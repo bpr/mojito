@@ -653,6 +653,14 @@ pub struct Checker {
     /// ([`Checker::fold_builtin_bodies`]), as the pin folds such a body to
     /// nothing.
     builtin_procedures: HashSet<String>,
+    /// Whether each name a call spells reaches a builtin callable whose
+    /// folded body dropped a `comptime assert`
+    /// ([`Checker::spells_asserting_builtin`]).
+    asserting_builtin_spellings: RefCell<HashMap<String, bool>>,
+    /// The parameter value each run-time call of an asserting builtin
+    /// callable folds to, by the call's span, or `None` for one that stays
+    /// a call ([`Checker::record_folded_builtin_call`]).
+    folded_builtin_calls: RefCell<HashMap<SourceSpan, Option<ParamExpr>>>,
     /// The field types of each non-generic struct declaring a builtin
     /// member, resolved when builtin bodies fold, before the structs'
     /// fields register: a folded body reads a field of a struct-typed
@@ -1095,6 +1103,8 @@ impl Checker {
             probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),
+            asserting_builtin_spellings: RefCell::new(HashMap::new()),
+            folded_builtin_calls: RefCell::new(HashMap::new()),
             builtin_struct_fields: HashMap::new(),
             module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),

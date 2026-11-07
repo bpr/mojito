@@ -199,6 +199,11 @@ pub(in crate::checker) struct ApplicableFunction {
     /// in [`Checker::called_application`]'s order, which a call substitutes
     /// its arguments into ([`Checker::fold_builtin_bodies`]).
     pub(in crate::checker) folded_body: Option<FoldedBody>,
+    /// Whether it is builtin and its body, or a builtin it calls, holds a
+    /// `comptime assert`, which the fold drops, so a run-time call over
+    /// parameter operands folds it away
+    /// ([`Checker::record_folded_builtin_call`]).
+    pub(in crate::checker) assertions: BuiltinAssertions,
     /// Its `where` clauses as the declaration spells them.
     where_clauses: Vec<Expr>,
     /// The conditional conformance gating a synthesized member
@@ -210,6 +215,16 @@ pub(in crate::checker) struct ApplicableFunction {
     /// `None` until they compile, and a callable whose clauses do not is
     /// applied by no call.
     pub(in crate::checker) constraints: Option<Vec<GenericConstraint>>,
+}
+
+/// Whether a builtin callable's fold drops a `comptime assert`
+/// ([`ApplicableFunction::assertions`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(in crate::checker) enum BuiltinAssertions {
+    /// No assertion: its body, and every builtin it calls, asserts nothing.
+    None,
+    /// Its body, or a builtin it calls, holds one the fold drops.
+    Dropped,
 }
 
 /// A folded `@always_inline("builtin")` body
@@ -1743,6 +1758,26 @@ impl Checker {
             return None;
         }
         self.selected_call(selected)
+    }
+
+    /// Whether `expr` calls an `@always_inline("builtin")` callable, every
+    /// argument of the call a parameter expression.
+    pub(super) fn applies_builtin(&self, expr: &Expr) -> bool {
+        self.selected_application(expr).is_some_and(|selected| {
+            selected.function.inline == mojito_checked::declaration::InlineLevel::Builtin
+        })
+    }
+
+    /// Whether `expr` calls an `@always_inline("builtin")` callable whose
+    /// body folded and holds a `comptime assert`
+    /// ([`Self::fold_builtin_bodies`]), every argument of the call a
+    /// parameter expression.
+    pub(super) fn applies_folded_builtin(&self, expr: &Expr) -> bool {
+        self.selected_application(expr).is_some_and(|selected| {
+            selected.function.inline == mojito_checked::declaration::InlineLevel::Builtin
+                && selected.function.folded_body.is_some()
+                && selected.function.assertions == BuiltinAssertions::Dropped
+        })
     }
 
     /// The application of the `@implicit` `__init__` of the struct `ty` that
@@ -6286,6 +6321,7 @@ impl ApplicableShape<'_> {
             inline: mojito_checked::declaration::InlineLevel::of(self.decorators)
                 .unwrap_or_default(),
             folded_body: None,
+            assertions: BuiltinAssertions::None,
             where_clauses: self.where_clauses.to_vec(),
             gate: self.gate.cloned(),
             constraints: (self.where_clauses.is_empty() && self.gate.is_none()).then(Vec::new),

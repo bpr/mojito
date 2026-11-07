@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1101
+# swept-count	1102
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -213,6 +213,7 @@ assets/type_error/always_inline_builtin_ordinary_call.mojo	compile-reject	agree	
 assets/type_error/always_inline_builtin_raises.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support this argument convention
 assets/type_error/always_inline_builtin_reassigned_var.mojo	compile-reject	agree	error: '@always_inline("builtin")' could not resolve operand value
 assets/type_error/always_inline_builtin_return_in_branch.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support MLIR operation lit.return
+assets/type_error/always_inline_builtin_runtime_argument_assert.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/always_inline_builtin_self_fold_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, Int((mul n, 2))]' value to 'SIMD[.int8, ((Int(2) * n) + Int(1))]'
 assets/type_error/always_inline_builtin_self_not_register_passable.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support this argument convention
 assets/type_error/always_inline_builtin_self_ordinary_call.mojo	compile-reject	agree	error: '@always_inline("builtin")' only supports calls to other '@always_inline("builtin")' functions

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A run-time call of an `@always_inline("builtin")` callable whose every
+  argument is a compile-time value now folds where it is called, as the
+  pin's parser folds it, so its body's `comptime assert` is dropped:
+  `checked[-1](1)` prints `2`, and `a < SIMD[DType.int32, 4](2)` over a
+  `comptime` vector `a` is `True` instead of a failed one-lane assertion
+  (R1527). A call with a run-time argument still instantiates its callee,
+  which judges the assertion.
 - An `@always_inline("builtin")` callable's signature is now judged as the
   pin judges it, called or not: a variadic, `mut`, `var`, `ref`, or
   `deinit` argument, or an argument or result that is not trivially

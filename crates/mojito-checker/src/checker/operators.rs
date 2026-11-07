@@ -1007,11 +1007,13 @@ impl Checker {
         })
     }
 
-    /// Record the value of `expr`, the comparison `left op right` of a
-    /// `SIMD` vector in a compile-time position, as the node's parameter
-    /// value: upstream's dunder folded (`infix_value`), whose `comptime
-    /// assert` the fold drops, never an operator over lanes.
-    pub(super) fn record_folded_comparison(
+    /// Record the value of `expr`, the operator `left op right` over a
+    /// `SIMD` vector, as the node's parameter value: upstream's builtin
+    /// dunder folded (`infix_value`), whose `comptime assert` the fold
+    /// drops, never an operator over lanes. A compile-time position folds
+    /// a comparison; a run-time one folds an operator whose builtin dunder
+    /// asserts ([`Self::record_folded_simd_operation`]).
+    pub(super) fn record_folded_simd_operator(
         &self,
         expr: &Expr,
         op: InfixOp,
@@ -1019,23 +1021,14 @@ impl Checker {
         right: &Expr,
     ) {
         use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
-        if self.comptime_positions.get() == 0 || !matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
-            return;
-        }
-        // An operand may be an application (`SIMD[DType.int32, 4](3)`).
-        let _lifting = self.lifting_position();
-        let vector = |operand: &Expr| {
-            self.compile_dependent_ct_expr(operand)
-                .ok()
-                .and_then(|built| built.meta().as_value().cloned())
-                .is_some_and(|ty| {
-                    ty.is_simd() && !mojito_types::types::has_host_scalar_value(ty.kind())
-                })
+        let folds = if self.crosses_to_runtime() {
+            op.dunder()
+                .is_some_and(|dunder| self.spells_asserting_builtin(dunder))
+        } else {
+            matches!(op, Eq | Ne | Lt | Gt | Le | Ge)
         };
-        if (vector(left) || vector(right))
-            && let Ok(value) = self.compile_dependent_ct_expr(expr)
-        {
-            self.record_member_value(expr.source_span(), value);
+        if folds {
+            self.record_folded_simd_operation(expr, &[left, right]);
         }
     }
 
@@ -1156,6 +1149,45 @@ impl Checker {
         };
         let (element, origin) = self.infer_place_address(span, value)?;
         Ok(TyKind::LitRef { element, origin }.into())
+    }
+
+    /// Record the value of `expr`, an operator over `operands` one of which
+    /// is a `SIMD` vector, as the node's parameter value. At run time each
+    /// operand is a parameter expression or a builtin callable's
+    /// application, as upstream's parser folds a builtin call over
+    /// parameter operands ([`Self::record_folded_builtin_call`]), so `a <
+    /// SIMD[DType.int32, 4](2)` over a `comptime` vector `a` is `True`
+    /// rather than a failed one-lane assertion, while `SIMD[DType.int32,
+    /// 4](1, 2, 3, 4)`, no builtin, stays a call.
+    fn record_folded_simd_operation(&self, expr: &Expr, operands: &[&Expr]) {
+        let runtime = self.crosses_to_runtime();
+        if runtime && self.reads_run_time_binding(expr) {
+            return;
+        }
+        let _position = runtime.then(|| self.comptime_position());
+        if runtime
+            && !operands.iter().all(|operand| {
+                self.compile_dependent_ct_expr(operand).is_ok() || self.applies_builtin(operand)
+            })
+        {
+            return;
+        }
+        // An operand may be an application (`SIMD[DType.int32, 4](3)`).
+        let _lifting = self.lifting_position();
+        let vector = |operand: &Expr| {
+            self.compile_dependent_ct_expr(operand)
+                .ok()
+                .and_then(|built| built.meta().as_value().cloned())
+                .is_some_and(|ty| {
+                    ty.is_simd() && !mojito_types::types::has_host_scalar_value(ty.kind())
+                })
+        };
+        if operands.iter().any(|operand| vector(operand))
+            && let Ok(value) = self.compile_dependent_ct_expr(expr)
+            && !(runtime && matches!(value.kind(), ParamKind::Apply { .. }))
+        {
+            self.record_member_value(expr.source_span(), value);
+        }
     }
 
     /// Type upstream's `Pointer[T, o](_mlir_value=)` overloads: a

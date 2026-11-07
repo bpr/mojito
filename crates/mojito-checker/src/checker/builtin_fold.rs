@@ -10,7 +10,7 @@
 //! `twice(n)` over `return n + n` and `n + n` spelled in place are one
 //! expression.
 
-use super::comptime_validation::{ApplicableDeclaration, FoldedBody};
+use super::comptime_validation::{ApplicableDeclaration, BuiltinAssertions, FoldedBody};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{InfixOp, PrefixOp};
@@ -52,6 +52,7 @@ impl Checker {
         }) {
             return Err(error);
         }
+        self.mark_asserting_builtins(&declarations);
         let mut pending: Vec<&ApplicableDeclaration<'_>> = declarations.iter().collect();
         loop {
             let unfolded: HashSet<String> = pending
@@ -75,6 +76,101 @@ impl Checker {
                 return Ok(());
             }
         }
+    }
+
+    /// Record a run-time call `expr` of a builtin callable whose every
+    /// argument is a compile-time value as the parameter value its folded
+    /// body denotes over them, as upstream's parser folds such a call where
+    /// it builds it (`foldInlineBuiltinFunction`): the call is a constant,
+    /// never instantiated, so the body's `comptime assert`, which the fold
+    /// drops, is not judged (`checked[-1](1)`). A call with a run-time
+    /// argument (`checked[-1](x)`) stays a call, which the instance judges.
+    pub(super) fn record_folded_builtin_call(&self, expr: &Expr) {
+        if !self.crosses_to_runtime() {
+            return;
+        }
+        let spelling = match &expr.kind {
+            ExprKind::Call { name, .. } => name.as_str(),
+            ExprKind::MethodCall { method, .. } => method.as_str(),
+            ExprKind::Invoke { callee, .. } => match &callee.kind {
+                ExprKind::Member { field, .. } => field.as_str(),
+                _ => return,
+            },
+            _ => return,
+        };
+        if !self.spells_asserting_builtin(spelling) || self.reads_run_time_binding(expr) {
+            return;
+        }
+        let span = expr.source_span();
+        let cached = self.folded_builtin_calls.borrow().get(&span).cloned();
+        let folded = cached.unwrap_or_else(|| {
+            let _position = self.comptime_position();
+            let folded = self
+                .applies_folded_builtin(expr)
+                .then(|| self.called_application(expr))
+                .flatten()
+                .filter(|value| !matches!(value.kind(), ParamKind::Apply { .. }));
+            self.folded_builtin_calls
+                .borrow_mut()
+                .insert(span.clone(), folded.clone());
+            folded
+        });
+        if let Some(value) = folded {
+            self.record_member_value(span, value);
+        }
+    }
+
+    /// Whether `expr` reads a name that denotes no parameter expression (a
+    /// local `var`, an argument, `self`), so no call in it is one: the
+    /// cheap test a run-time fold makes before selecting its callee.
+    pub(super) fn reads_run_time_binding(&self, expr: &Expr) -> bool {
+        struct RunTimeRead<'a> {
+            checker: &'a Checker,
+            found: bool,
+        }
+        impl mojito_ast::visit::Visitor for RunTimeRead<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.found = self.found
+                    || matches!(&expr.kind, ExprKind::Identifier(name)
+                        if self.checker.lookup(name).is_some())
+                        && self.checker.compile_dependent_ct_expr(expr).is_err();
+            }
+        }
+        let _position = self.comptime_position();
+        let mut read = RunTimeRead {
+            checker: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut read, expr);
+        read.found
+    }
+
+    /// Whether a call spelled `spelling` (`f`, `plus` of `G[1].plus`, `SIMD`
+    /// of a construction) may reach a builtin callable, the module's own or
+    /// an imported one, whose body holds a `comptime assert` its fold drops
+    /// ([`folded_spellings`]). Only the families so spelled resolve, once
+    /// per spelling.
+    pub(super) fn spells_asserting_builtin(&self, spelling: &str) -> bool {
+        if let Some(&asserting) = self.asserting_builtin_spellings.borrow().get(spelling) {
+            return asserting;
+        }
+        let asserting = self
+            .applicable_functions
+            .keys()
+            .filter(|family| folded_spellings(family).iter().any(|own| own == spelling))
+            .any(|family| {
+                self.applicable_functions
+                    .get(family)
+                    .is_some_and(|overloads| {
+                        overloads
+                            .iter()
+                            .any(|function| function.assertions == BuiltinAssertions::Dropped)
+                    })
+            });
+        self.asserting_builtin_spellings
+            .borrow_mut()
+            .insert(spelling.to_string(), asserting);
+        asserting
     }
 
     /// The pin's rejection of a builtin callable's signature, whose fold
@@ -133,6 +229,38 @@ impl Checker {
             Some(result)
         })
         .flatten()
+    }
+
+    /// Mark each of `declarations` whose body holds a `comptime assert`,
+    /// or calls a builtin callable so marked, as the pin's fold of a call
+    /// drops the assertion of every builtin it inlines
+    /// ([`ApplicableFunction::assertions`]). A callee is known by the
+    /// name the call spells, so a call of an overload sharing it marks too,
+    /// which only folds a call whose value its instance computes alike.
+    ///
+    /// [`ApplicableFunction::assertions`]: comptime_validation::ApplicableFunction
+    fn mark_asserting_builtins(&mut self, declarations: &[ApplicableDeclaration<'_>]) {
+        let mut unmarked: Vec<_> = declarations.iter().collect();
+        loop {
+            let before = unmarked.len();
+            unmarked.retain(|declaration| {
+                let asserts = declaration
+                    .body
+                    .iter()
+                    .any(|statement| matches!(statement.kind, StmtKind::ComptimeAssert { .. }))
+                    || call_spellings(declaration.body)
+                        .iter()
+                        .any(|spelling| self.spells_asserting_builtin(spelling));
+                if asserts && let Some(entry) = self.applicable_entry(declaration) {
+                    entry.assertions = BuiltinAssertions::Dropped;
+                }
+                !asserts
+            });
+            self.asserting_builtin_spellings.borrow_mut().clear();
+            if unmarked.len() == before {
+                return;
+            }
+        }
     }
 
     /// The field types of each non-generic struct `stmts` declare with a
@@ -992,6 +1120,49 @@ fn builtin_procedures(stmts: &[Stmt]) -> HashSet<String> {
         .filter(|&(_, procedure)| procedure)
         .map(|(name, _)| name.to_string())
         .collect()
+}
+
+/// The names a call of the callable family `name` (`f`, `G.f`,
+/// `G.__init__`) spells: its own last segment, and a constructor's struct.
+fn folded_spellings(name: &str) -> Vec<String> {
+    let mut segments = name.rsplit('.');
+    let own = segments.next().unwrap_or(name);
+    let owner = segments.next().filter(|_| own == "__init__");
+    std::iter::once(own)
+        .chain(owner)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The names the calls and operators of `body` spell
+/// ([`folded_spellings`]): a function's, a method's, and an operator's
+/// dunders.
+fn call_spellings(body: &[Stmt]) -> Vec<String> {
+    #[derive(Default)]
+    struct Spellings(Vec<String>);
+    impl mojito_ast::visit::Visitor for Spellings {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::Call { name, .. } => self.0.push(name.clone()),
+                ExprKind::MethodCall { method, .. } => self.0.push(method.clone()),
+                ExprKind::Invoke { callee, .. } => {
+                    if let ExprKind::Member { field, .. } = &callee.kind {
+                        self.0.push(field.clone());
+                    }
+                }
+                ExprKind::Infix(op, ..) => self.0.extend(
+                    op.dunder()
+                        .into_iter()
+                        .chain(op.reflected_dunder())
+                        .map(str::to_string),
+                ),
+                _ => {}
+            }
+        }
+    }
+    let mut spellings = Spellings::default();
+    mojito_ast::visit::walk_block(&mut spellings, body);
+    spellings.0
 }
 
 /// A rejection of a builtin body, in the pin's words.

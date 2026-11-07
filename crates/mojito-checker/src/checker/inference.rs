@@ -505,6 +505,7 @@ impl Checker {
             {
                 self.record_literal_materializations(expr, &literal_ty, ty)?;
             }
+            self.record_folded_builtin_call(expr);
             self.record_at(expr.source_span()).ty = Some(ty.clone());
             self.record_linear_temporary(expr, ty);
             self.materialize_parameter_read(expr, ty);
@@ -1287,7 +1288,7 @@ impl Checker {
             ExprKind::Prefix(op, operand) => self.infer_prefix(expr.source_span(), *op, operand),
             ExprKind::Infix(op, left, right) => {
                 let ty = self.infer_infix(Some(expr.source_span()), *op, left, right)?;
-                self.record_folded_comparison(expr, *op, left, right);
+                self.record_folded_simd_operator(expr, *op, left, right);
                 Ok(ty)
             }
             ExprKind::Call {

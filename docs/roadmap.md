@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1992**.
+Next free ID: **R1993**.
 
 ## Ordered Work
 
@@ -9180,34 +9180,28 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1527 A run-time call of an `@always_inline("builtin")` callable
-  judges its `comptime assert`**
+- [ ] **R1992 A run-time prefix operator over a compile-time `SIMD`
+  vector is not folded, so it judges its builtin dunder's `comptime
+  assert`**
 
-  `checked[-1](1)` over a builtin `def checked[k: Int](n: Int) -> Int`
-  opening with `comptime assert k > 0, "positive"` prints `2` at the pin,
-  where Mojito fails: "function instantiation of `checked` failed:
-  constraint failed: positive".
-  - The pin folds every call of a builtin callable at the call, and its
-    fold drops the assertion. `builtin_fold.rs` drops it from the
-    parameter-position template only, so a run-time call instantiates the
-    body and the elaborator judges it.
-  - Probe: `G[-1].checked(1)` over a builtin static method of `struct
-    G[k: Int]` asserting `Self.k > 0` behaves the same.
-  - Probe: `var x = a < SIMD[DType.int32, 4](2)` over a `comptime a =
-    SIMD[DType.int32, 4](1, 2, 3, 4)` prints `True` at the pin, which folds
-    the builtin `SIMD.__lt__` and drops its one-lane assertion. Mojito
-    fails the instance with "Strict inequality is only defined for
-    `Scalar`s": the check records the assertion at every run-time
-    position (`Checker::record_instance_assertion`), and only a
-    `comptime` position skips it.
-  - Probe: `comptime q = SIMD[DType.int32, 4](3)` then `comptime r = v >
-    q` in `def folded[v: SIMD[DType.int32, 4]]()` prints `True` at the
-    pin. Mojito lifts the comparison over the application-valued `q` to a
-    `$comptime$` function whose `SIMD.__gt__` instance fails the same
-    assertion (also with `from_int=3`; found while landing R1781).
-  - Without the decorator both are rejected, at the pin and here.
-  - Found while landing R1522 (2026-10-27).
-  - Depends on nothing.
+  `var x = -b` over a `comptime b = SIMD[DType.bool, 4](True, False, True,
+  False)` prints `[False, True, False, True]` at the pin, which folds the
+  builtin `SIMD.__neg__` over its parameter operand and drops its numeric
+  assertion. Mojito fails `main`'s instance: "the SIMD type must be
+  numeric".
+  - `Checker::record_folded_simd_operator` folds a run-time infix
+    operator over parameter operands, as upstream's parser folds a builtin
+    call, but no prefix one.
+  - Folding the prefix node needs two levers: MIR's parameter-constant
+    read (`call_family` in `lower_expr/expr.rs`) takes no `Prefix` node,
+    and the elaborator evaluates no prefix parameter expression over a
+    vector, so `-b` keeps the constant "in elaborated MIR after
+    monomorphization" and `~b`, folded to `b ^ -1`, meets R1960.
+  - Probe: `print(~a)` and `print(-SIMD[DType.int8, 2](3))` over
+    `comptime a = SIMD[DType.int32, 4](1, 2, 3, 4)` must keep printing
+    `[-2, -3, -4, -5]` and `[-3, -3]` once prefix nodes fold.
+  - Found while landing R1527 (2026-11-07).
+  - Depends on R1960.
   - Model: Opus, Not Planned.
 
 - [ ] **R1565 A method's compile-time parameter may reuse its struct's
