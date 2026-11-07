@@ -662,6 +662,32 @@ impl Checker {
             .unwrap_or_else(|| default_literal(actual))
     }
 
+    /// The type an argument of type `actual` passes at a parameter typed
+    /// `param`: an existential `Some[Trait]` is the anonymous `[T: Trait]`
+    /// binder upstream desugars it to, which the argument deduces through
+    /// [`Self::deduced_ty`] (a literal materializes or defaults) when the
+    /// deduced type conforms. Any other parameter, or a deduction that does
+    /// not conform, keeps `param`.
+    pub(super) fn existential_argument_ty(&self, param: &Ty, actual: &Ty) -> Ty {
+        let TyKind::Param {
+            binder,
+            callable_bound: None,
+            ..
+        } = param.kind()
+        else {
+            return param.clone();
+        };
+        if !is_existential_binder(binder) {
+            return param.clone();
+        }
+        let deduced = self.deduced_ty(actual);
+        if self.value_coerces(&deduced, param) {
+            deduced
+        } else {
+            param.clone()
+        }
+    }
+
     /// Whether a value of `ty` materializes through its target's implicit
     /// constructor (a `StringLiteral`, a user struct), rather than by the
     /// compiler's literal folding (`IntLiteral`, `FloatLiteral`).
@@ -1708,16 +1734,20 @@ impl Checker {
                 ArgSlot::Keyword(k) => &kwargs[*k].value,
                 ArgSlot::Default => continue,
             };
-            let arg_ty = self.infer_with_expected(arg, &params[i], true)?;
+            let mut arg_ty = self.infer_with_expected(arg, &params[i], true)?;
             reject_generic_function_value(name, &names[i], arg, &arg_ty, &params[i])?;
-            if !self.record_implicit_conversion(arg, &arg_ty, &params[i])? {
+            let expected = self.existential_argument_ty(&params[i], &arg_ty);
+            if expected != params[i] {
+                arg_ty = self.infer_with_expected(arg, &expected, true)?;
+            }
+            if !self.record_implicit_conversion(arg, &arg_ty, &expected)? {
                 return Err(TypeError::TypeMismatch {
                     expected: params[i].to_string(),
                     found: arg_ty.to_string(),
                     context: format!("argument '{}' to '{}'", names[i], name),
                 });
             }
-            score += conversion_count(&arg_ty, &params[i]);
+            score += conversion_count(&arg_ty, &expected);
             // Only a `var`/`deinit` parameter *consumes* its argument (moving the
             // value in). `read` (the default), `mut`, and `ref` all **borrow** — no
             // copy — so passing a non-Copyable value to them is fine.

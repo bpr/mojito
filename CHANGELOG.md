@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An existential `Some[Trait]` parameter is now the anonymous
+  `[T: Trait]` binder its argument deduces, as upstream desugars it: a
+  literal argument materializes (`StringLiteral` to `String`) or
+  defaults (`Int`, `Float64`) there, at a free function and a method,
+  where `g("abc")` and `g(3)` over `g(x: Some[Hashable])` were rejected
+  (R1865).
 - A value whose struct declares `@__nonmaterializable(T)` now
   materializes to `T` before an implicit constructor of the parameter
   type, as upstream's conversion does: `g("a")` over an

@@ -89,8 +89,12 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            if let Some(expected) = resolved.param_types.get(index) {
-                let actual = self.infer_with_expected(expression, expected, true)?;
+            if let Some(declared) = resolved.param_types.get(index) {
+                let mut actual = self.infer_with_expected(expression, declared, true)?;
+                let expected = &self.existential_argument_ty(declared, &actual);
+                if expected != declared {
+                    actual = self.infer_with_expected(expression, expected, true)?;
+                }
                 let binds = if self.is_synthetic_slice_descriptor(expression) {
                     self.slice_literal_binding(expression, expected, true)?
                         .is_some()
@@ -371,7 +375,11 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            let actual = self.infer_with_expected(expression, &params[index], false)?;
+            let mut actual = self.infer_with_expected(expression, &params[index], false)?;
+            let expected = self.existential_argument_ty(&params[index], &actual);
+            if expected != params[index] {
+                actual = self.infer_with_expected(expression, &expected, false)?;
+            }
             // A slice literal binds through its parameter type's
             // `__slice_literal__` constructor, at one cost whichever type
             // that is.
@@ -381,12 +389,12 @@ impl Checker {
                     .is_some()
             } else {
                 self.has_index_normalization(expression, &params[index])
-                    || self.value_coerces(&actual, &params[index])
+                    || self.value_coerces(&actual, &expected)
             };
             if !binds
                 && (literal
                     || self
-                        .implicit_conversion_target(&actual, &params[index])?
+                        .implicit_conversion_target(&actual, &expected)?
                         .is_none())
             {
                 return Err(TypeError::TypeMismatch {
@@ -396,7 +404,7 @@ impl Checker {
                 });
             }
             if !literal {
-                score += conversion_count(&actual, &params[index]);
+                score += conversion_count(&actual, &expected);
             }
             simd_erasures += usize::from(
                 matches!(

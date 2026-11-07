@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1975**.
+Next free ID: **R1976**.
 
 ## Ordered Work
 
@@ -11019,25 +11019,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1865 An existential `Some[Trait]` parameter is not a deduced
-  type parameter at the call**
+- [ ] **R1975 Two existential `Some[Trait]` parameters of one trait share
+  one binder**
 
-  The checker resolves `x: Some[Trait]` to a bounded `TyKind::Param`
-  under a synthetic binder and accepts an argument only if its own type
-  conforms, where upstream desugars it to an anonymous `[T: Trait]`
-  binder that the argument deduces through `Checker::deduced_ty`.
-  - So a literal neither materializes (`@__nonmaterializable`) nor
-    defaults to its `Int`/`Float64` type there, as it does for a named
-    `[T: Trait](x: T)` binder.
-  - Lever: bind an existential parameter as a call-local deduced binder,
-    as `with_existential_binders` (`checker/traits_support.rs`) already
-    does for trait witnesses, so the call records the materialization.
-  - Probe: `g("abc")` over `def g(x: Some[Hashable]) -> UInt64: return
-    hash(x)` is rejected ("expected Some[Hashable], found
-    StringLiteral["abc"]"), where the pin prints `1671071436193132867`.
-  - Probe: `g(3)` over the same `g` is rejected ("found IntLiteral[3]"),
-    where the pin hashes the `Int`.
-  - Found while landing R1654 (2026-11-03).
+  `synthetic_binder` makes the spelling `Some[Trait]` a binder's whole
+  identity, where upstream desugars each `Some[Trait]` occurrence to its
+  own anonymous `[T: Trait]` binder.
+  - So a call binding the two at different types elaborates one instance
+    keyed by the first argument, and the specialized MIR fails to verify.
+  - Lever: mint one binder per parameter slot when resolving a
+    signature (as `with_existential_binders` in
+    `checker/traits_support.rs` already numbers them for witness
+    comparison), and give the body's parameter binding the same id.
+  - Probe: `two(String("a"), 1)` over `def two(a: Some[Writable], b:
+    Some[Writable]): print(a, b)` fails elaboration ("argument 1 of
+    'two$mono$TString$TString' has type Int, declared String"), where the
+    pin prints `a 1`.
+  - Found while landing R1865 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
