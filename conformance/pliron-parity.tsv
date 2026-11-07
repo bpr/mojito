@@ -268,6 +268,7 @@ assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sa
 assets/ok/conditional_register_passable_result_owned.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_library_types_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_runtime_value.mojo	main	exe-differential	sanitized
+assets/ok/conforms_to_struct_valued_argument.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_undeclared_compiler_trait.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitized

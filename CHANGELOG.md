@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `conforms_to` and `reflect[...].name()` over a struct whose parameter is
+  a constructed struct value (`conforms_to(W[K(4)], Intable)`,
+  `reflect[W[P(3, True)]].name()`) or a `SIMDLength` now answer as at the
+  pin; a regression fixture pins the behavior (R1563).
 - A `comptime assert` whose condition reads a parameter but folds to
   `False` under the pin's canonicalizer (`n != n`, `n - n == 1`, `False
   and n == 2`) now ends its path, so a `comptime if` whose other arm

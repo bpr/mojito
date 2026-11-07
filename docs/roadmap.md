@@ -7144,32 +7144,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1563 `conforms_to` over a struct with a struct-valued argument
-  stays unfolded in elaborated MIR**
-
-  `comptime c = conforms_to(W[K(4)], Intable)`, with `@fieldwise_init
-  struct K` and `struct W[k: K]`, stops with "keeps the parameter constant
-  `conforms_to(W[K(4)], Intable)` in elaborated MIR", where the pin prints
-  `False`.
-  - The `comptime if conforms_to(W[K(4)], Sized)` form fails the same way.
-  - The root is not located. The suspect is `Specializer::decide_type_conforms`
-    (`mono/availability.rs`), whose `bind_struct_arguments` may not bind
-    the `K(4)` construction argument, leaving the query undecided.
-  - A `SIMD` instance's `SIMDLength` argument folds here, so the gap is the
-    construction argument's, not the struct-valued slot's.
-  - Found while landing R1550 (2026-10-28).
-  - Probe: `reflect[L[4]].name()` over `struct L[s: SIMDLength]`, and
-    `reflect[W[P(3, True)]].name()` over `struct W[p: P]`, stop with
-    "unsupported compile-time application `StringSpan.__init__…` reads an
-    unresolved value", where the pin prints `probe.L[4]` and
-    `probe.W[{3 : SIMD[DType.int, 1], True}]`. The construction argument
-    stays a `param_apply`, which the check's `has_free_parameters` and
-    mono's `is_symbolic` both count as symbolic, so neither answers the
-    query. `TypeNameSpeller::value` already spells a struct value as the
-    pin does once it is one.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1639 A struct's type member read through an application over a
   symbolic parameter has no receiver**
 
