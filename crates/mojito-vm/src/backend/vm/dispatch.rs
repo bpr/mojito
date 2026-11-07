@@ -63,11 +63,13 @@ impl VmBackend {
 
     /// Destroy `value`, which a `drop.var` or `drop.place` of the static
     /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
-    /// names, on the whole value, else by dropping its fields: the value
-    /// holds every part (`mir::verify`'s slot-end rule). A field, and what
-    /// a cleanup list or any other teardown ends, still finds its
-    /// destructor in its struct's member table. A destructor the compiler
-    /// synthesized runs untraced: the source declares none.
+    /// names, on the whole value, else by dropping its fields at their
+    /// declared types: the value holds every part (`mir::verify`'s slot-end
+    /// rule). A field, and what a cleanup list or any other teardown ends,
+    /// still finds its destructor in its struct's member table. A held
+    /// struct ([`Prog::boxed`]) is destroyed as its box, its members being
+    /// its type's. A destructor the compiler synthesized runs untraced: the
+    /// source declares none.
     pub(super) fn drop_named(
         &mut self,
         prog: &Prog,
@@ -75,17 +77,10 @@ impl VmBackend {
         ty: Option<&Ty>,
         destructor: Option<&str>,
     ) -> Result<(), RuntimeError> {
-        let value = match ty {
-            Some(ty) => erased_instance_value(prog, value, ty),
-            None => value,
-        };
-        match value {
+        match static_struct_value(prog, value, ty) {
             Value::Struct { name, fields } => {
                 let Some(destructor) = destructor else {
-                    for (_, value) in fields {
-                        self.drop_value(prog, value)?;
-                    }
-                    return Ok(());
+                    return self.drop_fields(prog, &name, fields);
                 };
                 let index = prog.index_of(destructor).ok_or_else(|| {
                     RuntimeError::Unsupported(format!(
@@ -98,14 +93,14 @@ impl VmBackend {
                 self.call_function(prog, index, vec![Value::Struct { name, fields }])?;
                 Ok(())
             }
-            value => self.drop_value(prog, value),
+            value => self.drop_value(prog, value, ty),
         }
     }
 
     /// Copy `value` of the static type `ty` by running `constructor`, the
     /// `__copyinit__` the copy names, the copy keeping `value`'s own
-    /// instance names; a copy naming none copies by type, as
-    /// [`Self::clone_value_as`].
+    /// instance names and, for a held struct, its unboxed shape; a copy
+    /// naming none copies by type, as [`Self::clone_value_as`].
     pub(super) fn copy_named(
         &mut self,
         prog: &Prog,
@@ -113,14 +108,13 @@ impl VmBackend {
         ty: Option<&Ty>,
         constructor: Option<&str>,
     ) -> Result<Value, RuntimeError> {
-        match (constructor, value) {
-            (Some(constructor), Value::Struct { .. }) => {
-                let source = match ty {
-                    Some(ty) => erased_instance_value(prog, value.clone(), ty),
-                    None => value.clone(),
-                };
+        match constructor {
+            Some(constructor)
+                if matches!(value, Value::Struct { .. }) || holds_unboxed(prog, value, ty) =>
+            {
+                let source = static_struct_value(prog, value.clone(), ty);
                 let copy = self.run_constructor(prog, constructor, source)?;
-                Ok(with_names_of(value, copy))
+                Ok(with_names_of(value, reshaped_as(prog, value, copy, ty)))
             }
             _ => self.clone_value_as(prog, value, ty),
         }
@@ -128,8 +122,9 @@ impl VmBackend {
 
     /// Relocate `value` moved out of a slot of the static type `ty` by
     /// running `constructor`, the `__moveinit__` the move names, the moved
-    /// value keeping `value`'s own instance names; a move naming none moves
-    /// by type, as [`Self::move_value_as`].
+    /// value keeping `value`'s own instance names and, for a held struct,
+    /// its unboxed shape; a move naming none moves by type, as
+    /// [`Self::move_value_as`].
     pub(super) fn move_named(
         &mut self,
         prog: &Prog,
@@ -137,15 +132,14 @@ impl VmBackend {
         ty: Option<&Ty>,
         constructor: Option<&str>,
     ) -> Result<Value, RuntimeError> {
-        match (constructor, &value) {
-            (Some(constructor), Value::Struct { .. }) => {
+        match constructor {
+            Some(constructor)
+                if matches!(value, Value::Struct { .. }) || holds_unboxed(prog, &value, ty) =>
+            {
                 let names = value.clone();
-                let source = match ty {
-                    Some(ty) => erased_instance_value(prog, value, ty),
-                    None => value,
-                };
+                let source = static_struct_value(prog, value, ty);
                 let moved = self.run_constructor(prog, constructor, source)?;
-                Ok(with_names_of(&names, moved))
+                Ok(with_names_of(&names, reshaped_as(prog, &names, moved, ty)))
             }
             _ => self.move_value_as(prog, value, ty),
         }
@@ -181,12 +175,12 @@ impl VmBackend {
         ty: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
         match ty.filter(|ty| mojito_types::types::erases_an_argument(ty)) {
-            Some(ty) => {
-                let erased = erased_instance_value(prog, value.clone(), ty);
-                let copy = self.clone_value(prog, &erased)?;
+            Some(erased) => {
+                let source = erased_instance_value(prog, value.clone(), erased);
+                let copy = self.clone_value(prog, &source, ty)?;
                 Ok(with_names_of(value, copy))
             }
-            None => self.clone_value(prog, value),
+            None => self.clone_value(prog, value, ty),
         }
     }
 
@@ -201,21 +195,34 @@ impl VmBackend {
         ty: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
         match ty.filter(|ty| mojito_types::types::erases_an_argument(ty)) {
-            Some(ty) => {
+            Some(erased) => {
                 let names = value.clone();
-                let moved = self.move_typed_value(prog, erased_instance_value(prog, value, ty))?;
+                let source = erased_instance_value(prog, value, erased);
+                let moved = self.move_typed_value(prog, source, ty)?;
                 Ok(with_names_of(&names, moved))
             }
-            None => self.move_typed_value(prog, value),
+            None => self.move_typed_value(prog, value, ty),
         }
     }
 
-    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
-    /// it defines one (its body consumes the receiver's fields at their last
-    /// use), else drop the fields in declaration order — Mojo's order.
-    /// Internal tuple/compile-time storage recurses through its elements.
-    /// Scalars are a no-op.
-    pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
+    /// Recursively destroy `v`, a value of the static type `ty` when known
+    /// (ASAP drop), as upstream destroys a value by its type: run a struct's
+    /// `__deinit__` if it defines one (its body consumes the receiver's
+    /// fields at their last use), else drop the fields in declaration order
+    /// — Mojo's order — each at its declared type. A held struct
+    /// ([`Prog::boxed`]) is destroyed as its box. A tuple's elements drop at
+    /// their element types, a variant's payload at its alternative's, and
+    /// internal compile-time storage element by element. Scalars are a
+    /// no-op.
+    pub(super) fn drop_value(
+        &mut self,
+        prog: &Prog,
+        v: Value,
+        ty: Option<&Ty>,
+    ) -> Result<(), RuntimeError> {
+        if holds_unboxed(prog, &v, ty) {
+            return self.drop_value(prog, prog.boxed(v, ty), ty);
+        }
         match v {
             Value::Struct { name, fields, .. } => {
                 if let Some(idx) = prog.lifecycle_member(&name, "__deinit__") {
@@ -227,13 +234,11 @@ impl VmBackend {
                     self.call_function(prog, idx, vec![self_val])?;
                     return Ok(());
                 }
-                for (_, value) in fields {
-                    self.drop_value(prog, value)?;
-                }
+                self.drop_fields(prog, &name, fields)?;
             }
             Value::ComptimeList(items) => {
                 for item in items.into_iter().rev() {
-                    self.drop_value(prog, item)?;
+                    self.drop_value(prog, item, None)?;
                 }
             }
             // Pack storage a teardown reaches by type, left to right: a
@@ -241,12 +246,38 @@ impl VmBackend {
             // (`mir::refine_pack_drops`), and a homogeneous collector's
             // `VariadicList.__deinit__` ends its storage itself.
             Value::Tuple(items) => {
-                for item in items {
-                    self.drop_value(prog, item)?;
+                let types = element_types(ty, items.len());
+                for (at, item) in items.into_iter().enumerate() {
+                    self.drop_value(prog, item, types.and_then(|types| types.get(at)))?;
                 }
             }
-            Value::Variant { value, .. } => self.drop_value(prog, *value)?,
+            Value::Variant {
+                alternatives,
+                index,
+                value,
+            } => self.drop_value(prog, *value, alternatives.get(index))?,
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Drop `fields`, the fields of a value of the struct `name`, in
+    /// declaration order, each at its declared type.
+    fn drop_fields(
+        &mut self,
+        prog: &Prog,
+        name: &str,
+        fields: Vec<(String, Value)>,
+    ) -> Result<(), RuntimeError> {
+        let declared = prog.structs.get(name);
+        for (field, value) in fields {
+            let ty = declared.and_then(|declared| {
+                declared
+                    .fields
+                    .iter()
+                    .find_map(|(declared, ty)| (*declared == field).then_some(ty))
+            });
+            self.drop_value(prog, value, ty)?;
         }
         Ok(())
     }
@@ -267,7 +298,7 @@ impl VmBackend {
             value,
         } = old
         else {
-            return self.drop_value(prog, old);
+            return self.drop_value(prog, old, None);
         };
         self.drop_named(
             prog,
@@ -597,6 +628,59 @@ pub(super) fn format_value(value: &Value, repr: bool) -> Result<String, RuntimeE
         )),
         _ if repr => Ok(scalar_repr(value)),
         _ => Ok(value.to_string()),
+    }
+}
+
+/// Whether `value`, a value of the static type `ty`, is a held struct
+/// ([`Prog::held_field`]) not in its box: what a slot or register of `ty`
+/// holds below the MIR waist. A moved-out or uninitialized value is no
+/// struct value at all.
+pub(super) fn holds_unboxed(prog: &Prog, value: &Value, ty: Option<&Ty>) -> bool {
+    let Some((name, _)) = prog.held_field(ty) else {
+        return false;
+    };
+    match value {
+        Value::Moved | Value::None | Value::UninitStorage(_) => false,
+        Value::Struct { name: held, .. } => {
+            mojito_types::types::struct_template(held) != mojito_types::types::struct_template(name)
+        }
+        _ => true,
+    }
+}
+
+/// `value`, a value of the static type `ty`, as the [`Value::Struct`] its
+/// type's members dispatch on: an erased instance's value under that
+/// instance's name ([`erased_instance_value`]), and a held struct in its box
+/// ([`Prog::boxed`]). Any other value, and a moved-out or uninitialized one,
+/// is returned as it is.
+pub(super) fn static_struct_value(prog: &Prog, value: Value, ty: Option<&Ty>) -> Value {
+    match ty {
+        Some(ty) if !matches!(value, Value::Moved | Value::None | Value::UninitStorage(_)) => {
+            prog.boxed(erased_instance_value(prog, value, ty), Some(ty))
+        }
+        _ => value,
+    }
+}
+
+/// `result`, a lifecycle member's result for `original` of the static type
+/// `ty`, in `original`'s shape: unboxed where `original` is a held struct
+/// out of its box ([`holds_unboxed`]), else as it is.
+pub(super) fn reshaped_as(prog: &Prog, original: &Value, result: Value, ty: Option<&Ty>) -> Value {
+    if holds_unboxed(prog, original, ty) {
+        prog.unboxed(result, ty)
+    } else {
+        result
+    }
+}
+
+/// The element types of `ty` where it is a tuple or pack of `len`
+/// elements: what a [`Value::Tuple`] of that static type holds.
+pub(super) fn element_types(ty: Option<&Ty>, len: usize) -> Option<&[Ty]> {
+    match ty?.kind() {
+        TyKind::Tuple(items) | TyKind::RuntimePack(items) if items.len() == len => {
+            Some(items.as_slice())
+        }
+        _ => None,
     }
 }
 

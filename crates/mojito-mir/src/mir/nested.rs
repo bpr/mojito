@@ -979,6 +979,8 @@ fn lower_closure_storage(
                 }),
             )
             .collect(),
+        register_passable: storage.declared.trivially_register_passable()
+            || storage.declared.register_passable(),
         associated_types: Vec::new(),
         parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),

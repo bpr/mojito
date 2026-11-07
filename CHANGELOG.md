@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct declaration now records whether it declares `RegisterPassable`
+  or `TrivialRegisterPassable` with no condition, decided on the template
+  and kept by every instance, as upstream's declaration-level
+  register-passability is (MIR text 1.175, `mojito-package 199`). The VM
+  now destroys, copies, and moves a value by its static type, recursing
+  into fields, tuple elements, and variant payloads at their declared
+  types, so a struct held as its one field still runs its own
+  `__deinit__`, copy, and move constructors. Holding a one-field
+  `RegisterPassable` struct with lifecycle members as its field, as the
+  pin does, waits on Pliron's lifecycle calls on a scalar (R1524, R1984).
 - An `and`/`or` whose left operand converts to the right operand's type
   (`n or W(raw=50)` over an `@implicit` `Int` constructor, `Int32(0) or v`
   over a vector, `"" or s` over a `String`) now runs as at the pin: the

@@ -60,6 +60,15 @@ pub struct StructDeclaration {
     /// `mojito_types::conformance::struct_trait_rule`. A concrete
     /// instance's are decided, likewise.
     pub declared: Vec<StructConformance>,
+    /// Whether the struct declares `RegisterPassable` or
+    /// `TrivialRegisterPassable` with no condition, directly or through a
+    /// refining trait: upstream's declaration-level register-passability,
+    /// by which `LowerKGENToLLVM` holds a one-field struct as its field
+    /// (`MirDeclarations::register_field`). It is decided on the template,
+    /// before the elaborator decides an instance's conditional
+    /// [`Self::declared`] rows, and every instance keeps the template's
+    /// answer.
+    pub register_passable: bool,
     /// The struct's unparameterized associated types (`Element` of `List`),
     /// sorted by member, each over the struct's own binders: the elaborator
     /// solves `C.Element` from them once `C` is bound to an instance, so
@@ -944,6 +953,7 @@ mod tests {
             explicit_destroy: None,
             conformances: Vec::new(),
             declared: Vec::new(),
+            register_passable: false,
             associated_types,
             parameterized_associated_types,
             associated_values: Vec::new(),

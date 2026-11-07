@@ -375,6 +375,11 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 ),
             ));
         }
+        // Schema 1.175 says whether the struct declares register-passability
+        // unconditionally, written only when it does.
+        if declaration.register_passable {
+            entries.push(("register_passable", "true".to_string()));
+        }
         // Schema 1.138 carries the declaring module's path, written only
         // when the struct has one.
         if !declaration.module.is_empty() {

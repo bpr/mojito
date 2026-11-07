@@ -1744,6 +1744,7 @@ fn declaration_metadata_reprints_byte_identically() {
                 }],
             },
         ],
+        register_passable: true,
         associated_types: vec![(
             "Element".into(),
             TyKind::Param {
@@ -1829,6 +1830,7 @@ fn declaration_metadata_reprints_byte_identically() {
         explicit_destroy: None,
         conformances: Vec::new(),
         declared: Vec::new(),
+        register_passable: false,
         associated_types: Vec::new(),
         origin_params: Vec::new(),
         parameterized_associated_types: Vec::new(),

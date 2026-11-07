@@ -1218,6 +1218,8 @@ struct ResultAdapterFrames<'a> {
 struct ResultAdapter<'a> {
     kind: mojito_checked::checked::CheckedResultAdapter,
     constructor: Option<&'a str>,
+    /// The static type of the call's result, which a copy of it runs by.
+    ty: Option<&'a Ty>,
 }
 
 /// Take the single argument of a one-arg built-in (the checker guarantees arity;
@@ -1868,6 +1870,7 @@ mod held_struct_tests {
                 trait_name: trait_name.into(),
                 conditions: vec![mojito_types::types::GenericConstraint::Bool(true)],
             }],
+            register_passable: false,
             associated_types: Vec::new(),
             origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
@@ -2244,9 +2247,10 @@ mod pointer_storage_tests {
         vm.drop_value(
             &empty_program(),
             Value::UninitStorage(Some(Box::new(Value::Str("leaked".to_string())))),
+            None,
         )
         .expect("no-op drop");
-        vm.drop_value(&empty_program(), Value::UninitStorage(None))
+        vm.drop_value(&empty_program(), Value::UninitStorage(None), None)
             .expect("no-op drop of uninitialized storage");
     }
 }

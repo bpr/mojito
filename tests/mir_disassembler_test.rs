@@ -190,6 +190,7 @@ fn metadata_program() -> MirProgram {
             }),
             conformances: Vec::new(),
             declared: Vec::new(),
+            register_passable: false,
             associated_types: Vec::new(),
             origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),

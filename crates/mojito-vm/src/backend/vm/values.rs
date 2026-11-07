@@ -532,15 +532,29 @@ impl VmBackend {
         Ok(Value::Struct { name, fields })
     }
 
-    /// Produce a semantically-correct **copy** of a value (a `UseVar { Copy }` read,
-    /// a by-value argument, or a return). For a struct that defines `__copyinit__`,
-    /// run it (so a pointer-owning type deep-copies its storage instead of aliasing);
-    /// for a struct without one, recurse into fields (a nested field may define it).
-    /// Internal tuple/compile-time storage recurses element-wise. Only reached
-    /// when `has_copyinit` is set, for a copy naming no constructor
+    /// Produce a semantically-correct **copy** of `v`, a value of the
+    /// static type `ty` when known (a `UseVar { Copy }` read, a by-value
+    /// argument, or a return), as upstream copies a value by its type. For a
+    /// struct that defines `__copyinit__`, run it (so a pointer-owning type
+    /// deep-copies its storage instead of aliasing); for a struct without
+    /// one, recurse into its fields at their declared types (a nested field
+    /// may define it). A held struct ([`Prog::boxed`]) is copied as its box
+    /// and keeps its unboxed shape. A tuple's elements copy at their element
+    /// types, a variant's payload at its alternative's, and internal
+    /// compile-time storage element by element. Only reached when
+    /// `has_copyinit` is set, for a copy naming no constructor
     /// ([`Self::copy_named`] runs a named one) and for the fields, captures,
     /// and payloads a copy reaches.
-    pub(super) fn clone_value(&mut self, prog: &Prog, v: &Value) -> Result<Value, RuntimeError> {
+    pub(super) fn clone_value(
+        &mut self,
+        prog: &Prog,
+        v: &Value,
+        ty: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        if dispatch::holds_unboxed(prog, v, ty) {
+            let copy = self.clone_value(prog, &prog.boxed(v.clone(), ty), ty)?;
+            return Ok(prog.unboxed(copy, ty));
+        }
         match v {
             Value::Struct { name, fields } => {
                 if let Some(fidx) = prog.lifecycle_member(name, "__copyinit__") {
@@ -548,9 +562,16 @@ impl VmBackend {
                     let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v.clone()])?;
                     Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
                 } else {
+                    let declared = prog.structs.get(name);
                     let mut new_fields = Vec::with_capacity(fields.len());
                     for (f, fv) in fields {
-                        new_fields.push((f.clone(), self.clone_value(prog, fv)?));
+                        let field_ty = declared.and_then(|declared| {
+                            declared
+                                .fields
+                                .iter()
+                                .find_map(|(declared, ty)| (declared == f).then_some(ty))
+                        });
+                        new_fields.push((f.clone(), self.clone_value(prog, fv, field_ty)?));
                     }
                     Ok(Value::Struct {
                         name: name.clone(),
@@ -561,14 +582,15 @@ impl VmBackend {
             Value::ComptimeList(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for it in items {
-                    out.push(self.clone_value(prog, it)?);
+                    out.push(self.clone_value(prog, it, None)?);
                 }
                 Ok(Value::ComptimeList(out))
             }
             Value::Tuple(items) => {
+                let types = dispatch::element_types(ty, items.len());
                 let mut out = Vec::with_capacity(items.len());
-                for it in items {
-                    out.push(self.clone_value(prog, it)?);
+                for (at, it) in items.iter().enumerate() {
+                    out.push(self.clone_value(prog, it, types.and_then(|types| types.get(at)))?);
                 }
                 Ok(Value::Tuple(out))
             }
@@ -579,7 +601,7 @@ impl VmBackend {
             } => Ok(Value::Variant {
                 alternatives: alternatives.clone(),
                 index: *index,
-                value: Box::new(self.clone_value(prog, value)?),
+                value: Box::new(self.clone_value(prog, value, alternatives.get(*index))?),
             }),
             // Scalars alias/copy trivially; a bare pointer copy *aliases* (correct —
             // deep-copy is the owning struct's `__copyinit__` job, handled above).
@@ -587,8 +609,8 @@ impl VmBackend {
         }
     }
 
-    /// Run lifecycle copying, by the `constructor` the copy names as
-    /// [`Self::copy_named`], while reference handles embedded in the value can
+    /// Run lifecycle copying of `value`, at the result type and by the
+    /// constructor `adapter` names, as [`Self::copy_named`], while reference handles embedded in the value can
     /// still resolve against the executing caller and (for iterator results)
     /// the just-completed callee. The VM normally pops the executing frame while
     /// interpreting one instruction; moving its real slots into temporary frame
@@ -598,7 +620,7 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         value: &Value,
-        constructor: Option<&str>,
+        adapter: ResultAdapter<'_>,
         current: FrameId,
         current_variables: &mut Vec<Value>,
         returned_frame: Option<(FrameId, &mut Vec<Value>)>,
@@ -628,7 +650,7 @@ impl VmBackend {
             variables
         });
 
-        let result = self.copy_named(prog, value, None, constructor);
+        let result = self.copy_named(prog, value, adapter.ty, adapter.constructor);
         if let Some(variables) = returned_variables.as_mut() {
             let frame = self
                 .frames
@@ -645,16 +667,22 @@ impl VmBackend {
         result
     }
 
-    /// Relocate a **moved** value (a `UseVar { Move }` / `^` transfer). For a struct
-    /// that defines `__moveinit__`, run it (`existing` is consumed); otherwise the
-    /// default move — the value's slot was already tombstoned — suffices. Only
-    /// reached when `has_moveinit` is set.
-    ///
+    /// Relocate a **moved** value `v` of the static type `ty` when known (a
+    /// `UseVar { Move }` / `^` transfer). For a struct that defines
+    /// `__moveinit__`, run it (`existing` is consumed); otherwise the default
+    /// move — the value's slot was already tombstoned — suffices. A held
+    /// struct ([`Prog::boxed`]) moves as its box and keeps its unboxed
+    /// shape. Only reached when `has_moveinit` is set.
     pub(super) fn move_typed_value(
         &mut self,
         prog: &Prog,
         v: Value,
+        ty: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
+        if dispatch::holds_unboxed(prog, &v, ty) {
+            let moved = self.move_typed_value(prog, prog.boxed(v, ty), ty)?;
+            return Ok(prog.unboxed(moved, ty));
+        }
         if let Value::Struct { name, .. } = &v
             && let Some(fidx) = prog.lifecycle_member(name, "__moveinit__")
         {

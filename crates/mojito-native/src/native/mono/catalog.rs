@@ -138,6 +138,7 @@ impl StructCatalog {
                             explicit_destroy: None,
                             conformances: Vec::new(),
                             declared: Vec::new(),
+                            register_passable: false,
                             associated_types: Vec::new(),
                             parameterized_associated_types: Vec::new(),
                             associated_values: Vec::new(),

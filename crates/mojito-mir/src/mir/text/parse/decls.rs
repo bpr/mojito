@@ -95,16 +95,20 @@ impl Decoder {
                 "functions",
             ],
         );
+        let mut declarations = MirDeclarations {
+            structs,
+            functions: function_declarations,
+            traits,
+            imported: None,
+        };
+        if self.minor < 175 {
+            declarations.decide_register_passability();
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {
                     functions,
-                    declarations: MirDeclarations {
-                        structs,
-                        functions: function_declarations,
-                        traits,
-                        imported: None,
-                    },
+                    declarations,
                     invariant_errors: Vec::new(),
                 },
                 self.source_map,
@@ -356,6 +360,14 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.175 says whether the struct declares register-passability
+        // unconditionally, written only when it does; an older artifact's
+        // answer is decided from its declared rows once its traits are read.
+        let register_passable = self
+            .field(fields, "register_passable")
+            .ok()
+            .and_then(|field| self.boolean(field))
+            .unwrap_or(false);
         // Schema 1.138's declaring module path; a struct without one has
         // none.
         let module = self
@@ -379,6 +391,7 @@ impl Decoder {
                 "explicit_destroy_fields",
                 "conformances",
                 "declared",
+                "register_passable",
                 "associated_types",
                 "parameterized_associated_types",
                 "associated_values",
@@ -399,6 +412,7 @@ impl Decoder {
             explicit_destroy,
             conformances,
             declared,
+            register_passable,
             associated_types,
             parameterized_associated_types,
             associated_values,

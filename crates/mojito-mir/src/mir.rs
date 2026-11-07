@@ -632,6 +632,25 @@ impl MirDeclarations {
         }
     }
 
+    /// Record each struct's declaration-level register-passability
+    /// ([`MirStructDeclaration::register_passable`]) from its declared rows,
+    /// before the elaborator decides any condition.
+    fn decide_register_passability(&mut self) {
+        let decided: Vec<bool> = self
+            .structs
+            .iter()
+            .map(|declaration| {
+                declaration.declared.iter().any(|row| {
+                    self.refines_register_passable(&row.trait_name)
+                        && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+                })
+            })
+            .collect();
+        for (declaration, register_passable) in self.structs.iter_mut().zip(decided) {
+            declaration.register_passable = register_passable;
+        }
+    }
+
     /// Whether `declaration` declares `TrivialRegisterPassable`
     /// unconditionally, directly or through a refining trait, and so owns no
     /// `__copyinit__` or `__deinit__`, which the trait forbids.
@@ -1228,6 +1247,7 @@ fn lower_program(
             .structs
             .extend(struct_declaration(checked, *root, &mut invariant_errors));
     }
+    declarations.decide_register_passability();
     let units = checked.lowering_units();
     let mut ranges = Vec::with_capacity(units.len());
     let mut lowered = |unit, functions: &mut Vec<_>, declarations: &mut _, errors: &mut _| {
@@ -1887,6 +1907,7 @@ fn struct_declaration(
             .get(name)
             .cloned()
             .unwrap_or_default(),
+        register_passable: false,
         associated_types: checked
             .conformances()
             .associated

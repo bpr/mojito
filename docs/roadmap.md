@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1984**.
+Next free ID: **R1985**.
 
 ## Ordered Work
 
@@ -8125,7 +8125,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Model: Opus, Not Planned.
 
 - [ ] **R860 A `TrivialRegisterPassable` struct may define a copy
-  constructor or `__del__`, or hold a non-trivial field**
+  constructor or `__del__`, or hold a non-trivial field, and a
+  `RegisterPassable` one a move constructor or a memory-only field**
 
   Mojito accepts all three, and runs the user copy constructor and
   destructor, where the pin rejects each at the declaration.
@@ -8147,6 +8148,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     instance `B[_REMOVED_ARG]` drops the row its concrete instances keep,
     so the VM's `build_structs` boxes every instance of a template whose
     instances disagree. That rule goes with the rejection.
+  - Probe (from R1524): `struct C(Copyable, RegisterPassable)` with
+    `__init__(out self, *, deinit move: Self)` runs the user move
+    constructor, where the pin rejects it: "'RegisterPassable' types must
+    not declare explicit move constructors".
+  - Probe (from R1524): `struct S(Movable, RegisterPassable){s: String}`
+    runs, where the pin rejects it: "all members of 'RegisterPassable'
+    struct must themselves be 'RegisterPassable'".
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11059,26 +11067,49 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1524 A one-field `RegisterPassable` struct with lifecycle
-  members is a boxed struct value in the VM**
+- [ ] **R1984 A one-field struct declaring `RegisterPassable` with a
+  lifecycle member is boxed in both backends, where the pin holds it as
+  its field**
 
-  The pin holds `R(RegisterPassable){v: Int}` with a `__del__` as its
-  element (`define internal i64 @"u3::fr(u3::R$)"(i64)` in unoptimized
-  LLVM), as it holds a trivial one, where the VM keeps it a `Value::Struct`.
-  - Cause: `drop_value`, `clone_value`, and `move_typed_value`
-    (`backend/vm/dispatch.rs`, `values.rs`) find `__deinit__`,
-    `__copyinit__`, and `__moveinit__` by the value's runtime struct name,
-    which a value held as its field no longer carries.
-  - `MirDeclarations::register_field` therefore answers only a struct
-    declaring `TrivialRegisterPassable` unconditionally, which owns none.
-  - Lever: every drop, copy, and move dispatches by its static type, as
-    `drop.var` and `drop.place` already name their destructor. Then
-    `register_field` widens to `register_passable` at the instance, which
-    holds `VariadicList` and a register-passable `Tuple` instance too.
-  - The VM's `build_structs` keeps every instance of a template held or
-    none, so a per-instance answer stays consistent with an erased
-    instance.
-  - Found while landing R1396 (2026-10-27).
+  The pin passes `R(Movable, RegisterPassable){v: Int}` with a
+  `__deinit__` as `i64`, as it does a trivial one, but
+  `MirDeclarations::register_field` still answers only a struct declaring
+  `TrivialRegisterPassable` with no lifecycle member.
+  - The fact is in place: `StructDeclaration::register_passable` records
+    the template's unconditional `RegisterPassable`/`TrivialRegisterPassable`
+    row, which every instance keeps (R1524).
+  - The VM is ready: its drops, copies, and moves run by static type and
+    box a held value (`dispatch::{holds_unboxed, static_struct_value}`).
+    With `register_field` reading `register_passable`, the VM prints the
+    pin's output for the probes below.
+  - Cause: Pliron's lifecycle call sites assume aggregate storage.
+    `lower_drop_var`/`lower_drop_reg` (`lower/drops.rs`) return early for
+    `LowerTy::Scalar`, `emit_drop` passes the value's address,
+    `emit_constructor_call` (`lower/pointers.rs`) passes `(dst, src)`
+    pointers, `UseVar` copy/move (`lower/vars.rs`) runs a constructor only
+    for an aggregate, and a `deinit`/`mut self` receiver's write-back
+    (`lower/methods.rs`) rejects a scalar receiver.
+  - Lever: pass a lifecycle operand per the callee's `FnSignature` (load a
+    scalar parameter, keep an aggregate's pointer), then widen
+    `register_field` to `[field] if declaration.register_passable` and
+    update its unit test, `build_structs`' doc, and
+    `docs/native-abi.md`'s unwrap rule. `VariadicList`, `VariadicPack`,
+    and `FastMathFlag` become held too.
+  - A conditional row never counts: `Tuple[Int, Int]`, `Optional[Int]`,
+    and `B[T](RegisterPassable where conforms_to(T, RegisterPassable))`
+    stay aggregates at the pin.
+  - Probe: `W(Movable, RegisterPassable){r: R}` over that `R`, with
+    `print(take(R(1)))` over `take(var r: R)` and `var w = W(R(2));
+    print(w.r.v)`: the pin prints `del R 1`, `1`, `2`, `del R 2`; with
+    the widening alone, Pliron fails "unsupported mutating method on a
+    scalar receiver".
+  - Fixture to add with it: `assets/ok/register_passable_one_field_lifecycle.mojo`,
+    covering drop through a `var` parameter, a held field of a held
+    struct, a tuple element, a `List` element, an `Optional` payload, and
+    `.copy()` of a held struct with a user copy constructor and of a
+    memory-only struct holding one (the plan file's `fx.mojo` without its
+    move constructor).
+  - Found while landing R1524 (2026-11-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

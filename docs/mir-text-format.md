@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.174
+mojito-mir 1.175
 ```
 
-The writer emits 1.174. The reader accepts 1.0 through 1.174; *Schema 1.0*
+The writer emits 1.175. The reader accepts 1.0 through 1.175; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1155,6 +1155,15 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.175 adds a struct record's optional `register_passable` field
+(R1524): whether the struct declares `RegisterPassable` or
+`TrivialRegisterPassable` unconditionally, decided on the template before
+the elaborator decides an instance's conditional `declared` rows, so an
+instance of a conditionally register-passable struct still answers no.
+An older artifact's answer is decided from its `declared` rows and traits
+when it is read. The checked struct declaration gains the field, so the
+package format moves to `mojito-package 199`.
+
 Schema 1.174 removes the value-less `StringLiteral` atom (R1861): a
 string literal's type always carries its text, as upstream's
 `StringLiteral[value]` does, so every literal register is the
@@ -1407,7 +1416,11 @@ undeclared with no obligated field. `associated_types` contains
 param-expr }` records sorted by name. `origin_params` (schema 1.168, written only
 when non-empty) lists the id of each explicit origin parameter as
 `origin_param(N)`, in the order of an instance's origin arguments after
-its `param_decls`-aligned prefix.
+its `param_decls`-aligned prefix. `register_passable: true` (schema
+1.175, written only when true) says the struct declares
+`RegisterPassable` or `TrivialRegisterPassable` with no condition,
+directly or through a refining trait: upstream's declaration-level
+register-passability, decided on the template, which every instance keeps.
 
 A struct that declares a parameterized compile-time value member (`comptime
 get[idx: Int]: Int = Self.values[idx]`) carries

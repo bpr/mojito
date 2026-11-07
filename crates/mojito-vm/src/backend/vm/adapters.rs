@@ -28,10 +28,12 @@ impl VmBackend {
                 kind: mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
                 ..
             }) if !concrete_returns_reference => Ok(value),
-            Some(ResultAdapter {
-                kind: mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
-                constructor,
-            }) => {
+            Some(
+                adapter @ ResultAdapter {
+                    kind: mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
+                    ..
+                },
+            ) => {
                 let value = match self.read_reference(&value, current, current_variables) {
                     Ok(value) => value,
                     Err(error) => {
@@ -69,7 +71,7 @@ impl VmBackend {
                     self.clone_value_with_reachable_frames(
                         prog,
                         &value,
-                        constructor,
+                        adapter,
                         current,
                         current_variables,
                         returned,

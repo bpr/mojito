@@ -1092,6 +1092,7 @@ impl VmBackend {
                                 ResultAdapter {
                                     kind: adapter.kind,
                                     constructor: adapter.constructor.as_deref(),
+                                    ty: reg_types.get(&dest.0),
                                 }
                             }),
                             arguments: argv,
