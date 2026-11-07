@@ -6,7 +6,7 @@ use crate::checker::{CheckContext, InstalledInterfaces};
 use crate::comptime::{ComptimeError, ImportedScope, elaborate_importing, prepare_importing};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
-use crate::mir::text::{DisassembleError, disassemble};
+use crate::mir::text::disassemble;
 use crate::module::{
     LinkOptions, LinkedProgram, ModuleError, inject_prelude, inject_prelude_with_package,
     link_source_with_options, link_source_with_package, link_with_options, link_with_package,
@@ -36,6 +36,9 @@ pub struct CompiledProgram {
     /// With an imported package, the elaborated program with every package
     /// body joined to it.
     complete: OnceLock<MirProgram>,
+    /// With an imported package, the elaborated program with the package
+    /// bodies its elaboration reached joined to it.
+    artifact: OnceLock<MirProgram>,
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
@@ -239,9 +242,49 @@ impl CompiledProgram {
             .map_err(|error| CompilerError::Elaborate(error.clone()))
     }
 
-    /// Emit this program as canonical, executable Mojito MIR assembly.
-    pub fn emit_mir(&self) -> Result<String, DisassembleError> {
-        disassemble(self.drop_elaborated_mir())
+    /// The program an artifact holds: [`Self::elaborated_mir`] with the
+    /// imported package bodies its elaboration reached joined to it, as a
+    /// linked executable holds only what its entry points reach. Elaborating
+    /// it from its entry roots looks up no other package body
+    /// ([`SpecializedProgram::imported`]).
+    ///
+    /// # Errors
+    ///
+    /// When the program does not elaborate ([`Self::concrete_mir`]).
+    pub fn artifact_mir(&self) -> Result<&MirProgram, CompilerError> {
+        let concrete = self.concrete_mir()?;
+        let Some(package) = &self.package else {
+            return Ok(self.elaborated_mir());
+        };
+        Ok(self.artifact.get_or_init(|| {
+            let mut artifact = self.elaborated_mir().clone();
+            for name in &concrete.imported {
+                if let Some(function) = package.bodies.get(name) {
+                    artifact.functions.push((name.clone(), function.clone()));
+                }
+                artifact
+                    .invariant_errors
+                    .extend_from_slice(package.bodies.findings(name));
+            }
+            // The artifact materializes every declaration, so its verdict
+            // is the whole package's.
+            artifact
+                .invariant_errors
+                .extend(package.declarations.failures());
+            artifact
+        }))
+    }
+
+    /// Emit this program's artifact ([`Self::artifact_mir`]) as canonical,
+    /// executable Mojito MIR assembly.
+    ///
+    /// # Errors
+    ///
+    /// When the program does not elaborate, or its artifact does not verify
+    /// or has no textual form.
+    pub fn emit_mir(&self) -> Result<String, CompilerError> {
+        disassemble(self.artifact_mir()?)
+            .map_err(|error| CompilerError::Verify(error.findings().to_vec()))
     }
 }
 #[derive(Debug, Clone)]
@@ -620,6 +663,7 @@ impl Compiler {
             mir,
             elaborated: OnceLock::new(),
             complete: OnceLock::new(),
+            artifact: OnceLock::new(),
             concrete: OnceLock::new(),
             target: self.target.clone(),
             package,

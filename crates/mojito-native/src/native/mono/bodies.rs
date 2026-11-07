@@ -11,6 +11,7 @@
 use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{MirFunction, MirProgram};
 use mojito_symbol::symbol::{CallableCandidate, CallableLookup, OV_SEP};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
@@ -20,6 +21,8 @@ use std::ops::Bound;
 pub(super) struct Bodies<'a> {
     resident: BTreeMap<&'a str, (usize, &'a MirFunction)>,
     package: Option<&'a PackageBodies>,
+    /// Every package function a lookup found, by its row in package order.
+    reached: RefCell<BTreeMap<usize, String>>,
 }
 
 impl<'a> Bodies<'a> {
@@ -33,7 +36,14 @@ impl<'a> Bodies<'a> {
                 .map(|(index, (name, function))| (name.as_str(), (index, function)))
                 .collect(),
             package: None,
+            reached: RefCell::default(),
         }
+    }
+
+    /// Every package function a lookup found, in package order: the bodies
+    /// an artifact of the program carries beside its own.
+    pub(super) fn imported(&self) -> Vec<String> {
+        self.reached.borrow().values().cloned().collect()
     }
 
     /// These bodies with `package`'s behind them: a callee the program
@@ -48,7 +58,10 @@ impl<'a> Bodies<'a> {
         self.resident
             .get(name)
             .map(|&(_, function)| function)
-            .or_else(|| self.package?.get(name))
+            .or_else(|| {
+                self.note(name);
+                self.package?.get(name)
+            })
     }
 
     /// What made the package body of `name` unusable when its importer
@@ -56,7 +69,10 @@ impl<'a> Bodies<'a> {
     /// refuses before the elaboration.
     pub(super) fn findings(&self, name: &str) -> &'a [String] {
         match self.package {
-            Some(package) if !self.resident.contains_key(name) => package.findings(name),
+            Some(package) if !self.resident.contains_key(name) => {
+                self.note(name);
+                package.findings(name)
+            }
             _ => &[],
         }
     }
@@ -67,14 +83,16 @@ impl<'a> Bodies<'a> {
     /// elaboration.
     pub(super) fn reached(&self, name: &str) -> &'a [String] {
         match self.package {
-            Some(package) if !self.resident.contains_key(name) => package.reached(name),
+            Some(package) if !self.resident.contains_key(name) => {
+                self.note(name);
+                package.reached(name)
+            }
             _ => &[],
         }
     }
 
     pub(super) fn contains_key(&self, name: &str) -> bool {
-        self.resident.contains_key(name)
-            || self.package.is_some_and(|package| package.contains(name))
+        self.resident.contains_key(name) || self.note(name)
     }
 
     /// The position of `name` in output order: the program's own functions
@@ -83,7 +101,10 @@ impl<'a> Bodies<'a> {
         self.resident
             .get(name)
             .map(|(index, _)| *index)
-            .or_else(|| self.package?.row(name).map(|row| self.resident.len() + row))
+            .or_else(|| {
+                self.note(name);
+                self.package?.row(name).map(|row| self.resident.len() + row)
+            })
     }
 
     /// Every function whose name starts with `prefix`, by its name and
@@ -99,6 +120,9 @@ impl<'a> Bodies<'a> {
             .into_iter()
             .flatten()
             .filter(|(name, _)| !self.resident.contains_key(name))
+            .inspect(|(name, _)| {
+                self.note(name);
+            })
             .map(|(name, n_params)| CallableCandidate { name, n_params });
         self.resident
             .range::<str, _>((Bound::Included(prefix.as_str()), Bound::Unbounded))
@@ -121,6 +145,21 @@ impl<'a> Bodies<'a> {
                     .map(|candidate| candidate.name.to_string()),
             )
             .collect()
+    }
+}
+
+impl Bodies<'_> {
+    /// Record `name` as reached when it is a package function, answering
+    /// whether it is one.
+    fn note(&self, name: &str) -> bool {
+        let Some(row) = self.package.and_then(|package| package.row(name)) else {
+            return false;
+        };
+        self.reached
+            .borrow_mut()
+            .entry(row)
+            .or_insert_with(|| name.to_string());
+        true
     }
 }
 

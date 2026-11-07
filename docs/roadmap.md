@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2001**.
+Next free ID: **R2002**.
 
 ## Ordered Work
 
@@ -3748,7 +3748,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Then the specializer's struct-callee devirtualization of
     `call.indirect` and `mir/verify/calls.rs`'s nominal-callee branch go.
   - Split from R1877 (2026-11-05).
-  - Depends on R1934, since the probe reads `emit-mir`.
+  - Depends on R2001, since the probe reads `emit-mir` with the pipeline
+    off.
   - Model: Fable, Not Planned.
 
 - [ ] **R1515 A bracket followed by a call is fused into the call's
@@ -4487,6 +4488,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `assets/ok/math_log.mojo` fails in `std.math.frexp`'s mask
     `~`.
   - Found while landing R1845 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2001 The elaborator does not fold `conforms_to` over a concrete
+  type, so every program fails with the pre-elaboration pipeline off**
+
+  With `MOJITO_PRE_ELABORATION=0`, `def main(): print(1)` fails `run` and
+  `emit-mir` with "in `VariadicList.__deinit__`: unsupported
+  'conforms_to(UInt8, Deinitable)' is not a compile-time constant here",
+  where the pin prints `1`.
+  - The bundled `VariadicList.__deinit__`'s `comptime assert
+    conforms_to(Self.element_type, Deinitable)` folds when the pipeline
+    runs (`inline_parametric` reads `conforms_to`); without it the
+    elaborator's own parameter evaluation answers `ParamError::NotConstant`.
+  - Upstream's elaborator answers `#kgen.type_conforms_to_trait` over a
+    concrete type itself, whatever ran before it.
+  - It blocks every probe that reads `MOJITO_PRE_ELABORATION=0` output.
+  - Probe: `MOJITO_PRE_ELABORATION=0 mojito run` of `def main():
+    print(1)` prints `1`.
+  - Found while landing R1997 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9615,20 +9636,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R359.
   - Model: Opus, Not Planned.
 
-- [ ] **R1934 `emit-mir` rejects every program at the bundled
-  `unsupported_target_error`'s compile-time body**
+- [ ] **R1934 A `deinit self` call on a memory-only parameter value
+  leaves a register drop the verifier rejects**
 
-  `mojito emit-mir` fails on any program, `def main(): print(1)`
-  included, where the MIR verifier reports "drop.reg destroys %r0 of
-  memory-only type Optional[String], which upstream destroys through its
-  storage" in
-  `$comptime$__module$std$sys$info$CompilationTarget.unsupported_target_error$c0`.
-  - `run` verifies the same program cleanly, so the disassembly reaches
-    a compile-time body the production pipeline does not verify, or
-    verifies it before the pass that stores its `Optional[String]`.
-  - It started with R1873's rule (2026-11-05), and blocks every probe
-    that reads `emit-mir`, with or without `MOJITO_PRE_ELABORATION=0`.
-  - Probe: `emit-mir` of `def main(): print(1)` prints its MIR.
+  The bundled
+  `$comptime$__module$std$sys$info$CompilationTarget.unsupported_target_error$c0`
+  fails verification with "drop.reg destroys %r0 of memory-only type
+  Optional[String], which upstream destroys through its storage".
+  - It started with R1873's rule (2026-11-05). Since R1997 (2026-11-07)
+    an artifact carries only the package bodies its elaboration reaches,
+    so `emit-mir` fails only on a program that reaches this body.
   - Probe: the `tuple_reverse_closed` case of `tests/mir_pass_test.rs`
     fails at load, since its input predates R1873's rule (`swapped`'s
     `deinit` receiver call destroys a memory-only `Tuple` register); it
@@ -13269,20 +13286,6 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
-
-- [ ] **R1997 The corpus `artifact` group takes about 25 s per fixture
-  where compiling and running it takes 1.6 s**
-
-  `artifact_runs_as_source` (`tests/corpus_test.rs`) compiles through the
-  cached `Compiler`, so std checking is not the cost. Together the 1,680
-  tests took about 41,000 CPU seconds on the 2026-11-04 gate.
-  - The extra time is in emitting the MIR text, reparsing it
-    (`run_artifact`), or elaborating the reparsed program. Which one is not
-    yet measured.
-  - Profile one fixture, fix the slow step, and time about 20 fixtures
-    before and after.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1998 Each std-linked checker test checks the whole standard
   library from source**

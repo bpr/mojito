@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `CompiledProgram::emit_mir` and `mojito emit-mir` now write the program's
+  own bodies and only the imported package bodies its elaboration looks up
+  (`CompiledProgram::artifact_mir`), rather than every std body (R1997). An
+  artifact of a small program shrinks from about 61 MB to about 4 MB, the
+  corpus `artifact` group's trial drops from about 26 s to about 2 s in a
+  debug build, and `emit-mir` no longer fails on every program at the
+  unreached `unsupported_target_error` compile-time body. `emit_mir` now
+  reports a `CompilerError`, since it requires the program to elaborate.
+
 - The corpus `verify` and `roundtrip` groups now compile each fixture
   through `Compiler` against the cached std package, instead of linking and
   checking all of std from source per fixture, and verify or round-trip the

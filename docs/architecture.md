@@ -84,7 +84,8 @@ each named by its accessor and each computed once:
 |---|---|---|---|
 | Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and declarations, with the package's MIR declarations attached and each resolved the first time a lookup names it | Ownership analysis |
 | Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted and the pre-elaboration pipeline run, re-verified; may still be generic, and its control flow is still structured (one block per region) | The elaborator, beside an imported package's bodies |
-| Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded, drop-elaborated, and through the pre-elaboration pipeline; the same program when nothing is imported | `emit_mir` and the serialized artifact |
+| Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded, drop-elaborated, and through the pre-elaboration pipeline; the same program when nothing is imported | Native compiles of a named root (`pliron::compile_mir`) |
+| Artifact MIR | `artifact_mir()` | `elaborated_mir()` with only the package bodies the elaboration looked up joined (`SpecializedProgram::imported`), as a linked executable holds only what its entry points reach; requires `concrete_mir()` to succeed | `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
 
 ### The Bundled Library Is An Imported Package
@@ -425,8 +426,9 @@ declaration that does not decode is judged the same way: the elaborator
 refuses one its lookups reached (`MonoErrorKind::Decode`), or one a package
 body it materializes reached while it was lowered or finished
 (`PackageBodies::reached`), and only
-`drop_elaborated_mir`, whose artifact holds the whole package, reports every
-record that does not decode (`PackageDeclarations::failures`).
+`drop_elaborated_mir` and `artifact_mir`, which materialize every package
+declaration, report every record that does not decode
+(`PackageDeclarations::failures`).
 
 The entry roots are defined once, by `mir::entry_roots`: `main` and
 the module initializer `__toplevel__`, each when the program defines it.
@@ -442,8 +444,10 @@ program runs. Compile-time evaluation runs concrete fragments the elaborator
 builds (`VmBackend::call_concrete`). The corpus binary's `artifact` group
 compares the production run with the serialized artifact's run per fixture.
 
-`CompiledProgram::emit_mir` serializes the drop-elaborated program to
-canonical text. Post-drop verification findings fold into its
+`CompiledProgram::emit_mir` serializes the artifact program
+(`artifact_mir`: the drop-elaborated program with the package bodies its
+elaboration looked up) to canonical text; elaborating the artifact from its
+entry roots looks up no other package body. Post-drop verification findings fold into its
 `invariant_errors`, which every consumer refuses when non-empty. Production
 backends therefore never re-lower checked syntax. `CompilerError` identifies
 the failing stage. Individual stage functions remain public seams for phase

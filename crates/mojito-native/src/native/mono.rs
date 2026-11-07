@@ -52,6 +52,11 @@ pub struct SpecializedProgram {
     pub program: ConcreteMir,
     pub entries: HashMap<String, String>,
     pub counts: ElaborationCounts,
+    /// Every imported package function the elaboration looked up, in
+    /// package order: the package bodies an artifact of the program carries
+    /// beside its own, since an elaboration of that artifact looks up no
+    /// others.
+    pub imported: Vec<String>,
 }
 
 impl SpecializedProgram {
@@ -69,6 +74,7 @@ impl SpecializedProgram {
             program,
             entries,
             mut counts,
+            imported,
         } = self;
         let program = program
             .rewrite_bodies(rewrite)
@@ -85,6 +91,7 @@ impl SpecializedProgram {
             program,
             entries,
             counts,
+            imported,
         })
     }
 
@@ -131,6 +138,7 @@ impl SpecializedProgram {
             program,
             entries,
             mut counts,
+            imported,
         } = self;
         let program = program
             .pruned(|program| eliminate(program, &roots))
@@ -147,6 +155,7 @@ impl SpecializedProgram {
             program,
             entries,
             counts,
+            imported,
         })
     }
 }

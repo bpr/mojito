@@ -572,9 +572,9 @@ fn compile(path: &Path) -> Result<mojito::CompiledProgram, Failed> {
 }
 
 /// Canonical executable MIR for a fixture: its own drop-elaborated bodies,
-/// beside the imported package's declarations they name. The package's
-/// bodies, the same for every fixture, are reprinted with the whole
-/// program by the `artifact` group's `emit_mir`.
+/// beside the imported package's declarations they name. The package
+/// bodies its elaboration reaches are reprinted with the whole artifact by
+/// the `artifact` group's `emit_mir`.
 fn roundtrip_text(path: &Path) -> Result<String, Failed> {
     disassemble(compile(path)?.elaborated_mir())
         .map_err(|error| fail(format!("disassemble: {error}")))

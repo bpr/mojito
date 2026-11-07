@@ -155,6 +155,7 @@ impl<'a> Specializer<'a> {
             program,
             entries: entry_map,
             counts,
+            imported: self.functions.imported(),
         })
     }
 
