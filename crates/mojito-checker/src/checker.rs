@@ -2347,6 +2347,7 @@ impl Checker {
                         reference,
                     }) if facts.reference_value_use.is_none()
                         && !facts.borrowed_read_call_place
+                        && !facts.compile_time_load
                         && !copyable_reads.contains(span)
                         && !discarded.contains(span)
                         && !borrowed_receivers.contains(span) =>

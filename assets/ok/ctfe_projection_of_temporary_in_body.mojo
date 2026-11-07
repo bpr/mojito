@@ -1,7 +1,7 @@
-# A compile-time initializer is the lifted thunk's `return` operand: a field
-# or an element of a temporary it builds is copied out before the thunk
-# drops the temporary, and a `Copyable` element crosses without being
-# `ImplicitlyCopyable`. A tuple value holding a `String` is constructed at
+# A compile-time initializer is the lifted thunk's `return` operand: an
+# element of a temporary it builds is loaded out of it, as upstream's
+# `load_from_mem` is, at any `Movable` type, and a field of a temporary is a
+# value its initializer owns. A tuple value holding a `String` is constructed at
 # its `Tuple` instance, and a field read of a module struct constant is a
 # compile-time projection of it.
 @fieldwise_init

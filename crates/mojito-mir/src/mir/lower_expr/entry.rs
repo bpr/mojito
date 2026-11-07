@@ -480,6 +480,9 @@ impl<'a> Flatten<'a> {
                 .unwrap_or_else(Ty::error);
             let read = self.fresh_typed(e.location(), Some(place.root), value_ty.clone());
             self.emit(MirInstr::LoadPlace { dest: read, place });
+            if loads_compile_time_result(e) {
+                return Some(read);
+            }
             let dest = self.fresh_typed(e.location(), None, value_ty);
             self.emit(MirInstr::CopyValue {
                 dest,
@@ -499,6 +502,9 @@ impl<'a> Flatten<'a> {
                 dest: read,
                 reference: handle,
             });
+            if loads_compile_time_result(e) {
+                return Some(read);
+            }
             // A reference-returning expression has two checked uses. `ref x =
             // expression` is intercepted by the Borrow adjustment above and
             // retains its handle. Every ordinary value use reads the referent
@@ -645,4 +651,15 @@ fn origin_place_roots(
             .for_each(|member| origin_place_roots(member, roots)),
         _ => {}
     }
+}
+
+/// Whether `e` is a compile-time initializer's result the checker marked as
+/// upstream's `load_from_mem` of its referent, which runs no copy.
+fn loads_compile_time_result(e: Node<'_>) -> bool {
+    e.adjustments().iter().any(|adjustment| {
+        matches!(
+            adjustment,
+            mojito_checked::checked::SemanticAdjustment::CompileTimeLoad
+        )
+    })
 }

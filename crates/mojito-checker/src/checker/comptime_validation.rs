@@ -4197,7 +4197,7 @@ impl Checker {
             ));
         }
         let ty = mojito_types::types::default_literal(&ty?);
-        self.copy_compile_time_result(value, &ty);
+        self.load_compile_time_result(value, &ty);
         let Some(application) = self.named_application(value, &names_read(value), ty) else {
             return Ok(None);
         };

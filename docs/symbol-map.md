@@ -2401,8 +2401,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct) is lifted by name at its own type
   (`Checker::requested_binding`, `checker/comptime_validation.rs`), in any
   body, and each read of the binding materializes that application (a
-  `ParamValue`, `Checker::local_comptime_application`) where no slot holds it, a projection of a temporary it builds copied out as the thunk's
-  `return` operand (`Checker::copy_compile_time_result`);
+  `ParamValue`, `Checker::local_comptime_application`) where no slot holds it, a reference result of a temporary it builds loaded
+  as the thunk's `return` operand, upstream's `load_from_mem`
+  (`Checker::load_compile_time_result`, `SemanticAdjustment::CompileTimeLoad`,
+  read by `reference_result_value` in `mir/lower_expr/entry.rs`);
   `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
   operand of a kept `materialize[X]()` or `comptime(e)`
   (`Checker::infer_template_materialize`, `infer_template_comptime`, which

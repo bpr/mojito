@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time initializer that subscripts a display it builds
+  (`comptime r = [mk(1), mk(2)][0]`) now loads the element out of the
+  reference result, as the pin's `load_from_mem` does, so a non-`Copyable`
+  element is taken instead of rejected and a `Copyable` one no longer runs
+  its copy initializer (R1729).
 - A `comptime assert` after a `comptime if` arm that returns is now
   judged at the instance, as at the pin, so `k[1]()` over `comptime if n
   == 1: return 1` then `comptime assert n == 5, "never"` fails with

@@ -2302,10 +2302,10 @@ impl Checker {
                     self.declare_immutable(name, ty)?;
                 } else {
                     let ty = self.infer(value)?;
-                    // A compile-time result is a value of its own, copied
+                    // A compile-time result is a value of its own, loaded
                     // out of a reference result as any compile-time
                     // result is (`comptime q = QS[2]`).
-                    self.copy_compile_time_result(value, &ty);
+                    self.load_compile_time_result(value, &ty);
                     let declared = self.comptime_binding_ty(&ty, name)?;
                     // A float literal stays a `FloatLiteral` that each read
                     // materializes; an unfolded integer literal is read as

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1988**.
+Next free ID: **R1989**.
 
 ## Ordered Work
 
@@ -160,24 +160,31 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1729 A lifted compile-time initializer copies its result out of
-  a reference, so a non-`Copyable` element cannot be taken**
+- [ ] **R1988 A local `comptime` field of a temporary copies or moves
+  the field out, where the pin loads it**
 
-  `comptime r = [mk(1), mk(2)][0]` over `def mk(n: Int) -> NC`, with `NC`
-  only `Movable`, is rejected with "cannot copy non-Copyable type 'NC'",
-  where the pin prints `1`.
-  - The thunk lifted for the initializer returns `__getitem__`'s reference
-    result by copy (`Checker::copy_compile_time_result`,
-    `checker/traits.rs`). The pin's compile-time materialization takes the
-    referent of the temporary it built.
-  - A run-time `return [mk(1), mk(2)][0]` is rejected at the pin too, so the
-    fix belongs to the thunk's result only, not to `return` in general.
-  - It blocks deleting the frozen display element (`Checker::element_value`)
-    in R1530: without the freeze, `comptime r = [NC(1), NC(2)][0]` in
-    `assets/ok/ctfe_projection_of_temporary_in_body.mojo` takes this route.
-  - Found while landing R1529 (2026-10-30).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  `comptime s = HC(mk(3)).c` in a body, over a `C` whose copy initializer
+  adds 100, prints `103`, where the pin prints `3`.
+  - At the pin the initializer is a parameter expression, and the field is
+    `load_from_mem` of the temporary's storage: no copy or move
+    initializer runs, and the temporary ends undestroyed.
+  - Mojito lowers a local `comptime` binding that is no display as an
+    ordinary run-time binding (`lower_comptime_binding`,
+    `mir/lower_stmt.rs`). The field is a `GetField` off a register
+    temporary (`load_temporary_field`, `mir/calls.rs`), copied under
+    `CopyPlaceValue` (`Checker::load_compile_time_result`) or moved out.
+  - The lever: record `SemanticAdjustment::CompileTimeLoad` on the field
+    chain as R1729 does on a reference result, and end the temporary with
+    `MarkDestroyed`, which needs it in a slot (R1501).
+  - The module-scope form (`comptime MS = HC(mk(7)).c`) already prints `7`.
+  - Probe: the same `C`, `comptime s = HC(mk(3)).c; print(s.n)`: `3` at
+    the pin, `103` in Mojito.
+  - Probe: an `M` whose move initializer adds 1000, `comptime s =
+    H(mk(3)).m; print(materialize[s]().n)`: `1003` at the pin, `2003` in
+    Mojito.
+  - Found while landing R1729 (2026-11-07).
+  - Depends on R1501.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1727 A `@fieldwise_init` struct that declares another `__init__`
   has no compile-time fieldwise construction**
@@ -1846,6 +1853,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
   - Since R1306 the in-place slot's drop is the library
     `VariadicList.__deinit__` call on the narrowed list.
+  - Probe: a list display moves each element twice, out of the pack and
+    into the list, where upstream's `consume_elements` moves it once:
+    `var a = [mk(1), mk(2)]; print(a[0].n)` over an `M` whose move
+    initializer adds 1000 prints `1001` at the pin, `2001` in Mojito.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7809,7 +7820,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Delete the frozen display element with the arm
     (`Checker::frozen_display`, `Checker::element_value`), including
     `comptime_display_subscript`'s reader; `comptime r = [NC(1), NC(2)][0]`
-    then needs R1729.
+    then takes the reference-result load (`SemanticAdjustment::
+    CompileTimeLoad`), as a user `__init__`'s `NC` already does.
   - Found while planning R1472 (2026-10-27).
   - Depends on R1729.
   - Model: Opus, Not Planned.

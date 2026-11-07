@@ -709,6 +709,7 @@ impl RewriteTypes for SemanticAdjustment {
                 interior: _,
             }
             | Self::CopyPlaceValue
+            | Self::CompileTimeLoad
             | Self::RetainCallPlace
             | Self::BorrowReadArgument
             | Self::ReadTemporaryArgument

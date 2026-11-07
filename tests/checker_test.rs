@@ -5525,6 +5525,25 @@ fn structs_are_non_copyable_by_default() {
 }
 
 #[test]
+fn only_a_compile_time_initializer_loads_a_non_copyable_reference_result() {
+    let declarations = "struct NC(Movable):\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef mk(n: Int) -> NC:\n    return NC(n)\n\n";
+
+    assert!(
+        check_with_std(&format!(
+            "{declarations}def main():\n    comptime r = [mk(1), mk(2)][0]\n    print(r.n)\n"
+        ))
+        .is_ok()
+    );
+
+    assert!(matches!(
+        check_with_std(&format!(
+            "{declarations}def g() -> NC:\n    return [mk(1), mk(2)][0]\n\ndef main():\n    print(g().n)\n"
+        )),
+        Err(TypeError::NonCopyable { ty, .. }) if ty == "NC"
+    ));
+}
+
+#[test]
 fn ordinary_reference_result_reads_require_copyable_referents() {
     let declarations = "@fieldwise_init\nstruct Token:\n    var value: Int\n    def __deinit__(deinit self):\n        pass\n\n@fieldwise_init\nstruct Holder:\n    var token: Token\n    def get(ref self) -> ref[origin_of(self.token)] Token:\n        return self.token\n\n";
 

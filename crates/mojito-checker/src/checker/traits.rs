@@ -3463,15 +3463,15 @@ impl Checker {
         Ok(())
     }
 
-    /// A compile-time initializer is its thunk's `return` operand: a
-    /// projection or a reference result of a `Copyable` value is copied
-    /// out of the temporaries the thunk drops. The pin's compile-time
-    /// materialization asks `Copyable`, not `ImplicitlyCopyable`; any
-    /// other value is returned as it stands.
-    pub(super) fn copy_compile_time_result(&self, value: &Expr, ty: &Ty) {
-        if !self.is_copyable(ty) {
-            return;
-        }
+    /// A compile-time initializer's reference result (`[mk(1), mk(2)][0]`)
+    /// is upstream's `load_from_mem` of the referent: its storage is loaded
+    /// at any `Movable` type, running no copy or move initializer, and the
+    /// temporaries it was projected from end undestroyed
+    /// ([`SemanticAdjustment::CompileTimeLoad`]). A field chain of a
+    /// `Copyable` value is copied out of its owner.
+    ///
+    /// [`SemanticAdjustment::CompileTimeLoad`]: mojito_checked::checked::SemanticAdjustment::CompileTimeLoad
+    pub(super) fn load_compile_time_result(&self, value: &Expr, ty: &Ty) {
         let span = value.source_span();
         let reference_result = matches!(
             self.node_facts
@@ -3481,10 +3481,8 @@ impl Checker {
             Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. })
         );
         if reference_result {
-            self.copyable_reference_result_reads
-                .borrow_mut()
-                .insert(span);
-        } else if self.designates_place(value) {
+            self.record_at(span).compile_time_load = true;
+        } else if self.designates_place(value) && self.is_copyable(ty) {
             self.record_at(span).copy_place_value_use = true;
         }
     }

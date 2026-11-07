@@ -307,6 +307,7 @@ assets/ok/ctfe_module_optional_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_optional_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_pointer_struct_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_reference_result_load.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_serves_keyed_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape

@@ -832,6 +832,12 @@ pub enum SemanticAdjustment {
     /// independent value rather than leave a projected-place load as a shallow
     /// handle alias.
     CopyPlaceValue,
+    /// A compile-time initializer's projected result (a subscript's
+    /// reference result, or a field of a temporary or a compile-time
+    /// binding), as upstream's `load_from_mem` reads it: the projected
+    /// storage is loaded with no copy or move initializer, and the
+    /// initializer's temporaries end without their destructors.
+    CompileTimeLoad,
     /// A call produced a reference handle, while ordinary expression typing
     /// reads through that handle to the referent. Reference-valued contexts
     /// retain the handle; MIR emits an explicit `ReadRef` everywhere else.
@@ -6849,6 +6855,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.copy_place_value_use {
         adjustments.push(SemanticAdjustment::CopyPlaceValue);
     }
+    if facts.compile_time_load {
+        adjustments.push(SemanticAdjustment::CompileTimeLoad);
+    }
     if facts.call_place_use {
         adjustments.push(SemanticAdjustment::RetainCallPlace);
     }
@@ -7232,6 +7241,8 @@ node_facts! {
     flags {
         explicit_destroy_call,
         copy_place_value_use,
+        /// See [`SemanticAdjustment::CompileTimeLoad`].
+        compile_time_load,
         call_place_use,
         borrowed_read_call_place,
         read_temporary_argument,
