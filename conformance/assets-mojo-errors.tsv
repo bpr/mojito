@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1083
+# swept-count	1092
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -121,6 +121,10 @@ assets/ownership_error/use_after_move_after_try.mojo	compile-reject	agree	error:
 assets/ownership_error/use_after_move_in_try_else.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/use_after_move_in_try_handler.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/write_through_moved.mojo	compile-reject	agree	error: value 'p' cannot be consumed, because 'p.x' is used later
+assets/parse_error/assert_reserved_keyword.mojo	compile-reject	agree	error: unexpected token in expression
+assets/parse_error/assert_statement_extra_message.mojo	compile-reject	agree	error: statements must start at the beginning of a line
+assets/parse_error/assert_statement_module_scope.mojo	compile-reject	agree	error: 'assert' must be inside a function; move this into a function body
+assets/parse_error/assert_statement_struct_body.mojo	compile-reject	agree	error: 'assert' must be inside a function; move this into a function body
 assets/parse_error/bare_kwargs_requires_var.mojo	compile-reject	agree	error: variadic keyword arguments only support the 'var' convention; add 'var' before '**'
 assets/parse_error/capturing_effect_compile_time_parameter.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/parse_error/capturing_effect_declaration.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
@@ -148,6 +152,7 @@ assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: u
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
+assets/runtime_error/debug_assert_safe_mode_fails.mojo	trap	agree	At: assets/runtime_error/debug_assert_safe_mode_fails.mojo:8:37: Assert Error: safe boom 3
 assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
 assets/runtime_error/file_open_missing.mojo	trap	agree	Failed to open file 'mojito_missing_dir/nothing.txt': No such file or directory
 assets/runtime_error/file_read_closed_handle.mojo	compile-reject	ledgered	error: no matching function in initialization
@@ -164,7 +169,7 @@ assets/runtime_error/nominal_string_byte_slice_boundary.mojo	trap	agree	error: e
 assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	trap	agree	error: execution crashed
-assets/runtime_error/nominal_string_justify_fillchar.mojo	runs	subset	the pin runs it;Mojito rejects: abort: fill char needs to be a one byte literal
+assets/runtime_error/nominal_string_justify_fillchar.mojo	runs	divergence	the pin runs it;Mojito rejects: abort: fill char needs to be a one byte literal
 assets/runtime_error/nominal_string_resize_boundary.mojo	trap	agree	error: execution crashed
 assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	trap	agree	error: execution crashed
 assets/runtime_error/optional_take_empty_aborts.mojo	trap	agree	error: execution crashed
@@ -225,6 +230,8 @@ assets/type_error/array_display_requires_movable_element.mojo	compile-reject	agr
 assets/type_error/array_display_temporary_abandoned.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: Use `deinit_with()` to explicitly destroy an `Array` of non-`Deinitable` elements
 assets/type_error/array_element_assignment_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/array_linear_element_needs_explicit_destroy.mojo	compile-reject	agree	error: 'a' abandoned without being explicitly destroyed: Use `deinit_with()` to explicitly destroy an `Array` of non-`Deinitable` elements
+assets/type_error/assert_statement_int_condition.mojo	compile-reject	agree	error: no matching function in call to 'debug_assert'
+assets/type_error/assert_statement_tuple_condition.mojo	compile-reject	agree	error: no matching function in call to 'debug_assert'
 assets/type_error/assign_call_over_viewed_local.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
 assets/type_error/assign_field_interior_view_over_whole.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebox' call
 assets/type_error/assign_interior_element_over_list.mojo	compile-reject	agree	error: aliasing values passed immutably to 'x' argument and constructed as a result in 'rebuild' call
@@ -557,6 +564,7 @@ assets/type_error/keyword_parameter_already_bound.mojo	compile-reject	agree	erro
 assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/keyword_subscript_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/keyword_subscript_unknown_keyword.mojo	compile-reject	agree	error: invalid call to '__getitem__': missing required argument: 'byte'
+assets/type_error/kgen_param_assert_op.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/kgen_string_argument_string_literal.mojo	compile-reject	agree	error: invalid call to 'bind': 'bind' parameter 's' has 'KGENString' type, but value has type 'StringLiteral["a"]'
 assets/type_error/kgen_string_from_string_literal.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["a"]' value to 'KGENString' in comptime initializer
 assets/type_error/kgen_string_no_concatenation.mojo	compile-reject	agree	error: '__mlir_type.`!kgen.string`' does not implement the '__add__' method
@@ -996,6 +1004,7 @@ assets/type_error/struct_value_param_mismatch.mojo	compile-reject	agree	error: c
 assets/type_error/struct_value_param_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'depth'
 assets/type_error/subscript_inplace_operand_aliasing.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call
 assets/type_error/symbolic_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/sys_defines_string_undefined.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/template_method_place_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'n' argument in 'grow' call
 assets/type_error/template_method_reference_read_requires_copy.mojo	compile-reject	agree	error: value of type 'T' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/template_method_transfer_requires_movable.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'T' doesn't conform to 'Movable'

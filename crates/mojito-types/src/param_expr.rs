@@ -339,6 +339,7 @@ impl ParamContext {
             ParamOp::TargetGetField | ParamOp::TargetHasFeature => {
                 self.build_target_read(op, operands)
             }
+            ParamOp::GetEnv => self.build_get_env(operands),
             ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
             ParamOp::StoreToMem => self.build_store_to_mem(operands),
             ParamOp::IntLiteralConvert | ParamOp::FloatLiteralConvert => {
@@ -2315,6 +2316,20 @@ impl ParamContext {
         self.build_lane_op(op, operands)
     }
 
+    /// KGEN's `get_env` at a result type shape over a `!kgen.string` name:
+    /// the define's presence or value once the name is constant, and
+    /// otherwise the node, of the result type.
+    fn build_get_env(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if *operands[1].meta() != MetaTy::value(TyKind::KgenString.into()) {
+            return Err(ParamError::TypeMismatch {
+                operation: ParamOp::GetEnv.name().to_string(),
+                expected: "a '!kgen.string' define name".to_string(),
+                found: operands[1].meta().to_string(),
+            });
+        }
+        self.build_lane_op(ParamOp::GetEnv, operands)
+    }
+
     /// `and`/`or`: flatten, fold constants, drop duplicates, and sort. The
     /// dominating constant wins only once every operand is known to be a
     /// well-typed `Bool`, which the arity and domain checks established.
@@ -3578,6 +3593,12 @@ pub enum ParamOp {
     /// enables the feature its second operand names, a `!kgen.string`
     /// ([`crate::ct::KgenTarget::has_feature`]).
     TargetHasFeature,
+    /// KGEN's `get_env`: the compile-time define its second operand names,
+    /// a `!kgen.string`, read at the result type its first operand names,
+    /// a type shape: whether it is defined (an `i1`), or its value as a
+    /// `!kgen.string` or an `index`, which fails over an undefined name
+    /// ([`fold::compile_time_define`]).
+    GetEnv,
     /// `pop.dtype.to_ui8`: a `DType`'s code, a `UInt8` (upstream's
     /// `DType._as_ui8`), whose mask bits `DType`'s builtin predicates test
     /// ([`ParamContext::dtype_predicate`]).
@@ -3655,6 +3676,7 @@ impl ParamOp {
             Self::Cast => "cast",
             Self::TargetGetField => "target_get_field",
             Self::TargetHasFeature => "target_has_feature",
+            Self::GetEnv => "get_env",
             Self::DtypeToUi8 => "dtype_to_ui8",
             Self::StoreToMem => "store_to_mem",
             Self::IntLiteralConvert => "int_literal_convert",
@@ -3708,7 +3730,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 39] = [
+    const ALL: [Self; 40] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -3739,6 +3761,7 @@ impl ParamOp {
         Self::Cast,
         Self::TargetGetField,
         Self::TargetHasFeature,
+        Self::GetEnv,
         Self::DtypeToUi8,
         Self::StoreToMem,
         Self::IntLiteralConvert,
@@ -3801,6 +3824,7 @@ impl ParamOp {
             | Self::Cast
             | Self::TargetGetField
             | Self::TargetHasFeature
+            | Self::GetEnv
             | Self::DtypeToUi8
             | Self::StoreToMem
             | Self::IntLiteralConvert
@@ -5130,6 +5154,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::StringAddress, [string]) => fold::fold_string_address(string),
         (ParamOp::TargetGetField, [target, name]) => fold::fold_target_get_field(target, name),
         (ParamOp::TargetHasFeature, [target, name]) => fold::fold_target_has_feature(target, name),
+        (ParamOp::GetEnv, [CtValue::Type(ty), name]) => fold::fold_get_env(ty, name),
         (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
         (ParamOp::StoreToMem, [referent]) => Ok(CtValue::StoreToMem(Box::new((*referent).clone()))),
         (
@@ -5266,6 +5291,7 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::Cast
         | ParamOp::TargetGetField
         | ParamOp::TargetHasFeature
+        | ParamOp::GetEnv
         | ParamOp::DtypeToUi8
         | ParamOp::StoreToMem
         | ParamOp::IntLiteralConvert
@@ -5309,6 +5335,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::Cast => "pop.cast",
         ParamOp::TargetGetField => "target_get_field",
         ParamOp::TargetHasFeature => "target_has_feature",
+        ParamOp::GetEnv => "get_env",
         ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
         ParamOp::StoreToMem => "store_to_mem",
         ParamOp::IntLiteralConvert => "pop.int_literal_convert",

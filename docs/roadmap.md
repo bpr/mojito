@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1978**.
+Next free ID: **R1984**.
 
 ## Ordered Work
 
@@ -3853,24 +3853,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1598 The `assert` statement does not parse**
-
-  `assert n == 3, "boom"` is a parse error ("Expected newline, ';', or EOF
-  at the end of statement"), where the pin desugars it to `debug_assert()`
-  and, under the default `-D ASSERT` mode, skips it, so the next
-  `print("ok")` runs.
-  - Bundle the part of `std/builtin/debug_assert.mojo` the desugaring
-    calls, with `ASSERT_MODE` from `get_defined_string`.
-  - Restore the arity `assert` the bundled `SIMD.__init__(*elems)` omits
-    (`stdlib/std/simd.mojo`'s header note).
-  - Restore the three `assert`s the bundled `StaticTuple` omits from
-    `__init__(*elems)`, `__getitem__`, and `__setitem__`
-    (`stdlib/std/utils/static_tuple.mojo`'s header note).
-  - Grammar first.
-  - Found while landing R1555 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R61 A leading-dot static call cannot take its struct's parameters
   from the expected type**
 
@@ -7499,6 +7481,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1979 `SourceLocation`, `source_location`, and `call_location` are
+  not bundled**
+
+  `std.reflection`'s source-location API is missing, so the bundled
+  `debug_assert` takes no `location=` argument and a failed assertion cannot
+  report where it failed.
+  - Upstream builds all three on `kgen.source_loc`, whose `inline_count`
+    names the call site an `@inline(.always)` chain was entered from.
+  - The pin's `debug_assert[assert_mode="safe"](False, "x")` reports
+    `At: <file>:<line>:<col>:` at the call's condition, through the
+    `@inline(.always)` `debug_assert`.
+  - Once bundled, restore `debug_assert`'s `location: Optional[
+    SourceLocation] = None` parameters and its `call_location()` calls
+    (`stdlib/std/builtin/debug_assert.mojo`'s header note).
+  - Probe: `debug_assert(True, location=None)` matches no overload, where
+    the pin accepts it.
+  - Found while landing R1598 (2026-11-06).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -8502,6 +8504,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     interior where upstream's is `Pointer[T, origin]`
     (`assets/ok/owned_pointer_api.mojo` prints `drop 9` before `held 9`;
     `conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
+  - Probe: `var s = String("hello"); var bytes = s.as_bytes(); f(bytes.
+    unsafe_ptr(), 5)`, with `f` reading the pointer, traps with "use after
+    Pointer deallocation", where the pin reads `h`. The bundled
+    `_debug_assert_fail_format` passes the `String`'s own pointer instead
+    (`stdlib/std/builtin/debug_assert.mojo`'s header note).
   - Found while landing R190 (2026-10-19).
   - Depends on R177.
   - Model: Fable, Not Planned.
@@ -9281,6 +9288,41 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `comptime x: Int = Ts[0]` over `*Ts: Copyable`, the same
     message at the pin.
   - Found while landing R1492 (2026-11-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1980 A failed `assert` prints no `At: <location>: ` prefix**
+
+  A failing `debug_assert[assert_mode="safe"](False, "boom")` prints
+  `Assert Error: boom` and traps, where the pin prints
+  `At: <file>:<line>:<col>: Assert Error: boom`.
+  - The bundled `_debug_assert_msg` prints through `print` and traps through
+    `abort(message)`, where upstream's calls `_printf` and the no-argument
+    `abort() -> Never`.
+  - `_debug_assert_fail_format` writes into a `String`, where upstream's
+    writes into a stack `_FixedWriteBuffer`.
+  - Port `_printf`, `_FixedWriteBuffer`, and `abort()` verbatim, then make
+    `_debug_assert_msg` and `_debug_assert_fail_format` upstream's
+    (`stdlib/std/builtin/debug_assert.mojo`'s header note).
+  - Probe: `assets/runtime_error/debug_assert_safe_mode_fails.mojo`.
+  - Found while landing R1598 (2026-11-06).
+  - Depends on R1979 (the location), R50 and R799 (`abort() -> Never`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1983 A multi-byte `ascii_rjust` fill character traps where the
+  pin's default mode skips upstream's `assert`**
+
+  `String("hi").ascii_rjust(6, "é")` traps with "fill char needs to be a one
+  byte literal", where the pin skips `_justify`'s `assert` under its default
+  `ASSERT` mode and pads with the fill's first byte (`\xc3` four times, then
+  `hi`).
+  - The bundled `_justify` (`stdlib/std/string.mojo`) checks with
+    `_mojito_abort`, written before the `assert` statement parsed.
+  - Spell upstream's `assert fillchar.byte_length() == 1, "fill char needs
+    to be a one byte literal"` there, and move
+    `assets/runtime_error/nominal_string_justify_fillchar.mojo` to an `ok`
+    fixture with its manifest rows.
+  - Found while landing R1598 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13126,6 +13168,32 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1978 `get_defined_dtype` is not bundled**
+
+  `std.sys.defines.get_defined_dtype` is missing, since its body reads
+  `DType._from_str`, which the bundled `DType` does not declare.
+  - Port `DType._from_str` from upstream's `std/builtin/dtype.mojo`, then
+    `get_defined_dtype` verbatim into `stdlib/std/sys/defines.mojo`, and
+    re-export it from `std.sys`.
+  - Probe: `from std.sys import get_defined_dtype` then
+    `print(get_defined_dtype["DT", DType.int8]())` prints `int8` at the pin.
+  - Found while landing R1598 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1982 `MojoVersion` and `MOJO_VERSION` are not bundled**
+
+  `std.sys.defines.MojoVersion` reads the compiler's version through the
+  `lit.mojo.version.major`/`minor`/`patch` ops, which the checker does not
+  admit.
+  - Admit the three ops as constant `index` values of the pin's version,
+    then port `MojoVersion` and `MOJO_VERSION` verbatim.
+  - Probe: `from std.sys.defines import MOJO_VERSION` then
+    `print(MOJO_VERSION.major)` prints the pin's major version.
+  - Found while landing R1598 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
@@ -13309,6 +13377,21 @@ Track: `tooling`.
     `package_bodies_decoded`.
   - `emit-mir` shows the spans because it decodes on the main thread.
   - Found while landing R584 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1981 The CLI takes no `-D NAME[=VALUE]` define**
+
+  `mojo run -D ASSERT=all f.mojo` enables every `assert`, where Mojito has
+  no `-D` and every `#kgen.param.expr<get_env>` sees an empty table.
+  - Add `-D`/`--define` to `src/main.rs` and `Compiler`, and fill
+    `mojito_types::param_expr::fold::compile_time_define` from it, for the
+    checker's folds and the elaborator's per-instance ones alike.
+  - Then `-D ASSERT=all` makes `assert n == 3, "boom"` fail, and
+    `-D ASSERT=bogus` fails `_assert_enabled`'s instance, as at the pin.
+  - Revisit `docs/non-goals.md`'s note on evaluating stdlib asserts as the
+    pin does under `-D ASSERT=all`.
+  - Found while landing R1598 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

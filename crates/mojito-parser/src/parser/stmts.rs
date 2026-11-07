@@ -82,6 +82,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Try) => self.parse_try()?,
                 Some(Token::Return) => self.parse_return()?,
                 Some(Token::Raise) => self.parse_raise()?,
+                Some(Token::Assert) => {
+                    let (cond, message) = self.parse_assert_operands()?;
+                    StmtKind::Assert { cond, message }
+                }
                 Some(Token::Import) => self.parse_import()?,
                 Some(Token::From) => self.parse_from_import()?,
                 Some(Token::Pass) => {
@@ -385,23 +389,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let body = self.parse_suite()?;
                 Ok(StmtKind::ComptimeFor { var, iter, body })
             }
+            Some(Token::Assert) => {
+                let (cond, message) = self.parse_assert_operands()?;
+                Ok(StmtKind::ComptimeAssert { cond, message })
+            }
             _ => {
                 let name =
                     self.expect_identifier("Expected a name, 'if', or 'for' after 'comptime'")?;
-                // `comptime assert cond[, message]`: parentheses around the
-                // condition are an ordinary parenthesized expression, so
-                // `comptime assert(c, "m")` asserts a tuple, as upstream reads it.
-                if name == "assert" {
-                    let cond = self.parse_expression(Precedence::Lowest)?;
-                    let message = if matches!(self.peek_token()?, Some(Token::Comma)) {
-                        self.next_token()?;
-                        Some(self.parse_expression(Precedence::Lowest)?)
-                    } else {
-                        None
-                    };
-                    self.expect_stmt_end()?;
-                    return Ok(StmtKind::ComptimeAssert { cond, message });
-                }
                 let type_params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
                     self.parse_type_params()?
                 } else {
@@ -680,6 +674,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
         Ok(StmtKind::Raise(value))
+    }
+
+    /// `assert cond[, message]`, after `comptime` for a compile-time
+    /// assertion: the condition and the optional message, each one
+    /// expression. Parentheses around the condition are an ordinary
+    /// parenthesized expression, so `assert(c, "m")` asserts a tuple, as
+    /// upstream reads it.
+    pub(super) fn parse_assert_operands(&mut self) -> Result<(Expr, Option<Expr>), ParseError> {
+        self.expect(&Token::Assert, "Expected 'assert'")?;
+        let cond = self.parse_expression(Precedence::Lowest)?;
+        let message = if matches!(self.peek_token()?, Some(Token::Comma)) {
+            self.next_token()?;
+            Some(self.parse_expression(Precedence::Lowest)?)
+        } else {
+            None
+        };
+        self.expect_stmt_end()?;
+        Ok((cond, message))
     }
 
     /// `import a.b.c [as alias]`

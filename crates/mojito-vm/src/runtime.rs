@@ -1126,7 +1126,7 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
 /// `bool` lane per operand lane, `scalef` its masked lanes, `pshuf.b.128`
 /// and `tbl1` the table lanes their indices name, a reduction one
 /// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
-/// result's lane positions, and `llvm.donothing` `None`. `result` is the
+/// result's lane positions, and `llvm.donothing` and `llvm.assume` `None`. `result` is the
 /// type LLVM translation sees
 /// (`MirDeclarations::translated_intrinsic_type`), a vector its
 /// `!kgen.simd` storage: a literal struct result (`vector.deinterleave2`'s)
@@ -1160,7 +1160,7 @@ pub fn llvm_intrinsic(
         _ => None,
     };
     match intrinsic {
-        LlvmIntrinsic::Donothing => return Ok(Value::None),
+        LlvmIntrinsic::Donothing | LlvmIntrinsic::Assume => return Ok(Value::None),
         LlvmIntrinsic::Stepvector => {
             let (dtype, width) = result_lanes().ok_or_else(mismatch)?;
             return Ok(simd_value(

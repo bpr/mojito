@@ -7,10 +7,11 @@
 # The body is upstream's, except that `args.get_loaded_kgen_pack()` is
 # served by the compiler, a `kgen.struct.load_indirect` of the
 # `VariadicPack`'s references, where upstream declares it (roadmap R1922).
-# `_RegisterPackType` is upstream's, verbatim: its `!kgen.struct` field is
-# Mojito's compiler-private tuple storage of the same elements.
+# `_RegisterPackType` and `assume` are upstream's, verbatim: the former's
+# `!kgen.struct` field is Mojito's compiler-private tuple storage of the
+# same elements.
 # Omitted: the gather, scatter, masked load and store, prefetch,
-# `assume`/`expect`, and GPU intrinsics.
+# `expect`, `likely`, `unlikely`, and GPU intrinsics.
 """Defines intrinsics.
 
 You can import these APIs from the `sys` package. For example:
@@ -92,3 +93,16 @@ struct _RegisterPackType[*Ts: TrivialRegisterPassable](TrivialRegisterPassable):
         return __mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](
             self._mlir_value
         )
+
+
+@inline(.nodebug)
+def assume(val: Bool):
+    """Signals to the optimizer that the condition is always true. This allows
+    the optimizer to optimize the code.
+
+    Args:
+      val: The input value which is assumed to be `True`.
+    """
+    if __is_run_in_comptime_interpreter:
+        return
+    llvm_intrinsic["llvm.assume", NoneType](val)

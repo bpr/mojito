@@ -1798,6 +1798,11 @@ pub enum StmtKind {
     /// elaborator judges it per reached instance, and for the rest of its
     /// block the asserted condition is known, as a `comptime if` arm's is.
     ComptimeAssert { cond: Expr, message: Option<Expr> },
+    /// `assert cond[, message]` — a **run-time assertion**, which upstream
+    /// emits as a call of the standard library's `debug_assert(cond[,
+    /// message])`. Allowed only in a function body; the linker lowers it to
+    /// that call, so no later phase sees it.
+    Assert { cond: Expr, message: Option<Expr> },
     /// `comptime match subject: case ...` — a **compile-time match** over a
     /// parameter value or type. Same shape as `Match`; elaboration selects
     /// one case per instance after every case is checked.
@@ -1959,6 +1964,51 @@ impl Expr {
 
     pub fn source_span(&self) -> mojito_common::token::SourceSpan {
         mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    }
+
+    /// The condition and message of upstream's compile-time assertion op,
+    /// ``__mlir_op.`kgen.param.assert`[cond=c.__mlir_bool__(), message=m]()``,
+    /// the form a `comptime assert c, m` denotes: the `Bool` whose `i1`
+    /// the `cond` attribute reads, and the `!kgen.string` message.
+    pub fn kgen_param_assert(&self) -> Option<(&Self, &Self)> {
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &self.kind
+        else {
+            return None;
+        };
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return None;
+        };
+        if !matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op")
+            || field != "kgen.param.assert"
+            || !args.is_empty()
+            || !kwargs.is_empty()
+        {
+            return None;
+        }
+        let attribute = |wanted: &str| {
+            param_args.iter().find_map(|argument| match argument {
+                ParamArg::Named { name, value } if name == wanted => match value.as_ref() {
+                    ParamArg::Value(value) => Some(value),
+                    _ => None,
+                },
+                _ => None,
+            })
+        };
+        let cond = match &attribute("cond")?.kind {
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__mlir_bool__" && args.is_empty() && kwargs.is_empty() => object,
+            _ => return None,
+        };
+        (param_args.len() == 2).then_some((cond.as_ref(), attribute("message")?))
     }
 
     /// The name a bracket after an identifier applies and the compile-time
@@ -2678,7 +2728,7 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
             }
         }
         StmtKind::While { cond, .. } => lambdas_in_condition(cond, out),
-        StmtKind::ComptimeAssert { cond, message } => {
+        StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
             lambdas_in_expr(cond, out);
             if let Some(message) = message {
                 lambdas_in_expr(message, out);
@@ -3203,7 +3253,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.block(body);
                     }
                 }
-                StmtKind::ComptimeAssert { cond, message } => {
+                StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
                     self.expr(cond);
                     if let Some(message) = message {
                         self.expr(message);

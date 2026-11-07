@@ -79,6 +79,11 @@ point, as upstream's toolchain does.
   it (R1481), so `__eq__` stays a requirement here. The
   compiler-modelled scalars and `Bool` conform to both, and `DType` to
   `Equatable`, as the upstream structs they stand in for declare.
+- `std/builtin/debug_assert.mojo` — upstream's `debug_assert` overloads,
+  `ASSERT_MODE`, and their helpers, which the `assert` statement calls; the
+  prelude exports `debug_assert`. The file's header lists the departures
+  (no `location=` argument, a `String` message buffer, `print` and
+  `abort(message)` in `_debug_assert_msg`) and the entries that own them.
 - `std/builtin/bool.mojo`, `std/builtin/int.mojo`,
   `std/builtin/floatable.mojo`, and `std/builtin/identifiable.mojo` —
   upstream's conversion traits: `Boolable`, `Indexer`, `Intable`,
@@ -300,6 +305,11 @@ point, as upstream's toolchain does.
   `get_alignof`. The queries read the `!kgen.target` attribute the
   elaborator answers `_current_target()` with; the file's header lists
   what is still omitted and the roadmap entries that own it.
+- `std/sys/defines.mojo` and `std/sys/_build.mojo` — upstream's
+  compile-time define reads (`is_defined`, `get_defined_bool`,
+  `get_defined_int`, `get_defined_string`) over
+  `#kgen.param.expr<get_env>`, and `is_debug_build`/`is_release_build`.
+  The compiler takes no `-D` yet, so every define is absent.
 - `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
   `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`
   mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —

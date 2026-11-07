@@ -116,6 +116,14 @@ fn comptime_assert_outside_function() -> ParseError {
     )
 }
 
+/// Upstream's placement diagnostic for an `assert` outside a function body:
+/// at module scope, or in a struct or trait body.
+fn assert_outside_function() -> ParseError {
+    ParseError::Message(
+        "'assert' must be inside a function; move this into a function body".to_string(),
+    )
+}
+
 /// The callee name of a call: the callee must be a bare identifier (closures
 /// can't escape to become arbitrary callee expressions).
 fn call_name(callee: Expr) -> Result<String, ParseError> {

@@ -1,0 +1,546 @@
+# Upstream's `std/builtin/debug_assert.mojo`, verbatim, except:
+# - No `debug_assert` overload takes upstream's `location:
+#   Optional[SourceLocation]`, and nothing calls `call_location()`, since
+#   neither is bundled (R1979); a failure reports no `At: <location>: `.
+# - `_debug_assert_fail_format` writes into a `String` rather than the
+#   unbundled `_FixedWriteBuffer` (R1980), and passes the `String`'s own
+#   pointer, since one read through its `as_bytes()` span does not keep it
+#   alive through the call (R1155).
+# - `_debug_assert_msg` takes no location and omits the
+#   `CurrentPlugin._handles_debug_assert` arm (R1698). Its fallback prints
+#   `Assert Error: <message>` through `print` rather than `_printf`, and
+#   traps through the bundled `abort(message)` rather than `abort()`
+#   (R1980).
+"""Implements run-time assertions.
+
+These are Mojo built-ins, so you don't need to import them.
+"""
+
+from std.os import abort
+from std.sys import (
+    is_apple_gpu,
+    is_gpu,
+)
+from std.sys._build import is_debug_build
+from std.sys.intrinsics import assume
+from std.sys.defines import get_defined_string
+from std.collections.string.string_span import _get_kgen_string
+from std.format import Writable
+from std.io.io import print
+from std.range import range
+from std.span import Span
+from std.string import StaticString, String, StringSlice
+
+comptime ASSERT_MODE = get_defined_string["ASSERT", "safe"]()
+"""The compile-time assertion mode from the ASSERT environment variable."""
+
+comptime _NO_MESSAGE = "assertion failed"
+"""Must remain a string literal: the no-message path passes `byte_length() + 1`
+and relies on the trailing nul in static memory."""
+
+
+@inline(.nodebug)
+def _string_free_comptime_assert[
+    cond: Bool, msg: StaticString, *extra: StaticString
+]():
+    """Compile-time assertion that avoids `String` to prevent circular deps.
+
+    This exists because `debug_assert` cannot use `comptime assert` with
+    `String`-based messages — `String` transitively depends on `debug_assert`,
+    which would create infinite recursion in the parameter domain.
+    """
+
+    __mlir_op.`kgen.param.assert`[
+        cond=cond.__mlir_bool__(),
+        message=_get_kgen_string[msg, *extra](),
+    ]()
+
+
+@inline(.never)
+def _assert_enabled[assert_mode: StaticString, cpu_only: Bool]() -> Bool:
+    _string_free_comptime_assert[
+        ASSERT_MODE == "none"
+        or ASSERT_MODE == "warn"
+        or ASSERT_MODE == "safe"
+        or ASSERT_MODE == "all",
+        "-D ASSERT=",
+        ASSERT_MODE,
+        " but must be one of: none, warn, safe, all",
+    ]()
+    _string_free_comptime_assert[
+        assert_mode == "none" or assert_mode == "safe",
+        "assert_mode=",
+        assert_mode,
+        " but must be one of: none, safe",
+    ]()
+
+    # FIXME: Enable assertions on Apple GPU after MOCO-2405 is fixed
+    comptime if ASSERT_MODE == "none" or (
+        is_gpu() and cpu_only
+    ) or is_apple_gpu():
+        return False
+    elif ASSERT_MODE == "all" or ASSERT_MODE == "warn" or is_debug_build():
+        return True
+    else:
+        return ASSERT_MODE == assert_mode
+
+
+@inline(.never)
+def _debug_assert_fail_format[*Ts: Writable](*messages: *Ts):
+    var message = String()
+
+    comptime for i in range(messages.__len__()):
+        messages[i].write_to(message)
+
+    _debug_assert_msg(message.unsafe_ptr(), message.byte_length() + 1)
+
+
+@inline(.always)
+def _debug_assert_fail[*Ts: Writable](*messages: *Ts):
+    """Reports a failed assertion, formatting the message if there is one."""
+
+    comptime if messages.__len__() == 0:
+        _debug_assert_msg(_NO_MESSAGE.ptr(), _NO_MESSAGE.byte_length() + 1)
+    else:
+        _debug_assert_fail_format(*messages)
+
+
+@inline(.always)
+def debug_assert[
+    Cond: def() -> Bool,
+    assert_mode: StaticString = "none",
+    *Ts: Writable,
+    cpu_only: Bool = False,
+](cond: Cond, *messages: *Ts):
+    """Asserts that the condition is true at run time.
+
+    If the condition is false, the assertion displays the given message and
+    causes the program to exit.
+
+    You can pass in multiple arguments to generate a formatted
+    message. No string allocation occurs unless the assertion is triggered.
+
+    ```mojo
+    var x = 0
+    debug_assert(x > 0, "expected x to be more than 0 but got: ", x)
+    ```
+
+    Normal assertions are off by default—they only run when the program is
+    compiled with all assertions enabled. You can set the `assert_mode` to
+    `safe` to create an assertion that's on by default:
+
+    ```mojo
+    var x = 0
+    debug_assert[assert_mode="safe"](
+        x > 0, "expected x to be more than 0 but got: ", x
+    )
+    ```
+
+    Use the `ASSERT` variable to turn assertions on or off when building or
+    running a Mojo program:
+
+    ```sh
+    mojo -D ASSERT=all main.mojo
+    ```
+
+    The `ASSERT` variable takes the following values:
+
+    - all: Turn on all assertions.
+    - safe: Turn on "safe" assertions only. This is the default.
+    - none: Turn off all assertions, for performance at the cost of safety.
+    - warn: Turn on all assertions, but print any errors instead of exiting.
+
+    To ensure that you have no run-time penalty from your assertions even when
+    they're disabled, make sure there are no side effects in your message and
+    condition expressions. For example:
+
+    ```mojo
+    var person = "name: john, age: 50"
+    var name = "john"
+    debug_assert(String("name: ", name) in person, "unexpected name")
+    ```
+
+    This will have a run-time penalty due to allocating a `String` in the
+    condition expression, even when assertions are disabled. To avoid this, pass
+    the condition as a closure so it runs only when the assertion is turned on:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert(check_name, "unexpected name")
+    ```
+
+    If you need to allocate, and so don't want the assert to ever run on GPU,
+    you can set it to CPU only:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert[cpu_only=True](check_name, "unexpected name")
+    ```
+
+    For compile-time assertions, see [`comptime
+    assert`](/docs/manual/metaprogramming/constraints/#compile-time-assertions)
+
+    Parameters:
+        Cond: The type of the closure to invoke to check if the assertion holds.
+        assert_mode: Determines when the assert is turned on.
+            - default ("none"): Turned on when compiled with `-D ASSERT=all`.
+            - "safe": Turned on by default.
+        Ts: The element types for the message arguments.
+        cpu_only: If true, only run the assert on CPU.
+
+    Args:
+        cond: The closure to invoke to check if the assertion holds.
+        messages: A set of [`Writable`](/docs/std/format/Writable/)
+            arguments to convert to a `String` message.
+    """
+
+    comptime if _assert_enabled[assert_mode, cpu_only]():
+        if cond():
+            return
+
+        # `debug_assert` is used a lot, so its body must generate short, concise
+        # code. Avoid standard library functions that contain error/abort code
+        # inside; those cause code bloat at every call site.
+        _debug_assert_fail(*messages)
+
+
+@inline(.always)
+def debug_assert[
+    assert_mode: StaticString = "none",
+    *Ts: Writable,
+    cpu_only: Bool = False,
+    _use_compiler_assume: Bool = False,
+](cond: Bool, *messages: *Ts):
+    """Asserts that the condition is true at run time.
+
+    If the condition is false, the assertion displays the given message and
+    causes the program to exit.
+
+    You can pass in multiple arguments to generate a formatted
+    message. No string allocation occurs unless the assertion is triggered.
+
+    ```mojo
+    var x = 0
+    debug_assert(x > 0, "expected x to be more than 0 but got: ", x)
+    ```
+
+    Normal assertions are off by default—they only run when the program is
+    compiled with all assertions enabled. You can set the `assert_mode` to
+    `safe` to create an assertion that's on by default:
+
+    ```mojo
+    var x = 0
+    debug_assert[assert_mode="safe"](
+        x > 0, "expected x to be more than 0 but got: ", x
+    )
+    ```
+
+    Use the `ASSERT` variable to turn assertions on or off when building or
+    running a Mojo program:
+
+    ```sh
+    mojo -D ASSERT=all main.mojo
+    ```
+
+    The `ASSERT` variable takes the following values:
+
+    - all: Turn on all assertions.
+    - safe: Turn on "safe" assertions only. This is the default.
+    - none: Turn off all assertions, for performance at the cost of safety.
+    - warn: Turn on all assertions, but print any errors instead of exiting.
+
+    To ensure that you have no run-time penalty from your assertions even when
+    they're disabled, make sure there are no side effects in your message and
+    condition expressions. For example:
+
+    ```mojo
+    var person = "name: john, age: 50"
+    var name = "john"
+    debug_assert(String("name: ", name) in person, "unexpected name")
+    ```
+
+    This will have a run-time penalty due to allocating a `String` in the
+    condition expression, even when assertions are disabled. To avoid this, pass
+    the condition as a closure so it runs only when the assertion is turned on:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert(check_name, "unexpected name")
+    ```
+
+    If you need to allocate, and so don't want the assert to ever run on GPU,
+    you can set it to CPU only:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert[cpu_only=True](check_name, "unexpected name")
+    ```
+
+    For compile-time assertions, see [`comptime
+    assert`](/docs/manual/metaprogramming/constraints/#compile-time-assertions)
+
+    Parameters:
+        assert_mode: Determines when the assert is turned on.
+            - default ("none"): Turned on when compiled with `-D ASSERT=all`.
+            - "safe": Turned on by default.
+        Ts: The element types for the message arguments.
+        cpu_only: If true, only run the assert on CPU.
+        _use_compiler_assume: If true, assume the condition is true for repeated checks,
+            to help the compiler optimize (default False).
+
+
+    Args:
+        cond: The bool value to assert.
+        messages: A set of [`Writable`](/docs/std/format/Writable/)
+            arguments to convert to a `String` message.
+    """
+
+    comptime if _assert_enabled[assert_mode, cpu_only]():
+        if cond:
+            return
+
+        # See the sibling overload: avoid stdlib functions carrying error/abort
+        # code.
+        _debug_assert_fail(*messages)
+
+    elif _use_compiler_assume:
+        assume(cond)
+
+
+# The two no-message overloads below omit `location` on purpose: they are
+# optimized for fast compile time, because they are used frequently. An
+# `Optional[SourceLocation]` and an `or_else` call generate extra IR and thus
+# slow compilation down.
+@inline(.always)
+def debug_assert[
+    Cond: def() -> Bool,
+    assert_mode: StaticString = "none",
+    cpu_only: Bool = False,
+](cond: Cond):
+    """Asserts that the condition is true at run time, with no message.
+
+    On failure this reports `assertion failed` at the call site. Use the
+    overload taking `messages` to report a formatted message instead.
+
+    ```mojo
+    def main():
+        var x = 1
+
+        def check() {x} -> Bool:
+            return x > 0
+
+        debug_assert(check)
+    ```
+
+    Parameters:
+        Cond: The type of the closure to invoke to check if the assertion holds.
+        assert_mode: Determines when the assert is turned on.
+        cpu_only: If true, only run the assert on CPU.
+
+    Args:
+        cond: The closure to invoke to check if the assertion holds.
+    """
+
+    comptime if _assert_enabled[assert_mode, cpu_only]():
+        if cond():
+            return
+
+        _debug_assert_fail()
+
+
+@inline(.always)
+def debug_assert[
+    assert_mode: StaticString = "none",
+    cpu_only: Bool = False,
+    _use_compiler_assume: Bool = False,
+](cond: Bool):
+    """Asserts that the condition is true at run time, with no message.
+
+    On failure this reports `assertion failed` at the call site. Use the
+    overload taking `messages` to report a formatted message instead.
+
+    ```mojo
+    var x = 1
+    debug_assert(x > 0)
+    ```
+
+    Parameters:
+        assert_mode: Determines when the assert is turned on.
+        cpu_only: If true, only run the assert on CPU.
+        _use_compiler_assume: If true, assume the condition is true for repeated
+            checks, to help the compiler optimize (default False).
+
+    Args:
+        cond: The bool value to assert.
+    """
+
+    comptime if _assert_enabled[assert_mode, cpu_only]():
+        if cond:
+            return
+
+        _debug_assert_fail()
+    elif _use_compiler_assume:
+        assume(cond)
+
+
+@inline(.always)
+def debug_assert[
+    assert_mode: StaticString = "none",
+    cpu_only: Bool = False,
+    _use_compiler_assume: Bool = False,
+](cond: Bool, message: StringLiteral):
+    """Asserts that the condition is true at run time.
+
+    If the condition is false, the assertion displays the given message and
+    causes the program to exit.
+
+    You can pass in multiple arguments to generate a formatted
+    message. No string allocation occurs unless the assertion is triggered.
+
+    ```mojo
+    var x = 0
+    debug_assert(x > 0, "expected x to be more than 0 but got: ", x)
+    ```
+
+    Normal assertions are off by default—they only run when the program is
+    compiled with all assertions enabled. You can set the `assert_mode` to
+    `safe` to create an assertion that's on by default:
+
+    ```mojo
+    var x = 0
+    debug_assert[assert_mode="safe"](
+        x > 0, "expected x to be more than 0 but got: ", x
+    )
+    ```
+
+    Use the `ASSERT` variable to turn assertions on or off when building or
+    running a Mojo program:
+
+    ```sh
+    mojo -D ASSERT=all main.mojo
+    ```
+
+    The `ASSERT` variable takes the following values:
+
+    - all: Turn on all assertions.
+    - safe: Turn on "safe" assertions only. This is the default.
+    - none: Turn off all assertions, for performance at the cost of safety.
+    - warn: Turn on all assertions, but print any errors instead of exiting.
+
+    To ensure that you have no run-time penalty from your assertions even when
+    they're disabled, make sure there are no side effects in your message and
+    condition expressions. For example:
+
+    ```mojo
+    var person = "name: john, age: 50"
+    var name = "john"
+    debug_assert(String("name: ", name) in person, "unexpected name")
+    ```
+
+    This will have a run-time penalty due to allocating a `String` in the
+    condition expression, even when assertions are disabled. To avoid this, pass
+    the condition as a closure so it runs only when the assertion is turned on:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert(check_name, "unexpected name")
+    ```
+
+    If you need to allocate, and so don't want the assert to ever run on GPU,
+    you can set it to CPU only:
+
+    ```mojo
+    def main():
+        var person = "name: john, age: 50"
+        var name = "john"
+
+        def check_name() {name, person} -> Bool:
+            return String("name: ", name) in person
+
+        debug_assert[cpu_only=True](check_name, "unexpected name")
+    ```
+
+    For compile-time assertions, see [`comptime
+    assert`](/docs/manual/metaprogramming/constraints/#compile-time-assertions)
+
+    Parameters:
+        assert_mode: Determines when the assert is turned on.
+            - default ("none"): Turned on when compiled with `-D ASSERT=all`.
+            - "safe": Turned on by default.
+        cpu_only: If true, only run the assert on CPU.
+        _use_compiler_assume: If true, assume the condition is true for repeated checks,
+            to help the compiler optimize (default False).
+
+    Args:
+        cond: The bool value to assert.
+        message: A static string message.
+    """
+
+    comptime if _assert_enabled[assert_mode, cpu_only]():
+        if cond:
+            return
+
+        _debug_assert_msg(
+            message.ptr(),
+            # include StringLiteral null terminator for printf statements
+            message.byte_length() + 1,
+        )
+    elif _use_compiler_assume:
+        assume(cond)
+
+
+@inline(.never)
+def _debug_assert_msg(message: ImmPointer[Byte, _], length: Int):
+    """Aborts with (or prints) the given message.
+
+    This function is intentionally marked as no_inline to reduce binary size.
+
+    Note that it's important that this function doesn't get inlined; otherwise,
+    an indirect recursion of @inline(.always) functions is possible (e.g. because
+    abort's implementation could use debug_assert)
+    """
+
+    var text = StringSlice(
+        unsafe_from_utf8=Span(unsafe_ptr=message, length=length - 1)
+    )
+    if __is_run_in_comptime_interpreter:
+        print("Assert Error: ", text, sep="")
+
+        comptime if ASSERT_MODE != "warn":
+            abort(String(text))
+        return
+
+    print("Assert Error: ", text, sep="")
+
+    comptime if ASSERT_MODE != "warn":
+        abort(String(text))

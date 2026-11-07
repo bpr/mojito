@@ -2340,6 +2340,12 @@ impl Checker {
             StmtKind::ComptimeAssert { cond, message } => {
                 self.check_comptime_assert(cond, message.as_ref()).map(drop)
             }
+            // The linker lowers `assert` to a call of the standard
+            // library's `debug_assert`, which an unlinked program lacks.
+            StmtKind::Assert { .. } => Err(TypeError::Unsupported(
+                "the `assert` statement needs the linked standard library's `debug_assert`"
+                    .to_string(),
+            )),
             // A kept compile-time block is straight-line code, so what it
             // initializes stays initialized after it.
             StmtKind::Scope(body) => self.check_scoped_block(body, ret, in_loop),
@@ -2748,6 +2754,11 @@ impl Checker {
 
             StmtKind::Pass => Ok(()),
 
+            // Upstream's `kgen.param.assert` op is the form a `comptime
+            // assert` denotes, and is checked as one.
+            StmtKind::Expr(expr) if let Some((cond, message)) = expr.kgen_param_assert() => {
+                self.check_comptime_assert(cond, Some(message)).map(drop)
+            }
             StmtKind::Expr(expr) => {
                 self.register_named_bindings(expr)?;
                 self.infer(expr)?;

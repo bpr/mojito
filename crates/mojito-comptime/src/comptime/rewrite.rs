@@ -1100,7 +1100,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 rewrite_block(b, subs, into_defs);
             }
         }
-        StmtKind::ComptimeAssert { cond, message } => {
+        StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
             std::iter::once(cond)
                 .chain(message)
                 .for_each(|value| rewrite_expr(value, subs));
@@ -1536,7 +1536,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 substitute_type_bindings_in_block(body, subs);
             }
         }
-        StmtKind::ComptimeAssert { cond, message } => {
+        StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
             std::iter::once(cond)
                 .chain(message)
                 .for_each(|value| retype_expr(value, subs));

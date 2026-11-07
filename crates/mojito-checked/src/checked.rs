@@ -6493,6 +6493,18 @@ impl<'a> ArenaBuilder<'a> {
                 value: self.expr(value),
             },
             StmtKind::Raise(value) => CheckedStmtOp::Raise(self.expr(value)),
+            StmtKind::Expr(value) if let Some((cond, message)) = value.kgen_param_assert() => {
+                CheckedStmtOp::ComptimeAssert {
+                    cond: self.expr(cond),
+                    message: Some(self.expr(message)),
+                    denotes: self
+                        .facts(&message.source_span())
+                        .comptime_value
+                        .as_deref()
+                        .cloned(),
+                    fails: self.facts(&cond.source_span()).failing_assertion,
+                }
+            }
             StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
             StmtKind::Comptime {
                 name,
@@ -6522,10 +6534,12 @@ impl<'a> ArenaBuilder<'a> {
                 target: self.target(target),
                 value: self.expr(value),
             },
-            // Declarations were taken above.
-            StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {
-                CheckedStmtOp::Pass
-            }
+            // Declarations were taken above, and the check rejects an
+            // `assert` the linker did not lower.
+            StmtKind::Def { .. }
+            | StmtKind::Struct { .. }
+            | StmtKind::Trait { .. }
+            | StmtKind::Assert { .. } => CheckedStmtOp::Pass,
             StmtKind::ComptimeIf {
                 branches: arms,
                 orelse,

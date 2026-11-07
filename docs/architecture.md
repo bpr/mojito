@@ -947,6 +947,15 @@ imported module named `__main__` would share that prefix; nothing rejects
 it. A name the entry imports explicitly cannot be declared again
 (`ModuleError::Redefinition`), as the pin rejects it.
 
+The linker also lowers each `assert cond[, message]` statement
+(`StmtKind::Assert`) to the call upstream emits for it, the standard
+library's `debug_assert(cond[, message])` at the condition's location, named
+by its linked identity (`module::linked_item_name("std.builtin.debug_assert",
+"debug_assert")`), before rewriting the operands like any expression. No
+later phase sees the statement, and a `debug_assert` the program declares
+does not capture it, as at the pin. A program checked without linking keeps
+the statement, and the checker rejects it explicitly.
+
 An absolute import of `std.*` resolves at the bundled library's root alone
 (the package's module table, or a development build's library source),
 never beside the importer or under a search root, as upstream's toolchain

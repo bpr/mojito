@@ -32,10 +32,7 @@
 # members are still served by the compiler or undeclared (R1581,
 # R1585, R1586; `_dynamic_shuffle` is R1777's),
 # `write_padded` is not ported
-# (R1663). `py=` is not ported. The element
-# list omits upstream's
-# `assert Self.length == len(elems)`, which the pin's default `-D ASSERT`
-# mode skips, so too few elements read past `elems` there as here (R1598).
+# (R1663). `py=` is not ported.
 # `_simd_dtype_checks` is `True`: Mojito has no
 # sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
 # conjunct for the same reason. The struct declares
@@ -841,6 +838,11 @@ struct SIMD[dtype: DType, length: SIMDLength](
             __list_literal__: Tell Mojo to use this method for list literals.
         """
         _simd_construction_checks[Self.dtype, Self.length]()
+
+        # TODO: Make this a compile-time check when possible.
+        assert Self.length == len(
+            elems
+        ), "mismatch in the number of elements in the SIMD variadic constructor"
 
         __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(self))
 

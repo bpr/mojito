@@ -338,6 +338,9 @@ pub enum Token {
     Break,
     Continue,
     Raise,
+    /// `assert`, the run-time assertion statement (and the second word of
+    /// `comptime assert`).
+    Assert,
     Try,
     Except,
     Finally,
@@ -471,6 +474,7 @@ impl Token {
             "break" => Self::Break,
             "continue" => Self::Continue,
             "raise" => Self::Raise,
+            "assert" => Self::Assert,
             "try" => Self::Try,
             "except" => Self::Except,
             "finally" => Self::Finally,

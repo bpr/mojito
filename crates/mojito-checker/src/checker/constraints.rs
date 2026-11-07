@@ -3369,6 +3369,25 @@ impl Checker {
                     .op(ParamOp::TargetHasFeature, &[target, name])
                     .map_err(param_error)
             }
+            // A compile-time define (`mojo -D name=value`): whether it is
+            // defined, or its value as a string or an `index`.
+            (shape, [name])
+                if let Some(result) = shape
+                    .strip_prefix("#kgen.param.expr<get_env,{}>:")
+                    .and_then(get_env_result) =>
+            {
+                let name = self.bracket_operand(name, recording)?;
+                if *name.meta() != MetaTy::value(TyKind::KgenString.into()) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a '!kgen.string' value".to_string(),
+                        found: name.meta().to_string(),
+                        context: "the name operand of '#kgen.param.expr<get_env>'".to_string(),
+                    });
+                }
+                context
+                    .op(ParamOp::GetEnv, &[context.type_shape(result), name])
+                    .map_err(param_error)
+            }
             (shape, [target]) if let Some(field) = target_field_read(shape) => {
                 let target = self.bracket_target(target, recording)?;
                 let name = context
@@ -3483,7 +3502,8 @@ impl Checker {
             _ => Err(TypeError::Unsupported(format!(
                 "the attribute '__mlir_attr[`{text}`]' is outside the subset; only a closed \
                  attribute, '#kgen.param_list.size', '#kgen.param_list.get', \
-                 '#kgen.param.expr<data_to_str>', '#kgen.param.expr<target_has_feature>', \
+                 '#kgen.param.expr<data_to_str>', '#kgen.param.expr<get_env>' at an 'i1', \
+                 '!kgen.string', or 'index', '#kgen.param.expr<target_has_feature>', \
                  '#kgen.param.expr<target_get_field>' of a known field, \
                  '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
                  '#kgen.param.expr<get_alignof>', '#kgen.param.identical', \
@@ -6930,6 +6950,17 @@ fn literal_binary_attribute_op(shape: &str) -> Option<InfixOp> {
         ("or", true) => InfixOp::BitOr,
         _ => return None,
     })
+}
+
+/// The result type a `#kgen.param.expr<get_env, {}> : T` reads its define
+/// at: `i1` (whether it is defined), `!kgen.string`, or `index`.
+fn get_env_result(result: &str) -> Option<Ty> {
+    match result {
+        "i1" => Some(Ty::bool()),
+        "!kgen.string" => Some(TyKind::KgenString.into()),
+        "index" => Some(Ty::index()),
+        _ => None,
+    }
 }
 
 /// The field a whitespace-free `#kgen.param.expr<target_get_field, {},

@@ -346,6 +346,7 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
             StmtKind::For { .. } => "for statement",
             StmtKind::Return(_) => "return statement",
             StmtKind::Raise(_) => "raise statement",
+            StmtKind::Assert { .. } => "assert statement",
             StmtKind::With { .. } => "with statement",
             StmtKind::Try { .. } => "try statement",
             StmtKind::Break => "break statement",

@@ -166,10 +166,6 @@ Mojito may reject valid Mojo.
   `mojo run` and is absent from a `mojo build` binary. A parameter default
   is not compile-time execution: every call leaving its slot out evaluates
   it at the call, so one that prints runs there, as the pin's does.
-- `assets/runtime_error/nominal_string_justify_fillchar.mojo` traps on an
-  `assert` in upstream's own `_justify`. Mojito evaluates every
-  standard-library assert, as the pin does under `-D ASSERT=all`; the pin's
-  default level skips it.
 
 The fixtures in the same sweep where Mojito's rejection is *not* deliberate are
 the opposite case and stay on `docs/roadmap.md` as `divergence` rows.

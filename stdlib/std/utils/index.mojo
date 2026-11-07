@@ -2,9 +2,6 @@
 # - The comparisons pass `self, rhs` where upstream passes
 #   `self.data, rhs.data` through the `@implicit` constructor, since a
 #   binder is not inferred through a converting argument (R52).
-# - The run-time `assert` of `__init__(*elems)` is omitted, since the
-#   `assert` statement does not parse (R1598); the pin's default mode skips
-#   it.
 # - `write_repr_to` and its `std.format._utils` import are omitted, since
 #   `FormatStruct.fields` over a callback is not bundled (R813).
 # - The `DevicePassable` conformance, `_to_device_type`, and the
@@ -256,6 +253,10 @@ struct IndexList[size: Int, *, element_type: DType = .int64](
             Self.element_type.is_integral()
         ), "Element type must be of integral type."
         var num_elements = len(elems)
+
+        assert (
+            Self.size == num_elements
+        ), "[IndexList] mismatch in the number of elements"
 
         self = Self()
         comptime for idx in range(Self.size):

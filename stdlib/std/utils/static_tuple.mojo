@@ -3,9 +3,6 @@
 # - `comptime _StaticTupleTraits` is omitted and each bound spells its
 #   composition out, since a trait composition is no `comptime` binding
 #   (R1171).
-# - The run-time `assert`s of `__init__(*elems)`, `__getitem__`, and
-#   `__setitem__` are omitted, since the `assert` statement does not parse
-#   (R1598); the pin's default `-D ASSERT` mode skips them.
 # - The `DevicePassable` conformance, `_DeviceElementType`, `device_type`,
 #   `_to_device_type`, and `get_type_name` are omitted with their
 #   `std.builtin.device_passable` and `std.builtin.rebind` imports: a static
@@ -125,6 +122,7 @@ struct StaticTuple[
         if len(elems) == 1:
             return Self(fill=elems[0])
 
+        assert Self.size == len(elems), "mismatch in the number of elements"
         self = Self()
         comptime for idx in range(Self.size):
             self[idx] = elems[idx]
@@ -171,6 +169,7 @@ struct StaticTuple[
         Returns:
             The value at the specified position.
         """
+        assert Self.size > index(idx), "index must be within bounds"
         return self._unsafe_ref(index(idx))
 
     @inline(.nodebug)
@@ -184,6 +183,7 @@ struct StaticTuple[
             idx: The index into the tuple.
             val: The value to store.
         """
+        assert Self.size > index(idx), "index must be within bounds"
         self._unsafe_ref(index(idx)) = val
 
     @inline(.nodebug)

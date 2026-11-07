@@ -703,7 +703,8 @@ impl FnLowering<'_> {
     /// defined result for a zero lane the VM computes; a shuffle's index
     /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
     /// LLVM's verifier rejects as an `immarg` unless it is a constant.
-    /// `llvm.donothing` returns nothing. A result LLVM translation sees as a
+    /// `llvm.donothing` returns nothing, and `llvm.assume` nothing from its
+    /// `i1`. A result LLVM translation sees as a
     /// literal struct (`MirDeclarations::translated_intrinsic_type`, a
     /// `_RegisterPackType`'s) is LLVM's literal struct of its elements'
     /// vectors, each extracted into the destination's storage at its
@@ -723,6 +724,20 @@ impl FnLowering<'_> {
                 StringAttr::new(intrinsic.name().to_string()),
                 fn_ty,
                 Vec::new(),
+            );
+            self.append(ctx, call.get_operation(), Some(dest));
+            return Ok(());
+        }
+        if let (LlvmIntrinsic::Assume, [condition]) = (intrinsic, args) {
+            let condition = self.reg_value(ctx, *condition, ScalarTy::of_dtype(Dtype::Bool))?;
+            let void = VoidType::get(ctx).to_handle();
+            let i1 = IntegerType::get(ctx, 1, Signedness::Signless).into();
+            let fn_ty = FuncType::get(ctx, void, vec![i1], false);
+            let call = CallIntrinsicOp::new(
+                ctx,
+                StringAttr::new(intrinsic.name().to_string()),
+                fn_ty,
+                vec![condition],
             );
             self.append(ctx, call.get_operation(), Some(dest));
             return Ok(());

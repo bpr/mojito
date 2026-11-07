@@ -180,7 +180,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             walk_condition(visitor, cond, body);
             walk_optional_block(visitor, orelse.as_deref());
         }
-        StmtKind::ComptimeAssert { cond, message } => {
+        StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
             walk_expr(visitor, cond);
             if let Some(message) = message {
                 walk_expr(visitor, message);
@@ -944,7 +944,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 walk_block_mut(visitor, body);
             }
         }
-        StmtKind::ComptimeAssert { cond, message } => {
+        StmtKind::ComptimeAssert { cond, message } | StmtKind::Assert { cond, message } => {
             walk_expr_mut(visitor, cond);
             if let Some(message) = message {
                 walk_expr_mut(visitor, message);

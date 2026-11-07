@@ -25,7 +25,7 @@ use super::{ParamError, ParamOp};
 use crate::ct::{
     CtLane, CtValue, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
 };
-use crate::types::same_type;
+use crate::types::{Ty, TyKind, same_type};
 use mojito_ast::ast::{Dtype, InfixOp};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 
@@ -342,6 +342,49 @@ pub fn fold_target_get_field(target: &CtValue, name: &CtValue) -> Result<CtValue
 pub fn fold_target_has_feature(target: &CtValue, name: &CtValue) -> Result<CtValue, ParamError> {
     let (target, name) = target_operands("target_has_feature", target, name)?;
     Ok(CtValue::Bool(target.has_feature(name)))
+}
+
+/// The value of the compile-time define `name` (`mojo -D name=value`),
+/// if it is defined. The compiler takes no `-D` yet, so no name is
+/// defined, as under a `mojo run` given none (R1981).
+pub const fn compile_time_define(_name: &str) -> Option<&'static str> {
+    None
+}
+
+/// KGEN's `get_env` over a concrete define name at result type `ty`.
+///
+/// It is whether the define exists (a `Bool`), or its value as a
+/// `!kgen.string` or an `index`, which fails over an undefined name as at
+/// the pin.
+pub fn fold_get_env(ty: &Ty, name: &CtValue) -> Result<CtValue, ParamError> {
+    let CtValue::KgenString(name) = name else {
+        return Err(ParamError::TypeMismatch {
+            operation: "get_env".to_string(),
+            expected: "a '!kgen.string' define name".to_string(),
+            found: format!("{name:?}"),
+        });
+    };
+    let value = compile_time_define(name);
+    if *ty == Ty::bool() {
+        return Ok(CtValue::Bool(value.is_some()));
+    }
+    let value = value.ok_or_else(|| {
+        ParamError::Constraint(format!(
+            "define '{name}' does not exist, please provide it via -D"
+        ))
+    })?;
+    match ty.kind() {
+        TyKind::KgenString => Ok(CtValue::KgenString(value.to_string())),
+        TyKind::Index => value
+            .parse::<i64>()
+            .map(CtValue::Index)
+            .map_err(|_| ParamError::Constraint(format!("define '{name}' is not an integer"))),
+        _ => Err(ParamError::TypeMismatch {
+            operation: "get_env".to_string(),
+            expected: "an 'i1', '!kgen.string', or 'index' result".to_string(),
+            found: ty.to_string(),
+        }),
+    }
 }
 
 /// `pop.dtype.from_ui8` over a concrete `ui8` code: the dtype it names.
@@ -859,7 +902,7 @@ fn target_operands<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_comparison, fold_data_to_str, fold_infix, fold_literal_attribute,
+        fold_comparison, fold_data_to_str, fold_get_env, fold_infix, fold_literal_attribute,
         fold_literal_convert, fold_string_address, fold_string_size, fold_target_get_field,
         fold_target_has_feature,
     };
@@ -872,6 +915,23 @@ mod tests {
         CtValue::Simd {
             dtype,
             lanes: vec![lane],
+        }
+    }
+
+    #[test]
+    fn an_undefined_define_is_absent_and_has_no_value() {
+        use crate::types::{Ty, TyKind};
+        let name = CtValue::KgenString("ASSERT".to_string());
+        assert_eq!(
+            fold_get_env(&Ty::bool(), &name).ok(),
+            Some(CtValue::Bool(false))
+        );
+        for ty in [TyKind::KgenString.into(), Ty::index()] {
+            assert!(
+                fold_get_env(&ty, &name).is_err_and(|error| error
+                    .to_string()
+                    .contains("define 'ASSERT' does not exist"))
+            );
         }
     }
 

@@ -219,11 +219,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 }
 
-/// Upstream requires a `comptime if`, a `comptime match`, or a `comptime
-/// assert` to sit inside a function, with its own wording for each. The walk stops at every `def`, so
+/// Upstream requires a `comptime if`, a `comptime match`, a `comptime
+/// assert`, or an `assert` to sit inside a function, with its own wording
+/// for each. The walk stops at every `def`, so
 /// a function body — including a nested one — keeps the form. A struct or
 /// trait body holds members rather than statements; its member parser
-/// rejects the assertion itself (`comptime_assert_outside_function`).
+/// rejects the assertion itself (`comptime_assert_outside_function`,
+/// `assert_outside_function`).
 fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), ParseError> {
     let block = |block: &[Stmt]| -> Result<(), ParseError> {
         for statement in block {
@@ -243,6 +245,7 @@ fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), Pa
         StmtKind::ComptimeAssert { .. } => {
             Err(comptime_assert_outside_function().at(statement.span))
         }
+        StmtKind::Assert { .. } => Err(assert_outside_function().at(statement.span)),
         // A `def`'s body is exactly where the form belongs.
         StmtKind::Def { .. } => Ok(()),
         StmtKind::If { branches, orelse } => {

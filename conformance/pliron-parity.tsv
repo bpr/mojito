@@ -45,6 +45,7 @@ assets/ok/array_display_temporary_subscript.mojo	main	exe-differential	sanitized
 assets/ok/array_element_assignment.mojo	main	exe-differential	sanitized
 assets/ok/array_fixed_size_core.mojo	main	exe-differential	sanitized
 assets/ok/array_struct_elements_and_fill.mojo	main	exe-differential	sanitized
+assets/ok/assert_statement.mojo	main	exe-differential	sanitized
 assets/ok/assign_interior_view_over_sibling_field.mojo	main	exe-differential	sanitized
 assets/ok/assign_interior_view_through_temporary.mojo	main	exe-differential	sanitized
 assets/ok/assign_interior_view_to_other_local.mojo	main	exe-differential	sanitized
@@ -305,6 +306,7 @@ assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	saniti
 assets/ok/ctfe_serves_keyed_instances.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
 assets/ok/dead_code_after_terminators.mojo	main	exe-differential	sanitized
+assets/ok/debug_assert_default_mode.mojo	main	exe-differential	sanitized
 assets/ok/decorator_unavailable_function.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/def_aggregate_value_binder_served.mojo	main	exe-differential	sanitized
@@ -1185,6 +1187,7 @@ assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/static_reference_result_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_string.mojo	main	exe-differential	sanitized
 assets/ok/static_string_parameter.mojo	main	exe-differential	sanitized
+assets/ok/static_string_parameter_equality.mojo	main	exe-differential	sanitized
 assets/ok/static_tuple.mojo	main	exe-differential	sanitized
 assets/ok/staticmethod_self_parameter.mojo	main	exe-differential	sanitized
 assets/ok/std_numerics_fputils.mojo	main	exe-differential	sanitized
@@ -1252,7 +1255,9 @@ assets/ok/subscript_store_setter_by_element_type.mojo	main	exe-differential	sani
 assets/ok/subscript_write_back.mojo	main	exe-differential	sanitized
 assets/ok/subscript_write_back_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
+assets/ok/sys_defines_undefined.mojo	main	exe-differential	sanitized
 assets/ok/sys_info_layout_queries.mojo	main	exe-differential	sanitized
+assets/ok/sys_intrinsics_assume.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/template_def_bound_conversion.mojo	main	exe-differential	sanitized
@@ -1703,6 +1708,7 @@ assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	
 assets/extensions/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
+assets/runtime_error/debug_assert_safe_mode_fails.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/file_open_invalid_mode.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_open_missing.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_read_closed_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError

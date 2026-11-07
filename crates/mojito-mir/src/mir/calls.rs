@@ -1735,11 +1735,16 @@ impl<'a> Flatten<'a> {
     /// The place of a compile-time binding's read the checker materialized
     /// (a tuple or struct value parameter holding a `String`): its hidden
     /// `$mat_r` slot, which the read stores a copy of the binding into.
+    /// Once the read has filled the slot (a conversion of the read stores
+    /// its unconverted source there), the place is that slot's.
     pub(super) fn materialized_parameter_place(
         &mut self,
         identifier: Node<'a>,
     ) -> Option<MirPlace> {
         let owner = mojito_checked::checked::materialized_borrow_owner(identifier.adjustments())?;
+        if let Some(variable) = self.owner_vars.get(&owner).copied() {
+            return Some(self.hidden_slot_place(variable));
+        }
         self.materialize_borrow_source(identifier, owner).1
     }
 

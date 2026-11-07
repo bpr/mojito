@@ -212,6 +212,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
+                Token::Assert => {
+                    let at = self.peek_start();
+                    return Err(assert_outside_function().at((at, at)));
+                }
                 Token::Comptime => associated.push(self.parse_struct_comptime()?),
                 Token::Def => methods.push(self.parse_member_method(Vec::new(), is_enum)?),
                 // Decorators before a method (`@staticmethod`, …).
@@ -272,10 +276,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
     ) -> Result<mojito_ast::ast::StructComptime, ParseError> {
         self.expect(&Token::Comptime, "Expected 'comptime'")?;
-        let name = self.expect_identifier("Expected a name after 'comptime'")?;
-        if name == "assert" {
+        if matches!(self.peek_token()?, Some(Token::Assert)) {
             return Err(comptime_assert_outside_function());
         }
+        let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type: `comptime IteratorType[params] = ...`.
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
             self.parse_type_params()?
@@ -420,6 +424,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     methods.push(self.parse_trait_method(decorators)?);
                 }
+                Token::Assert => {
+                    let at = self.peek_start();
+                    return Err(assert_outside_function().at((at, at)));
+                }
                 Token::Comptime => comptime_members.push(self.parse_trait_comptime()?),
                 Token::Enum => {
                     let at = self.peek_start();
@@ -451,10 +459,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
     ) -> Result<mojito_ast::ast::TraitComptime, ParseError> {
         self.expect(&Token::Comptime, "Expected 'comptime'")?;
-        let name = self.expect_identifier("Expected a name after 'comptime'")?;
-        if name == "assert" {
+        if matches!(self.peek_token()?, Some(Token::Assert)) {
             return Err(comptime_assert_outside_function());
         }
+        let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type requirement:
         // `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
         // Origin[mut=iterable_mut]]: Iterator`.

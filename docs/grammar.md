@@ -59,7 +59,7 @@ and a `#` inside `( … )`/`[ … ]` is skipped like any other continuation whit
 
 Following the reference tree-sitter Mojo grammar, reserved words split into the ones Mojo
 **shares with Python** (`def return pass None and or not if elif else while for in break
-continue raise try except finally import from as`, plus the `True`/`False` literals) and
+continue raise assert try except finally import from as`, plus the `True`/`False` literals) and
 the **Mojo-only** ones (`var struct trait comptime raises`, and upstream's
 `__generator_type` and `__is_run_in_comptime_interpreter`). `Token::keyword` is the single
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
@@ -96,6 +96,7 @@ simple_stmt:
     | augmented_assignment
     | comptime_stmt
     | comptime_assert_stmt
+    | assert_stmt
     | return_stmt
     | raise_stmt
     | import_stmt
@@ -1382,17 +1383,28 @@ comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'els
 comptime_for_stmt: 'comptime' for_stmt     # 'comptime' 'for' NAME 'in' expression ':' block
                                            # a destructuring target is a parse error
 comptime_assert_stmt: 'comptime' 'assert' expression [',' expression]
+assert_stmt: 'assert' expression [',' expression]
 ```
 
 `comptime assert cond[, message]` is a **compile-time assertion**, allowed only
 in a function body: at module scope and among a struct's or trait's members
 the parser reports upstream's "'comptime assert' must be inside a function;
-move this into a function body". `assert` stays an identifier lexically; the
-parser recognizes it after `comptime`. Parentheses around the condition are an
+move this into a function body". Parentheses around the condition are an
 ordinary parenthesized expression, so `comptime assert (\n cond\n), "m"` spans
 lines and `comptime assert(c, "m")` asserts a tuple, as upstream reads both.
 The elaborator judges the assertion per reached instance; for the rest of its
 block its condition is known, as a `comptime if` arm's is.
+
+`assert cond[, message]` is a **run-time assertion** under the same placement
+rule, with upstream's "'assert' must be inside a function; move this into a
+function body" at module scope and in a struct or trait body. `assert` is a
+reserved word, so it names no variable. The message is one expression: a
+second comma ends the statement early, a parse error. Parentheses read as for
+`comptime assert`, so `assert(c, "m")` asserts a tuple. The parser keeps the
+statement (`StmtKind::Assert`); the linker lowers it to a call of the standard
+library's `debug_assert(cond[, message])` at the condition's location, by that
+function's linked identity, so a `debug_assert` the program declares does not
+capture it, as at the pin.
 
 `comptime` also prefixes an `if` or `for` to give a **compile-time conditional**
 (`comptime if cond:` — with `elif`/`else` like a normal `if`) or a **compile-time,

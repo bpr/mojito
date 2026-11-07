@@ -29,6 +29,7 @@ pub enum LlvmIntrinsic {
     Sqrt,
     IsFpclass,
     Donothing,
+    Assume,
     VectorReduce(VectorReduction),
     VectorExtract,
     VectorInsert,
@@ -73,7 +74,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -85,6 +86,7 @@ impl LlvmIntrinsic {
         Self::Sqrt,
         Self::IsFpclass,
         Self::Donothing,
+        Self::Assume,
         Self::VectorReduce(VectorReduction::And),
         Self::VectorReduce(VectorReduction::Or),
         Self::VectorReduce(VectorReduction::Smax),
@@ -126,6 +128,7 @@ impl LlvmIntrinsic {
             Self::Sqrt => "llvm.sqrt",
             Self::IsFpclass => "llvm.is.fpclass",
             Self::Donothing => "llvm.donothing",
+            Self::Assume => "llvm.assume",
             Self::VectorReduce(VectorReduction::And) => "llvm.vector.reduce.and",
             Self::VectorReduce(VectorReduction::Or) => "llvm.vector.reduce.or",
             Self::VectorReduce(VectorReduction::Smax) => "llvm.vector.reduce.smax",
@@ -161,6 +164,7 @@ impl LlvmIntrinsic {
         match self {
             Self::Donothing | Self::Stepvector => 0,
             Self::Ctpop
+            | Self::Assume
             | Self::Bitreverse
             | Self::Bswap
             | Self::Sqrt
@@ -182,7 +186,10 @@ impl LlvmIntrinsic {
     /// The types the intrinsic's LLVM name is mangled by, in order.
     pub const fn overloads(self) -> &'static [OverloadSlot] {
         match self {
-            Self::Donothing | Self::X86Avx512MaskScalefPs512 | Self::X86Ssse3PshufB128 => &[],
+            Self::Donothing
+            | Self::Assume
+            | Self::X86Avx512MaskScalefPs512
+            | Self::X86Ssse3PshufB128 => &[],
             Self::VectorReduce(_) | Self::VectorDeinterleave2 | Self::IsFpclass => {
                 &[OverloadSlot::Operand(0)]
             }
@@ -339,7 +346,8 @@ impl LlvmIntrinsic {
     /// shuffles (`vector.extract`, `vector.insert`, the splices, and
     /// `vector.interleave2`) and `llvm.stepvector` a vector of at least two
     /// lanes, `vector.deinterleave2` a literal struct of two, and
-    /// `llvm.donothing` `NoneType`. The integer intrinsics take no `bool`
+    /// `llvm.donothing` and `llvm.assume`, over a `Bool`,
+    /// `NoneType`. The integer intrinsics take no `bool`
     /// lanes but `vector.reduce.and` and `vector.reduce.or`, which reduce a
     /// `<N x i1>` mask as `SIMD.reduce_and` and `reduce_or` do.
     ///
@@ -399,6 +407,14 @@ impl LlvmIntrinsic {
                 return (!matches!(result.kind(), TyKind::None))
                     .then(mismatch)
                     .flatten();
+            }
+            Self::Assume => {
+                return (!matches!(result.kind(), TyKind::None)
+                    || operands
+                        .iter()
+                        .any(|operand| *operand != storage_ty(&Ty::bool())))
+                .then(mismatch)
+                .flatten();
             }
             Self::Stepvector => {
                 return match lanes(result) {
@@ -576,7 +592,7 @@ impl LlvmIntrinsic {
 
     /// Why the comptime interpreter cannot call the intrinsic, or `None`
     /// when it can: it calls only what LLVM's constant folder folds, which
-    /// leaves out `llvm.donothing`, the float reductions, `vector.insert`,
+    /// leaves out `llvm.donothing` and `llvm.assume`, the float reductions, `vector.insert`,
     /// the splices, `llvm.stepvector`, and the target-specific `scalef`,
     /// `pshuf.b.128`, and `tbl1`, and it types no struct result, which leaves out
     /// `vector.deinterleave2`.
@@ -585,7 +601,7 @@ impl LlvmIntrinsic {
             return Some("LLVM intrinsic has unknown result type".to_string());
         }
         match self {
-            Self::Donothing => Some(format!(
+            Self::Donothing | Self::Assume => Some(format!(
                 "cannot constant fold zero-result LLVM intrinsic: {}",
                 self.name()
             )),

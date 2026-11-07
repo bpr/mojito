@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The `assert cond[, message]` statement now parses and runs as at the
+  pin: `assert` is reserved, allowed only in a function body, and lowered
+  by the linker to the newly bundled `std.builtin.debug_assert.debug_assert`
+  (in the prelude), so under the default `ASSERT` mode a failing `assert`
+  is skipped after its operands are evaluated, and a failing
+  `assert_mode="safe"` `debug_assert` prints `Assert Error: <message>` and
+  traps. The bundled `SIMD`, `StaticTuple`, and `IndexList` now carry
+  upstream's `assert`s. Alongside: `std.sys.defines` and `std.sys._build`
+  over `#kgen.param.expr<get_env>` (with no `-D`, every define is absent),
+  `std.sys.intrinsics.assume` over `llvm.assume`, the
+  ``__mlir_op.`kgen.param.assert` `` op checked as a `comptime assert`, and
+  a run-time `==` between two compile-time `StaticString`s, which
+  overflowed the compiler's stack (R1598).
 - A field store into, and a `mut self` method call on, the element a
   parametric-mut `ref` field reaches (`self.src[0].n = 3`,
   `self.src[0].inc()` over `ref[o] List[C]` with `o: Origin[mut=m]`)

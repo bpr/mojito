@@ -2262,6 +2262,9 @@ const STD_PACKAGE: &str = "std";
 
 const PRELUDE_MODULE: &str = "std.prelude";
 
+/// The module declaring the `debug_assert` an `assert` statement calls.
+const DEBUG_ASSERT_MODULE: &str = "std.builtin.debug_assert";
+
 /// The module whose functions step a `comptime for` iterator.
 const STUBS_MODULE: &str = "std.builtin._stubs";
 
@@ -2316,6 +2319,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "StringLiteral",
     "IntLiteral",
     "FloatLiteral",
+    "debug_assert",
     "Absable",
     "Roundable",
     "abs",
@@ -2481,12 +2485,44 @@ fn type_path(ty: &Type) -> Option<String> {
     }
 }
 
+/// Replace an `assert cond[, message]` statement with the expression
+/// statement of the call it denotes ([`debug_assert_call`]).
+fn lower_assert(stmt: &mut Stmt) {
+    if matches!(stmt.kind, StmtKind::Assert { .. })
+        && let StmtKind::Assert { cond, message } =
+            std::mem::replace(&mut stmt.kind, StmtKind::Pass)
+    {
+        stmt.kind = StmtKind::Expr(debug_assert_call(cond, message));
+    }
+}
+
+/// The call an `assert cond[, message]` statement denotes, as upstream
+/// emits it: the standard library's `debug_assert(cond[, message])`, bound
+/// by its linked identity so a `debug_assert` the user declares does not
+/// capture it. The call and its callee sit at the condition, where the
+/// pin reports an assertion's location and a failed overload resolution.
+fn debug_assert_call(cond: Expr, message: Option<Expr>) -> Expr {
+    let (span, source) = (cond.span, cond.source.clone());
+    let mut call = Expr::new(
+        ExprKind::Call {
+            name: linked_item_name(DEBUG_ASSERT_MODULE, "debug_assert"),
+            param_args: Vec::new(),
+            args: std::iter::once(cond).chain(message).collect(),
+            kwargs: Vec::new(),
+        },
+        span,
+    );
+    call.source = source;
+    call
+}
+
 #[allow(clippy::cognitive_complexity, reason = "TODO: split this pass")]
 fn rewrite_stmt(
     stmt: &mut Stmt,
     names: &HashMap<String, String>,
     namespaces: &HashMap<String, HashMap<String, String>>,
 ) {
+    lower_assert(stmt);
     match &mut stmt.kind {
         StmtKind::Def {
             name,

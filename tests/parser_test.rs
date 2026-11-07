@@ -5088,6 +5088,62 @@ fn rejects_comptime_assert_outside_a_function() {
 }
 
 #[test]
+fn parses_assert_as_its_own_statement() {
+    // `assert cond[, message]`, the statement upstream emits as a
+    // `debug_assert` call: a parenthesized condition is an ordinary
+    // parenthesized expression, so `assert(c, "m")` asserts a tuple.
+    let body = |source: &str| match parse(source).remove(0).kind {
+        StmtKind::Def { body, .. } => body,
+        other => panic!("expected a def, got {other:?}"),
+    };
+    let asserts = body(
+        "def f():\n    assert n == 3, \"three\"\n    assert (\n        n > 1\n    ), n\n    assert n > 1\n    assert(True, \"tuple\")\n",
+    );
+    let shapes: Vec<_> = asserts
+        .iter()
+        .map(|stmt| match &stmt.kind {
+            StmtKind::Assert { cond, message } => (
+                matches!(cond.kind, ExprKind::TupleLit(_)),
+                message
+                    .as_ref()
+                    .map(|message| matches!(message.kind, ExprKind::Str(_))),
+            ),
+            other => panic!("expected an assert, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        shapes,
+        [
+            (false, Some(true)),
+            (false, Some(false)),
+            (false, None),
+            (true, None)
+        ]
+    );
+}
+
+#[test]
+fn rejects_assert_outside_a_function_and_as_a_name() {
+    // The pin: "'assert' must be inside a function; move this into a
+    // function body", at module scope and in a struct or trait body; and
+    // `assert` is reserved, so it names no variable.
+    for source in [
+        "assert True, \"m\"\n",
+        "if True:\n    assert True\n",
+        "struct S:\n    assert True\n",
+        "trait T:\n    assert True\n",
+    ] {
+        let error = mojito::parse(source).unwrap_err().to_string();
+        assert!(
+            error.contains("'assert' must be inside a function"),
+            "missing placement diagnostic for {source:?}: {error}"
+        );
+    }
+    assert!(mojito::parse("def f():\n    var assert = 1\n").is_err());
+    assert!(mojito::parse("def f():\n    assert True, \"a\", \"b\"\n").is_err());
+}
+
+#[test]
 fn parses_enum_cases_as_a_struct_declaration() {
     let statements = parse(
         "enum Token[T: AnyType](Copyable):\n    \"\"\"Doc.\"\"\"\n    case eof\n    case ident(String)\n    case span(Int, Self.T,)\n\n    def m(self) -> Int:\n        return 1\n\nenum Empty:\n    pass\n",
