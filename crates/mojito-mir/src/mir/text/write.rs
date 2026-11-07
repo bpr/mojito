@@ -2184,7 +2184,6 @@ fn ty_value(ty: &Ty) -> String {
         kind if kind.is_int() => "Int".into(),
         kind if kind.is_uint() => "UInt".into(),
         kind if kind.is_bool() => "Bool".into(),
-        TyKind::StringLiteral => "StringLiteral".into(),
         kind if kind.is_float64() => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),

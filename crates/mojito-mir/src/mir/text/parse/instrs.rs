@@ -38,11 +38,7 @@ impl Decoder {
             .ok()
             .and_then(|slot| self.var(slot));
         let register_rows = self.field(fields, "register_types").ok()?;
-        let bare_literals = if self.minor < 172 {
-            self.bare_literal_registers(register_rows)
-        } else {
-            Vec::new()
-        };
+        let bare_literals = self.bare_literal_registers(register_rows);
         self.bare_literal_rows = !bare_literals.is_empty();
         let reg_types_raw = self.type_map(register_rows, "reg_type", "reg", "%r");
         self.bare_literal_rows = false;
@@ -183,8 +179,9 @@ impl Decoder {
 
     /// The registers whose row in `rows` spells the bare `IntLiteral` or
     /// `FloatLiteral` atom, the value-less literal type MIR text before
-    /// 1.172 wrote.
+    /// 1.172 wrote, or the bare `StringLiteral` one it wrote before 1.174.
     fn bare_literal_registers(&mut self, rows: &Value) -> Vec<u32> {
+        let minor = self.minor;
         let Ok(rows) = self.list(rows) else {
             return Vec::new();
         };
@@ -192,8 +189,14 @@ impl Decoder {
             .filter_map(|row| {
                 let fields = self.record(row, "reg_type").ok()?;
                 let ty = self.field(fields, "type").ok()?;
-                if !matches!(&ty.kind, ValueKind::Atom(tag) if tag == "IntLiteral" || tag == "FloatLiteral")
-                {
+                let bare = match &ty.kind {
+                    ValueKind::Atom(tag) if tag == "IntLiteral" || tag == "FloatLiteral" => {
+                        minor < 172
+                    }
+                    ValueKind::Atom(tag) if tag == "StringLiteral" => minor < 174,
+                    _ => false,
+                };
+                if !bare {
                     return None;
                 }
                 let register = self.identity(self.field(fields, "reg").ok(), "%r")?;
@@ -1461,7 +1464,7 @@ pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
 }
 
 /// Give each register of `registers`, typed by a bare literal atom older
-/// than MIR 1.172, the literal type carrying the value of the `const`
+/// than MIR 1.172 (1.174 for `StringLiteral`), the literal type carrying the value of the `const`
 /// defining it; the registers no literal `const` defines.
 pub(super) fn upgrade_bare_literals(function: &mut MirFunction, registers: &[u32]) -> Vec<u32> {
     let mut undefined = Vec::new();
@@ -1489,6 +1492,10 @@ fn literal_definition(blocks: &[MirBlock], register: u32) -> Option<Ty> {
                 dest,
                 k: Const::FloatLiteral(value),
             } if dest.0 == register => Some(Ty::float_literal_of(value)),
+            MirInstr::Const {
+                dest,
+                k: Const::Str(text),
+            } if dest.0 == register => Some(Ty::string_literal_of(text)),
             _ => crate::mir::instruction_regions(instruction)
                 .into_iter()
                 .find_map(|region| literal_definition(region, register)),

@@ -2970,7 +2970,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Upstream declares both `TrivialRegisterPassable`, but the modelled
   conformance (`modelled_trivial_register_passable`, `mojito-types`) and
   the checker's `is_trivial_register_passable` answer no for
-  `TyKind::Pointer` and `TyKind::StringLiteral`.
+  `TyKind::Pointer` and a `StringLiteral[v]` application.
   - Probe: `conformance/probes/builtin_trivial_register_passable.mojo`.
     The pin prints `7 a`. Mojito says "type 'Pointer[Int, ...]' for
     parameter 'T' does not conform to trait 'TrivialRegisterPassable'", and
@@ -6932,9 +6932,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Since R1657 an element read (`names[i]`, `field_names()[i]`) is a
     `StaticString`, the `_kgen` application over the element's
     `!kgen.string`.
-  - The list itself is still `CtValue::Str` elements typed
-    `ParamList(value(StringLiteral))` (`ReflectQuery::meta`,
-    `ReflectQuery::answer`), where upstream's elements are `!kgen.string`.
+  - The list is typed `ParamList(value(!kgen.string))` as upstream's
+    `#kgen.struct_field_names` is (`ReflectQuery::meta`), but still holds
+    `CtValue::Str` literal values (`ReflectQuery::answer`), where
+    upstream's elements are `!kgen.string`.
+  - Probe: an element read in a generic body takes the `value` field of
+    a `!kgen.string`-typed node (`ParamContext::field` in the
+    `FieldNames` index arm of `reflection.rs`), which the closed list's
+    `StringLiteral` element answers once the elaborator binds `T`
+    (`assets/ok/reflection_field_name_materialize.mojo`); upstream reads
+    the element itself (found while landing R1861, 2026-11-06).
   - The whole list's type is `reflected_names_array_ty`'s `Array[String,
     N]`, and `reject_bound_list_crossing` spells it (`reflection.rs`).
   - Probe: `var a = materialize[names]()` then
@@ -10909,28 +10916,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1861 The value-less `TyKind::StringLiteral` still exists**
-
-  Upstream's `StringLiteral` type always carries its text, but Mojito
-  keeps a value-less variant and its consumers. A literal's own type is
-  the declared struct's application (`TyKind::string_literal_value`).
-  - The consumers: `Ty::string_literal()`/`TyKind::STRING_LITERAL`,
-    `coerces`'s (application, value-less) arm (`types.rs`),
-    `overload_support.rs`'s and `constraints.rs`'s arms, mangling
-    (`symbol.rs`), MIR text's bare `StringLiteral` (`write.rs`,
-    `parse/types.rs`), `ct::source_type`, the elaborator's
-    `ct_param_source_type` and `source_type_from_ty_with_origins`
-    (`comptime.rs`), and `ast::Type::ClosedStringLiteral`.
-  - This is the string half of R1849.
-  - Probe: the checker's last producer is a bare `StringLiteral`
-    annotation (`SourceType::ClosedStringLiteral` in
-    `type_resolution.rs`); a `+` beside it (`concatenated_literal`,
-    `checker/operators.rs`) and its compile-time `.value` (a field node,
-    `ParamContext::field`) follow from it.
-  - Done when `TyKind::StringLiteral` is deleted.
-  - Depends on R1858, R1859, R1860.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1862 A `StringLiteral[v]` register holds a 16-byte descriptor,
   where upstream's struct is empty**
 
@@ -10950,8 +10935,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `infer_instance_construction`, `call_inference.rs`), and MIR's
     `default_construction` writes the literal's text (`type_construction.rs`).
   - Lever: `Const::Str` of a literal application writes an empty struct,
-    and a conversion to the value-less type, `String`, or `StringSpan`
-    reads the text from the operand's closed type.
+    and a conversion to `String` or `StringSpan` reads the text from the operand's closed type.
   - Probe: `comptime template = StaticString(Self())` in
     `StringLiteral.format` fails to package the bundled library ("Undefined
     variable '__module$std$string$_FormatUtils'"), so the bundled body

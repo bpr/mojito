@@ -804,7 +804,7 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             }
         }
         Type::TypeOf(operand) | Type::Value(operand) => rewrite_expr(operand, subs),
-        Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
+        Type::None | Type::SelfType => {}
     }
 }
 
@@ -1941,12 +1941,10 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
     let Some(replacement) = subs(name) else {
         return;
     };
-    let (head, head_args) = match replacement {
-        Type::Named(head, head_args) => (head, head_args),
-        Type::ClosedStringLiteral => ("String".to_string(), Vec::new()),
-        // No source constructor head exists (function types, references);
-        // leave the call for the checker to report against the clone.
-        _ => return,
+    // No source constructor head exists (function types, references);
+    // leave the call for the checker to report against the clone.
+    let Type::Named(head, head_args) = replacement else {
+        return;
     };
     *name = head;
     let mut merged = head_args;
@@ -2060,7 +2058,6 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
         ));
     }
     let literal = match ty {
-        Type::ClosedStringLiteral => Some(ExprKind::Str(String::new())),
         Type::None => Some(ExprKind::None),
         _ => None,
     };

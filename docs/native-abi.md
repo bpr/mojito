@@ -250,7 +250,7 @@ Rules:
 
 ### Strings and the constant pool
 
-- A **string literal** (`TyKind::StringLiteral`) is the borrowed descriptor
+- A **string literal** (`StringLiteral[value]`) is the borrowed descriptor
   `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8, not
   NUL-terminated, never owned by the consumer. Literal bytes live in private
   constant globals named `mjstr_<n>` (an underscore — pliron identifiers

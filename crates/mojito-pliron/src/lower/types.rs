@@ -181,7 +181,6 @@ pub fn lower_ty(
         | TyKind::RuntimePack(_)
         | TyKind::LitRefPack { .. }
         | TyKind::Variant(_)
-        | TyKind::StringLiteral
         | TyKind::KgenString
         | TyKind::Func(_)
             if !ty.is_simd() =>

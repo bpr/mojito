@@ -5229,11 +5229,9 @@ keeps it under its template name. Its run-time value is still the
 compiler's `{ptr, len}` descriptor (R1862), so the struct rules that read
 fields, copies, and operator dunders (`as_non_simd_struct`,
 `MirDeclarations::field_types`, `builtin_copy_is_value_read`) leave it out,
-and `StringLiteral[v]()` is still built by rule. The value-less
-`TyKind::StringLiteral`, which upstream has no type for, still types
-the elaborator's placeholder writer and a `[s: StringLiteral]` binder's
-declared type (R1861), though its members are the struct's, never a
-compiler rule; a compile-time string's meta is the literal type of its
+and `StringLiteral[v]()` is still built by rule. There is no value-less
+string literal type: a literal's members are the struct's, never a
+compiler rule, a compile-time string's meta is the literal type of its
 text, and a bare run-time `s: StringLiteral` argument auto-parameterizes as
 `StringLiteral[_]` like any parametric struct, a `[text: String]` value
 parameter is a `String`, and a reflected name a `StaticString`. A source

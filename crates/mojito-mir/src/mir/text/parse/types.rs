@@ -13,7 +13,6 @@ impl Decoder {
                 "Int" => Ty::int(),
                 "UInt" => Ty::uint(),
                 "Bool" => Ty::bool(),
-                "StringLiteral" => Ty::string_literal(),
                 "Float64" => Ty::float64(),
                 "None" => Ty::none(),
                 "Never" => Ty::never(),
@@ -24,10 +23,18 @@ impl Decoder {
                 "FloatLiteral" if self.bare_literal_rows => {
                     Ty::float_literal_of(&mojito_common::literal::FloatLiteral::from_int(&0.into()))
                 }
+                "StringLiteral" if self.bare_literal_rows => Ty::string_literal_of(""),
                 "IntLiteral" | "FloatLiteral" => {
                     self.error(
                         value.span,
                         format!("a literal type `{tag}` carries its value since MIR 1.172"),
+                    );
+                    return None;
+                }
+                "StringLiteral" => {
+                    self.error(
+                        value.span,
+                        "a literal type `StringLiteral` carries its text since MIR 1.174",
                     );
                     return None;
                 }

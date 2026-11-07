@@ -1468,7 +1468,6 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // `SIMD[DType.int32, 4]`), not as a struct's arguments.
         kind if kind.is_simd() => kind.to_string(),
         kind if kind.is_bool() => "Bool".to_string(),
-        TyKind::StringLiteral => "StringLiteral".to_string(),
         // A literal's application spells its text as an instance argument.
         kind if let Some(value) = kind.string_literal_value() => format!(
             "{}$V{value}",
@@ -1733,7 +1732,6 @@ fn ast_raw(
                 ast_raw(&vector, comptimes, type_bounds, None)
             );
         }
-        Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             // Mirror `ty_raw`: the nominal String annotation mangles as the
@@ -2021,7 +2019,6 @@ fn annotation_display(
     scope: &HashMap<String, BinderSpelling>,
 ) -> String {
     match ty {
-        Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args)
             if args.is_empty()

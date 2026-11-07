@@ -4274,6 +4274,46 @@ fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
     ));
 }
 
+/// A register row older than MIR 1.174 may spell a string literal
+/// register's type as the bare `StringLiteral` atom, which reads as the
+/// literal type carrying the text of the `string` `const` defining it; from
+/// 1.174 the bare atom is rejected.
+#[test]
+fn a_bare_string_literal_register_type_reads_from_its_const_before_1_174() {
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::string_literal_of("ab")],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::Str("ab".to_string()),
+            }],
+        ),
+    )]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let spelled =
+        "struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string(\"ab\"))] }";
+    let text = write::program(&program);
+    assert!(text.contains(spelled));
+    let bare = text.replacen(spelled, "StringLiteral", 1);
+    let older = bare.replacen(&current, "mojito-mir 1.173", 1);
+    let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("the text reads");
+    let (_, function) = parsed.program.functions.into_iter().next().expect("main");
+    assert_eq!(
+        function.reg_types.get(&0),
+        Some(&Ty::string_literal_of("ab"))
+    );
+    let error = artifact(bare.as_bytes(), "unit.mir".to_string())
+        .err()
+        .expect("a bare string literal type is rejected at the current minor");
+    assert!(
+        error.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("carries its text since MIR 1.174")),
+        "{error:?}"
+    );
+}
+
 /// A register row older than MIR 1.172 may spell a literal register's
 /// type as the bare `IntLiteral` atom, which reads as the literal type
 /// carrying the value of the `const` defining it; from 1.172 the bare

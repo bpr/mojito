@@ -365,13 +365,10 @@ impl Checker {
         let result = match op {
             // Two literals concatenate through `StringLiteral.__add__`, except
             // in an unlinked program (a phase test's), whose two texts
-            // concatenate here as the declared dunder's `#pop.string_concat`,
-            // and beside the value-less `StringLiteral`, which declares no
-            // members.
+            // concatenate here as the declared dunder's `#pop.string_concat`.
             Add if lt.is_string_literal()
                 && rt.is_string_literal()
-                && !(rt.kind().string_literal_value().is_some()
-                    && self.declared_receiver_member(&lt, "__add__").is_some()) =>
+                && self.declared_receiver_member(&lt, "__add__").is_none() =>
             {
                 Some(self.concatenated_literal(&lt, &rt)?)
             }
@@ -383,8 +380,7 @@ impl Checker {
             // scalars (`None`, and a `Bool` in an unlinked program, which
             // declares no `Bool`). A string literal compares through
             // `StringLiteral`'s dunders, except in an unlinked program (a
-            // phase test's) or for the value-less `StringLiteral`, neither
-            // of which declares them.
+            // phase test's), which declares none.
             Eq | Ne
                 if common.is_some()
                     || numeric_literals(&lt, &rt)
@@ -884,14 +880,15 @@ impl Checker {
 
     /// `StringLiteral[#pop.string_concat<l, r>]` over the two literals'
     /// `value` slots, as upstream's `StringLiteral.__add__` types its
-    /// result; closed slots fold to the concatenated text. Beside the
-    /// value-less `StringLiteral`, which has no slot, the value-less type.
+    /// result; closed slots fold to the concatenated text.
     fn concatenated_literal(&self, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
         let (Some(left), Some(right)) = (
             lt.kind().string_literal_value(),
             rt.kind().string_literal_value(),
         ) else {
-            return Ok(Ty::string_literal());
+            return Err(TypeError::InvariantViolation(format!(
+                "'{lt} + {rt}' concatenates no two string literals"
+            )));
         };
         let context = &self.param_context;
         let slot = |value: &CtValue| context.constant(value.clone());

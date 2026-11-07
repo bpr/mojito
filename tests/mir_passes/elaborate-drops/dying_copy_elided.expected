@@ -41,7 +41,7 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("copy"))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 164, end: 170, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 172, end: 179, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 158, end: 180, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 199, end: 206, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 199, end: 206, origin: present($v1) }) }],
         blocks: [
           bb0 {
@@ -72,7 +72,7 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("del"))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 252, end: 257, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 259, end: 266, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 246, end: 267, origin: absent }) }],
         blocks: [
           bb0 {

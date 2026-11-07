@@ -399,7 +399,7 @@ mod tests {
         });
         assert!(accepts_arg(CType::Int, &int32));
         assert!(accepts_arg(CType::Int, &Ty::int()));
-        assert!(!accepts_arg(CType::Int, &Ty::string_literal()));
+        assert!(!accepts_arg(CType::Int, &Ty::string_literal_of("s")));
         assert!(accepts_arg(CType::ConstCharPtr, &byte_ptr));
         assert!(accepts_arg(
             CType::ConstCharPtr,

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The value-less `StringLiteral` type is gone: every string literal's
+  type carries its text, as upstream's `StringLiteral[value]` does, so a
+  literal no longer coerces to a text-less literal type and a reflected
+  field-name list is typed by upstream's `!kgen.string` elements. MIR text
+  1.174 drops the bare `StringLiteral` register type, reading an older
+  one from the `string` `const` defining it, and the package format moves
+  to `mojito-package 197` (R1861).
 - The checker no longer types an untyped compile-time string by the
   value-less `StringLiteral`: a literal's compile-time `.value` reads its
   type's `value` parameter, an unlinked program's literal `+` is

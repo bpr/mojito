@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 173;
+pub const VERSION_MINOR: u16 = 174;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -504,7 +504,6 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         kind if kind.is_int() => "Int",
         kind if kind.is_uint() => "UInt",
         kind if kind.is_bool() => "Bool",
-        TyKind::StringLiteral => "StringLiteral",
         kind if kind.is_string_literal() => "StringLiteral",
         kind if kind.is_float64() => "Float64",
         kind if kind.is_int_literal() => "IntLiteral",

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.173
+mojito-mir 1.174
 ```
 
-The writer emits 1.173. The reader accepts 1.0 through 1.173; *Schema 1.0*
+The writer emits 1.174. The reader accepts 1.0 through 1.174; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -888,7 +888,7 @@ Schema 1.134 types a string literal by its text: a literal register is
 spelled as the application `struct_type { name: StringLiteral, arguments:
 [value_arg(ct_kgen_string("ab"))] }`, which the reader bridges back to the
 literal type, and a symbolic text as its `ct_expr`. The value-less
-`StringLiteral` keeps its atom. The package format moves to
+`StringLiteral` kept its atom until 1.174. The package format moves to
 `mojito-package 147`.
 
 Schema 1.135 gives a `KgenString` a run-time form: a register, slot,
@@ -1147,6 +1147,16 @@ Schema 1.163 removes the instructions `variant.set_init_with` and
 and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
+
+Schema 1.174 removes the value-less `StringLiteral` atom (R1861): a
+string literal's type always carries its text, as upstream's
+`StringLiteral[value]` does, so every literal register is the
+`struct_type` application 1.134 introduced, and the reader rejects a bare
+atom. An older artifact's register row may still spell one; the reader
+gives that register the text of the `string` `const` defining it, as 1.172
+does a numeric literal's, and rejects a bare row no such `const` defines.
+The compiler's type encoding loses the value-less variant, so the package
+format moves to `mojito-package 197`.
 
 Schema 1.173 adds `checked_construct`'s optional `parameter` field
 (R1964): the constructor parameter a converted default's numeric literal
@@ -1789,7 +1799,7 @@ read back, a pack element and a reflection query included.
 The complete `Ty` tag set is:
 
 ```text
-Int UInt Bool StringLiteral Float64 None Never Infer
+Int UInt Bool Float64 None Never Infer
 DType Self Error
 func { environment, params, names, return_type, required, variadic,
        kw_variadic, positional_only, keyword_only, raises, error_type,

@@ -117,7 +117,7 @@ artifact {
         raises: true,
         error_type: present(Error),
         error_slot: $v1,
-        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: StringLiteral }, reg_type { reg: %r2, type: Error }],
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("boom"))] } }, reg_type { reg: %r2, type: Error }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 581, end: 582, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 604, end: 610, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 598, end: 611, origin: absent }) }],
         blocks: [
           bb0 {

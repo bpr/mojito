@@ -55,7 +55,7 @@ impl Checker {
             return self.infer_raw_optional_method(site).map(Some);
         }
         // `x.write_to(writer)` on an intrinsic Writable receiver with no
-        // declared `write_to` (`DType`, a value-less literal register) is
+        // declared `write_to` (`DType`) is
         // `writer.write(x)`: the checker records the operand swap and MIR
         // lowers the host-formatted `Writer.write` shape. Every struct, a
         // `SIMD` or valued literal whose members are declared, and a

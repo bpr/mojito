@@ -251,7 +251,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
     };
     // StringLiteral lowers to the MjStrDesc descriptor.
     assert_eq!(
-        cx.layout_of(&Ty::string_literal()),
+        cx.layout_of(&Ty::string_literal_of("s")),
         Ok(Layout::new(
             size_of::<mojito_runtime::MjStrDesc>() as u64,
             align_of::<mojito_runtime::MjStrDesc>() as u64

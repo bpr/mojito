@@ -56,7 +56,7 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("del"))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 143, end: 148, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 150, end: 157, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 137, end: 158, origin: absent }) }],
         blocks: [
           bb0 {
@@ -84,7 +84,7 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: None }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("boom"))] } }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: None }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 30, end: 36, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 24, end: 37, origin: absent }) }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {

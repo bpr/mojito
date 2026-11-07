@@ -132,13 +132,6 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
 /// runtime semantics are not yet supported.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
-    /// The closed type of one string literal, `StringLiteral[value]` at the
-    /// pin, whose value Mojito does not track. The elaborator spells a binder
-    /// bound to an inferred literal's type with it (a pack element
-    /// `"two"` binds), so the annotation it substitutes stays concrete where
-    /// the bare struct name `StringLiteral` would not. The parser never
-    /// constructs it.
-    ClosedStringLiteral,
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
     /// arguments (`Point` is `Named("Point", [])`, `Pair[Int]` is
@@ -3135,7 +3128,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.expr(clause);
                     }
                 }
-                Type::ClosedStringLiteral | Type::None | Type::SelfParam(_) | Type::SelfType => {}
+                Type::None | Type::SelfParam(_) | Type::SelfType => {}
             }
         }
 

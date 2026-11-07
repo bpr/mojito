@@ -480,7 +480,6 @@ impl Checker {
             return Ok(reflected);
         }
         Ok(match ty {
-            SourceType::ClosedStringLiteral => Ty::string_literal(),
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::None => Ty::none(),
             SourceType::Generator { params, result } => self.generator_type(params, result)?,
@@ -4831,8 +4830,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         kind if kind.is_string_literal() || kind.is_numeric_literal() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::StringLiteral
-        | TyKind::None
+        TyKind::None
         | TyKind::Never
         | TyKind::Dtype
         | TyKind::AnyTrait(_)

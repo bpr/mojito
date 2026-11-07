@@ -316,8 +316,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
         || ty.is_numeric_literal()
         || matches!(
             ty.kind(),
-            TyKind::StringLiteral
-                | TyKind::None
+            TyKind::None
                 | TyKind::Dtype
                 | TyKind::Index
                 | TyKind::I1

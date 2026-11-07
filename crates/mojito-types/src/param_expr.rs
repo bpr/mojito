@@ -830,8 +830,8 @@ impl ParamContext {
     /// struct extract on a parameter attribute. A constant base folds to its
     /// field; `meta` is the field's declared type. A literal's `value` is
     /// its type's `value` parameter (`"ab".value` is `StringLiteral["ab"]`'s
-    /// `!kgen.string`), and a value-less `StringLiteral`'s (`s.value` over
-    /// `s: StringLiteral`) the field node each instance closes.
+    /// `!kgen.string`), and a symbolic literal's (`s.value` over
+    /// `s: StringLiteral[_]`) the field node each instance closes.
     pub fn field(
         &self,
         base: &ParamExpr,
@@ -2781,8 +2781,8 @@ impl ParamContext {
         }
         let value = match (&declared, value.as_constant()) {
             // A compile-time string bound to a `StringLiteral[v]` parameter
-            // is its literal, whose value-less type the binding of `v`
-            // keys (R1659).
+            // is its literal, whose type carries the text the binding of
+            // `v` keys.
             (MetaTy::Value(ty), Some(CtValue::Str(_)))
                 if ty.is_string_literal()
                     && value.meta().as_value().is_some_and(Ty::is_string_literal) =>
@@ -4304,7 +4304,9 @@ impl ReflectQuery {
             Self::IsStruct => MetaTy::bool(),
             Self::FieldCount | Self::FieldIndex(_) => MetaTy::int(),
             Self::FieldTypes => MetaTy::type_list(),
-            Self::FieldNames => MetaTy::ParamList(Box::new(MetaTy::value(Ty::string_literal()))),
+            Self::FieldNames => {
+                MetaTy::ParamList(Box::new(MetaTy::value(TyKind::KgenString.into())))
+            }
             Self::FieldNamed(_) => MetaTy::Type,
             Self::TypeName(_) => MetaTy::value(TyKind::KgenString.into()),
         }

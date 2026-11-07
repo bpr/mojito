@@ -1157,8 +1157,7 @@ impl Checker {
     /// probe, as upstream emits it into a block it then erases). A trait or a
     /// trait composition gives the trait metatype. A literal's type carries
     /// its value (`IntLiteral[4]`, `StringLiteral["ab"]`). A type operand's
-    /// metatype and a value-less literal type have no `Ty` upstream, so each
-    /// is rejected. In a signature the operand reads the parameters
+    /// metatype has no `Ty` upstream, so it is rejected. In a signature the operand reads the parameters
     /// declared before it ([`Self::in_signature_scope`]).
     pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
         if let Some(traits) = self.trait_value(operand) {
@@ -1186,17 +1185,11 @@ impl Checker {
         let depth = self.annotation_depth.replace(0);
         let typed = self.probe(|| self.infer(operand));
         self.annotation_depth.set(depth);
-        let ty = typed?;
         // A literal's type carries its value: `type_of("ab")` is
         // `StringLiteral["ab"]`, `type_of(N + 2.5)` over `comptime N = 4`
         // `FloatLiteral[6.5]`, and `type_of(M)` over `comptime M: Int = 4`
         // the `Int` it materialized as.
-        if matches!(ty.kind(), TyKind::StringLiteral) {
-            return Err(TypeError::Unsupported(
-                "'type_of' of a literal value is not supported yet".to_string(),
-            ));
-        }
-        Ok(ty)
+        typed
     }
 
     /// A type comparison read as a value (`print(T == Int)`, `comptime b =

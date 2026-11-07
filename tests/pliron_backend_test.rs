@@ -1293,7 +1293,7 @@ mod native_abi_cross_checks {
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
                     }
-                    TyKind::StringLiteral => {
+                    kind if kind.is_string_literal() => {
                         let ptr = LLVMPointerTypeInContext(self.ctx, 0);
                         let len = LLVMInt64TypeInContext(self.ctx);
                         self.strukt(&[ptr, len])
@@ -1419,7 +1419,7 @@ mod native_abi_cross_checks {
                 vec![
                     Ty::float64(),
                     Ty::bool(),
-                    Ty::string_literal(),
+                    Ty::string_literal_of("s"),
                     TyKind::Struct("Outer".to_string(), vec![]).into(),
                 ],
             ),
@@ -1451,7 +1451,7 @@ mod native_abi_cross_checks {
             Ty::uint(),
             Ty::bool(),
             Ty::float64(),
-            Ty::string_literal(),
+            Ty::string_literal_of("s"),
             Ty::error(),
             TyKind::Struct("Outer".to_string(), vec![]).into(),
         ];

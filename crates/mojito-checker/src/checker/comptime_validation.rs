@@ -511,14 +511,6 @@ pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> 
     ))
 }
 
-/// The rejection of `s.value` over a value-less `StringLiteral` (the
-/// elaborator's placeholder, R1659), whose text no type carries.
-pub(super) fn value_less_literal_value() -> TypeError {
-    TypeError::Unsupported(
-        "the 'value' of a value-less 'StringLiteral' is not supported".to_string(),
-    )
-}
-
 /// The value and type of the attribute `` __mlir_attr.`text` ``.
 ///
 /// An untyped attribute is upstream's `!kgen.deferred` constant
@@ -1786,9 +1778,7 @@ impl Checker {
                         return None;
                     };
                     let param = param.ty.resolved(Some(ty))?;
-                    if *param == *source
-                        || *param == mojito_types::types::value_less_literal(source)
-                    {
+                    if *param == *source {
                         return Some(Vec::new());
                     }
                     let decls = &function.signature.as_ref()?.decls;
@@ -3358,10 +3348,9 @@ impl Checker {
 
     /// The conversion cost of applying the compile-time `value` at a slot of
     /// type `ty`, as [`Self::applied_value`] applies it: none for a value
-    /// of the slot's type or of the literal type naming it.
+    /// of the slot's type.
     fn applied_conversions(&self, value: &CtValue, ty: &Ty) -> usize {
         self.ct_value_ty(value, ty)
-            .filter(|source| *source != mojito_types::types::value_less_literal(ty))
             .map_or(0, |source| overload_support::conversion_count(&source, ty))
     }
 
@@ -3466,13 +3455,7 @@ impl Checker {
                 .materialize_as(ty)
                 .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        // A string constant's value type is the value-less `StringLiteral`,
-        // which the literal type carrying its text names (R1659).
-        if let Some(argument) = argument.filter(|argument| {
-            argument.meta().as_value().is_some_and(|found| {
-                found == ty || *found == mojito_types::types::value_less_literal(ty)
-            })
-        }) {
+        if let Some(argument) = argument.filter(|argument| argument.meta().as_value() == Some(ty)) {
             return Some(argument);
         }
         let source = self.ct_value_ty(&value, ty).filter(|source| source != ty)?;
@@ -6150,7 +6133,6 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8
-                | TyKind::StringLiteral
                 | TyKind::Dtype
                 | TyKind::KgenDtype
                 | TyKind::Struct(..)

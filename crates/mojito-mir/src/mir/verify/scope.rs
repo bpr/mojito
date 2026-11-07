@@ -658,8 +658,7 @@ impl ScopeCx<'_> {
                 self.walk_in(role, element, nested);
             }
             TyKind::Ref(reference) => self.walk_in(role, &reference.referent, nested),
-            TyKind::StringLiteral
-            | TyKind::None
+            TyKind::None
             | TyKind::Never
             | TyKind::Infer
             | TyKind::Dtype

@@ -166,10 +166,11 @@ struct Decoder {
     /// 1.108, whose error the `try` it names, or the function, takes in no
     /// slot yet.
     legacy_raises: bool,
-    /// Whether the register rows of a function older than MIR 1.172 are
-    /// being read, whose numeric literal register types may be the bare
-    /// `IntLiteral`/`FloatLiteral` atom: [`instrs::upgrade_bare_literals`]
-    /// gives each the value of the `const` defining it.
+    /// Whether the register rows of a function older than MIR 1.172 (1.174
+    /// for a string literal) are being read, whose literal register types
+    /// may be the bare `IntLiteral`/`FloatLiteral` (`StringLiteral`) atom:
+    /// [`instrs::upgrade_bare_literals`] gives each the value of the
+    /// `const` defining it.
     bare_literal_rows: bool,
     /// The schema minor the header names: a `value_param` of a pack older
     /// than MIR 1.113 carries its element, not the list it binds.

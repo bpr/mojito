@@ -410,7 +410,10 @@ mod tests {
 
     #[test]
     fn descriptor_error_and_pointer_layouts() {
-        assert_eq!(layout_of(&Ty::string_literal()), Ok(Layout::new(16, 8)));
+        assert_eq!(
+            layout_of(&Ty::string_literal_of("s")),
+            Ok(Layout::new(16, 8))
+        );
         assert_eq!(layout_of(&Ty::error()), Ok(Layout::new(24, 8)));
         let pointer = Ty::new(TyKind::Pointer {
             element: Ty::int(),
@@ -419,7 +422,7 @@ mod tests {
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
         // A reference pack is one address per element, whatever each holds.
         let pack = Ty::new(TyKind::LitRefPack {
-            elements: vec![Ty::bool(), Ty::string_literal(), Ty::int()],
+            elements: vec![Ty::bool(), Ty::string_literal_of("s"), Ty::int()],
             origin: PointerOrigin::Static,
         });
         assert_eq!(layout_of(&pack), Ok(Layout::new(24, 8)));

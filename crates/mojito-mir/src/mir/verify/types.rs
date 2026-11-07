@@ -28,7 +28,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         return true;
     }
     // Every string literal is one held descriptor whatever its text, which
-    // the checker owns, value-less or still a parameter.
+    // the checker owns.
     if found.is_string_literal() && expected.is_string_literal() {
         return true;
     }

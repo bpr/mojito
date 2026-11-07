@@ -1989,15 +1989,6 @@ impl Checker {
                 return Ok(ty);
             }
         }
-        // The value-less string's type carries no `value` parameter to read.
-        if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-            && matches!(obj_ty.kind(), TyKind::StringLiteral)
-        {
-            if self.crosses_to_runtime() {
-                return Err(super::comptime_validation::value_less_literal_value());
-            }
-            return Ok(TyKind::KgenString.into());
-        }
         Err(TypeError::NoSuchField {
             object_type: obj_ty.to_string(),
             field: field.to_string(),

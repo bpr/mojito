@@ -1758,13 +1758,11 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
         // A string literal's type is the closed application of the declared
-        // struct, `StringLiteral["text".value]`; a value-less one keeps the
-        // elaborator's closed spelling.
+        // struct, `StringLiteral["text".value]`.
         kind if let Some(value) = kind.string_literal_value() => Type::Named(
             "StringLiteral".to_string(),
             vec![ParamArg::Value(value.materialize(span)?)],
         ),
-        TyKind::StringLiteral => Type::ClosedStringLiteral,
         kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),

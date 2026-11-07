@@ -593,12 +593,6 @@ impl fmt::Display for LaneMask {
 /// lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
-    /// The value-less compiler string upstream has no type for: an untyped
-    /// compile-time string, or a run-time register whose text its type
-    /// does not carry. A string literal's own type, upstream's
-    /// `StringLiteral[value]`, is the declared struct's
-    /// [`TyKind::Struct`] ([`TyKind::string_literal_value`]).
-    StringLiteral,
     None,
     /// Bottom type: no runtime value can inhabit it.
     Never,
@@ -868,32 +862,11 @@ macro_rules! dataless_types {
             fn dataless(kind: &TyKind) -> Option<Self> {
                 match kind {
                     $(TyKind::$variant => Some(Self::$name()),)*
-                    TyKind::StringLiteral => Some(Self::string_literal()),
                     _ => None,
                 }
             }
         }
     };
-}
-
-macro_rules! shared_scalar_types {
-    ($($(#[$doc:meta])* $name:ident => $kind:ident),* $(,)?) => {
-        impl Ty {
-            $(
-                $(#[$doc])*
-                pub fn $name() -> Self {
-                    static TY: LazyLock<Ty> =
-                        LazyLock::new(|| Ty(Arc::new(TyNode::new(TyKind::$kind.clone()))));
-                    TY.clone()
-                }
-            )*
-        }
-    };
-}
-
-shared_scalar_types! {
-    /// The value-less `StringLiteral` ([`TyKind::StringLiteral`]).
-    string_literal => STRING_LITERAL,
 }
 
 impl Ty {
@@ -972,7 +945,7 @@ impl Ty {
         ))
     }
 
-    /// Whether this is a string literal's type, value-less or not.
+    /// Whether this is a string literal's type, `StringLiteral[value]`.
     pub fn is_string_literal(&self) -> bool {
         self.kind().is_string_literal()
     }
@@ -1143,9 +1116,6 @@ impl Ty {
 }
 
 impl TyKind {
-    /// The value-less `StringLiteral` ([`TyKind::StringLiteral`]).
-    pub const STRING_LITERAL: &'static Self = &Self::StringLiteral;
-
     /// Whether this is `Bool`, the struct `std.builtin.bool` declares.
     pub fn is_bool(&self) -> bool {
         matches!(self, Self::Struct(name, args) if name == BOOL_TYPE_NAME && args.is_empty())
@@ -1212,15 +1182,15 @@ impl TyKind {
         }
     }
 
-    /// Whether this is a string literal's type, value-less or not.
+    /// Whether this is a string literal's type, `StringLiteral[value]`.
     pub fn is_string_literal(&self) -> bool {
-        matches!(self, Self::StringLiteral) || self.string_literal_value().is_some()
+        self.string_literal_value().is_some()
     }
 
     /// The `value` argument of a `StringLiteral[value]` application whose
     /// slot is a string: a known [`CtValue::KgenString`] or a symbolic
     /// `!kgen.string` [`CtValue::Expr`]. A bare, erased, or deferred
-    /// application answers `None`, as does the value-less type.
+    /// application answers `None`.
     pub fn string_literal_value(&self) -> Option<&CtValue> {
         match self {
             Self::Struct(name, args) if name == STRING_LITERAL_TYPE_NAME => match args.as_slice() {
@@ -3586,7 +3556,6 @@ impl fmt::Display for TyKind {
             return write!(f, "FloatLiteral[{}]", value.pop_attribute_spelling());
         }
         match self {
-            Self::StringLiteral => write!(f, "StringLiteral"),
             Self::Infer => write!(f, "_"),
             Self::Dtype => write!(f, "DType"),
             Self::None => write!(f, "None"),
@@ -4296,9 +4265,7 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// The declared struct `ty` is an instance of, and its arguments.
 ///
 /// A struct application answers its own name and arguments, a literal's
-/// (`StringLiteral[value]`, `IntLiteral[value]`) included. The value-less
-/// `StringLiteral` is no instance: it materializes only where a conversion
-/// asks for it.
+/// (`StringLiteral[value]`, `IntLiteral[value]`) included.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
@@ -4372,15 +4339,6 @@ pub fn int_literal_as_float(actual: &Ty) -> Option<CtValue> {
         .kind()
         .int_literal_value()
         .map(|value| CtValue::PopFloatLiteral(FloatLiteral::from_int(value)))
-}
-
-/// The value-less `StringLiteral` of a string literal type that carries
-/// its text; any other type as it is.
-pub fn value_less_literal(ty: &Ty) -> Ty {
-    match ty.kind() {
-        kind if kind.string_literal_value().is_some() => Ty::string_literal(),
-        _ => ty.clone(),
-    }
 }
 
 /// The runtime type an exact literal materializes to when no context selects
@@ -4460,9 +4418,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     _ => false,
                 })
         }
-        // A literal whose type carries its text is still the compiler's
-        // value-less string (R1659).
-        (actual, TyKind::StringLiteral) if actual.string_literal_value().is_some() => true,
         (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         // A generator value converts as a generator argument does, but its
         // type spells its binders, so their names must agree too.
@@ -5686,8 +5641,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             let vector = rewrite_ty(&simd_node(dtype.clone(), width.clone()), rewrite)?;
             simd_storage(&vector).unwrap_or(vector)
         }
-        TyKind::StringLiteral
-        | TyKind::None
+        TyKind::None
         | TyKind::Never
         | TyKind::Infer
         | TyKind::Dtype
@@ -6303,7 +6257,6 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::I1
         | TyKind::Ui8
         | TyKind::KgenDtype
-        | TyKind::StringLiteral
         | TyKind::None
         | TyKind::Never
         | TyKind::Error => false,
@@ -7735,7 +7688,7 @@ mod collection_representation_tests {
         for ty in [
             runtime_list.clone(),
             set_type(Ty::int()),
-            dict_type(Ty::string_literal(), Ty::int()),
+            dict_type(Ty::string_literal_of("k"), Ty::int()),
             range_type(),
         ] {
             assert!(matches!(ty.kind(), TyKind::Struct(..)), "got {ty:?}");
@@ -8258,11 +8211,10 @@ mod string_literal_application_tests {
     }
 
     #[test]
-    fn a_literal_coerces_to_the_value_less_literal_not_another_text() {
+    fn a_literal_coerces_to_its_own_text_only() {
         let ab = Ty::string_literal_of("ab");
-        assert!(coerces(&ab, &Ty::string_literal()));
+        assert!(coerces(&ab, &Ty::string_literal_of("ab")));
         assert!(!coerces(&ab, &Ty::string_literal_of("cd")));
-        assert_eq!(value_less_literal(&ab), Ty::string_literal());
     }
 
     #[test]

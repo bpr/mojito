@@ -646,7 +646,6 @@ impl Checker {
     pub(super) fn materialization_target(&self, ty: &Ty) -> Option<Ty> {
         let name = match ty.kind() {
             TyKind::Struct(name, _) => name.as_str(),
-            TyKind::StringLiteral => mojito_types::types::STRING_LITERAL_TYPE_NAME,
             _ => return None,
         };
         let target = self.structs.get(name)?.materializes_to.clone()?;

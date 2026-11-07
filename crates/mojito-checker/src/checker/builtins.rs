@@ -43,8 +43,7 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
         kind if kind.is_simd() => true,
-        TyKind::StringLiteral
-        | TyKind::None
+        TyKind::None
         | TyKind::Struct(_, _)
         | TyKind::Dtype
         | TyKind::Error

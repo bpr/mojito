@@ -352,7 +352,7 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // binder.
         Type::TypeOf(_) => {}
         Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
-        Type::ClosedStringLiteral | Type::None | Type::SelfType => {}
+        Type::None | Type::SelfType => {}
     }
 }
 
@@ -423,7 +423,6 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
-        Type::ClosedStringLiteral => Some(Ty::string_literal()),
         Type::None => Some(Ty::none()),
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
         Type::TypeOf(operand) => any_trait_source_type(operand),
@@ -477,7 +476,6 @@ fn source_type_from_ty_with_origins(
             mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string(),
             vec![ParamArg::Value(value.materialize((0, 0))?)],
         ),
-        TyKind::StringLiteral => Type::ClosedStringLiteral,
         kind if kind.is_float64() || kind.is_float_literal() => {
             Type::Named("Float64".to_string(), Vec::new())
         }

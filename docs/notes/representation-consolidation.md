@@ -128,10 +128,9 @@ command cannot use both.
      move their construction and member rules onto those structs. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
    - `StringLiteral`: R1858 landed (the elaborator fills no unsolved
      binder), and R1859 landed (a `[s: StringLiteral]` parameter is the
-     auto-parameterized application);
-     R1860 → R1861 → R1862 delete the
-     value-less type and its descriptor. R1863, R1864, and R1865 are
-     independent.
+     auto-parameterized application). R1860 and R1861 landed: the
+     value-less type is deleted, and R1862 deletes its descriptor.
+     R1863, R1864, and R1865 are independent.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1843 --task R1837 --task R1836 \
