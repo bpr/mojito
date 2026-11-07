@@ -93,6 +93,14 @@ pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
         )
 }
 
+/// Whether a shallow read of `ty` aliases owned storage, as drop
+/// elaboration judges it: [`may_alias_owned_storage`] less the trivially
+/// register-passable types ([`MirDeclarations::copy_is_identity`]), which
+/// own no storage, so upstream loads a `read` of one at call setup.
+pub(super) fn aliases_owned_storage(ty: &Ty, declarations: &MirDeclarations) -> bool {
+    may_alias_owned_storage(ty) && !declarations.copy_is_identity(ty)
+}
+
 /// The parts of roots one instruction consumes through its operand
 /// registers, each the part the register's source place reached
 /// ([`DropValues::access`]).
@@ -164,7 +172,13 @@ impl<'a> ArgumentPassing<'a> {
                         kwarg_places,
                         spread: *spread,
                     };
-                    arguments_by_value(&arguments, &callee.contract(), 0, &mut loaded);
+                    arguments_by_value(
+                        self.declarations,
+                        &arguments,
+                        &callee.contract(),
+                        0,
+                        &mut loaded,
+                    );
                     loaded
                 })
                 .unwrap_or_default(),
@@ -194,7 +208,13 @@ impl<'a> ArgumentPassing<'a> {
                 .map(|callee| {
                     let mut loaded = Vec::new();
                     if recv_place.is_none() {
-                        callee_receiver_by_value(callee, *recv, register_types, &mut loaded);
+                        callee_receiver_by_value(
+                            self.declarations,
+                            callee,
+                            *recv,
+                            register_types,
+                            &mut loaded,
+                        );
                     }
                     let arguments = CallArguments {
                         args,
@@ -203,7 +223,13 @@ impl<'a> ArgumentPassing<'a> {
                         kwarg_places,
                         spread: *spread,
                     };
-                    arguments_by_value(&arguments, &callee.contract(), 1, &mut loaded);
+                    arguments_by_value(
+                        self.declarations,
+                        &arguments,
+                        &callee.contract(),
+                        1,
+                        &mut loaded,
+                    );
                     loaded
                 })
                 .unwrap_or_default(),
@@ -223,12 +249,24 @@ impl<'a> ArgumentPassing<'a> {
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                callee_receiver_by_value(callee, *a, register_types, &mut loaded);
+                callee_receiver_by_value(
+                    self.declarations,
+                    callee,
+                    *a,
+                    register_types,
+                    &mut loaded,
+                );
                 let arguments = CallArguments {
                     args: std::slice::from_ref(b),
                     ..CallArguments::default()
                 };
-                arguments_by_value(&arguments, &callee.contract(), 1, &mut loaded);
+                arguments_by_value(
+                    self.declarations,
+                    &arguments,
+                    &callee.contract(),
+                    1,
+                    &mut loaded,
+                );
                 loaded
             })
             .unwrap_or_default(),
@@ -257,12 +295,24 @@ impl<'a> ArgumentPassing<'a> {
                 if let Some(mojito_types::types::TyKind::Func(function)) =
                     contract.map(mojito_types::types::Ty::kind)
                 {
-                    arguments_by_value(&arguments, &function.as_ref().into(), 0, &mut loaded);
+                    arguments_by_value(
+                        self.declarations,
+                        &arguments,
+                        &function.as_ref().into(),
+                        0,
+                        &mut loaded,
+                    );
                 } else if let Some(declaration) = resolved
                     .as_deref()
                     .and_then(|name| self.declarations.function(name))
                 {
-                    arguments_by_value(&arguments, &declaration.into(), 1, &mut loaded);
+                    arguments_by_value(
+                        self.declarations,
+                        &arguments,
+                        &declaration.into(),
+                        1,
+                        &mut loaded,
+                    );
                 }
                 loaded
             }
@@ -282,9 +332,17 @@ impl<'a> ArgumentPassing<'a> {
             .map(|callee| {
                 let mut loaded = Vec::new();
                 if base_place.is_none() {
-                    callee_receiver_by_value(callee, *base, register_types, &mut loaded);
+                    callee_receiver_by_value(
+                        self.declarations,
+                        callee,
+                        *base,
+                        register_types,
+                        &mut loaded,
+                    );
                 }
-                if index_place.is_none() && loads_positional(&callee.contract(), 0) {
+                if index_place.is_none()
+                    && loads_positional(self.declarations, &callee.contract(), 0)
+                {
                     loaded.push((index.0, 1));
                 }
                 loaded
@@ -306,9 +364,21 @@ impl<'a> ArgumentPassing<'a> {
             .map(|callee| {
                 let mut loaded = Vec::new();
                 if object_place.is_none() {
-                    callee_receiver_by_value(callee, *object, register_types, &mut loaded);
+                    callee_receiver_by_value(
+                        self.declarations,
+                        callee,
+                        *object,
+                        register_types,
+                        &mut loaded,
+                    );
                 }
-                subscript_indices_loaded(&callee.contract(), args, arg_places, &mut loaded);
+                subscript_indices_loaded(
+                    self.declarations,
+                    &callee.contract(),
+                    args,
+                    arg_places,
+                    &mut loaded,
+                );
                 loaded
             })
             .unwrap_or_default(),
@@ -330,7 +400,13 @@ impl<'a> ArgumentPassing<'a> {
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                subscript_indices_loaded(&callee.contract(), args, arg_places, &mut loaded);
+                subscript_indices_loaded(
+                    self.declarations,
+                    &callee.contract(),
+                    args,
+                    arg_places,
+                    &mut loaded,
+                );
                 loaded
             })
             .unwrap_or_default(),
@@ -436,6 +512,7 @@ impl DropFacts {
             reg_types: &f.reg_types,
             values,
             ends: &ends,
+            declarations,
             exits,
         };
         let mut observer = DropFactsObserver {
@@ -610,6 +687,7 @@ impl RegisterLoanStep {
         register_types: &HashMap<u32, mojito_types::types::Ty>,
         values: &DropValues,
         ends: &RegisterEnds,
+        declarations: &MirDeclarations,
     ) -> Self {
         // The part a place reaches, and the reference it is reached through.
         let reached = |place: &MirPlace| {
@@ -650,7 +728,7 @@ impl RegisterLoanStep {
                     .ty
                     .as_ref()
                     .or_else(|| register_types.get(&dest.0))
-                    .is_none_or(may_alias_owned_storage)
+                    .is_none_or(|ty| aliases_owned_storage(ty, declarations))
                 {
                     aliased.extend(reached(place));
                 } else {
@@ -735,7 +813,7 @@ impl RegisterLoanStep {
         {
             if register_types
                 .get(&dest.0)
-                .is_none_or(may_alias_owned_storage)
+                .is_none_or(|ty| aliases_owned_storage(ty, declarations))
             {
                 seeded.extend(reached(place));
             } else {
@@ -934,30 +1012,37 @@ fn split_register_uses(
 /// Push `receiver` at rank zero when `callee` takes it by value. A
 /// requirement's receiver is a bound parameter, which is memory-only.
 fn callee_receiver_by_value(
+    declarations: &MirDeclarations,
     callee: Callee,
     receiver: Reg,
     register_types: &HashMap<u32, Ty>,
     loaded: &mut Vec<(u32, usize)>,
 ) {
     if let Callee::Declared(declaration) = callee {
-        receiver_by_value(declaration, receiver, register_types, loaded);
+        receiver_by_value(declarations, declaration, receiver, register_types, loaded);
     }
 }
 
 /// Whether positional argument `index` binds a parameter of `contract`
 /// that receives it by value, rather than the variadic collector.
-fn loads_positional(contract: &ParameterContract, index: usize) -> bool {
-    contract.collector.is_none_or(|collector| index < collector) && loads(contract, index)
+fn loads_positional(
+    declarations: &MirDeclarations,
+    contract: &ParameterContract,
+    index: usize,
+) -> bool {
+    contract.collector.is_none_or(|collector| index < collector)
+        && loads(declarations, contract, index)
 }
 
 /// Whether parameter `slot` of `contract` receives its argument by value: a
-/// `read` or `var` convention over a concrete register-passable type.
-fn loads(contract: &ParameterContract, slot: usize) -> bool {
+/// `read` or `var` convention over a trivially register-passable type
+/// ([`aliases_owned_storage`]).
+fn loads(declarations: &MirDeclarations, contract: &ParameterContract, slot: usize) -> bool {
     use mojito_ast::ast::ArgConvention;
     contract
         .types
         .get(slot)
-        .is_some_and(|ty| !may_alias_owned_storage(ty))
+        .is_some_and(|ty| !aliases_owned_storage(ty, declarations))
         && matches!(
             contract.conventions.get(slot).copied().flatten(),
             None | Some(ArgConvention::Imm | ArgConvention::Var)
@@ -968,6 +1053,7 @@ fn loads(contract: &ParameterContract, slot: usize) -> bool {
 /// ranked by its parameter slot after `offset` receiver slots: a retained
 /// place, a spread pack, and a variadic element are addressed.
 fn arguments_by_value(
+    declarations: &MirDeclarations,
     arguments: &CallArguments,
     contract: &ParameterContract,
     offset: usize,
@@ -975,7 +1061,7 @@ fn arguments_by_value(
 ) {
     for argument in arguments.bindings(contract) {
         if let (false, ArgumentBinding::Slot(slot)) = (argument.placed, argument.binding)
-            && loads(contract, slot)
+            && loads(declarations, contract, slot)
         {
             loaded.push((argument.reg.0, offset + slot));
         }
@@ -985,6 +1071,7 @@ fn arguments_by_value(
 /// The plain subscript indices `contract` loads by value, each at its
 /// parameter rank after the receiver.
 fn subscript_indices_loaded(
+    declarations: &MirDeclarations,
     contract: &ParameterContract,
     args: &[MirSubscriptArg],
     arg_places: &[Option<MirPlace>],
@@ -994,7 +1081,7 @@ fn subscript_indices_loaded(
         let placed = arg_places.get(index).is_some_and(Option::is_some);
         if let MirSubscriptArg::Index(register) = argument
             && !placed
-            && loads_positional(contract, index)
+            && loads_positional(declarations, contract, index)
         {
             loaded.push((register.0, index + 1));
         }
@@ -1002,8 +1089,10 @@ fn subscript_indices_loaded(
 }
 
 /// Push `receiver` at rank zero when `declaration` takes its receiver by
-/// value: a `read` or `var` `self` of a register-passable type.
+/// value: a `read` or `var` `self` of a trivially register-passable type
+/// ([`aliases_owned_storage`]).
 fn receiver_by_value(
+    declarations: &MirDeclarations,
     declaration: &MirFunctionDeclaration,
     receiver: Reg,
     register_types: &HashMap<u32, mojito_types::types::Ty>,
@@ -1017,7 +1106,7 @@ fn receiver_by_value(
         )
         && register_types
             .get(&receiver.0)
-            .is_some_and(|ty| !may_alias_owned_storage(ty))
+            .is_some_and(|ty| !aliases_owned_storage(ty, declarations))
     {
         loaded.push((receiver.0, 0));
     }
@@ -1050,6 +1139,7 @@ struct DropFactsScan<'a> {
     reg_types: &'a HashMap<u32, Ty>,
     values: &'a DropValues,
     ends: &'a RegisterEnds<'a>,
+    declarations: &'a MirDeclarations,
     /// The variables whose ending the walk tracks: the split `deinit`
     /// parameters, which every exit ends unless a path already did.
     exits: &'a [VarId],
@@ -1064,6 +1154,7 @@ impl DropFactsScan<'_> {
             self.reg_types,
             self.values,
             self.ends,
+            self.declarations,
         )
     }
 }

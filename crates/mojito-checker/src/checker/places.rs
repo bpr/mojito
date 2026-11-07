@@ -33,7 +33,9 @@ impl Checker {
     /// ([`read_temporary_arguments`]). The arguments a read `*args`
     /// collector gathers bind the same way, and so does a temporary
     /// receiver whose declared convention is a read
-    /// ([`read_temporary_receiver`]). It also records the arguments
+    /// ([`read_temporary_receiver`]); such a place receiver is marked so a
+    /// register-passable one is passed by value ([`read_place_receiver`]).
+    /// It also records the arguments
     /// and the receiver that bind an owned parameter, among them the
     /// elements an owning (`var`) collector gathers
     /// ([`forwarded_arguments`]).
@@ -99,6 +101,9 @@ impl Checker {
             .extend(read.iter().cloned());
         for span in read {
             self.record_at(span).read_temporary_argument = true;
+        }
+        if let Some(span) = read_place_receiver(receiver, designates_place) {
+            self.record_at(span).read_place_receiver = true;
         }
         let owned_receiver = receiver
             .filter(|(_, convention)| owns_argument(*convention))
@@ -917,6 +922,23 @@ fn read_temporary_receiver(
         .filter(|(receiver, convention)| {
             matches!(convention, None | Some(ArgConvention::Imm))
                 && !designates_place(receiver)
+                && !matches!(receiver.kind, ExprKind::Transfer(_))
+        })
+        .map(|(receiver, _)| receiver.source_span())
+}
+
+/// A method's place receiver whose **declared** convention is a read:
+/// upstream loads a register-passable one at call setup, as it does a
+/// `read` argument, so its owner's last use is that load. A `^` receiver
+/// lends its place ([`Checker::check_consumed_receiver`]).
+fn read_place_receiver(
+    receiver: Option<(&Expr, Option<ArgConvention>)>,
+    designates_place: impl Fn(&Expr) -> bool,
+) -> Option<SourceSpan> {
+    receiver
+        .filter(|(receiver, convention)| {
+            matches!(convention, None | Some(ArgConvention::Imm))
+                && designates_place(receiver)
                 && !matches!(receiver.kind, ExprKind::Transfer(_))
         })
         .map(|(receiver, _)| receiver.source_span())

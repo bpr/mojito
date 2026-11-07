@@ -2300,7 +2300,8 @@ impl Checker {
                         _ => facts.ty.as_ref(),
                     };
                     let by_value = (facts.borrowed_read_call_place
-                        || facts.read_temporary_argument)
+                        || facts.read_temporary_argument
+                        || facts.read_place_receiver)
                         && passed.is_some_and(|ty| !memory_only(ty));
                     let indirect = facts
                         .declared_result

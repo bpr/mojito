@@ -1032,6 +1032,7 @@ assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_type_name.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/register_copy_dies_after_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/register_passable_receiver_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/replaced_field_read_through_register.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_library_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_sized_scalars.mojo	-	ineligible	no-scalar-entry-shape

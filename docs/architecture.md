@@ -5955,15 +5955,20 @@ current Mojo:
   Its owner then lives through the call, so the owner's `DropVar` follows the
   call, and owners dying together there drop in descending `VarId`, after
   the call's in-place result binding and its slot, if any. A
-  concrete register-passable `read` or `var` parameter, a built-in operator's
-  operand is loaded at call setup instead, in parameter order, so an owner whose last use it is drops just
+  trivially register-passable `read` or `var` parameter
+  (`MirDeclarations::copy_is_identity`: a scalar, or a user struct
+  declaring `TrivialRegisterPassable`), a `read self` receiver of such a
+  type, or a built-in operator's operand is loaded at call setup instead, in parameter order, so an owner whose last use it is drops just
   before the consumer, in that load order (`RegisterUses::loaded`). The
   owner a register or a loan carries is the part its source place reaches
   (`DropValues::access`, upstream's `getValueRefsForAccess`), a `ValueRef`
   of the root's bits, so a read of `p.b` keeps `p.b` alone live, and a
   `deinit self` receiver's fields take the same split one by one; a
   subscript setter's plain indices load like a getter's. An
-  aggregate load retains its owner through every consumer as before. A
+  aggregate load retains its owner through every consumer as before, unless
+  the aggregate is trivially register-passable: such a value owns no
+  storage, so its load borrows its owner for the one hop, as a scalar's
+  does (`aliases_owned_storage`). A
   moving end of a slot (a `move`/`forward` use, a consume, a whole-root
   move capture) removes that root from every register's provenance: the
   slot's storage backs no register any more, so `two(h^, h.v)` drops no `h`

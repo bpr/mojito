@@ -941,11 +941,12 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
-    /// A [`Self::BorrowReadArgument`] or [`Self::ReadTemporaryArgument`]
-    /// whose type is proven register-passable, which upstream passes to a
-    /// `read` parameter by value. Any other read argument is memory-only and
-    /// passed by address: lowering retains its place, or a temporary's
-    /// storage, so the callee binds that storage.
+    /// A [`Self::BorrowReadArgument`], a [`Self::ReadTemporaryArgument`],
+    /// or a place receiver of a `read self`, whose type is proven
+    /// register-passable, which upstream passes to a `read` parameter by
+    /// value. Any other read argument is memory-only and passed by address:
+    /// lowering retains its place, or a temporary's storage, so the callee
+    /// binds that storage.
     RegisterPassableRead,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's
@@ -7206,6 +7207,10 @@ node_facts! {
         call_place_use,
         borrowed_read_call_place,
         read_temporary_argument,
+        /// A place receiver whose declared convention is a read, which a
+        /// register-passable type passes by value
+        /// ([`SemanticAdjustment::RegisterPassableRead`]).
+        read_place_receiver,
         forwarded_argument,
         implicitly_copied_consuming_receiver,
         /// See [`SemanticAdjustment::ReflectedOperator`].

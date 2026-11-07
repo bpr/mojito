@@ -95,7 +95,8 @@ pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
 /// an aggregate (a struct with a destructor or owning fields, the built-in
 /// `Error`, tuple/pack storage, a variant, or a still-abstract parameter
 /// type). Kept textually aligned with the drop analysis'
-/// `may_alias_owned_storage`.
+/// `may_alias_owned_storage`, which drop elaboration refines by
+/// `MirDeclarations::copy_is_identity`.
 pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
     ty.is_non_simd_struct()
         || matches!(
@@ -2454,19 +2455,28 @@ impl<'a> Flatten<'a> {
         if copied {
             return self.copy_consuming_receiver(receiver, value, place.as_ref());
         }
-        // A `SIMD` receiver the method reads is passed by value, as
-        // upstream passes a register-passable `read self`: it retains no
-        // place, so its owner may die at the read, before the call runs.
+        // A register-passable receiver the method reads is passed by
+        // value, as upstream passes a `read self` whose type is not
+        // memory-only: it retains no place, so its owner may die at the
+        // read, before the call runs. A call whose result borrows the
+        // receiver keeps it. The register then carries the receiver's
+        // type, which the call's binding reads its struct's binders from.
         if place.is_some()
-            && call.reference_result().is_none()
+            && !call.lends_read_arguments()
             && call.call_contract().is_some_and(|contract| {
                 matches!(
                     contract.receiver_convention,
                     None | Some(mojito_ast::ast::ArgConvention::Imm)
                 )
             })
-            && receiver.ty().is_some_and(|ty| ty.is_simd())
+            && receiver.register_passable_read()
         {
+            if let Some(ty) = receiver.ty() {
+                self.f
+                    .reg_types
+                    .entry(value.0)
+                    .or_insert_with(|| ty.clone());
+            }
             return (value, None);
         }
         (value, place)

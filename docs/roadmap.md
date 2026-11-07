@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1976**.
+Next free ID: **R1977**.
 
 ## Ordered Work
 
@@ -1255,23 +1255,25 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1570 A register-passable `read self` receiver keeps its place, so
-  its owner outlives the call, where upstream passes it by value**
+- [ ] **R1976 A subscript getter or `__contains__` keeps its
+  register-passable `read self` receiver's place, so the owner outlives the
+  call, where upstream passes it by value**
 
-  `a.p.add(b.p)`, with `p` a `TrivialRegisterPassable` field of a `W` that
-  prints in its destructor, prints `add` then `del 2`, `del 1` here, where
-  the pin prints `del 1`, `del 2`, then `add`.
-  - The method call retains the receiver's place (`recv_place`), so the
-    owner's last use is the call, not the receiver's read at setup.
-  - A read argument already decides this by the checker's
-    `RegisterPassableRead` and passes such a value with no place unless
-    the call's result borrows it (`lower_call_operand`).
-  - `lower_receiver_value` (`mir/calls.rs`) drops the place for a `SIMD`
-    receiver only: record the same fact for a receiver and apply it to
-    every register-passable one.
-  - Probe: the shape above, as an `assets/ok` drop-order fixture.
+  `a.p[2]` and `1 in a.p`, with `p` a `TrivialRegisterPassable` field of a
+  `W` that prints in its destructor, print the dunder before `del` here,
+  where the pin prints `del` first.
+  - These receivers are lowered outside `lower_receiver_value`
+    (`mir/calls.rs`), which since R1570 drops the place of a receiver the
+    checker judges `RegisterPassableRead`.
+  - The subscript lowerings keep `base_place`/`object_place`, and the
+    `in` lowering (`contains_call`, `mir/lower_expr/expr.rs`) keeps its
+    receiver's place.
+  - Check that the checker's `read_place_receiver` fact reaches these
+    receivers too, then apply the same rule.
+  - Probe: `var r = a.p[2]` prints `del 3`, `getitem`, `3` at the pin.
+  - Probe: `var r = 1 in a.p` prints `del 2`, `contains`, `True` at the pin.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1682 A local read through an untracked pointer after its last use
   reads `None` on the VM**

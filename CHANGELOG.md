@@ -3651,6 +3651,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trivially register-passable value read out of an owner and passed to a
+  `read` parameter or `read self` receiver is loaded at call setup, as at
+  the pin, so an owner whose last use it is dies before the call runs:
+  `a.p.add(b.p)` and `a.p + b.p` print `del 1`, `del 2`, then the call,
+  and `one(b.p)` drops `b` first. A register-passable `read self`
+  receiver now retains no place, as a read argument already did. Pinned by
+  a new fixture (R1570).
+
 - A value an erased (`_REMOVED_ARG`) clone builds displays through its
   caller's `write_to`: `print(B[T, n].make(x))` over a `make` that reads
   no `n`, a compile-time `S[2](5)`, and a `comptime Z = Self(7)` member
