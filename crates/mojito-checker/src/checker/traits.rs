@@ -3463,12 +3463,13 @@ impl Checker {
         Ok(())
     }
 
-    /// A compile-time initializer's reference result (`[mk(1), mk(2)][0]`)
-    /// is upstream's `load_from_mem` of the referent: its storage is loaded
-    /// at any `Movable` type, running no copy or move initializer, and the
-    /// temporaries it was projected from end undestroyed
-    /// ([`SemanticAdjustment::CompileTimeLoad`]). A field chain of a
-    /// `Copyable` value is copied out of its owner.
+    /// A compile-time initializer's reference result into a temporary it
+    /// builds (`[mk(1), mk(2)][0]`) is upstream's `load_from_mem` of the
+    /// referent: its storage is loaded at any `Movable` type, running no
+    /// copy or move initializer, and the temporary ends undestroyed
+    /// ([`SemanticAdjustment::CompileTimeLoad`]). A reference result into a
+    /// binding (`L[1]`), which a body still owns and destroys, and a field
+    /// chain of a `Copyable` value are copied out of their owner.
     ///
     /// [`SemanticAdjustment::CompileTimeLoad`]: mojito_checked::checked::SemanticAdjustment::CompileTimeLoad
     pub(super) fn load_compile_time_result(&self, value: &Expr, ty: &Ty) {
@@ -3480,8 +3481,18 @@ impl Checker {
                 .and_then(|facts| facts.adjustment.as_deref()),
             Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. })
         );
-        if reference_result {
+        let projected_from_temporary = match &value.kind {
+            ExprKind::Index { object, .. } | ExprKind::MethodCall { object, .. } => {
+                !self.designates_place(object)
+            }
+            _ => false,
+        };
+        if reference_result && projected_from_temporary {
             self.record_at(span).compile_time_load = true;
+        } else if reference_result && self.is_copyable(ty) {
+            self.copyable_reference_result_reads
+                .borrow_mut()
+                .insert(span);
         } else if self.designates_place(value) && self.is_copyable(ty) {
             self.record_at(span).copy_place_value_use = true;
         }
