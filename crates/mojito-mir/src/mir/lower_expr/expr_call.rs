@@ -12,13 +12,6 @@ impl<'a> Flatten<'a> {
         let args = args.as_slice();
         let kwargs = call.kwargs();
         let kwargs = kwargs.as_slice();
-        if name == "__mojito_fieldwise_copy" {
-            return self.expr(
-                *args
-                    .first()
-                    .expect("checked synthesized fieldwise copy has one argument"),
-            );
-        }
         if let Some(dest) = self.checked_construction(call, args, kwargs) {
             return dest;
         }

@@ -14,10 +14,10 @@ use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 /// (`ImplicitlyCopyable`, `TrivialRegisterPassable`), whose parents the
 /// program's own trait declarations or the `installed` package's answer —
 /// gains the method here as ordinary source AST, keeping the checker, HIR, MIR, and VM on
-/// their existing method and constructor paths. A struct with an explicit copy
-/// constructor delegates to it (propagating its raising effect); a fieldwise
-/// Copyable struct uses the same explicit copy-construction spelling, which
-/// lowers to the synthesized fieldwise copy lifecycle. A conditional conformance gates
+/// their existing method and constructor paths. The body is upstream's
+/// `Self(copy=self)` for every struct: a declared copy constructor answers it
+/// (propagating its raising effect), and otherwise the synthesized fieldwise
+/// copy lifecycle does. A conditional conformance gates
 /// the method: its provenance names the conformance, whose compiled header
 /// condition is the method's availability. Structs that already spell `copy` keep their own
 /// (the self-hosted collections predate this synthesis).
@@ -32,7 +32,6 @@ pub(super) fn synthesize_copyable_copy(
         let span = statement.span;
         let module = statement.module.clone();
         let StmtKind::Struct {
-            name,
             conforms,
             conformance_conditions,
             methods,
@@ -47,30 +46,18 @@ pub(super) fn synthesize_copyable_copy(
         let copy_constructor = methods
             .iter()
             .find(|m| mojito_symbol::symbol::lifecycle_method_name(m) == "__copyinit__");
-        let result = if copy_constructor.is_some() {
-            Expr::new(
-                ExprKind::Call {
-                    name: name.clone(),
-                    param_args: Vec::new(),
-                    args: Vec::new(),
-                    kwargs: vec![mojito_ast::ast::KwArg {
-                        name: "copy".to_string(),
-                        value: Expr::new(ExprKind::Identifier("self".to_string()), span),
-                    }],
-                },
-                span,
-            )
-        } else {
-            Expr::new(
-                ExprKind::Call {
-                    name: "__mojito_fieldwise_copy".to_string(),
-                    param_args: Vec::new(),
-                    args: vec![Expr::new(ExprKind::Identifier("self".to_string()), span)],
-                    kwargs: Vec::new(),
-                },
-                span,
-            )
-        };
+        let result = Expr::new(
+            ExprKind::Call {
+                name: "Self".to_string(),
+                param_args: Vec::new(),
+                args: Vec::new(),
+                kwargs: vec![mojito_ast::ast::KwArg {
+                    name: "copy".to_string(),
+                    value: Expr::new(ExprKind::Identifier("self".to_string()), span),
+                }],
+            },
+            span,
+        );
         let (raises, raises_type) = copy_constructor.map_or((false, None), |constructor| {
             (constructor.raises, constructor.raises_type.clone())
         });

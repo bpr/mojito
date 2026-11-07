@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's synthesized `Copyable.copy` is now upstream's `return
+  Self(copy=self)` for every struct, instead of the checker's
+  `__mojito_fieldwise_copy` intrinsic when no copy constructor is declared;
+  the intrinsic's checker and MIR arms are gone (R1832). A struct with a
+  type pack and a copy constructor now copies (it failed with "expected
+  VP[*Ts], found VP[()]"), and the bundled `VariadicPack` declares
+  upstream's `__init__(out self, *, copy: Self)`.
+
 - `Error` is now upstream's library struct, bundled in
   `std/builtin/error.mojo` over its `_error` message, instead of a compiler
   type (R1938). Its `@implicit` initializers from a string literal, a

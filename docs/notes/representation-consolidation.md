@@ -36,12 +36,12 @@ and 11-04 (*Measure*), so the size steps still matter.
    - A call through a `def(...)` bound is still a `call.indirect`: R1933,
      after R1934 (`emit-mir`, which its probe reads).
    - The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
-     filed. R1832 (the synthesized `copy` calls
-     `__mojito_fieldwise_copy`) is the first piece, after R1923.
+     filed. Their first piece landed with R1832: the synthesized `copy` is
+     upstream's `Self(copy=self)` for every struct.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R2010 --task R1938 \
-     --task R1933 --task R1832 -n 0
+     --task R1933 -n 0
    ```
 
 2. **Finish gap D′** (size). Only the verifier rule's unnamed `drop.reg`

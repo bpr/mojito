@@ -51,8 +51,7 @@
 # collector is still the tuple of its elements (roadmap R1927), and
 # `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members they read are
 # not declared (R1922). Otherwise it differs from upstream's:
-# - the `Copyable` conformance has no `else` message (R1115), and the copy
-#   constructor is not declared, so `copy` is the field-wise copy (R1832);
+# - the `Copyable` conformance has no `else` message (R1115);
 # - `element_types` has no `@deprecated(use=Ts)` (R1925);
 # - `__getitem_param__` returns `Pointer(_mlir_value=litref_elt)[]` where
 #   upstream returns `__get_litref_as_mvalue(litref_elt)`, and
@@ -639,6 +638,15 @@ struct VariadicPack[
             value: The argument to construct the pack with.
         """
         self._value = value
+
+    @inline(.nodebug)
+    def __init__(out self, *, copy: Self):
+        """Copy a non-owned pack.
+
+        Args:
+            copy: The pack to copy.
+        """
+        self._value = copy._value
 
     # The destructor for this type is trivial if not an "owned" pack.
     comptime __del__is_trivial: Bool = not Self.is_owned

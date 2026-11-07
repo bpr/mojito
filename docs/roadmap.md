@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2015**.
+Next free ID: **R2017**.
 
 ## Ordered Work
 
@@ -7643,6 +7643,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R2015 A local non-owned `VariadicPack` variable fails
+  elaboration at its destruction**
+
+  `var c = pack.copy()` over a read `VariadicPack` parameter fails with
+  "unsupported dependent type `Ts[...paramfor_next_value...($iter)]` has
+  no concrete MIR declaration fact", where the pin runs it.
+  - `len(pack.copy())`, a temporary, runs; so the binding's destruction is
+    the difference.
+  - The pack declares `__del__is_trivial = not Self.is_owned`, and its
+    `__deinit__`'s `comptime for` over `Self.Ts` sits under `comptime if
+    Self.is_owned`: either the drop ignores the trivial hook here, or the
+    elaborator lowers the dead arm over the symbolic pack.
+  - Probe: `def total[*Ts: Writable](pack: VariadicPack[origin=_,
+    element_trait=Writable, False, *Ts]) -> Int: var c = pack.copy();
+    return len(c)`, called through a `*args: *Ts` forward.
+  - Found while landing R1832 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -11332,29 +11351,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1832 A struct's synthesized `copy` without a `__copyinit__`
-  calls the checker's `__mojito_fieldwise_copy` intrinsic, where upstream's
-  `Copyable.copy` default is `Self(copy=self)`**
+- [ ] **R2016 A struct that binds its pack element-wise has a
+  non-canonical `Self` type inside its own template**
 
-  `synthesize_copyable_copy` (`mojito-comptime/src/comptime/synth.rs`)
-  spells `Self(copy=self)` only for a struct with a copy constructor.
-  - Every other `Copyable` struct's `copy` calls `__mojito_fieldwise_copy`,
-    which the checker (`call_inference.rs`) and MIR (`expr_call.rs`) each
-    special-case as a value read.
-  - Since R1813, `S(copy=s)` at a struct whose copy is synthesized
-    (a `SIMD` application included) reaches `struct_copy`, so the
-    intrinsic has no remaining job.
-  - Lever: spell `Self(copy=self)` for every struct, then delete the
-    intrinsic's checker and MIR arms.
-  - Probe: `x.copy()` on a `@fieldwise_init` struct, an `Int32`, a
-    `SIMD[DType.float32, 4]`, and a generic struct, on both backends.
-  - The copy constructor's case spells the template's name, not `Self`
-    (`S(copy=self)`), which re-infers the struct's parameters from the
-    argument: a struct with a type pack and a copy constructor fails
-    ("expected VP[*Ts], found VP[()]").
-  - Probe: the bundled `VariadicPack` omits upstream's `__init__(out self,
-    *, copy: Self)` and takes the field-wise copy.
-  - Depends on R1923.
+  `Tuple`, `TString`, and `Variant` spell a bound pack element by element
+  and drop the pack's zero-sized `TypeList` argument
+  (`types::canonical_pack_arguments`), but their template's own `Self`
+  (`self_struct_arguments` in `checker.rs`) keeps it beside the pack.
+  - So `Tuple[*Self.Ts]` resolves to one argument where `self`'s type has
+    two, and the two do not coerce ("expected Tuple[*Ts], found
+    Tuple[*Ts]").
+  - The synthesized `Self(copy=self)` reaches it; the checker's
+    `infer_copy_construction` binds a source equal to the instance up to
+    canonical pack spelling as the instance, to work around it.
+  - Lever: build an element-wise struct's `Self` arguments canonically,
+    then delete that workaround.
+  - Probe: inside `Tuple`, `var t: Tuple[*Self.Ts] = self.copy()`.
+  - Found while landing R1832 (2026-11-07).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1833 `struct_field_types` answers no fields for a struct

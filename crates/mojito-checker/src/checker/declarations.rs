@@ -4720,6 +4720,27 @@ impl Checker {
                     .ok()
                     .map(|bound| with_tail(bound.arguments)),
             };
+            // The template's own `Self` keeps an element-wise pack struct's
+            // `TypeList` beside its pack, which the canonical bracket drops
+            // (R2016): a source of that instance binds as it.
+            let instance = instance.map(|instance| {
+                if !mojito_types::types::binds_pack_elementwise(name) {
+                    return instance;
+                }
+                self.probe(|| self.infer(&kwargs[0].value))
+                    .ok()
+                    .filter(|source| match (source.kind(), instance.kind()) {
+                        (TyKind::Struct(source_name, source_args), TyKind::Struct(_, args)) => {
+                            source_name == name
+                                && mojito_types::types::canonical_pack_arguments(
+                                    name,
+                                    source_args.clone(),
+                                ) == *args
+                        }
+                        _ => false,
+                    })
+                    .unwrap_or(instance)
+            });
             if let Some(instance) = instance {
                 if constructed.is_none() && !param_args.is_empty() {
                     let attributes = resolve()?.attributes;

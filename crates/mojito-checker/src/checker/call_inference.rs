@@ -1054,24 +1054,6 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()
                 .map(|elements| TyKind::Tuple(elements).into());
         }
-        if name == "__mojito_fieldwise_copy" {
-            if !param_args.is_empty() || args.len() != 1 || !kwargs.is_empty() {
-                return Err(TypeError::InvariantViolation(
-                    "malformed synthesized fieldwise copy".to_string(),
-                ));
-            }
-            let ty = self.infer(&args[0])?;
-            if !self.is_copyable(&ty) {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "value".to_string(),
-                    ty: ty.to_string(),
-                    trait_name: "Copyable".to_string(),
-                    reason: self.trait_failure_reason(&ty, "Copyable"),
-                });
-            }
-            self.record_at(args[0].source_span()).copy_place_value_use = true;
-            return Ok(ty);
-        }
         if let Some(element) = self.infer_pack_element_construction(
             span.clone(),
             name,
