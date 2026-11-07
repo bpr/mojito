@@ -721,8 +721,6 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::FoldedParameterArguments(_)
             | Self::ImplicitlyCopyConsumingReceiver
             | Self::ReflectedOperator
-            | Self::InvertedWrite
-            | Self::InvertedReprWrite
             | Self::ReceiverFromFirstArgument { inner: _ }
             | Self::Truthiness
             | Self::RegisterPassableResult

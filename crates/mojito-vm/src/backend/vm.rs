@@ -8,8 +8,8 @@
 
 use crate::runtime::RuntimeError;
 use crate::runtime::{
-    RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_error, builtin_input,
-    builtin_min_max, simd_from_values, value_as_index,
+    RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_input, builtin_min_max,
+    simd_from_values, value_as_index,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
@@ -771,9 +771,22 @@ impl VmBackend {
                 .collect();
         }
         if let Some(main) = prog.index_of("main") {
-            self.call_function(prog, main, Vec::new())?;
+            self.call_function(prog, main, Vec::new())
+                .map_err(|error| self.unhandled(error))?;
         }
         Ok(())
+    }
+
+    /// An error escaping `main`, reported by its message: an unhandled
+    /// `Error` struct propagates as its text, which `unhandled error:`
+    /// prints as the native runtime's `mjrt_unhandled_error` does.
+    fn unhandled(&self, error: RuntimeError) -> RuntimeError {
+        match error {
+            RuntimeError::Raised(value) => {
+                RuntimeError::Raised(self.error_text(&value).map_or(value, Value::Str))
+            }
+            other => other,
+        }
     }
 }
 
@@ -2247,7 +2260,7 @@ mod input_override_tests {
             .input_from_override(Value::Str("Again: ".to_string()))
             .expect_err("EOF raises");
         assert!(
-            matches!(&second, RuntimeError::Raised(Value::Error(message)) if message == "EOF"),
+            matches!(&second, RuntimeError::Raised(Value::Str(message)) if message == "EOF"),
             "{second:?}"
         );
 

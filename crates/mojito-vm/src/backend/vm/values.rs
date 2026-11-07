@@ -469,41 +469,51 @@ impl VmBackend {
         self.materialize_string_struct(skeleton, text)
     }
 
-    /// A `StringSpan` view over a fresh buffer holding `text`'s UTF-8 bytes,
-    /// with the buffer's allocation for the caller to free once the view's
-    /// borrow ends.
-    pub(super) fn temporary_string_span(
+    /// The library `Error` over `message`, as its `String` initializer
+    /// builds it: the struct holding the nominal `String` of the text.
+    pub(super) fn error_value(
         &mut self,
         prog: &Prog,
-        text: &str,
-    ) -> Result<(Value, u64), RuntimeError> {
-        let def = prog
-            .structs
-            .get(mojito_types::types::STDLIB_STRING_SPAN_STRUCT)
-            .ok_or_else(|| {
-                RuntimeError::Unsupported("vm: Writer payloads need the linked StringSpan".into())
-            })?;
-        let allocation = self.alloc_utf8_bytes(text.as_bytes())?;
+        message: &str,
+    ) -> Result<Value, RuntimeError> {
+        let error = mojito_types::types::ERROR_TYPE_NAME;
+        let Some(def) = prog.structs.get(error) else {
+            return Err(RuntimeError::Unsupported(
+                "vm: raising an `Error` needs the linked `std.builtin.error`".to_string(),
+            ));
+        };
         let fields = def
             .fields
             .iter()
             .map(|(field, _)| {
-                let value = match field.as_str() {
-                    "_data" => Value::Pointer {
-                        allocation,
-                        offset: 0,
+                Ok((
+                    field.clone(),
+                    match field.as_str() {
+                        ERROR_MESSAGE_FIELD => self.nominal_string_value(prog, message)?,
+                        other => unreachable!("unexpected Error field '{other}'"),
                     },
-                    "_size" => Value::Int(text.len() as i64),
-                    other => unreachable!("unexpected StringSpan field '{other}'"),
-                };
-                (field.clone(), value)
+                ))
             })
-            .collect();
-        let view = Value::Struct {
-            name: mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
+            .collect::<Result<_, RuntimeError>>()?;
+        Ok(Value::Struct {
+            name: error.to_string(),
             fields,
+        })
+    }
+
+    /// The message of a library `Error` value, or `None` for any other
+    /// value.
+    pub(super) fn error_text(&self, value: &Value) -> Option<String> {
+        let Value::Struct { name, fields } = value else {
+            return None;
         };
-        Ok((view, allocation))
+        if name != mojito_types::types::ERROR_TYPE_NAME {
+            return None;
+        }
+        fields
+            .iter()
+            .find(|(field, _)| field == ERROR_MESSAGE_FIELD)
+            .and_then(|(_, message)| self.nominal_string_text(message))
     }
 
     /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
@@ -765,3 +775,6 @@ fn uninitialized_field(ty: &Ty) -> Value {
         _ => Value::None,
     }
 }
+
+/// The message field of upstream's `Error`.
+const ERROR_MESSAGE_FIELD: &str = "_error";

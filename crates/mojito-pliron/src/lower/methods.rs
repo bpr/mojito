@@ -83,17 +83,6 @@ impl FnLowering<'_> {
         {
             return Err(self.unsupported_reg("String struct-to-literal bridge".into(), dest));
         }
-        // A writer's host-formatted write: format each intrinsic argument
-        // and feed it through the receiver's compiled `write_string`.
-        if resolved.is_none()
-            && mojito_symbol::symbol::is_formatted_write(method)
-            && let Some((writer, _)) = ((self.func.reg_types.get(&recv.0).cloned()).as_ref())
-                .and_then(|ty| ty.kind().as_non_simd_struct())
-            && let Some(write_string) = self.struct_member(writer, "write_string", 1)
-        {
-            let repr = method == mojito_symbol::symbol::WRITE_REPR_FORMATTED;
-            return self.lower_writer_write(ctx, dest, write_string, args, recv_place, repr);
-        }
         // `Sized` spelled on a specialized pack's storage: it has no nominal
         // struct to resolve the method onto, so the static count answers it
         // exactly as the `len` builtin does.
@@ -282,67 +271,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// A writer's host-formatted write (`$write_formatted`,
-    /// `$write_repr_formatted`): each intrinsic argument's display text, or
-    /// with `repr` its representation text, feeds one `write_string` call
-    /// on the aliased `mut self` receiver.
-    /// The payload `String` borrows the text bytes (`cap == len`); the callee
-    /// reads it and never takes ownership.
-    pub(super) fn lower_writer_write(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        write_string: &str,
-        args: &[Reg],
-        recv_place: Option<&MirPlace>,
-        repr: bool,
-    ) -> Result<(), PlironError> {
-        let signature = &self.signatures[write_string];
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{write_string}`"), dest));
-        }
-        let payload_ty = self
-            .declarations
-            .get(write_string)
-            .and_then(|decl| decl.param_types.first());
-        if !payload_ty
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-            .is_some_and(|(payload, _)| {
-                mojito_symbol::symbol::is_stdlib_string_span_struct(payload)
-            })
-        {
-            return Err(self.unsupported_reg(
-                format!("`{write_string}` without a StringSpan payload"),
-                dest,
-            ));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
-        let Some(place) = recv_place else {
-            return Err(self.unsupported_reg("`Writer.write` needs a mutable place".into(), dest));
-        };
-        let place = place.clone();
-        let writer_address = self.place_address(ctx, &place, dest)?.0;
-        for arg in args {
-            let (data, len) = self.writer_argument_text(ctx, *arg, repr, dest)?;
-            let payload = self.entry_alloca(ctx, 16, 8);
-            self.store_string_span_fields(ctx, payload, data, len, dest);
-            let call = CallOp::new(
-                ctx,
-                CallOpCallable::Direct(callee.clone()),
-                func_ty,
-                vec![writer_address, payload],
-            );
-            self.append(ctx, call.get_operation(), Some(dest));
-        }
-        self.erased.insert(dest.0);
-        Ok(())
-    }
-
     /// The display bytes of one `Writer.write` argument as a `(data, len)`
     /// pair, or with `repr` its representation bytes — the VM's host text
     /// (`format_value`) over the supported argument shapes.
@@ -353,12 +281,13 @@ impl FnLowering<'_> {
         repr: bool,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
-        let quoted =
-            self.is_string_constant(arg)
-                || self.str_runtime.contains_key(&arg.0)
-                || self.func.reg_types.get(&arg.0).is_some_and(|ty| {
-                    !matches!(ty.kind(), TyKind::Error) && ty.is_non_simd_struct()
-                });
+        let quoted = self.is_string_constant(arg)
+            || self.str_runtime.contains_key(&arg.0)
+            || self
+                .func
+                .reg_types
+                .get(&arg.0)
+                .is_some_and(|ty| !ty.kind().is_error() && ty.is_non_simd_struct());
         if repr && quoted {
             return Err(self.unsupported_reg(
                 "representation of a string through a formatted write".into(),
@@ -375,7 +304,7 @@ impl FnLowering<'_> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(TyKind::Error) => {
+            Some(kind) if kind.is_error() => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

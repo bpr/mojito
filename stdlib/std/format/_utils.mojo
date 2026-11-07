@@ -2,9 +2,9 @@
 # `write_repr_to` bodies build on. `TypeNames` writes a type pack's
 # unqualified names, `FormatStruct` writes `Name[params](fields)` through
 # upstream's fluent chain (`FormatStruct(writer, "Name").params(...)
-# .fields(...)`), and `Named` writes `name=value`. Not ported: the
-# `fields[FieldsFn]` callback overload (nested `@parameter def`), `Repr`, and
-# the free `write_to`/`write_repr_to`. The bundled collections'
+# .fields(...)`), `Named` writes `name=value`, and `Repr` writes a value's
+# `write_repr_to`. Not ported: the `fields[FieldsFn]` callback overload
+# (nested `@parameter def`) and the free `write_to`/`write_repr_to`. The bundled collections'
 # `write_repr_to` bodies write their text directly through
 # `_unqualified_type_name` rather than the builder, so an instance mints no
 # builder or `TypeNames` specialization of its own. `_FlushingWriteBuffer`
@@ -67,6 +67,20 @@ struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
                 self._writer[].write(", ")
             self._writer[].write(args[i])
         self._writer[].write(")")
+
+
+# Upstream's wrapper writing the referenced value's `write_repr_to`, so a
+# builder that calls `write_to` on each element writes its representation.
+struct Repr[T: Writable, o: ImmOrigin](ImplicitlyCopyable, Writable):
+    var _value: Pointer[Self.T, Self.o]
+
+    @inline(.always)
+    def __init__(out self, ref[Self.o] value: Self.T):
+        self._value = Pointer(to=value)
+
+    @inline(.always)
+    def write_to(self, mut writer: Some[Writer]):
+        self._value[].write_repr_to(writer)
 
 
 # Upstream's `name=value` wrapper: a reference to the value, not a copy.

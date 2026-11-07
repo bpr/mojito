@@ -25,9 +25,6 @@ impl FnLowering<'_> {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
         if !self.signatures.contains_key(name) {
-            if name == "Error" {
-                return self.lower_error_builtin(ctx, dest, args, kwargs);
-            }
             // The numeric/IO builtins the VM's `call_named` implements
             // directly. Nominal-receiver `len`/`abs` were rewritten to
             // `__len__`/`__abs__` method calls during monomorphization; only

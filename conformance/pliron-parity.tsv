@@ -388,6 +388,7 @@ assets/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
 assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/erased_clone_result_members.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized
+assets/ok/error_library_struct.mojo	main	exe-differential	sanitized
 assets/ok/error_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized

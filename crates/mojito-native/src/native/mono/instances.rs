@@ -218,39 +218,6 @@ impl Specializer<'_> {
             .is_some_and(|target| self.functions.contains_key(target))
     }
 
-    /// A writer's host-formatted write (`writer.$write_formatted(x)`)
-    /// reaches the writer's `write_string`: enqueue its instance for the
-    /// lowered expansion.
-    pub(super) fn enqueue_formatted_write(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        writer: Reg,
-    ) -> Result<(), MonoError> {
-        let Some(writer_ty) = function
-            .reg_types
-            .get(&writer.0)
-            .map(|ty| peel_refs(ty).clone())
-        else {
-            return Ok(());
-        };
-        let Some((writer_name, _)) = mojito_types::types::nominal_parts(&writer_ty) else {
-            return Ok(());
-        };
-        let write_string = mojito_symbol::symbol::resolve_callable_symbol(
-            &self.functions,
-            &format!("{}.write_string", nominal_template(writer_name)),
-            1,
-        );
-        if !self.functions.contains_key(write_string.as_str()) {
-            return Ok(());
-        }
-        let (bindings, arguments, _) =
-            self.infer_receiver_call(owner, &write_string, &writer_ty, ReceiverCall::default())?;
-        self.enqueue(&write_string, bindings, arguments)?;
-        Ok(())
-    }
-
     /// Whether a display method takes the `Writable` protocol's writer; any
     /// other `write_to` is an ordinary overload and never serves display.
     pub(super) fn writes_protocol(&self, target: &str) -> bool {

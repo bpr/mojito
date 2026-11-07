@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2011**.
+Next free ID: **R2015**.
 
 ## Ordered Work
 
@@ -3609,8 +3609,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   is rejected**
 
   Problem: upstream's `@implicit def __init__(x: W[_]) -> W[x.n + 1]:
-  return {}` is "@implicit requires a single-argument '__init__(out self,
-  value: T)'", where the pin prints `3` for `show(W[2]())` over `def
+  return {}` is "'@implicit' initializers must accept a single positional
+  argument value", where the pin prints `3` for `show(W[2]())` over `def
   show(w: W[3])`.
   - The form constructs another instance of the struct, whose type the
     signature computes from the argument.
@@ -3632,6 +3632,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `type_of(FloatLiteral(self) OP rhs)`. That deletes the `Div` arm of the
     literal rule in `Checker::infer_infix` for an `IntLiteral` pair.
   - Found while landing R1507 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2012 A lone positional collector's `@implicit` initializer
+  converts nothing, so `raise 3` and `var e: Error = 5` are rejected**
+
+  Upstream's `@implicit def __init__[*Ts: Writable](out self, *args: *Ts)`
+  converts any `Writable` value, and a `raise` converts its operand to the
+  error type through it. The pin prints `caught 3` and `5` for both
+  probes.
+  - `Checker::direct_conversion_constructor` (`checker.rs`) selects only an
+    initializer whose first regular parameter is required. The declaration
+    check (`check_method_inner`, `checker/declarations.rs`) already accepts
+    the collector form.
+  - `StmtKind::Raise` (`checker/statements.rs`) converts only a `String` or
+    string literal operand. Upstream converts any operand the error type's
+    `@implicit` initializers accept.
+  - Probe: `raise 3` in a `raises` function is "raising operation produces
+    'IntLiteral[3]', but this context propagates 'Error'".
+  - Probe: `var e2: Error = 5; print(e2)` prints `5` at the pin.
+  - Found while landing R1938 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8931,9 +8952,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   'Writable'"), where the pin prints the address, though
   `modelled_declares` answers `Writable` for `TyKind::Pointer`, as
   upstream's `Pointer` declares.
-  - The checker's `printable_argument` (`checker/builtins.rs`) does not
-    take a pointer, the VM's `format_value` writes `Pointer(0x11+0)`, and the
-    native lowering has no display of one.
+  - Neither backend has a display of one: the bundled library declares
+    no `Pointer.write_to`.
   - Upstream's `write_to` writes the address in hex and `write_repr_to`
     writes `Pointer[mut=True, SIMD[DType.int, 1],
     address_space=AddressSpace.GENERIC](0x...)`.
@@ -9239,27 +9259,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R1323, which the respelled tests need.
   - Model: Opus, Not Planned.
 
-- [ ] **R1352 `repr` of an `Error` prints its bare message**
-
-  `print(repr(Error("boom")))` prints `boom` on the VM and is rejected
-  natively ("unsupported type `Error`"), where the pin prints
-  `Error('boom')`.
-  - Upstream's `Error` is a library struct whose `write_repr_to` writes
-    the type name around the quoted message. Mojito's is the intrinsic
-    `TyKind::Error`, so `repr` is hand-rolled per backend.
-  - The VM's `repr` formats it as `str` does (`format_value` in
-    `crates/mojito-vm/src/backend/vm/dispatch.rs`), and Pliron's
-    `lower_repr_builtin` (`lower/methods.rs`) has no `Error` arm.
-  - Probe: `x.write_repr_to(s)` in `show[T: Writable](x: T)` over an
-    `Error` fails on the VM ("does not support methods on Error"), where
-    the pin writes `Error('boom')`: the elaborator answers an intrinsic
-    receiver's `write_to` through a bound with the writer's
-    `$write_formatted` (`rewrite_blocks`, `mono/specializer.rs`), but
-    `Error` has no `write_repr_to` witness for the requirement to reach.
-  - Found while landing R1326 (2026-10-24).
-  - Depends on R1938, which bundles upstream's `Error`.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1906 The bundled owned `List` iterator holds a raw buffer, where
   upstream's holds the drained `List`**
 
@@ -9454,6 +9453,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `assets/runtime_error/nominal_string_justify_fillchar.mojo` to an `ok`
     fixture with its manifest rows.
   - Found while landing R1598 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2014 `String.write_repr_to` writes its quoted text in one write,
+  where upstream's writes each piece**
+
+  Upstream's `StringSpan.write_repr_to` writes the opening quote, each
+  codepoint or escape, and the closing quote as separate `write_string`
+  calls. The bundled `String.write_repr_to` (`stdlib/std/string.mojo`)
+  builds the whole text in a buffer first.
+  - A writer that marks each call sees the difference.
+  - Upstream also writes a non-printable ASCII byte as a `\x..` escape
+    (`_write_hex`), which the bundled body does not.
+  - Probe: `e.write_to(w); e.write_repr_to(w)` over `Error("boom")` into a
+    writer that writes `|` before each piece gives `|boom|Error|(|'boom'|)`,
+    where the pin gives `|boom|Error|(|'|b|o|o|m|'|)`.
+  - Found while landing R1938 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11050,34 +11066,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - If not, delete both places and drop the two names from
     `TYPE_REACHED_MEMBERS`. If so, lower it as the requirement call
     upstream's body spells.
-  - Probe: `TYPE_REACHED_MEMBERS` lists `write_string` alone.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1938 `Error` is a compiler builtin in Mojito where upstream's is a
-  library struct**
-
-  Upstream's `Error` is a struct in `std/builtin/error.mojo` with declared
-  initializers, `write_to`, and `write_repr_to`. Mojito's is
-  `TyKind::Error`, which `declared_receiver_member` cannot resolve a member
-  of.
-  - It is the last receiver of the checker's inverted write
-    (`SemanticAdjustment::InvertedWrite` and `InvertedReprWrite`,
-    `intrinsic_receivers.rs`) and of the elaborator's `$write_formatted`
-    swap (`rewrite_blocks`, `mono/specializer.rs`), now that `DType` is
-    the library struct.
-  - Lever: bundle upstream's `Error`, then retire both adjustments, their
-    MIR arm in `lower_expr/expr_method.rs`, the `$write_formatted` and
-    `$write_repr_formatted` primitives, the VM's `format_value`, Pliron's
-    `lower_writer_write`, and `write_string` in
-    `mir::TYPE_REACHED_MEMBERS`.
-  - Probe: `repr(Error("boom"))` prints `boom`, where the pin prints
-    `Error('boom')`.
-  - Probe: `e.write_repr_to(w)` over `Error("boom")` writes `|boom|boom`
-    for `write_to` then `write_repr_to` into a marking writer, where the pin
-    writes `|boom|Error|(|'|b|o|o|m|'|)` (R1352's shape).
-  - Probe: `Error("Index ", 3, " not in *args")` is rejected (R429's
-    shape).
+  - Probe: `TYPE_REACHED_MEMBERS` is empty (R1938 retired `write_string`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13091,17 +13080,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R429 `Error` has no variadic `Writable` constructor**
-
-  Problem: `Error("Index ", 3, " not in *args")` builds the joined message
-  at the pin, while Mojito reports "'Error' expects 1 argument(s), got 3".
-  - Upstream declares `Error.__init__[*Ts: Writable](out self, *args: *Ts)`.
-  - `String`'s declared `__init__[*Ts: Writable]` in
-    `stdlib/std/string.mojo` is the model.
-  - Found while landing R421 (2026-10-06).
-  - Depends on R1938, which bundles upstream's `Error`.
-  - Model: Opus, Not Planned.
-
 - [ ] **R431 `Span` has no `unsafe_get`**
 
   Problem: `bytes.unsafe_get(i)` over a `Span[UInt8]` reads the element at
@@ -13372,9 +13350,46 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2011 The bundled `Error` omits upstream's `StackTrace` and its
+  `_stack_trace` field**
+
+  Upstream's `Error` holds `_stack_trace: Optional[StackTrace]` and
+  answers `get_stack_trace()`. Mojito's holds only its `_error` message.
+  - `StackTrace.collect_if_enabled` calls the compiler runtime's
+    `KGEN_CompilerRT_GetStackTrace`, which `mojito-runtime` does not
+    export, and holds an `ArcPointer[OwnedPointer[UInt8]]`.
+  - The field changes the native `MjError` layout the runtime ABI fixes
+    to one `MjString` (`docs/native-abi.md`, `rt_abi.rs`).
+  - The `depth` keyword of `Error.__init__(String)` is kept and ignored.
+  - Probe: `reflect[Error].field_count()` is `1`, where the pin's is `2`.
+  - Probe: `e.get_stack_trace()` is "has no method", where the pin answers
+    `None` with tracing off.
+  - Found while landing R1938 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
+
+- [ ] **R2013 The MIR pass-test inputs spell the removed `DType` and
+  `Error` type tags, so `tests/mir_pass_test.rs` cannot load them**
+
+  Schema 1.177 (R1936) and 1.178 (R1938) made both types library structs,
+  but 143 `tests/mir_passes/*/*.mir` cases still write `DType` and 26
+  write `Error` as bare type tags. `opt` rejects each at load.
+  - Respell each as `struct_type { name: DType, arguments: [] }` or
+    `struct_type { name: Error, arguments: [] }`, adding the struct rows
+    the verifier needs, or re-emit the case as `tests/mir_passes/README.md`
+    describes.
+  - The `Error` cases also call the retired builtin `func: Error`. Replace
+    it with a call of the library initializer, or re-emit.
+  - Probe: `mojito opt --pass mem-2-reg
+    tests/mir_passes/mem-2-reg/try_region.mir` reports "unknown type
+    `DType`".
+  - Found while landing R1938 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1998 Each std-linked checker test checks the whole standard
   library from source**

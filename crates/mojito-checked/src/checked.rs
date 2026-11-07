@@ -919,15 +919,6 @@ pub enum SemanticAdjustment {
     /// The dunder each link of a chained comparison (`a < b < c`) selected,
     /// in link order: MIR lowers every link as its lone operator's call.
     CompareLinks(Vec<CheckedCompareLink>),
-    /// `x.write_to(writer)` on an intrinsic Writable receiver with no
-    /// declared `write_to` (`DType`, `Error`): receiver and argument swap,
-    /// so MIR lowers the call as `writer.$write_formatted(x)`, the writer's
-    /// host-formatting primitive.
-    InvertedWrite,
-    /// `x.write_repr_to(writer)` on the same intrinsic receivers: the
-    /// representation twin of [`Self::InvertedWrite`], lowered as
-    /// `writer.$write_repr_formatted(x)`.
-    InvertedReprWrite,
     /// An instance method called through its type with the receiver as the
     /// first argument (`List[Int].__len__(xs)`, current Mojo's
     /// `T.method(value, …)` spelling): the checker typed it as

@@ -242,55 +242,6 @@ impl<'a> Flatten<'a> {
         {
             return Some(self.expr(object));
         }
-        // `x.write_to(writer)` or `x.write_repr_to(writer)` on an
-        // intrinsic receiver without the declared member (checker-marked):
-        // receiver and argument swap into the writer's host primitive, the
-        // writer's place retained for the accumulator write-back.
-        if let Some(primitive) = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::InvertedWrite => {
-                    Some(mojito_symbol::symbol::WRITE_FORMATTED)
-                }
-                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite => {
-                    Some(mojito_symbol::symbol::WRITE_REPR_FORMATTED)
-                }
-                _ => None,
-            })
-        {
-            let writer = *args.first().expect("checked write_to has one writer");
-            let (recv, recv_place) = self.lower_call_receiver(writer);
-            let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = call.call_anchors_arguments();
-            let (regs, arg_places) = self.lower_call_arguments(&[object], false);
-            self.allow_argument_anchors = saved_anchor_permission;
-            let d = self.fresh_typed(call.location(), None, Ty::none());
-            self.emit_interior_invalidations(writer, None);
-            self.emit(MirInstr::MethodCall {
-                dest: d,
-                recv,
-                method: primitive.to_string(),
-                resolved: None,
-                raises: None,
-                reference_result: None,
-                result_adapter: None,
-                args: regs,
-                kwargs: Vec::new(),
-                recv_place: recv_place.map(Box::new),
-                recv_writes: true,
-                receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
-                arg_places,
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_args: Vec::new(),
-                spread: None,
-                refined_bound: None,
-            });
-            return Some(d);
-        }
         // An `enum` storage's discriminant (`storage.get_discriminant()`)
         // reads the tag, as `isa[T]()` tests it.
         if node.adjustments.iter().any(|adjustment| {

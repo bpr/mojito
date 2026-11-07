@@ -1574,9 +1574,6 @@ impl Checker {
         if name == "_" && args.is_empty() {
             return Ok(Some((Ty::infer(), Vec::new())));
         }
-        if name == "Error" && args.is_empty() {
-            return Ok(Some((Ty::error(), Vec::new())));
-        }
         if name == "DType" && args.is_empty() && !self.structs.contains_key(name) {
             return Ok(Some((Ty::dtype(), Vec::new())));
         }
@@ -4829,8 +4826,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Index
         | TyKind::I1
         | TyKind::Ui8
-        | TyKind::KgenDtype
-        | TyKind::Error => false,
+        | TyKind::KgenDtype => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(type_is_symbolic)),

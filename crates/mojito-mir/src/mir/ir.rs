@@ -1931,39 +1931,6 @@ pub struct Raises {
     pub error: Reg,
 }
 
-/// Whether a raised value of type `ty` is a string a raise converts to the
-/// error type `error`, `Error`, as it converts its value to the type of
-/// the error slot it stores into.
-pub fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
-    matches!(error.kind(), TyKind::Error)
-        && match ty.kind() {
-            kind if kind.is_string_literal() => true,
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                mojito_symbol::symbol::is_stdlib_string_struct(name)
-            }
-            _ => false,
-        }
-}
-
-/// The conversion of the string in `message` to the `Error` in `dest`, as a
-/// raise converts it.
-pub fn error_conversion(dest: Reg, message: Reg) -> MirInstr {
-    MirInstr::Call {
-        dest,
-        func: FuncRef::named("Error"),
-        raises: None,
-        args: vec![message],
-        kwargs: Vec::new(),
-        arg_places: vec![None],
-        kwarg_places: Vec::new(),
-        capture_accesses: Vec::new(),
-        param_arg_regs: Vec::new(),
-        receiver: None,
-        instantiated_args: Vec::new(),
-        spread: None,
-    }
-}
-
 /// A single three-address instruction. Each value-producing instruction writes a
 /// fresh `dest` register; control flow lives in the block's [`MirTerm`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

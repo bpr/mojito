@@ -183,13 +183,13 @@ use mojito_mir::mir::{
     Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirClosureCapture,
     MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace,
     MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, RegisterEnds,
-    TypeConstructionError, UseMode, callable_targets, construct_type_parameters, converts_to_error,
-    count_register_reads, dunder_method_call, erase_removed_operands, error_conversion,
-    fresh_register, has_no_destructor, instruction_regions, instruction_regions_mut,
-    instruction_regs_mut, instruction_slots, instruction_subscript_call,
-    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
-    member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
-    renumber_block_slots, storage_construction, subscript_store_call, terminator_regs_mut,
+    TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
+    count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
+    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
+    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors,
+    operator_method, region_exit, removed_argument_operands, renumber_block_slots,
+    storage_construction, subscript_store_call, terminator_regs_mut,
     with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
@@ -2036,8 +2036,7 @@ impl ReturnExit {
     /// checker's unreachable fall-off; a break carrying no value cannot
     /// leave a loop with a result, so it is unreachable there. A raise out
     /// of the callee (`lit.error_return`) breaks the loop too when the call
-    /// has a raise edge, carrying its error, a string converted to `Error`
-    /// as the raise converts it, and leaves the body as it left the callee
+    /// has a raise edge, carrying its error, and leaves the body as it left the callee
     /// when it has none, its store into the callee's error slot storing
     /// into the caller's instead; a raise naming a `try` of the callee
     /// stays. A value the path does not define is upstream's
@@ -2089,16 +2088,6 @@ impl ReturnExit {
         if let Some(raises) = &self.raises {
             values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
             let error = match stored.map(|store| block.instrs.remove(store)) {
-                Some(MirInstr::DefVar { src: error, .. })
-                    if function
-                        .reg_types
-                        .get(&error.0)
-                        .is_some_and(|ty| *ty != raises.ty) =>
-                {
-                    let converted = fresh_register(function, raises.ty.clone(), span.as_ref());
-                    block.instrs.push(error_conversion(converted, error));
-                    converted
-                }
                 Some(MirInstr::DefVar { src: error, .. }) => error,
                 _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
             };
@@ -2134,9 +2123,9 @@ fn raised_store(block: &MirBlock, slot: Option<VarId>) -> Option<usize> {
 
 /// Whether a body inlined at a call whose raise edge is `raises` can route
 /// each raise out of the callee in `blocks` into it: one storing into the
-/// callee's error slot `slot` a value of the edge's error type, or a
-/// string the raise converts to `Error`. `reg_types` are the callee's,
-/// whose registers the body numbers from `base`.
+/// callee's error slot `slot` a value of the edge's error type.
+/// `reg_types` are the callee's, whose registers the body numbers from
+/// `base`.
 fn routes_raises(
     blocks: &[MirBlock],
     raises: &Raises,
@@ -2150,7 +2139,7 @@ fn routes_raises(
                     .0
                     .checked_sub(base)
                     .and_then(|callee| reg_types.get(&callee))
-                    .is_some_and(|ty| *ty == raises.ty || converts_to_error(ty, &raises.ty)))
+                    .is_some_and(|ty| *ty == raises.ty))
             });
         routed
             && block

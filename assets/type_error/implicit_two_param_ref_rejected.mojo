@@ -1,4 +1,4 @@
-# expect: @implicit requires a single-argument
+# expect: '@implicit' initializers must accept a single positional argument value
 # The loosened @implicit gate admits exactly one `ref [origin]` parameter;
 # two reference parameters stay rejected.
 struct Wrap:

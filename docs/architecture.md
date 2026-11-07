@@ -2952,13 +2952,10 @@ its error region before the store.
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer` and `Writable` are the
 bundled traits (`std/format/__init__.mojo`). `Writer`'s default `write` writes
-each heterogeneous Writable argument through its `write_to`, and an
-intrinsic value with no declared `write_to` or `write_repr_to` (`DType`,
-`Error`) feeds its host-formatted UTF-8 text to `write_string`
-(`$write_formatted`, `$write_repr_formatted`): the checker's
-`InvertedWrite`/`InvertedReprWrite` adjustment swaps a concrete call into
-that shape, and the elaborator swaps one reached through a `Writable`
-bound. `String(x)` is upstream's overload resolution over the bundled
+each heterogeneous Writable argument through its `write_to`; every
+writable value, `Error` (the library struct of `std/builtin/error.mojo`)
+included, declares its own `write_to` and `write_repr_to`, so no phase
+formats a value on the writer's behalf. `String(x)` is upstream's overload resolution over the bundled
 initializers (the `*Ts: Writable` pack initializer for anything but a
 `StringLiteral` or `StaticString`), and `repr` is upstream's library
 function (`std/format/repr.mojo`), which writes the value's
@@ -3877,8 +3874,10 @@ first stores its error there (`Flatten::raise_exit`); the slot holds
 nothing on entry, so drop elaboration demands it at each `error_return`
 alone (`ExitDemands::error`), as upstream's error argument is initialized
 on error, and destroys at its death an error a `finally`'s `return`
-replaced. A raise converts a string it stores into an `Error`-typed slot
-to `Error` first (`mir::error_conversion`). `sroa` and `mem-2-reg` keep
+replaced. A raised `String` or string literal reaches MIR already
+converted: the checker records `Error`'s `@implicit` initializer at the
+operand, as upstream converts a raise's operand to the error type.
+`sroa` and `mem-2-reg` keep
 the slot whole, and `renumber_slots` renumbers it. Likewise
 upstream's `parseTryStmt` declares `__try_error__` before each `lit.try`,
 which takes it as its `$err` operand, each `MirInstr::Try` names its error

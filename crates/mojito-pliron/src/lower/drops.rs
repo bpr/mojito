@@ -34,21 +34,6 @@ impl<'a> FnLowering<'a> {
             .filter(|(_, symbol)| self.declarations.contains_key(*symbol))
     }
 
-    /// The symbol of the member `method` the struct `name` runs for a
-    /// dispatch with `argc` arguments besides the receiver, from its member
-    /// table: the one compiled instance under the key callable resolution
-    /// selects among the member's overloads.
-    pub(super) fn struct_member(&self, name: &str, method: &str, argc: usize) -> Option<&'a str> {
-        let candidates = mojito_symbol::symbol::MemberCandidates::new(
-            name,
-            self.struct_member_symbols(name, method)
-                .filter_map(|(key, symbol)| {
-                    Some((key, symbol, self.signatures.get(symbol)?.params.len()))
-                }),
-        );
-        candidates.resolve(method, argc)
-    }
-
     /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
     /// call `destructor`, the compiled `__deinit__` the drop names (its body
     /// consumes the receiver's fields), else destroy the fields in
@@ -179,10 +164,9 @@ impl<'a> FnLowering<'a> {
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         match ty.kind() {
-            // The built-in error has no user destructor; dropping it frees
-            // the message buffer invisibly (the VM's error drop is a no-op —
-            // its message is arena-owned).
-            TyKind::Error => {
+            // The library `Error` is its message `String`, laid out as the
+            // runtime's `MjError`: dropping it frees the message buffer.
+            kind if kind.is_error() => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
@@ -299,7 +283,7 @@ impl<'a> FnLowering<'a> {
 
     /// [`Self::needs_drop`] for a drop naming `destructor` as `ty`'s own.
     pub(super) fn needs_named_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
-        destructor.is_some() || matches!(ty.kind(), TyKind::Error) || self.fields_need_drop(ty)
+        destructor.is_some() || ty.kind().is_error() || self.fields_need_drop(ty)
     }
 
     /// Whether any transitive field/element of `ty` performs drop work

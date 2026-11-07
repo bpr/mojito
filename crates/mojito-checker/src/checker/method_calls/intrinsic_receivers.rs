@@ -6,8 +6,7 @@ use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
-    /// the compiler-known collections, `DType`, the inverted
-    /// `write_to`, string literals, tuples, packs, pointers, and uninit
+    /// the compiler-known collections, string literals, tuples, packs, pointers, and uninit
     /// storage. `None` leaves the call to
     /// signature resolution.
     pub(super) fn infer_intrinsic_receiver_call(
@@ -50,28 +49,6 @@ impl Checker {
             && !self.structs.contains_key("Optional")
         {
             return self.infer_raw_optional_method(site).map(Some);
-        }
-        // `x.write_to(writer)` on an intrinsic Writable receiver with no
-        // declared `write_to` (`Error`) is
-        // `writer.write(x)`: the checker records the operand swap and MIR
-        // lowers the host-formatted `Writer.write` shape. Every struct, a
-        // `SIMD` or valued literal whose members are declared, and a
-        // `Writable`-bounded type parameter, whose call is the requirement's
-        // and reaches the conformer's witness, keep the ordinary method path.
-        let receiver = match obj_ty.kind() {
-            TyKind::Ref(reference) => &reference.referent,
-            _ => obj_ty,
-        };
-        if matches!(method, "write_to" | "write_repr_to")
-            && args.len() == 1
-            && kwargs.is_empty()
-            && param_args.is_empty()
-            && receiver.kind().as_non_simd_struct().is_none()
-            && self.declared_receiver_member(receiver, method).is_none()
-            && !matches!(receiver.kind(), TyKind::Param { .. })
-            && self.conforms_to(obj_ty, "Writable")
-        {
-            return self.infer_inverted_write(site).map(Some);
         }
         // A `VariadicPack` whose pack is still a parameter answers
         // `__len__()` through its static overload, `Self.Ts.length`, as the
@@ -228,36 +205,5 @@ impl Checker {
                 method: method.to_string(),
             }),
         }
-    }
-
-    /// `x.write_to(writer)` on an intrinsic receiver with no declared
-    /// `write_to` is `writer.write(x)`: record the operand swap.
-    fn infer_inverted_write(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
-        let MethodCallSite {
-            span,
-            object,
-            method,
-            call,
-            ..
-        } = site;
-        let MethodCallArguments { args, .. } = call;
-        let writer_ty = self.infer(&args[0])?;
-        if !self.conforms_to(&writer_ty, "Writer") {
-            return Err(TypeError::TypeMismatch {
-                expected: "Writer".to_string(),
-                found: writer_ty.to_string(),
-                context: "argument 1 to 'write_to'".to_string(),
-            });
-        }
-        self.check_place(&args[0])?;
-        self.record_at(object.source_span())
-            .borrowed_read_call_place = true;
-        self.infer_written_operand(object)?;
-        self.record_at(span.clone()).adjustment = Some(Box::new(if method == "write_repr_to" {
-            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
-        } else {
-            mojito_checked::checked::SemanticAdjustment::InvertedWrite
-        }));
-        Ok(Ty::none())
     }
 }

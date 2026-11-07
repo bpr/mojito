@@ -501,7 +501,6 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Supported,
         "width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.and/or reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise",
     ),
-    ("Error", CapabilityStatus::Supported, "MjError storage"),
     (
         "comptime_list",
         CapabilityStatus::Unsupported,

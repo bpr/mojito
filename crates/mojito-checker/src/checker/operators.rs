@@ -1062,30 +1062,6 @@ impl Checker {
         }
     }
 
-    /// Type the built-in `Error(msg)` constructor: one `String` argument.
-    pub(super) fn infer_error_construction(&self, args: &[Expr]) -> Result<Ty, TypeError> {
-        if args.len() != 1 {
-            return Err(TypeError::ArityMismatch {
-                name: "Error".to_string(),
-                expected: 1,
-                got: args.len(),
-            });
-        }
-        let aty = self.infer(&args[0])?;
-        self.bind_read_builtin_argument(&args[0], &aty);
-        let nominal_string = aty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
-            args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
-        });
-        if !aty.is_string_literal() && !nominal_string {
-            return Err(TypeError::TypeMismatch {
-                expected: "String".to_string(),
-                found: aty.to_string(),
-                context: "argument to 'Error'".to_string(),
-            });
-        }
-        Ok(Ty::error())
-    }
-
     /// Type `Pointer(to=place)` (also spelled through the deprecated
     /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
     /// storage. The element type is the place's type and the origin is the

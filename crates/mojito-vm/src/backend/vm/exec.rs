@@ -2082,7 +2082,7 @@ impl VmBackend {
             RuntimeError::Raised(error) => error,
             raised => return Err(raised),
         };
-        if let Value::Error(message) = &error {
+        if let Some(message) = self.error_text(&error) {
             self.record_lifecycle(format!("catch {message}"));
         }
         Ok(error)
@@ -2108,25 +2108,12 @@ impl VmBackend {
 
     /// The error a `raise` of `value` propagates as: `Raised`, which the
     /// nearest enclosing `try` intercepts, or which otherwise unwinds the
-    /// frame.
+    /// frame. The checker converted a raised string to the `Error` struct.
     pub(super) fn raise(&mut self, value: &Value) -> RuntimeError {
-        let error = match value {
-            Value::Str(message) => Value::Error(message.clone()),
-            // A raised nominal String reads its buffer back through the
-            // struct-to-literal bridge.
-            Value::Struct { name, .. } if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
-                match self.string_struct_literal(value) {
-                    Ok(Value::Str(message)) => Value::Error(message),
-                    Ok(other) => other,
-                    Err(error) => return error,
-                }
-            }
-            other => other.clone(),
-        };
-        if let Value::Error(message) = &error {
+        if let Some(message) = self.error_text(value) {
             self.record_lifecycle(format!("raise {message}"));
         }
-        RuntimeError::Raised(error)
+        RuntimeError::Raised(value.clone())
     }
 }
 

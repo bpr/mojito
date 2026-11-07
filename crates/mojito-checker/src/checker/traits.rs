@@ -2258,9 +2258,6 @@ impl Checker {
             }
             TyKind::Param { .. } | TyKind::Assoc { .. } => self.archetype_conformance(ty, tr),
             TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
-            // An already-reported error proves anything, so it cascades no
-            // further.
-            TyKind::Error => Conformance::Proven,
             _ if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) => {
                 mojito_types::conformance::leaf_conformance(ty, tr, element)
                     .unwrap_or(Conformance::Unknown)

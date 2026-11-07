@@ -2979,9 +2979,6 @@ impl<'a> Specializer<'a> {
                         param_decls,
                         instantiated_args,
                         spread,
-                        recv_place,
-                        recv_writes,
-                        arg_places,
                         ..
                     } => {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -3008,31 +3005,6 @@ impl<'a> Specializer<'a> {
                             param_decls.clear();
                             instantiated_args.clear();
                             param_arg_regs.clear();
-                            // An intrinsic receiver with no declared
-                            // `write_to` or `write_repr_to` (`Error`,
-                            // `DType`) is written by its writer's host
-                            // primitive.
-                            let primitive = match method.as_str() {
-                                "write_to" => Some(mojito_symbol::symbol::WRITE_FORMATTED),
-                                "write_repr_to" => {
-                                    Some(mojito_symbol::symbol::WRITE_REPR_FORMATTED)
-                                }
-                                _ => None,
-                            };
-                            if let Some(primitive) = primitive
-                                && args.len() == 1
-                                && arg_places.len() == 1
-                            {
-                                std::mem::swap(recv, &mut args[0]);
-                                let writer_place = arg_places[0].take();
-                                arg_places[0] = recv_place.take().map(|place| *place);
-                                *recv_place = writer_place.map(Box::new);
-                                *method = primitive.to_string();
-                                *recv_writes = true;
-                                *receiver_convention = Some(mojito_ast::ast::ArgConvention::Mut);
-                                *result_adapter = None;
-                                self.enqueue_formatted_write(owner, function, *recv)?;
-                            }
                             continue;
                         }
                         // A borrowed receiver dispatches on its referent, as
@@ -3073,12 +3045,6 @@ impl<'a> Specializer<'a> {
                             ),
                         };
                         if !self.functions.contains_key(target.as_str()) {
-                            // The VM-synthesized `Writer.write` dispatch calls
-                            // the receiver's `write_string`; enqueue its
-                            // instance for the lowered expansion.
-                            if mojito_symbol::symbol::is_formatted_write(method) {
-                                self.enqueue_formatted_write(owner, function, *recv)?;
-                            }
                             continue;
                         }
                         // The adapter copies the element out of a reference

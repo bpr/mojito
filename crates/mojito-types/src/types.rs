@@ -363,6 +363,11 @@ pub fn is_simd_length(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(name, args) if name == SIMD_LENGTH_TYPE_NAME && args.is_empty())
 }
 
+/// Whether `ty` is upstream's `Error`.
+pub fn is_error(ty: &Ty) -> bool {
+    ty.kind().is_error()
+}
+
 /// Whether `ty` is upstream's `DType`.
 pub fn is_dtype(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(name, args) if name == DTYPE_TYPE_NAME && args.is_empty())
@@ -680,8 +685,6 @@ pub enum TyKind {
         #[serde(serialize_with = "crate::symbol_ref::serialize")] String,
         Vec<TyArg>,
     ),
-    /// The built-in `Error` type.
-    Error,
     /// Compile-time-only list shape used while materializing `CtValue::List`.
     /// Checked executable List values use `Struct("List", ...)`.
     ComptimeList(Ty),
@@ -936,6 +939,16 @@ impl Ty {
         });
         TY.clone()
     }
+    /// `Error`, the struct `std.builtin.error` declares over its message.
+    pub fn error() -> Self {
+        static TY: LazyLock<Ty> = LazyLock::new(|| {
+            Ty(Arc::new(TyNode::new(TyKind::Struct(
+                ERROR_TYPE_NAME.to_string(),
+                Vec::new(),
+            ))))
+        });
+        TY.clone()
+    }
 }
 
 dataless_types! {
@@ -955,8 +968,6 @@ dataless_types! {
     ui8 => Ui8,
     /// Upstream's `!kgen.dtype`.
     kgen_dtype => KgenDtype,
-    /// `Error`.
-    error => Error,
 }
 
 impl Ty {
@@ -1221,6 +1232,11 @@ impl TyKind {
     /// Whether this is a string literal's type, `StringLiteral[value]`.
     pub fn is_string_literal(&self) -> bool {
         self.string_literal_value().is_some()
+    }
+
+    /// Whether this is upstream's `Error`, the `std.builtin.error` struct.
+    pub fn is_error(&self) -> bool {
+        matches!(self, Self::Struct(name, args) if name == ERROR_TYPE_NAME && args.is_empty())
     }
 
     /// The `value` argument of a `StringLiteral[value]` application whose
@@ -1573,6 +1589,9 @@ pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 /// The name of upstream's `DType`, declared in `std.builtin.dtype`: the
 /// type of `SIMD`'s element slot.
 pub const DTYPE_TYPE_NAME: &str = "DType";
+
+/// The name of upstream's `Error`, declared in `std.builtin.error`.
+pub const ERROR_TYPE_NAME: &str = "Error";
 
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
@@ -3628,7 +3647,6 @@ impl fmt::Display for TyKind {
             }
             Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
-            Self::Error => write!(f, "Error"),
             Self::Pointer { element, origin } => {
                 write!(f, "Pointer[{element}, ")?;
                 fmt_pointer_origin(f, origin)?;
@@ -4544,7 +4562,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     (None, None) => true,
                     (None, Some(TyKind::Never)) => true,
                     (None, Some(_)) => true,
-                    (Some(from), Some(TyKind::Error)) => *from != TyKind::Never,
+                    (Some(from), Some(to)) if to.is_error() => *from != TyKind::Never,
                     (Some(from), Some(to)) => from == to,
                     (Some(TyKind::Never), None) => true,
                     (Some(_), None) => false,
@@ -4682,7 +4700,6 @@ pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
                 | TyKind::Func(_)
                 | TyKind::GenericFunc(_)
                 | TyKind::Overload(_)
-                | TyKind::Error
         )
 }
 
@@ -4882,7 +4899,7 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         ) {
             (None | Some(TyKind::Never), _) => true,
             (Some(_), None) => false,
-            (Some(actual), Some(TyKind::Error)) => *actual != TyKind::Never,
+            (Some(actual), Some(contract)) if contract.is_error() => *actual != TyKind::Never,
             (Some(actual), Some(contract)) => actual == contract,
         }
 }
@@ -5683,8 +5700,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::I1
         | TyKind::Ui8
         | TyKind::KgenDtype
-        | TyKind::SelfType
-        | TyKind::Error => ty.clone(),
+        | TyKind::SelfType => ty.clone(),
     })
 }
 
@@ -6283,8 +6299,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Ui8
         | TyKind::KgenDtype
         | TyKind::None
-        | TyKind::Never
-        | TyKind::Error => false,
+        | TyKind::Never => false,
     }
 }
 
@@ -6677,8 +6692,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Index
         | TyKind::I1
         | TyKind::Ui8
-        | TyKind::KgenDtype
-        | TyKind::Error => true,
+        | TyKind::KgenDtype => true,
         TyKind::KgenSimd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {

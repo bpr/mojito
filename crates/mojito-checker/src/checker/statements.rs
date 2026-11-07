@@ -2379,9 +2379,11 @@ impl Checker {
                 Ok(())
             }
 
-            // `raise` — its operand must be an `Error` (or a `String`, the
-            // shorthand). The raises *effect* (that this must be in a `raises`
-            // function or a `try`) is deliberately not analyzed.
+            // `raise` — its operand is the raised error, or a `String` the
+            // `Error` struct's `@implicit` initializer converts, as upstream
+            // converts the operand to the error type. The raises *effect*
+            // (that this must be in a `raises` function or a `try`) is
+            // deliberately not analyzed.
             StmtKind::Raise(expr) => {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
@@ -2389,7 +2391,19 @@ impl Checker {
                     || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
                         args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
                     });
-                let error = if stringish { Ty::error() } else { ty };
+                let error = if stringish {
+                    let error = Ty::error();
+                    if !self.record_implicit_conversion(expr, &ty, &error)? {
+                        return Err(TypeError::TypeMismatch {
+                            expected: error.to_string(),
+                            found: ty.to_string(),
+                            context: "'raise'".to_string(),
+                        });
+                    }
+                    error
+                } else {
+                    ty
+                };
                 self.require_error("'raise'", error)?;
                 Ok(())
             }

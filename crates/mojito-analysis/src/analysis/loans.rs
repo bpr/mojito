@@ -653,7 +653,6 @@ pub(super) fn loan_accesses(
         }
         MirInstr::MethodCall {
             dest,
-            method,
             resolved,
             recv_place,
             recv_writes,
@@ -684,9 +683,6 @@ pub(super) fn loan_accesses(
                     .copied()
                     .map_or(LoanAccess::Unclassified, access_for_convention),
                 (None, Some(callee)) => callees.retained_access(callee, argument, true),
-                (None, None) if mojito_symbol::symbol::is_formatted_write(method) => {
-                    LoanAccess::Read
-                }
                 (None, None) => LoanAccess::Unclassified,
             };
             let mut accesses = recv_place

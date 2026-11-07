@@ -388,6 +388,7 @@ assets/ok/enum_like_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/env_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/erased_clone_result_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/errno_strerror.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/error_library_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/error_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/evaluated_default_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape

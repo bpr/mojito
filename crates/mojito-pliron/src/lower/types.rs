@@ -169,12 +169,9 @@ pub fn lower_ty(
         | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
         // A `!kgen.generator` is a trivial register type that holds nothing.
         TyKind::None | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
-        // The built-in error value is `MjError { message: MjString }` storage;
-        // its message buffer frees invisibly on drop (no user destructor).
         // A `!kgen.string`'s storage is the borrowed `MjStrDesc` descriptor.
         // A retained callable is the two-word `{ invoke, env }` value.
         TyKind::KgenSimd { .. }
-        | TyKind::Error
         | TyKind::Struct(..)
         | TyKind::Tuple(_)
         | TyKind::PopArray { .. }

@@ -127,7 +127,7 @@ impl Checker {
         let error_exit = exits.iter().any(|sig| {
             sig.has_self
                 && sig.params.len() == 1
-                && sig.params[0] == TyKind::Error
+                && sig.params[0].kind().is_error()
                 && sig.ret.is_bool()
         });
         if enter_consumes && (plain_exit || error_exit) {

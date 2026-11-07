@@ -1903,7 +1903,9 @@ impl Checker {
             .iter()
             .filter(|sig| {
                 sig.implicit
-                    && sig.params.len() == 1
+                    && sig.required.first() == Some(&true)
+                    && sig.required[1..].iter().all(|required| !required)
+                    && sig.variadic.is_none()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
                             declarations::refinement_admits(refined, &instance, &sig.decls, to)

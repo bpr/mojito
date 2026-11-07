@@ -322,7 +322,6 @@ impl Checker {
                 }
                 Ok(tuple)
             }
-            "Error" => self.infer_error_construction(args),
             _ => Err(TypeError::UndefinedVariable(name.to_string())),
         }
     }

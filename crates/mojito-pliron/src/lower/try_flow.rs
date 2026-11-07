@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `lit.try`, a control-flow node like `hlcf`'s: each part is a block of
@@ -95,10 +94,9 @@ impl FnLowering<'_> {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
-            // An error value displays as its bare message (the VM's
-            // `format_value` over `Value::Error`), whose data and length
+            // An `Error` displays as its message, whose data and length
             // lead it as a String's do.
-            Some(TyKind::Error) => {
+            Some(kind) if kind.is_error() => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }

@@ -673,8 +673,7 @@ impl ScopeCx<'_> {
             | TyKind::I1
             | TyKind::Ui8
             | TyKind::KgenDtype
-            | TyKind::SelfType
-            | TyKind::Error => {}
+            | TyKind::SelfType => {}
         }
     }
 

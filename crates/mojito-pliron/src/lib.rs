@@ -1046,23 +1046,6 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_named(constructor);
                 }
             }
-            // A writer's host-formatted write lowers to `write_string`
-            // calls that exist only in the expansion.
-            MirInstr::MethodCall {
-                recv,
-                method,
-                resolved: None,
-                ..
-            } if mojito_symbol::symbol::is_formatted_write(method) => {
-                if let Some((name, _)) = self
-                    .function
-                    .reg_types
-                    .get(&recv.0)
-                    .and_then(|ty| ty.kind().as_non_simd_struct())
-                {
-                    self.push_members(name, "write_string");
-                }
-            }
             // A `Variant` receiver's lowered `__hash__` reaches its
             // hasher's compiled `_update_with_simd`.
             MirInstr::MethodCall {

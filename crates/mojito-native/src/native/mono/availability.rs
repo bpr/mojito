@@ -291,23 +291,11 @@ impl Specializer<'_> {
                         true
                     })
             };
-            // The compiler-modelled `Error`, which the check also reads as
-            // its poison, reaches an instance only as a value's type: it
-            // answers as upstream's struct, which lists `ImplicitlyCopyable`
-            // and `Writable`.
-            let modelled_error = matches!(ty.kind(), TyKind::Error);
             let conforms = if declarations.declares_trait(trait_name) {
                 // A compiler-known type conforms to a declared trait only as
                 // the upstream struct it models declares.
-                if !modelled_error {
-                    mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)?;
-                }
+                mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)?;
                 mojito_types::conformance::modelled_declares(ty, trait_name, &mut element)
-            } else if modelled_error {
-                matches!(
-                    trait_name,
-                    "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" | "AnyType"
-                )
             } else {
                 mojito_types::conformance::leaf_conforms(ty, trait_name, &mut element)?
             };

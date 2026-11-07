@@ -197,7 +197,6 @@ pub fn leaf_conformance(
                 | TyKind::Dependent(_)
                 | TyKind::SelfType
                 | TyKind::Infer
-                | TyKind::Error
         )
     {
         return None;

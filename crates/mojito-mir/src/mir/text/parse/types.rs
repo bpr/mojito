@@ -50,7 +50,6 @@ impl Decoder {
                 "ui8" => Ty::ui8(),
                 "kgen_dtype" => Ty::kgen_dtype(),
                 "Self" => Ty::self_type(),
-                "Error" => Ty::error(),
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));
                     return None;

@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 177;
+pub const VERSION_MINOR: u16 = 178;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -301,7 +301,6 @@ pub const TYPE_SPELLINGS: &[&str] = &[
     "Self",
     "struct_type",
     "simd",
-    "Error",
     "comptime_list",
     "tuple",
     "pop_array",
@@ -520,7 +519,6 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         kind if kind.is_simd() => "simd",
         TyKind::Struct(_, _) => "struct_type",
         TyKind::KgenSimd { .. } => "kgen_simd",
-        TyKind::Error => "Error",
         TyKind::ComptimeList(_) => "comptime_list",
         TyKind::ParamList(_) => "param_list",
         TyKind::AnyTrait(_) => "any_trait",

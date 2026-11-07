@@ -1718,19 +1718,31 @@ impl Checker {
                 .is_some_and(|parameter| parameter.origin.is_some()),
             Some(_) => false,
         };
+        // Upstream accepts an `@implicit` initializer callable with one
+        // positional argument: one required parameter whose followers all
+        // default (`Error.__init__(out self, var value: String, *, depth:
+        // Int = -1)`), or a lone positional collector
+        // (`Error.__init__[*Ts: Writable](out self, *args: *Ts)`).
+        let one_required = m.params.first().is_some_and(|first| {
+            first.kind == mojito_ast::ast::ParamKind::Regular
+                && first.default.is_none()
+                && implicit_convention_ok
+        }) && m.params[1..].iter().all(|parameter| {
+            parameter.kind == mojito_ast::ast::ParamKind::Regular && parameter.default.is_some()
+        });
+        let collector = matches!(
+            m.params.as_slice(),
+            [only] if only.kind == mojito_ast::ast::ParamKind::Variadic
+        );
         if is_implicit
             && (m.name != "__init__"
                 || !m.has_self
                 || m.self_convention != Some(ArgConvention::Out)
-                || m.params.len() != 1
-                || m.params[0].kind != mojito_ast::ast::ParamKind::Regular
-                || m.params[0].default.is_some()
-                || !implicit_convention_ok
+                || !(one_required || collector)
                 || m.ret.is_some())
         {
             return Err(TypeError::Unsupported(
-                "@implicit requires a single-argument '__init__(out self, value: T)' \
-                 (the argument may be a 'var' or 'ref [origin]' parameter)"
+                "'@implicit' initializers must accept a single positional argument value"
                     .to_string(),
             ));
         }

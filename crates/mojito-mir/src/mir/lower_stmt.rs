@@ -3848,21 +3848,6 @@ impl<'a> Flatten<'a> {
             Terminator::MatchComplete => MirTerm::MatchComplete(Vec::new()),
             Terminator::Raise(value) => {
                 let src = self.expr_hir(value);
-                // `raise "message"` raises the `Error` the literal converts
-                // to, as `raise Error("message")` does.
-                let src = if self
-                    .f
-                    .reg_types
-                    .get(&src.0)
-                    .is_some_and(Ty::is_string_literal)
-                {
-                    let error =
-                        self.fresh_typed(self.hir_node(value).location(), None, Ty::error());
-                    self.emit(error_conversion(error, src));
-                    error
-                } else {
-                    src
-                };
                 self.flush_argument_anchors();
                 let (instrs, term) = self.raise_exit(src);
                 for instruction in instrs {

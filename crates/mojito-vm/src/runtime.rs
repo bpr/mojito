@@ -55,8 +55,6 @@ pub enum Value {
     /// pipeline. A `!kgen.string` is also a run-time value, which the
     /// `pop.string.size` and `pop.string.address` reads inspect.
     Attribute(mojito_types::ct::CtValue),
-    /// An `Error` value carrying its message (what `raise` raises).
-    Error(String),
     /// A list-shaped compile-time value crossing the narrow VM-CTFE bridge.
     /// This is never a language-level runtime collection: executable List values
     /// are ordinary nominal [`Value::Struct`] instances from the bundled library.
@@ -178,7 +176,6 @@ impl PartialEq for Value {
                     lanes: l2,
                 },
             ) => d1 == d2 && l1 == l2,
-            (Self::Error(a), Self::Error(b)) => a == b,
             (Self::ComptimeList(a), Self::ComptimeList(b)) => a == b,
             (Self::Tuple(a), Self::Tuple(b)) => a == b,
             (
@@ -268,9 +265,6 @@ impl fmt::Display for Value {
                     write!(f, "[{}]", strs.join(", "))
                 }
             }
-            // Upstream prints an Error as its bare message (`print(e)` ->
-            // `boom`), not a constructor rendering.
-            Self::Error(msg) => write!(f, "{msg}"),
             Self::Pointer { allocation, offset } => {
                 write!(f, "Pointer({allocation:#x}+{offset})")
             }
@@ -385,7 +379,6 @@ pub fn type_name(value: &Value) -> String {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.width())
             }
         }
-        Value::Error(_) => "Error".to_string(),
         Value::Pointer { .. } => "Pointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
@@ -773,10 +766,14 @@ pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
     Ok(Value::Str(line))
 }
 
-/// The error `input()` raises when standard input is exhausted.
+/// The error `input()` raises when standard input is exhausted: its
+/// message, which the VM's `input` dispatch constructs the `Error` of.
 pub fn input_eof() -> RuntimeError {
-    RuntimeError::Raised(Value::Error("EOF".to_string()))
+    RuntimeError::Raised(Value::Str(INPUT_EOF_MESSAGE.to_string()))
 }
+
+/// The message of the `Error` `input()` raises at end of input.
+pub const INPUT_EOF_MESSAGE: &str = "EOF";
 
 /// The synthetic integer address of a VM pointer: 0 for the null (allocation
 /// 0) pointer, otherwise the allocation id in the high word with the element
@@ -837,17 +834,6 @@ pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError>
             "{}() expects an integer literal, got {}",
             method,
             type_name(other)
-        ))),
-    }
-}
-
-/// `Error(msg)`: wrap a `String` into an `Error` value.
-pub fn builtin_error(v: Value) -> Result<Value, RuntimeError> {
-    match v {
-        Value::Str(s) => Ok(Value::Error(s)),
-        other => Err(RuntimeError::TypeError(format!(
-            "Error() expects a String, got {}",
-            type_name(&other)
         ))),
     }
 }

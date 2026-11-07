@@ -502,9 +502,16 @@ impl VmBackend {
                     prompt = self.string_struct_literal(&prompt)?;
                 }
                 let line = if self.input_override.is_some() {
-                    self.input_from_override(prompt)?
+                    self.input_from_override(prompt)
                 } else {
-                    builtin_input(prompt)?
+                    builtin_input(prompt)
+                };
+                // End of input raises the library `Error` over its message.
+                let line = match line {
+                    Err(RuntimeError::Raised(Value::Str(message))) => {
+                        return Err(RuntimeError::Raised(self.error_value(prog, &message)?));
+                    }
+                    line => line?,
                 };
                 match line {
                     Value::Str(text)
@@ -514,17 +521,6 @@ impl VmBackend {
                     }
                     line => Ok(line),
                 }
-            }
-            "Error" => {
-                let mut argument = literal_text_argument(&arg1(name, args)?, arg_types, 0);
-                // A nominal String message reads back through the
-                // struct-to-literal bridge before wrapping.
-                if matches!(&argument, Value::Struct { name, .. }
-                    if mojito_symbol::symbol::is_stdlib_string_struct(name))
-                {
-                    argument = self.string_struct_literal(&argument)?;
-                }
-                builtin_error(argument)
             }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
             // return a pointer to the base (the element type is erased).
@@ -601,33 +597,6 @@ impl VmBackend {
         let skeleton = Self::struct_skeleton(prog, name);
         let (_, frame_vars) = self.call_frame(prog, index, vec![skeleton, source])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
-    }
-}
-
-/// The host text a writer's `$write_formatted` (or, with `repr`,
-/// `$write_repr_formatted`) writes for an intrinsic value with no
-/// declared `write_to`: `DType`, `Error`, `None`, and the VM's internal
-/// values. A declared value writes itself through its own member, so a
-/// struct or `SIMD` value here is an unsupported boundary. A moved-out
-/// tombstone (an unsafe take of never-written storage) traps as any use
-/// of it does.
-pub(super) fn format_value(value: &Value, repr: bool) -> Result<String, RuntimeError> {
-    match value {
-        Value::Moved => Err(RuntimeError::TypeError(
-            "vm: display of a value after it was moved".to_string(),
-        )),
-        Value::Struct { name, .. } => Err(RuntimeError::Unsupported(format!(
-            "vm: host-formatted write of the declared struct `{name}`"
-        ))),
-        Value::Int(_)
-        | Value::UInt(_)
-        | Value::Float64(_)
-        | Value::Bool(_)
-        | Value::Simd { .. } => Err(RuntimeError::Unsupported(
-            "vm: host-formatted write of a declared `SIMD` or `Bool` value".to_string(),
-        )),
-        _ if repr => Ok(scalar_repr(value)),
-        _ => Ok(value.to_string()),
     }
 }
 
@@ -764,29 +733,5 @@ fn with_names_of(original: &Value, value: Value) -> Value {
                 .collect(),
         },
         (_, value) => value,
-    }
-}
-
-/// Upstream's `repr` text for a value no member table displays: a
-/// literal as the `Int` or `Float64` it materializes to, a single-quoted
-/// string with backslash escapes; everything else prints its text.
-fn scalar_repr(value: &Value) -> String {
-    match value {
-        Value::Str(text) => {
-            let mut out = String::from("'");
-            for ch in text.chars() {
-                match ch {
-                    '\\' => out.push_str("\\\\"),
-                    '\'' => out.push_str("\\'"),
-                    '\n' => out.push_str("\\n"),
-                    '\t' => out.push_str("\\t"),
-                    '\r' => out.push_str("\\r"),
-                    other => out.push(other),
-                }
-            }
-            out.push('\'');
-            out
-        }
-        other => other.to_string(),
     }
 }

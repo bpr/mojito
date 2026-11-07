@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.177
+mojito-mir 1.178
 ```
 
-The writer emits 1.177. The reader accepts 1.0 through 1.177; *Schema 1.0*
+The writer emits 1.178. The reader accepts 1.0 through 1.178; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,16 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.178 removes the `Error` type tag, the builtin callee `Error`,
+and the methods `$write_formatted` and `$write_repr_formatted` (R1938):
+`Error` is the bundled library struct `std.builtin.error.Error`, an
+ordinary nominal record over its `_error` `String`, constructed by its
+declared initializers, and every value writes through its declared
+`write_to` and `write_repr_to`. A raise of a string stores the `Error`
+its checked `@implicit` conversion built. The checked adjustments
+`InvertedWrite` and `InvertedReprWrite` go with them, so the package
+format moves to `mojito-package 202`.
+
 Schema 1.177 removes the `DType` type tag and `checked_dtype` (R1936):
 `DType` is the bundled library struct `std.builtin.dtype.DType`, an
 ordinary nominal record over one `kgen_dtype` field. A `DType` value is
@@ -1839,7 +1849,7 @@ The complete `Ty` tag set is:
 
 ```text
 Int UInt Bool Float64 None Never Infer
-Self Error
+Self
 func { environment, params, names, return_type, required, variadic,
        kw_variadic, positional_only, keyword_only, raises, error_type,
        conventions, ref_params, ref_return, transfers }

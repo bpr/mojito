@@ -36,18 +36,6 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
     }
 }
 
-/// Whether a value of type `ty` can be `print`ed (has a user-facing display).
-/// Functions, ranges, and opaque type parameters are not printable.
-pub(super) fn is_printable(ty: &Ty) -> bool {
-    match ty.kind() {
-        kind if kind.is_simd() => true,
-        TyKind::None | TyKind::Struct(_, _) | TyKind::Error | TyKind::ComptimeList(_) => true,
-        // A tuple prints if every element prints.
-        TyKind::Tuple(elems) => elems.iter().all(is_printable),
-        _ => false,
-    }
-}
-
 /// The common type of two numeric operands, coercing literals as needed, or
 /// `None` if they can't be unified (e.g. two different concrete types).
 pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
@@ -104,51 +92,6 @@ impl Checker {
             TyKind::Tuple(nested) => self.tuple_elements_equatable(nested),
             _ => self.is_list_equatable(ty),
         })
-    }
-
-    /// Type the receiver of an inverted write (`x.write_to(writer)` over a
-    /// receiver with no `write_to` body): a read of a `Writable` value.
-    pub(super) fn infer_written_operand(&self, operand: &Expr) -> Result<(), TypeError> {
-        let ty = self.infer(operand)?;
-        self.bind_read_builtin_argument(operand, &ty);
-        self.borrow_storage_element_argument(operand);
-        let runtime_ty = default_literal(&ty);
-        if runtime_ty != ty {
-            self.record_literal_materializations(operand, &ty, &runtime_ty)?;
-        }
-        if !self.printable_argument(&ty) {
-            return Err(TypeError::TraitNotSatisfied {
-                param: "Self".to_string(),
-                ty: ty.to_string(),
-                trait_name: "Writable".to_string(),
-                reason: None,
-            });
-        }
-        Ok(())
-    }
-
-    /// Whether a value of type `ty` may be handed to a `Writer`: a
-    /// printable built-in, a built-in aggregate of printable elements, or a
-    /// struct or parameter that is `Writable`.
-    pub(super) fn printable_argument(&self, ty: &Ty) -> bool {
-        if let Some((name, _)) = ty.kind().as_non_simd_struct()
-            && !self.structs.contains_key(name)
-            && (list_element(ty).is_some_and(is_printable)
-                || set_element(ty).is_some_and(is_printable)
-                || dict_elements(ty)
-                    .is_some_and(|(key, value)| is_printable(key) && is_printable(value))
-                || tuple_elements(ty)
-                    .is_some_and(|elements| elements.into_iter().all(is_printable)))
-        {
-            return true;
-        }
-        if ty.is_non_simd_struct()
-            || matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
-            || self.opaque_element(ty).is_some()
-        {
-            return self.conforms_to(ty, "Writable");
-        }
-        is_printable(ty)
     }
 
     /// Type the built-in `input(prompt)`: the prompt is a compile-time or
@@ -230,13 +173,10 @@ impl Checker {
     /// slots an `unsafe_uninit_length` construction left unwritten), and
     /// `print(e)` never copies the `Error`, upstream's library struct.
     pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
-        let nominal = match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                self.structs.contains_key(name)
-            }
-            TyKind::Error => true,
-            _ => false,
-        };
+        let nominal = ty
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| self.structs.contains_key(name));
         if matches!(argument.kind, ExprKind::Identifier(_)) && nominal {
             self.record_at(argument.source_span())
                 .borrowed_read_call_place = true;
@@ -269,28 +209,6 @@ impl Checker {
                 TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_)
             )
         {
-            self.record_at(argument.source_span())
-                .borrowed_read_call_place = true;
-        }
-    }
-
-    /// A read-only builtin (`print`) over an element of a named tuple or
-    /// pack reads the element where it lies, as it reads a field.
-    pub(super) fn borrow_storage_element_argument(&self, argument: &Expr) {
-        let ExprKind::Index { object, .. } = &argument.kind else {
-            return;
-        };
-        let storage = matches!(object.kind, ExprKind::Identifier(_))
-            && matches!(
-                (self
-                    .node_facts
-                    .borrow()
-                    .get(&object.source_span())
-                    .and_then(|facts| facts.ty.as_ref()))
-                .map(Ty::kind),
-                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_))
-            );
-        if storage {
             self.record_at(argument.source_span())
                 .borrowed_read_call_place = true;
         }

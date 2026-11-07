@@ -2204,7 +2204,6 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Ui8 => "ui8".into(),
         TyKind::KgenDtype => "kgen_dtype".into(),
         TyKind::SelfType => "Self".into(),
-        TyKind::Error => "Error".into(),
         TyKind::Func(func) => {
             let FuncTy {
                 environment,

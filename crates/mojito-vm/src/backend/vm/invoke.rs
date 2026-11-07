@@ -326,38 +326,6 @@ impl VmBackend {
                     "vm: Pointer has no method '{method}'"
                 ))),
             },
-            Value::Struct { name, .. }
-                if mojito_symbol::symbol::is_formatted_write(method)
-                    && let Some(index) = prog.struct_member(name, "write_string", 1) =>
-            {
-                let place = recv_place.as_ref().ok_or_else(|| {
-                    RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
-                })?;
-                let mut writer = recv.clone();
-                // The writer's `write_string` runs in a nested frame that may
-                // read references into this caller (a writer holding
-                // `Pointer(to=local)`): keep the caller reachable as a
-                // synchronous call does.
-                let repr = method == mojito_symbol::symbol::WRITE_REPR_FORMATTED;
-                let stack_base = self.push_caller_mirror(frame_id, regs, vars);
-                let written = (|| {
-                    for argument in args {
-                        let text = super::dispatch::format_value(&argument, repr)?;
-                        // `write_string` borrows a view over a temporary buffer
-                        // that lives exactly as long as the call.
-                        let (payload, allocation) = self.temporary_string_span(prog, &text)?;
-                        let (_, variables) =
-                            self.call_frame(prog, index, vec![writer.clone(), payload])?;
-                        self.heap_free(allocation, 0)?;
-                        writer = variables.into_iter().next().unwrap_or(Value::None);
-                    }
-                    Ok::<_, RuntimeError>(())
-                })();
-                self.restore_caller_mirror(stack_base, vars)?;
-                written?;
-                self.store_at_call_place(frame_id, place, writer, regs, vars)?;
-                Ok(Value::None)
-            }
             _ if let Some(name) = &declared_owner => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");

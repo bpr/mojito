@@ -10,7 +10,7 @@ impl FnLowering<'_> {
     /// String's buffer; raw pointers are not owned).
     pub(super) fn owns_heap(&self, ty: &Ty) -> bool {
         match ty.kind() {
-            TyKind::Error => true,
+            kind if kind.is_error() => true,
             struct_ty
                 if let Some((name, _)) = struct_ty.as_non_simd_struct()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
@@ -58,7 +58,7 @@ impl FnLowering<'_> {
             }
             // A String's buffer and an error's message buffer both sit at
             // offset 0 (MjString/MjError agree on the data-first layout).
-            TyKind::Error => {
+            kind if kind.is_error() => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);

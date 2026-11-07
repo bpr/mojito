@@ -288,7 +288,7 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, dst, new_data, src_size, src_cap, span);
             return Ok(());
         }
-        if matches!(ty.kind(), TyKind::Error) {
+        if ty.kind().is_error() {
             let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
             let new_data = self.emit_alloc(ctx, src_size, 1, span);
             self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);

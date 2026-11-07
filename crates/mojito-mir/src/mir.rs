@@ -3985,33 +3985,18 @@ impl<'a> Flatten<'a> {
         let Some(slot) = slot else {
             return (Vec::new(), term);
         };
-        let raised = self.f.reg_types.get(&src.0).cloned();
         let ty = match self.var_types.get(&slot) {
             Some(ty) => Some(ty.clone()),
-            None => raised.clone().inspect(|ty| {
+            None => self.f.reg_types.get(&src.0).cloned().inspect(|ty| {
                 self.var_types.insert(slot, ty.clone());
             }),
         };
-        let mut instrs = Vec::new();
-        let src = match (&ty, &raised) {
-            (Some(slot_ty), Some(raised)) if converts_to_error(raised, slot_ty) => {
-                let error = Reg(self.next_reg);
-                self.next_reg += 1;
-                self.f.reg_types.insert(error.0, Ty::error());
-                if let Some((span, _)) = self.f.spans.0.get(&src.0).cloned() {
-                    self.f.spans.0.insert(error.0, (span, None));
-                }
-                instrs.push(error_conversion(error, src));
-                error
-            }
-            _ => src,
-        };
-        instrs.push(MirInstr::DefVar {
+        let instrs = vec![MirInstr::DefVar {
             var: slot,
             src,
             binding_ty: ty,
             in_place: false,
-        });
+        }];
         (instrs, term)
     }
 

@@ -61,24 +61,6 @@ impl ModuleNames for NoModuleNames {
 /// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
 pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 
-/// The method a writer receives for `x.write_to(writer)` on a value whose
-/// `write_to` the host formats (a builtin scalar or literal).
-///
-/// It stands for the tail of upstream's `write_to` body, which writes the
-/// formatted text through `writer.write_string` and never re-enters the
-/// writer's own `write`; the `$` keeps any source method from naming it.
-pub const WRITE_FORMATTED: &str = "$write_formatted";
-
-/// The representation twin of [`WRITE_FORMATTED`]: the method a writer
-/// receives for `x.write_repr_to(writer)` on the same host-formatted
-/// receivers, writing the value's `repr` text.
-pub const WRITE_REPR_FORMATTED: &str = "$write_repr_formatted";
-
-/// Whether `method` is one of the writer's host-formatted write primitives.
-pub fn is_formatted_write(method: &str) -> bool {
-    method == WRITE_FORMATTED || method == WRITE_REPR_FORMATTED
-}
-
 /// The symbol of upstream's `@implicit SIMDLength.__init__(Int)`, which
 /// spells the length a vector's `Int` width converts to.
 pub const SIMD_LENGTH_FROM_INT: &str = "SIMDLength.__init__$ov$Int";
@@ -3413,7 +3395,7 @@ impl TypeNameSpeller<'_> {
             kind if kind.is_float_literal() => self.simd(&"DType.float64", &1),
             kind if kind.is_bool() => self.qualify("std.builtin.bool", "Bool"),
             TyKind::None => self.qualify("std.builtin.none", "NoneType"),
-            TyKind::Error => self.qualify("std.builtin.error", "Error"),
+            kind if kind.is_error() => self.qualify("std.builtin.error", "Error"),
             kind if kind.is_string_literal() => {
                 self.qualify("std.builtin.string_literal", "StringLiteral")
             }
@@ -3550,7 +3532,7 @@ fn reflected_base_name(ty: &Ty) -> String {
 
         kind if kind.is_bool() => "Bool",
         TyKind::None => "NoneType",
-        TyKind::Error => "Error",
+        kind if kind.is_error() => "Error",
         kind if kind.is_string_literal() => "StringLiteral",
         TyKind::Variant(_) => "Variant",
         struct_ty

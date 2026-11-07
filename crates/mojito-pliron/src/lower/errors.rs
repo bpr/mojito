@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `mjrt_trace(kind, data, len)` — one ordered lifecycle event (test
@@ -141,7 +140,7 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            Some(TyKind::Error) => {
+            Some(kind) if kind.is_error() => {
                 let ptr = self.reg_ptr(ctx, src)?;
                 self.mem_copy(ctx, storage, ptr, 24, src);
                 Ok(())
@@ -187,37 +186,6 @@ impl FnLowering<'_> {
         let op = ConstantOp::new(ctx, Box::new(attr));
         self.append(ctx, op.get_operation(), None);
         op.get_result(ctx)
-    }
-
-    pub(super) fn lower_error_builtin(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        args: &[Reg],
-        kwargs: &[(String, Reg)],
-    ) -> Result<(), PlironError> {
-        if args.len() != 1 || !kwargs.is_empty() {
-            return Err(self.unsupported_reg("Error construction contract".into(), dest));
-        }
-        // `Value::Error` owns a cloned message. Copy at construction rather
-        // than retaining a descriptor into an argument whose last-use
-        // cleanup may run before a later `raise` consumes this value.
-        let (source, len) = self.string_bytes(ctx, args[0], dest)?;
-        let data = self.emit_alloc(ctx, len, 1, dest);
-        self.mem_copy_dynamic(ctx, data, source, len, dest);
-        self.str_runtime.insert(
-            dest.0,
-            RuntimeStr {
-                data,
-                len,
-                owned: true,
-            },
-        );
-        // Error construction is compiler-internal and its only supported
-        // consumer is a `raise`; `store_error_into` transfers this allocation.
-        // Do not schedule ordinary temporary cleanup between construction
-        // and the raise edge.
-        Ok(())
     }
 
     /// A `lit.error_return`: jump to the raising function's propagate
@@ -282,7 +250,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let slot = self.var_slots[var as usize];
         let message = match self.func.var_tys.get(&var).map(Ty::kind) {
-            Some(TyKind::Error) => true,
+            Some(kind) if kind.is_error() => true,
             Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
             }

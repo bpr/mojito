@@ -416,7 +416,7 @@ behind `_write_float`'s staged leaf, still produces the VM's float text (Rust's 
 round trip — `3.0`, `1e300`, `NaN`, `inf`). Print parity is therefore
 structural rather than re-implemented: `print` lowers to one write per piece — each
 argument's display bytes, a single `" "` between arguments, and a trailing
-`"\n"` — composing the VM's `format_value` join byte-for-byte. A program's
+`"\n"` — composing the VM's `print` join byte-for-byte. A program's
 own `write(1, ...)` through `external_call` is an unbuffered syscall and
 `mjrt_write_stdout` flushes per call, so the two interleave in program
 order — the VM appends both to its captured stdout in the same order.

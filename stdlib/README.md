@@ -137,6 +137,12 @@ point, as upstream's toolchain does.
   are omitted, and the keyword `__init__` spells `!kgen.dtype`
   where upstream writes `Self._mlir_type` (R2007); the file header lists
   each departure. The prelude exports `DType`.
+- `std/builtin/error.mojo` — upstream's `struct Error` with its three
+  `@implicit` initializers, `write_to`, and `write_repr_to` (over
+  `std/format/_utils.mojo`'s `Repr`). `StackTrace`, the `_stack_trace`
+  field, `get_stack_trace`, and `__mojo_debugger_raise_hook` are omitted
+  (R2011), and the `depth` keyword is kept and ignored; the file header
+  lists each departure. The prelude exports `Error`.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
   and `TrivialRegisterPassable` traits; the prelude exports all three.
   `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,

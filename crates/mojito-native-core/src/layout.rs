@@ -123,9 +123,6 @@ impl LayoutCx<'_> {
             // `{ data: ptr, len: u64 }` (`MjStrDesc` in the runtime
             // contract), as KGEN lowers one to its address and size.
             TyKind::KgenString => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
-            // The built-in error value: `{ message: MjString }` where
-            // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
-            TyKind::Error => Ok(self.mj_error()),
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(
@@ -408,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_error_and_pointer_layouts() {
+    fn descriptor_and_pointer_layouts() {
         // A string literal is upstream's field-less struct; the
         // `!kgen.string` its `value` parameter is keeps the descriptor.
         assert_eq!(layout_of(&Ty::string_literal_of("s")), Ok(Layout::ZERO));
@@ -416,7 +413,6 @@ mod tests {
             layout_of(&Ty::new(TyKind::KgenString)),
             Ok(Layout::new(16, 8))
         );
-        assert_eq!(layout_of(&Ty::error()), Ok(Layout::new(24, 8)));
         let pointer = Ty::new(TyKind::Pointer {
             element: Ty::int(),
             origin: PointerOrigin::Static,

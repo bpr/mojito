@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Error` is now upstream's library struct, bundled in
+  `std/builtin/error.mojo` over its `_error` message, instead of a compiler
+  type (R1938). Its `@implicit` initializers from a string literal, a
+  `String`, and a variadic `Writable` sequence, its `write_to`, and its
+  `write_repr_to` are declared bodies, so `Error("Index ", 3, " not in
+  *args")` joins its arguments (R429) and `repr(e)` and a bound's
+  `e.write_repr_to(w)` write `Error('…')` as at the pin, on both backends
+  (R1352). A raised string converts through the checker's ordinary
+  `@implicit` conversion, and an `@implicit` initializer may now default
+  its later parameters or be a lone positional collector, with the pin's
+  diagnostic for any other shape. `TyKind::Error`, the VM's `Value::Error`,
+  the builtin `Error` callee, the checker's inverted write
+  (`InvertedWrite`, `InvertedReprWrite`), the `$write_formatted` and
+  `$write_repr_formatted` writer primitives, and `write_string` in
+  `mir::TYPE_REACHED_MEMBERS` are gone. MIR text moves to schema 1.178 and
+  the package format to `mojito-package 202`. The struct omits upstream's
+  `StackTrace` (R2011).
+
 - `DType.mantissa_width`, `max_exponent`, `exponent_width`, and
   `exponent_bias` are now upstream's declared static methods in
   `std/builtin/dtype.mojo` instead of a checker builtin (R1937), so a
