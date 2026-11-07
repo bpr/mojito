@@ -162,6 +162,7 @@ impl Checker {
         // A builtin body folds before any signature or field type calls it,
         // and over the callable's classified parameters.
         let phase = timing::span("declarations.builtin_folds");
+        self.register_builtin_result_members(stmts);
         self.classify_applicable_signatures(stmts);
         self.fold_builtin_bodies(stmts)?;
         self.compile_application_constraints(stmts);

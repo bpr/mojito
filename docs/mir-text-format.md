@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.175
+mojito-mir 1.176
 ```
 
-The writer emits 1.175. The reader accepts 1.0 through 1.175; *Schema 1.0*
+The writer emits 1.176. The reader accepts 1.0 through 1.176; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1155,6 +1155,14 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.176 adds the parameter-expression operators `simd_cmp_eq`,
+`simd_cmp_ne`, `simd_cmp_lt`, `simd_cmp_le`, `simd_reduce_and`, and
+`simd_reduce_or` (R1574): `pop.cmp` over two `!kgen.simd` storages, a
+`bool` mask (`gt` and `ge` are `lt` and `le` over swapped operands), and
+`pop.simd.reduce_and`/`reduce_or` of a mask, a `Bool`, which `SIMD`'s
+builtin comparison members fold to. The package format moves to
+`mojito-package 200`.
+
 Schema 1.175 adds a struct record's optional `register_passable` field
 (R1524): whether the struct declares `RegisterPassable` or
 `TrivialRegisterPassable` unconditionally, decided on the template before
@@ -1794,8 +1802,9 @@ running its `spelling`, so concrete MIR holds none.
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
-`bool_xor`, `cond`, `dtype_to_ui8` (schema 1.146), or `store_to_mem`
-(schema 1.147). `meta` is `meta_value(type)`, `meta_type`,
+`bool_xor`, `cond`, `dtype_to_ui8` (schema 1.146), `store_to_mem`
+(schema 1.147), or `simd_cmp_eq`, `simd_cmp_ne`, `simd_cmp_lt`,
+`simd_cmp_le`, `simd_reduce_and`, `simd_reduce_or` (schema 1.176). `meta` is `meta_value(type)`, `meta_type`,
 `meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
 `meta_param_list(meta)`. A pack query's `pack` (schema 1.166) is the

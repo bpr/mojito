@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time call of `SIMD`'s comparison members now folds their
+  `pop.cmp` and lane-reduction bodies, as the pin folds them, instead of
+  running a lifted thunk (R1574): `Tag[v.__lt__(w)]` is `Tag[v < w]`,
+  `Mask[v.gt(w)]` is `Mask[w.lt(v)]`, and a one-lane `v.__bool__()` is
+  `v != 0`. MIR moves to 1.176 and the package format to
+  `mojito-package 200`.
 - A run-time call of an `@always_inline("builtin")` callable whose every
   argument is a compile-time value now folds where it is called, as the
   pin's parser folds it, so its body's `comptime assert` is dropped:

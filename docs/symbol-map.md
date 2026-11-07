@@ -2319,7 +2319,29 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamOp::Cast` at the storage their `_type=` names
   (`Checker::lane_op_storage`), which `param_expr::fold::fold_lane_op`
   folds over `ct::CtLane::{of_scalar, cast}` at the vector the storage
-  holds. A builtin `SIMD` initializer folds to its `_mlir_value`:
+  holds. ``__mlir_op.`pop.cmp` `` and `pop.simd.reduce_and`/`reduce_or`
+  (`builtin_fold::mask_op`, read by `scalar_storage_expression`'s first
+  arm) build `ParamContext::simd_cmp` and `simd_reduce`, the
+  `ParamOp::{SimdCmpEq, SimdCmpNe, SimdCmpLt, SimdCmpLe, SimdReduceAnd,
+  SimdReduceOr}` nodes `SIMD`'s comparison members fold to: `gt`/`ge`
+  swap to `lt`/`le` and `eq`/`ne` order their operands, a closed compare
+  or reduction folds through `fold::{fold_lane_compare,
+  fold_mask_reduction}`, and `build_simd_reduce`'s `reduced_comparison`
+  reads `__eq__`'s `reduce_and(x.eq(y))` and `__lt__`'s
+  `reduce_or(x.lt(y).ne(0))` as `Eq`/`Lt`/`Le` over the values whose
+  storage they read (`storage_owner`), and over one lane either reduction
+  of `x.eq(y)` as `Eq`, of any other `x.ne(y)` as `not Eq`, and of
+  anything else as `reduce_and`. A builtin method returning a `comptime`
+  member type of `Self` (`Self._Mask`) is applicable, the member
+  registered before signatures classify
+  (`register_builtin_result_members`, run in `check_program` before
+  `classify_applicable_signatures`); a construction through it is
+  `type_member_construction`'s, whose spelled instance `called_application`
+  passes to `selected_application_at`; a `!kgen.simd` storage is a
+  `parameter_value_type`, so `SIMD(mlir_value=s)` applies; and
+  `applied_receiver` applies a `SIMD` receiver's builtin members. A
+  substituted `ParamKind::Field` takes its type at the bound base
+  (`ParamContext::replace_at`). A builtin `SIMD` initializer folds to its `_mlir_value`:
   `folded_construction` reads `self = e` as every field of `e`,
   `builtin_value` takes a `!kgen.simd` field's value only at that storage,
   a refined initializer (`out self: Int`) folds at its instance's fields

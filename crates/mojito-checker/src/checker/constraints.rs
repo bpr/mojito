@@ -2544,7 +2544,10 @@ impl Checker {
     /// (R1955), `Int(mlir_value=s)` the `Int` created from its storage `s`
     /// (`struct.create`), `Bool(value=b)` over the `i1` an `index.cmp` folds to its
     /// `Bool`, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
-    /// ([`super::builtin_fold::mlir_op_operator`]), and the typed
+    /// ([`super::builtin_fold::mlir_op_operator`]), ``__mlir_op.`pop.cmp` ``
+    /// and ``__mlir_op.`pop.simd.reduce_and` `` (or `reduce_or`) the lane
+    /// compare and mask reduction `SIMD`'s comparison bodies fold over
+    /// ([`super::builtin_fold::mask_op`]), and the typed
     /// ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` `` are
     /// `ParamOp::SimdSplat` and `ParamOp::Cast` at the storage their
     /// `_type=` names. Between an `Int` and the MLIR builtin `index`,
@@ -2571,6 +2574,25 @@ impl Checker {
                         .op(op, &[self.param_context.type_shape(ty), operand])
                         .map_err(param_error),
                 )
+            }
+            _ if let Some((op, operands)) = super::builtin_fold::mask_op(expr) => {
+                let operands = operands
+                    .iter()
+                    .map(|operand| self.build_ct(operand, recording).ok())
+                    .collect::<Option<Vec<_>>>()?;
+                let built = match (op, operands.as_slice()) {
+                    (mojito_types::mlir::MlirOp::PopCmp(predicate), [left, right]) => {
+                        self.param_context.simd_cmp(predicate, left, right)
+                    }
+                    (_, [mask]) => match op.lowering() {
+                        mojito_types::mlir::MlirLowering::Reduce(reduction) => {
+                            self.param_context.simd_reduce(reduction, mask)
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                Some(built.map_err(param_error))
             }
             _ if let Some(operator) = super::builtin_fold::mlir_op_operator(expr) => {
                 Some(self.build_ct(&operator, recording))

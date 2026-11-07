@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1993**.
+Next free ID: **R1996**.
 
 ## Ordered Work
 
@@ -6231,6 +6231,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1995 A compile-time call of a `SIMD` receiver's non-builtin
+  method is no application**
+
+  `use[v](T[v.reduce_add()]())` over `def use[v: SIMD[DType.int32, 4]](var
+  t: T[v.reduce_add()])` is "not a compile-time Int constant: not an
+  associated comptime expression", where the pin prints `ok`.
+  - `Checker::applied_receiver` (`checker/comptime_validation.rs`) applies
+    a `SIMD` receiver's member only when it is `@always_inline("builtin")`,
+    so any other member call in a signature builds nothing.
+  - `ApplicableShape::applicable` likewise admits a `Self.T` result
+    (`SourceType::SelfParam`) only for a builtin callable.
+  - Upstream applies any such call, which the elaborator runs.
+  - Lever: admit both for every callable, then confirm the corpus keeps
+    its output where a body's lifted thunk becomes an application.
+  - Found while landing R1574 (2026-11-07).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1220 A `TypeList` proposition over a pack in a signature type is
   rejected**
 
@@ -11167,27 +11185,42 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
-  lifted thunk, where upstream folds their `pop.cmp` bodies**
+- [ ] **R1993 A compile-time `SIMD` arithmetic dunder over a symbolic
+  vector keeps its application, where upstream folds its `pop` body**
 
-  `comptime m = v.lt(w)`, `v.__eq__(v)`, and `Bool(v)` over a parameter
-  `v` are lifted into a `$comptime$` function the VM runs, where upstream's
-  `foldInlineBuiltinFunction` folds the `@always_inline("builtin")` body.
-  - `builtin_fold.rs` declines `pop.cmp` and `pop.simd.reduce_and`/
-    `reduce_or`, so `eq` … `le`, `__eq__`, `__ne__`, and `__bool__` have no
-    template.
-  - Lever: elementwise `ParamOp`s for `pop.cmp` (predicates normalized to
-    `eq`/`ne`/`lt`/`le` by swapping operands) and for the two reductions,
-    built in `scalar_storage_expression` (`constraints.rs`) beside
-    `mlir_op_operator`, with `Bool(mlir_value=…)` read as the value.
-  - Canonicalize so the dunders collapse to today's nodes:
-    `reduce_and(cmp_eq(a, b))` is `Eq(a, b)`, `reduce_or(cmp_lt(a, b))` is
-    `Lt(a, b)`, `cmp_ne(m, splat(False))` over a mask is `m`, and a
-    one-lane reduction is the identity, so `where n < 3` keeps its form.
-  - The new `ParamOp` spellings bump the MIR minor and the package format.
-  - Found while landing R1553 (2026-10-28).
+  `T[v.__add__(w)]` over `v, w: Int32` is "expected T[(v + w)], found
+  T[v + w]", where the pin runs it.
+  - `builtin_fold::mlir_op_operator` reads `pop.add(a, b)` over two
+    storages as the infix `a + b`, but `ParamContext`'s ring
+    (`arithmetic_domain`, `build_ring`) takes only the integer domains, so
+    a non-`Int` `!kgen.simd` storage sum builds nothing.
+  - So `SIMD.__add__`, `__sub__`, `__mul__`, `__neg__`, and the other
+    `Self(mlir_value=__mlir_op.`pop.…`(…))` bodies fold no template.
+  - Lever: an elementwise storage node per `pop` arithmetic op, as
+    `ParamOp::SimdCmpLt` is for `pop.cmp`, whose `struct.create` of a
+    field read is the source operator over the vectors.
+  - Probe: `__add__` and `__neg__` over `Int32` and over
+    `SIMD[DType.float32, 4]`, as type identities against the infix forms.
+  - Found while landing R1574 (2026-11-07).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1994 A compile-time operator over `SIMD` operands builds its
+  `ParamOp` directly, where upstream folds the operator's dunder call**
+
+  Mojo's parser spells `a < b` as `a.__lt__(b)` and folds that call;
+  `Checker::infix_value` (`checker/constraints.rs`) builds `ParamOp::Lt`
+  over `SIMD` operands itself, since `SIMD` is not `struct_valued`.
+  - Since R1574 the comparison dunders fold to the same nodes, so the
+    comparison arm can route through `struct_operator_value` /
+    `called_application` with no change in identity.
+  - The arithmetic operators follow once their dunders fold (R1993).
+  - Done when `infix_value`'s `SIMD` operands go through the dunder call.
+  - Probe: `assets/ok/always_inline_builtin_comparison_fold.mojo`,
+    `simd_comparison_dunders.mojo`, and `where n < 3` keep their output.
+  - Found while landing R1574 (2026-11-07).
+  - Depends on R1993.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1790 A `_` in a binding's annotation is not solved by its
   initializer**

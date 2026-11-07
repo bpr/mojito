@@ -307,6 +307,53 @@ impl ParamContext {
         self.build_create(scalar, storage, None)
     }
 
+    /// ``__mlir_op.`pop.cmp`[pred=p](left, right)`` over two `!kgen.simd`
+    /// storages: the lane compare [`ParamOp::SimdCmpEq`] … `SimdCmpLe`,
+    /// `gt` and `ge` the `lt` and `le` compares of the swapped operands, as
+    /// the pin equates `v.gt(w)` with `w.lt(v)`. The unsigned predicates
+    /// only `index.cmp` names are rejected.
+    pub fn simd_cmp(
+        &self,
+        predicate: crate::mlir::CmpPredicate,
+        left: &ParamExpr,
+        right: &ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        use crate::mlir::CmpPredicate;
+        let (op, swapped) = match predicate {
+            CmpPredicate::Eq => (ParamOp::SimdCmpEq, false),
+            CmpPredicate::Ne => (ParamOp::SimdCmpNe, false),
+            CmpPredicate::Lt => (ParamOp::SimdCmpLt, false),
+            CmpPredicate::Le => (ParamOp::SimdCmpLe, false),
+            CmpPredicate::Gt => (ParamOp::SimdCmpLt, true),
+            CmpPredicate::Ge => (ParamOp::SimdCmpLe, true),
+            CmpPredicate::Ult | CmpPredicate::Ule | CmpPredicate::Ugt | CmpPredicate::Uge => {
+                return Err(ParamError::Unsupported(
+                    "'pop.cmp' takes no unsigned 'index.cmp' predicate".to_string(),
+                ));
+            }
+        };
+        let pair = if swapped {
+            [right.clone(), left.clone()]
+        } else {
+            [left.clone(), right.clone()]
+        };
+        self.op(op, &pair)
+    }
+
+    /// ``__mlir_op.`pop.simd.reduce_and`(mask)`` or `reduce_or` over a
+    /// `bool` mask's storage, a `Bool` ([`ParamOp::SimdReduceAnd`]).
+    pub fn simd_reduce(
+        &self,
+        reduction: crate::mlir::SimdReduction,
+        mask: &ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        let op = match reduction {
+            crate::mlir::SimdReduction::And => ParamOp::SimdReduceAnd,
+            crate::mlir::SimdReduction::Or => ParamOp::SimdReduceOr,
+        };
+        self.op(op, std::slice::from_ref(mask))
+    }
+
     /// The canonicalizing primitive constructor: checks arity and operand
     /// domains, folds what is constant, and returns the normal form, which may
     /// be a constant or one of the operands.
@@ -350,6 +397,12 @@ impl ParamContext {
             | ParamOp::FloatLiteralIsNan
             | ParamOp::FloatLiteralIsNegZero
             | ParamOp::FloatLiteralIsNormal => self.build_literal_attribute(op, operands),
+            ParamOp::SimdCmpEq | ParamOp::SimdCmpNe | ParamOp::SimdCmpLt | ParamOp::SimdCmpLe => {
+                self.build_simd_cmp(op, operands)
+            }
+            ParamOp::SimdReduceAnd | ParamOp::SimdReduceOr => {
+                self.build_simd_reduce(op, &operands[0])
+            }
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -2541,6 +2594,140 @@ impl ParamContext {
         ))
     }
 
+    /// A lane compare over two `!kgen.simd` storages: the mask once both
+    /// are closed, and otherwise the node, its `eq` and `ne` operands
+    /// ordered.
+    fn build_simd_cmp(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let mask = lane_mask_ty(op, &operands)?;
+        if let [Some(left), Some(right)] = [operands[0].as_constant(), operands[1].as_constant()]
+            && let Ok(value) = fold_primitive(op, &[left, right])
+        {
+            self.count_fold();
+            return self.typed_constant(value, &mask);
+        }
+        let operands = match op {
+            ParamOp::SimdCmpEq | ParamOp::SimdCmpNe => {
+                let [left, right]: [ParamExpr; 2] =
+                    operands
+                        .try_into()
+                        .map_err(|operands: Vec<_>| ParamError::Arity {
+                            operation: op.name().to_string(),
+                            found: operands.len(),
+                        })?;
+                let (left, right) = ordered(left, right);
+                vec![left, right]
+            }
+            _ => operands,
+        };
+        Ok(self.make(MetaTy::value(mask), ParamKind::Op { op, operands }))
+    }
+
+    /// A reduction of a `bool` mask, as the pin's simplifier folds the
+    /// `SIMD` comparison dunders' bodies: a closed mask reduces; any lane
+    /// count's `reduce_and(x.eq(y))` is `x == y`, and its
+    /// `reduce_or(x.lt(y).ne(0))` (`__lt__`'s `self.lt(rhs).__bool__()`)
+    /// is `x < y`, `le` likewise. Over one lane both reductions read
+    /// alike, so either over `x.eq(y)` is `x == y`, over a truth-tested
+    /// `x.lt(y)` is `x < y`, over any other `x.ne(y)` is `not x == y`, and
+    /// any other is `reduce_and`. A vector's other reductions stay nodes.
+    fn build_simd_reduce(&self, op: ParamOp, mask: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let width = match mask
+            .meta()
+            .as_value()
+            .and_then(|ty| crate::types::kgen_simd_slots(ty.kind()))
+        {
+            Some((dtype, width)) if dtype.known().is_none_or(|dtype| dtype == Dtype::Bool) => width,
+            _ => {
+                return Err(ParamError::TypeMismatch {
+                    operation: op.name().to_string(),
+                    expected: "a 'bool' '!kgen.simd' mask".to_string(),
+                    found: mask.meta().to_string(),
+                });
+            }
+        };
+        if let Some(value) = mask.as_constant()
+            && let Ok(value) = fold_primitive(op, &[value])
+        {
+            self.count_fold();
+            return self.constant(value);
+        }
+        let one_lane = matches!(width, crate::types::SimdWidth::Known(1));
+        if let Some(compared) = self.reduced_comparison(op, mask, one_lane)? {
+            return Ok(compared);
+        }
+        let op = if one_lane { ParamOp::SimdReduceAnd } else { op };
+        Ok(self.make(
+            MetaTy::bool(),
+            ParamKind::Op {
+                op,
+                operands: vec![mask.clone()],
+            },
+        ))
+    }
+
+    /// The source comparison the reduction `op` of `mask` is
+    /// ([`Self::build_simd_reduce`]), or `None` when it is none or a
+    /// compared storage has no value to compare.
+    fn reduced_comparison(
+        &self,
+        op: ParamOp,
+        mask: &ParamExpr,
+        one_lane: bool,
+    ) -> Result<Option<ParamExpr>, ParamError> {
+        let ParamKind::Op {
+            op: compare,
+            operands,
+        } = mask.kind()
+        else {
+            return Ok(None);
+        };
+        let [left, right] = operands.as_slice() else {
+            return Ok(None);
+        };
+        let any = op == ParamOp::SimdReduceOr || one_lane;
+        let every = op == ParamOp::SimdReduceAnd || one_lane;
+        let (source, negated, left, right) = match (compare, truth_tested_order(left, right)) {
+            (ParamOp::SimdCmpEq, _) if every => (ParamOp::Eq, false, left, right),
+            (ParamOp::SimdCmpNe, Some((ordering, left, right))) if any => {
+                (ordering, false, left, right)
+            }
+            (ParamOp::SimdCmpNe, _) if one_lane => (ParamOp::Eq, true, left, right),
+            _ => return Ok(None),
+        };
+        let (Some(left), Some(right)) = (self.storage_owner(left), self.storage_owner(right))
+        else {
+            return Ok(None);
+        };
+        let compared = self.op(source, &[left, right])?;
+        Ok(Some(if negated {
+            self.not(&compared)?
+        } else {
+            compared
+        }))
+    }
+
+    /// The value whose `_mlir_value` `storage` is: the base of a field
+    /// read, the `SIMD` (or `Int`) a closed storage holds, or the `Int` or
+    /// `UInt` created from an integer storage ([`Self::build_create`]);
+    /// `None` for any other storage.
+    fn storage_owner(&self, storage: &ParamExpr) -> Option<ParamExpr> {
+        match storage.kind() {
+            ParamKind::Field { base, name } if name == crate::ct::MLIR_VALUE_FIELD => {
+                Some(base.clone())
+            }
+            ParamKind::Constant(value) => self.constant(value.clone()).ok(),
+            _ => match IntDomain::of(storage.meta())? {
+                IntDomain::IntStorage => self.build_create(IntDomain::Int, storage, None).ok(),
+                IntDomain::UIntStorage => self.build_create(IntDomain::UInt, storage, None).ok(),
+                _ => None,
+            },
+        }
+    }
+
     /// Conditional selection stays lazy: only a constant condition selects.
     fn build_cond(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
         require_bool(ParamOp::Cond, &operands[0])?;
@@ -2650,10 +2837,13 @@ impl ParamContext {
                 &self.replace_at(list, bindings, depth, memo)?,
                 &self.replace_at(index, bindings, depth, memo)?,
             )?,
+            // The field's type names the binders its base's does
+            // (`v._mlir_value`'s `!kgen.simd<length, dtype>` at `v: Int32`
+            // is `!kgen.scalar<si32>`).
             ParamKind::Field { base, name } => self.field(
                 &self.replace_at(base, bindings, depth, memo)?,
                 name,
-                expr.meta().clone(),
+                self.replace_meta(expr.meta(), bindings, depth)?,
             )?,
             ParamKind::Reflect { subject, query } => self.reflect_query(
                 &self.replace_at(subject, bindings, depth, memo)?,
@@ -3641,6 +3831,27 @@ pub enum ParamOp {
     /// no special value (neither not a number, an infinity, nor negative
     /// zero), an `i1`.
     FloatLiteralIsNormal,
+    /// `pop.cmp` at `#kgen.cmp_pred<eq>`: the `bool` `!kgen.simd` mask of
+    /// two storages of one `!kgen.simd` type, compared lane by lane
+    /// (upstream's `SIMD.eq` body). Its operands are ordered, as equality
+    /// commutes.
+    SimdCmpEq,
+    /// `pop.cmp` at `#kgen.cmp_pred<ne>`, [`Self::SimdCmpEq`]'s
+    /// complement, which a NaN lane satisfies; operands ordered.
+    SimdCmpNe,
+    /// `pop.cmp` at `#kgen.cmp_pred<lt>`, the lanes' own ordering; `gt`
+    /// is this predicate over the swapped operands.
+    SimdCmpLt,
+    /// `pop.cmp` at `#kgen.cmp_pred<le>`; `ge` is this predicate over the
+    /// swapped operands.
+    SimdCmpLe,
+    /// `pop.simd.reduce_and` over a `bool` mask: whether every lane is set,
+    /// a `Bool` as `Bool(mlir_value=…)` reads its `!kgen.scalar<bool>`
+    /// result (R1955).
+    SimdReduceAnd,
+    /// `pop.simd.reduce_or` over a `bool` mask: whether some lane is set.
+    /// Over one lane it is [`Self::SimdReduceAnd`], its canonical spelling.
+    SimdReduceOr,
 }
 
 impl ParamOp {
@@ -3687,6 +3898,12 @@ impl ParamOp {
             Self::FloatLiteralIsNan => "float_literal_isa_nan",
             Self::FloatLiteralIsNegZero => "float_literal_isa_neg_zero",
             Self::FloatLiteralIsNormal => "float_literal_isa_normal",
+            Self::SimdCmpEq => "simd_cmp_eq",
+            Self::SimdCmpNe => "simd_cmp_ne",
+            Self::SimdCmpLt => "simd_cmp_lt",
+            Self::SimdCmpLe => "simd_cmp_le",
+            Self::SimdReduceAnd => "simd_reduce_and",
+            Self::SimdReduceOr => "simd_reduce_or",
         }
     }
 
@@ -3731,7 +3948,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 40] = [
+    const ALL: [Self; 46] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -3772,6 +3989,12 @@ impl ParamOp {
         Self::FloatLiteralIsNan,
         Self::FloatLiteralIsNegZero,
         Self::FloatLiteralIsNormal,
+        Self::SimdCmpEq,
+        Self::SimdCmpNe,
+        Self::SimdCmpLt,
+        Self::SimdCmpLe,
+        Self::SimdReduceAnd,
+        Self::SimdReduceOr,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
@@ -3787,7 +4010,9 @@ impl ParamOp {
             | Self::FloatToIntLiteral
             | Self::FloatLiteralIsNan
             | Self::FloatLiteralIsNegZero
-            | Self::FloatLiteralIsNormal => arity == 1,
+            | Self::FloatLiteralIsNormal
+            | Self::SimdReduceAnd
+            | Self::SimdReduceOr => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -3834,7 +4059,13 @@ impl ParamOp {
             | Self::FloatToIntLiteral
             | Self::FloatLiteralIsNan
             | Self::FloatLiteralIsNegZero
-            | Self::FloatLiteralIsNormal => return None,
+            | Self::FloatLiteralIsNormal
+            | Self::SimdCmpEq
+            | Self::SimdCmpNe
+            | Self::SimdCmpLt
+            | Self::SimdCmpLe
+            | Self::SimdReduceAnd
+            | Self::SimdReduceOr => return None,
         })
     }
 
@@ -5173,6 +5404,13 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::SimdSplat | ParamOp::Cast, [CtValue::Type(ty), value]) => {
             fold::fold_lane_op(op, ty, value)
         }
+        (
+            ParamOp::SimdCmpEq | ParamOp::SimdCmpNe | ParamOp::SimdCmpLt | ParamOp::SimdCmpLe,
+            [left, right],
+        ) => fold::fold_lane_compare(op, left, right),
+        (ParamOp::SimdReduceAnd | ParamOp::SimdReduceOr, [mask]) => {
+            fold::fold_mask_reduction(op, mask)
+        }
         (ParamOp::Cond, [condition, then_value, else_value]) => match condition {
             CtValue::Bool(true) => Ok((*then_value).clone()),
             CtValue::Bool(false) => Ok((*else_value).clone()),
@@ -5301,7 +5539,13 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::FloatToIntLiteral
         | ParamOp::FloatLiteralIsNan
         | ParamOp::FloatLiteralIsNegZero
-        | ParamOp::FloatLiteralIsNormal => 14,
+        | ParamOp::FloatLiteralIsNormal
+        | ParamOp::SimdCmpEq
+        | ParamOp::SimdCmpNe
+        | ParamOp::SimdCmpLt
+        | ParamOp::SimdCmpLe
+        | ParamOp::SimdReduceAnd
+        | ParamOp::SimdReduceOr => 14,
     }
 }
 
@@ -5346,6 +5590,12 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::FloatLiteralIsNan => "pop.float_literal_isa<nan>",
         ParamOp::FloatLiteralIsNegZero => "pop.float_literal_isa<neg_zero>",
         ParamOp::FloatLiteralIsNormal => "pop.float_literal_isa<normal>",
+        ParamOp::SimdCmpEq => "eq",
+        ParamOp::SimdCmpNe => "ne",
+        ParamOp::SimdCmpLt => "lt",
+        ParamOp::SimdCmpLe => "le",
+        ParamOp::SimdReduceAnd => "reduce_and",
+        ParamOp::SimdReduceOr => "reduce_or",
     }
 }
 
@@ -5441,6 +5691,25 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                 (ParamOp::BoolXor, [operand, constant]) if constant.as_bool() == Some(true) => {
                     write!(f, "not ")?;
                     write_expr(f, operand, level + 1)?;
+                }
+                // A lane compare shows as the `SIMD` member computing it
+                // (`v.lt(w)`), a reduction as a call over its mask.
+                (
+                    ParamOp::SimdCmpEq
+                    | ParamOp::SimdCmpNe
+                    | ParamOp::SimdCmpLt
+                    | ParamOp::SimdCmpLe,
+                    [left, right],
+                ) => {
+                    write_expr(f, storage_owner_shown(left), level)?;
+                    write!(f, ".{}(", source_operator(*op))?;
+                    write_expr(f, storage_owner_shown(right), 0)?;
+                    write!(f, ")")?;
+                }
+                (ParamOp::SimdReduceAnd | ParamOp::SimdReduceOr, [mask]) => {
+                    write!(f, "{}(", source_operator(*op))?;
+                    write_expr(f, storage_owner_shown(mask), 0)?;
+                    write!(f, ")")?;
                 }
                 (ParamOp::Cond, [condition, then_value, else_value]) => {
                     write_expr(f, then_value, level + 1)?;
@@ -5639,6 +5908,102 @@ fn pulled_cast(expr: &ParamExpr) -> Option<ParamExpr> {
     casts_only
         .then(|| ParamContext::detached().int_of_index(expr).ok())
         .flatten()
+}
+
+/// The `bool` `!kgen.simd` mask type of the lane compare `op` over
+/// `operands`, two `!kgen.simd` storages, at their lane count: a closed
+/// count where either operand's is, since a substituted field read keeps
+/// its template's storage type.
+fn lane_mask_ty(op: ParamOp, operands: &[ParamExpr]) -> Result<Ty, ParamError> {
+    let widths = operands
+        .iter()
+        .map(|operand| {
+            operand
+                .meta()
+                .as_value()
+                .and_then(|ty| crate::types::kgen_simd_slots(ty.kind()))
+                .map(|(_, width)| width)
+                .ok_or_else(|| ParamError::TypeMismatch {
+                    operation: op.name().to_string(),
+                    expected: "a '!kgen.simd' storage".to_string(),
+                    found: operand.meta().to_string(),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let width = widths
+        .iter()
+        .find(|width| matches!(width, crate::types::SimdWidth::Known(_)))
+        .unwrap_or(&widths[0])
+        .clone();
+    Ok(TyKind::KgenSimd {
+        dtype: crate::types::SimdDtype::Known(Dtype::Bool),
+        width,
+    }
+    .into())
+}
+
+/// The ordering compare `x.lt(y)` (or `le`) and its storages, when `left`
+/// and `right`, a `ne` compare's operands, are it and the all-`False`
+/// mask: `SIMD.__bool__`'s `self != 0` over a mask.
+fn truth_tested_order<'a>(
+    left: &'a ParamExpr,
+    right: &'a ParamExpr,
+) -> Option<(ParamOp, &'a ParamExpr, &'a ParamExpr)> {
+    let tested = if is_false_mask(right) {
+        left
+    } else if is_false_mask(left) {
+        right
+    } else {
+        return None;
+    };
+    match tested.kind() {
+        ParamKind::Op {
+            op: compare @ (ParamOp::SimdCmpLt | ParamOp::SimdCmpLe),
+            operands,
+        } if let [x, y] = operands.as_slice() => {
+            let ordering = if *compare == ParamOp::SimdCmpLt {
+                ParamOp::Lt
+            } else {
+                ParamOp::Le
+            };
+            Some((ordering, x, y))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `expr` is the all-`False` mask: a closed mask no lane of which
+/// is set, or the conversion of the literal `0` into one whose lane count
+/// is still open (`Self(0)._mlir_value` in a `bool` `SIMD`'s body).
+fn is_false_mask(expr: &ParamExpr) -> bool {
+    match expr.kind() {
+        ParamKind::Constant(CtValue::Bool(false)) => true,
+        ParamKind::Constant(CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes,
+        }) => lanes
+            .iter()
+            .all(|lane| matches!(lane, crate::ct::CtLane::Bool(false))),
+        ParamKind::Op {
+            op: ParamOp::IntLiteralConvert,
+            operands,
+        } => operands
+            .get(1)
+            .and_then(ParamExpr::as_constant)
+            .is_some_and(
+                |literal| matches!(literal, CtValue::PopIntLiteral(value) if value.is_zero()),
+            ),
+        _ => false,
+    }
+}
+
+/// The value a lane compare's operand shows as: the `SIMD` whose
+/// `_mlir_value` it reads, or the storage itself.
+fn storage_owner_shown(expr: &ParamExpr) -> &ParamExpr {
+    match expr.kind() {
+        ParamKind::Field { base, name } if name == crate::ct::MLIR_VALUE_FIELD => base,
+        _ => expr,
+    }
 }
 
 /// The scalar whose `_mlir_value` `expr` reads, when it is a field read.

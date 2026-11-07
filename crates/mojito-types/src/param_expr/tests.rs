@@ -1564,3 +1564,162 @@ fn literal_value_reads_the_type_slot() {
         v
     );
 }
+
+/// A `SIMD` parameter of `width` `int32` lanes and its storage read.
+fn vector_param(
+    context: &ParamContext,
+    slot: usize,
+    name: &str,
+    width: i64,
+) -> (ParamExpr, ParamExpr) {
+    let storage = crate::types::kgen_simd_ty(Dtype::Int32, width);
+    let vector = crate::types::storage_simd(&storage).expect("a storage's vector");
+    let value = context.register(ParamId::new("f", slot), name, MetaTy::value(vector));
+    let field = context
+        .field(&value, crate::ct::MLIR_VALUE_FIELD, MetaTy::value(storage))
+        .expect("a vector's storage");
+    (value, field)
+}
+
+fn false_mask(context: &ParamContext, width: i64) -> ParamExpr {
+    let lanes = usize::try_from(width).expect("a lane count");
+    context
+        .typed_constant(
+            CtValue::Simd {
+                dtype: Dtype::Bool,
+                lanes: vec![CtLane::Bool(false); lanes],
+            },
+            &crate::types::kgen_simd_ty(Dtype::Bool, width),
+        )
+        .expect("a mask constant")
+}
+
+fn compare(
+    context: &ParamContext,
+    predicate: crate::mlir::CmpPredicate,
+    left: &ParamExpr,
+    right: &ParamExpr,
+) -> ParamExpr {
+    context
+        .simd_cmp(predicate, left, right)
+        .expect("two storages compare")
+}
+
+fn reduce(
+    context: &ParamContext,
+    reduction: crate::mlir::SimdReduction,
+    mask: &ParamExpr,
+) -> ParamExpr {
+    context
+        .simd_reduce(reduction, mask)
+        .expect("a mask reduces")
+}
+
+/// `pop.cmp` normalizes `gt`/`ge` to `lt`/`le` over swapped operands and
+/// orders `eq`'s, and the `SIMD` dunders' reductions of it are the source
+/// comparisons, as the pin folds them: `__eq__`'s `reduce_and(x.eq(y))` is
+/// `v == w`, `__lt__`'s `reduce_or(x.lt(y).ne(0))` is `v < w`, and over
+/// one lane `any_lane(v.ne(w))` is `v != w`.
+#[test]
+fn lane_compares_reduce_to_the_source_comparisons() {
+    use crate::mlir::{CmpPredicate, SimdReduction};
+    let context = ParamContext::new();
+    let (v, x) = vector_param(&context, 0, "v", 1);
+    let (w, y) = vector_param(&context, 1, "w", 1);
+    assert_eq!(
+        compare(&context, CmpPredicate::Gt, &x, &y),
+        compare(&context, CmpPredicate::Lt, &y, &x)
+    );
+    assert_eq!(
+        compare(&context, CmpPredicate::Ge, &x, &y),
+        compare(&context, CmpPredicate::Le, &y, &x)
+    );
+    assert_eq!(
+        compare(&context, CmpPredicate::Eq, &x, &y),
+        compare(&context, CmpPredicate::Eq, &y, &x)
+    );
+    let equal = compare(&context, CmpPredicate::Eq, &x, &y);
+    for reduction in [SimdReduction::And, SimdReduction::Or] {
+        assert_eq!(
+            reduce(&context, reduction, &equal),
+            infix(&context, InfixOp::Eq, &v, &w)
+        );
+    }
+    let less = compare(&context, CmpPredicate::Lt, &x, &y);
+    let truth = compare(&context, CmpPredicate::Ne, &less, &false_mask(&context, 1));
+    assert_eq!(
+        reduce(&context, SimdReduction::Or, &truth),
+        infix(&context, InfixOp::Lt, &v, &w)
+    );
+    let unequal = compare(&context, CmpPredicate::Ne, &x, &y);
+    assert_eq!(
+        reduce(&context, SimdReduction::Or, &unequal),
+        infix(&context, InfixOp::Ne, &v, &w)
+    );
+    // The bare reduction of `v.lt(w)` is not `v < w`, whose `__bool__`
+    // the pin keeps; over one lane both reductions are one node.
+    let any_less = reduce(&context, SimdReduction::Or, &less);
+    assert_ne!(any_less, infix(&context, InfixOp::Lt, &v, &w));
+    assert_eq!(any_less, reduce(&context, SimdReduction::And, &less));
+}
+
+/// Over a vector only the dunders' own shapes collapse: `reduce_and(x.eq(y))`
+/// is `v == w`, but any lane of `v.ne(w)` is not `v != w`.
+#[test]
+fn vector_reductions_keep_other_shapes() {
+    use crate::mlir::{CmpPredicate, SimdReduction};
+    let context = ParamContext::new();
+    let (v, x) = vector_param(&context, 0, "v", 4);
+    let (w, y) = vector_param(&context, 1, "w", 4);
+    let equal = compare(&context, CmpPredicate::Eq, &x, &y);
+    assert_eq!(
+        reduce(&context, SimdReduction::And, &equal),
+        infix(&context, InfixOp::Eq, &v, &w)
+    );
+    assert!(matches!(
+        reduce(&context, SimdReduction::Or, &equal).kind(),
+        ParamKind::Op {
+            op: ParamOp::SimdReduceOr,
+            ..
+        }
+    ));
+    let unequal = compare(&context, CmpPredicate::Ne, &x, &y);
+    assert_ne!(
+        reduce(&context, SimdReduction::Or, &unequal),
+        infix(&context, InfixOp::Ne, &v, &w)
+    );
+}
+
+/// Closed operands fold: a NaN lane is `ne` to itself, as the pin's
+/// compile-time folder answers, and a closed mask reduces.
+#[test]
+fn closed_lane_compares_fold() {
+    use crate::mlir::{CmpPredicate, SimdReduction};
+    let context = ParamContext::new();
+    let storage = crate::types::kgen_simd_ty(Dtype::Float32, 1);
+    let nan = context
+        .typed_constant(
+            CtValue::Simd {
+                dtype: Dtype::Float32,
+                lanes: vec![CtLane::Float(f64::NAN.to_bits())],
+            },
+            &storage,
+        )
+        .expect("a storage constant");
+    let unequal = compare(&context, CmpPredicate::Ne, &nan, &nan);
+    assert_eq!(
+        unequal.as_constant(),
+        Some(&CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes: vec![CtLane::Bool(true)],
+        })
+    );
+    assert_eq!(
+        reduce(&context, SimdReduction::And, &unequal).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        reduce(&context, SimdReduction::Or, &false_mask(&context, 4)).as_bool(),
+        Some(false)
+    );
+}

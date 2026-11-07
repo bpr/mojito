@@ -1747,17 +1747,21 @@ impl Checker {
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
     pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        if let Some(construction) = self
-            .type_member_construction(expr)
-            .or_else(|| self.type_of_construction(expr))
-        {
+        // A construction through a member alias (`Self._Mask(mlir_value=m)`)
+        // constructs the instance the alias names, which no run-time typing
+        // of the spelled call gives while a builtin body folds.
+        if let Some(construction) = self.type_member_construction(expr) {
+            let spelled = self
+                .spelled_instances
+                .borrow()
+                .get(&construction.source_span())
+                .cloned();
+            return self.applied_call(&construction, spelled.as_ref());
+        }
+        if let Some(construction) = self.type_of_construction(expr) {
             return self.called_application(&construction);
         }
-        let selected = self.selected_application(expr)?;
-        if self.application_constraint_failure(&selected).is_some() {
-            return None;
-        }
-        self.selected_call(selected)
+        self.applied_call(expr, None)
     }
 
     /// Whether `expr` calls an `@always_inline("builtin")` callable, every
@@ -2457,6 +2461,22 @@ impl Checker {
     /// is its receiver's `__getitem__` of the slice literal's construction
     /// ([`Self::slice_literal_spelling`]).
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
+        self.selected_application_at(expr, None)
+    }
+
+    /// The application of `expr` ([`Self::called_application`]), a
+    /// construction of the instance `spelled` when it names one.
+    fn applied_call(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<ParamExpr> {
+        let selected = self.selected_application_at(expr, spelled)?;
+        if self.application_constraint_failure(&selected).is_some() {
+            return None;
+        }
+        self.selected_call(selected)
+    }
+
+    /// [`Self::selected_application`], a construction spelled without its
+    /// instance's bracket constructing `spelled` when it is given.
+    fn selected_application_at(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<Selected<'_>> {
         let self_spelling;
         // The construction bracket of an initializer called by name
         // (`S[2].__init__[3, 0]()`), whose own bracket binds the
@@ -2594,7 +2614,10 @@ impl Checker {
                             .ok(),
                         [].as_slice(),
                     ),
-                    (true, true) => (self.run_time_type(expr), param_args),
+                    (true, true) => (
+                        spelled.cloned().or_else(|| self.run_time_type(expr)),
+                        param_args,
+                    ),
                     _ => (instance.clone(), param_args),
                 };
                 if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
@@ -3071,16 +3094,24 @@ impl Checker {
         let instance = receiver.meta().as_value()?.clone();
         // A numeric literal is its declared struct's application, whose
         // dunders a literal construction (`type_of(exp)()`) applies.
+        // A vector applies only its builtin members, whose bodies fold
+        // (`v.lt(w)`); any other member call runs lifted.
+        let simd = instance.is_simd();
         let owner = match instance.kind() {
             kind if kind.is_int_literal() => mojito_types::types::INT_LITERAL_TYPE_NAME,
             kind if kind.is_float_literal() => mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+            _ if simd => mojito_types::types::SIMD_TYPE_NAME,
             kind => kind.as_non_simd_struct()?.0.as_str(),
         };
         let name = format!("{}.{method}", template_name(owner));
         self.applicable_functions
             .get(&name)?
             .iter()
-            .any(ApplicableFunction::takes_self)
+            .any(|function| {
+                function.takes_self()
+                    && (!simd
+                        || function.inline == mojito_checked::declaration::InlineLevel::Builtin)
+            })
             .then_some((name, instance, Some(receiver)))
     }
 
@@ -6191,6 +6222,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::Ui8
                 | TyKind::Dtype
                 | TyKind::KgenDtype
+                | TyKind::KgenSimd { .. }
                 | TyKind::Struct(..)
         )
 }
@@ -6303,6 +6335,16 @@ impl ApplicableShape<'_> {
             ),
             result: match self.ret {
                 SourceType::None | SourceType::SelfType | SourceType::Named(..) => self.ret.clone(),
+                // A `comptime` member type of `Self` (`SIMD.eq`'s
+                // `Self._Mask`) a builtin body returns, registered before
+                // the body folds ([`Checker::register_builtin_result_members`]).
+                SourceType::SelfParam(_)
+                    if mojito_checked::declaration::InlineLevel::of(self.decorators).is_ok_and(
+                        |level| level == mojito_checked::declaration::InlineLevel::Builtin,
+                    ) =>
+                {
+                    self.ret.clone()
+                }
                 ret if is_mlir_index_source(ret)
                     || is_mlir_source(ret, "!kgen.deferred")
                     || is_mlir_source(ret, "!kgen.string")

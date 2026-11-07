@@ -78,6 +78,62 @@ impl Checker {
         }
     }
 
+    /// Register each `comptime` type member (`comptime _Mask = SIMD[.bool,
+    /// Self.length]`) that a builtin method of its struct returns as
+    /// `Self.name`, before the method's signature classifies and its body
+    /// folds, as the pin resolves a member on demand; the struct's other
+    /// members register with its member types. A member whose body does
+    /// not resolve yet waits for them.
+    pub(super) fn register_builtin_result_members(&mut self, stmts: &[Stmt]) {
+        for statement in stmts {
+            let StmtKind::Struct {
+                name,
+                associated,
+                methods,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            let returned: Vec<&mojito_ast::ast::StructComptime> = associated
+                .iter()
+                .filter(|member| member.params.is_empty() && member.ty.is_none())
+                .filter(|member| {
+                    methods.iter().any(|method| {
+                        matches!(&method.ret, Some(SourceType::SelfParam(read)) if *read == member.name)
+                            && InlineLevel::of(&method.decorators)
+                                .is_ok_and(|level| level == InlineLevel::Builtin)
+                    })
+                })
+                .collect();
+            if returned.is_empty() {
+                continue;
+            }
+            let resolved = self
+                .in_struct_scope(statement, |checker| {
+                    returned
+                        .iter()
+                        .filter_map(|member| {
+                            let spelling =
+                                super::constraints::assoc_body_source_type(&member.value).ok()?;
+                            let ty = checker.ty_from_anno(&spelling).ok()?;
+                            Some((member.name.clone(), ty, spelling))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let Some(info) = self.structs.get_mut(name) else {
+                continue;
+            };
+            for (member, ty, spelling) in resolved {
+                info.associated
+                    .entry(member.clone())
+                    .or_insert(CtValue::Type(ty));
+                info.associated_spellings.entry(member).or_insert(spelling);
+            }
+        }
+    }
+
     /// Record a run-time call `expr` of a builtin callable whose every
     /// argument is a compile-time value as the parameter value its folded
     /// body denotes over them, as upstream's parser folds such a call where
@@ -1014,7 +1070,7 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
         },
         _ if typed => return None,
         // `pop.cmp` is elementwise, where an infix comparison is the
-        // reducing dunder.
+        // reducing dunder: [`mask_op`] reads it.
         _ if matches!(op, MlirOp::PopCmp(_)) => return None,
         (MlirLowering::Binary(op), [left, right]) => {
             ExprKind::Infix(op, Box::new(left.clone()), Box::new(right.clone()))
@@ -1042,6 +1098,51 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     let mut operator = Expr::new(kind, expr.span);
     operator.source.clone_from(&expr.source);
     Some(operator)
+}
+
+/// The op and operands of ``__mlir_op.`pop.cmp`[pred=p](a, b)`` or
+/// ``__mlir_op.`pop.simd.reduce_and`(m)`` (or `reduce_or`), the lane
+/// compares and mask reductions `SIMD`'s comparison bodies fold over, as
+/// `ParamContext::simd_cmp` and `simd_reduce`. `None` for any other
+/// expression.
+pub(super) fn mask_op(expr: &Expr) -> Option<(MlirOp, &[Expr])> {
+    let (object, name, param_args, args) = match &expr.kind {
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } if kwargs.is_empty() => (&**object, method.as_str(), [].as_slice(), args),
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } if kwargs.is_empty() => match &callee.kind {
+            ExprKind::Member { object, field } => {
+                (&**object, field.as_str(), param_args.as_slice(), args)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !matches!(&object.kind, ExprKind::Identifier(op) if op == "__mlir_op") {
+        return None;
+    }
+    let predicate = match param_args {
+        [] => None,
+        [mojito_ast::ast::ParamArg::Named { name, value }] if name == "pred" => {
+            Some(super::method_calls::mlir_attribute(value)?)
+        }
+        _ => return None,
+    };
+    let op = MlirOp::parse(name, predicate).ok()?;
+    match (op, args.as_slice()) {
+        (MlirOp::PopCmp(_), [_, _]) | (MlirOp::PopSimdReduceAnd | MlirOp::PopSimdReduceOr, [_]) => {
+            Some((op, args))
+        }
+        _ => None,
+    }
 }
 
 /// The op, `_type=` attribute, and operand of ``__mlir_op.`pop.simd.splat`[_type=T](x)``

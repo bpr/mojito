@@ -271,6 +271,62 @@ pub fn fold_comparison(
     }))
 }
 
+/// `pop.cmp` over two closed storages: their lanes' `bool` mask.
+///
+/// The [`ParamOp::SimdCmpEq`] … `SimdCmpLe` lane compare reads the lanes
+/// as [`fold_infix`] compares them, so a NaN lane is `ne` to everything, as
+/// the pin's compile-time folder answers it.
+pub fn fold_lane_compare(
+    op: ParamOp,
+    left: &CtValue,
+    right: &CtValue,
+) -> Result<CtValue, ParamError> {
+    let infix = match op {
+        ParamOp::SimdCmpEq => InfixOp::Eq,
+        ParamOp::SimdCmpNe => InfixOp::Ne,
+        ParamOp::SimdCmpLt => InfixOp::Lt,
+        ParamOp::SimdCmpLe => InfixOp::Le,
+        _ => return Err(unsupported(&format!("'{}' is no lane compare", op.name()))),
+    };
+    let lanes = match fold_infix(infix, left, right)? {
+        CtValue::Simd { lanes, .. } => lanes,
+        CtValue::Bool(value) => vec![CtLane::Bool(value)],
+        _ => return Err(unsupported("a lane compare expects a mask")),
+    };
+    Ok(CtValue::Simd {
+        dtype: Dtype::Bool,
+        lanes,
+    })
+}
+
+/// `pop.simd.reduce_and` or `reduce_or` ([`ParamOp::SimdReduceAnd`],
+/// `SimdReduceOr`) over a closed `bool` mask: the `Bool` whether every lane,
+/// or some lane, is set.
+pub fn fold_mask_reduction(op: ParamOp, mask: &CtValue) -> Result<CtValue, ParamError> {
+    let reduction = match op {
+        ParamOp::SimdReduceAnd => crate::mlir::SimdReduction::And,
+        ParamOp::SimdReduceOr => crate::mlir::SimdReduction::Or,
+        _ => {
+            return Err(unsupported(&format!(
+                "'{}' is no mask reduction",
+                op.name()
+            )));
+        }
+    };
+    let lanes = match mask {
+        CtValue::Bool(value) => vec![*value],
+        CtValue::Simd { lanes, .. } => lanes
+            .iter()
+            .map(|lane| match lane {
+                CtLane::Bool(value) => Ok(*value),
+                _ => Err(unsupported("a mask reduction expects 'bool' lanes")),
+            })
+            .collect::<Result<_, _>>()?,
+        _ => return Err(unsupported("a mask reduction expects a 'bool' mask")),
+    };
+    Ok(CtValue::Bool(reduction.reduce_bools(lanes.into_iter())))
+}
+
 /// Whether the source comparison `left op right` holds, as
 /// [`fold_comparison`] folds it; `None` when the folder refuses the
 /// operands.
