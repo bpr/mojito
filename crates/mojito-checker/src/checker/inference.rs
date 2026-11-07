@@ -1360,11 +1360,6 @@ impl Checker {
             {
                 applied
             }
-            ExprKind::Index { object, index }
-                if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
-            {
-                element
-            }
             ExprKind::Index { object, index } => {
                 // A subscript base that is itself a reference result
                 // (`v[List[Int]][0]` on the self-hosted `Variant`) is borrowed
@@ -2473,55 +2468,6 @@ impl Checker {
             self.record_literal_materializations(element, &found, &ty)?;
         }
         Ok(ty)
-    }
-
-    /// A subscript of a list display in a compile-time position
-    /// (`[10, 20, 30][n]`, a named list folded to its display): the element
-    /// the parameter expression `list[index]` denotes, which the elaborator
-    /// folds per instance, as the pin reads a compile-time list. `None` for
-    /// any other subscript, or one either operand of which is not a
-    /// parameter expression.
-    fn comptime_display_subscript(
-        &self,
-        expr: &Expr,
-        object: &Expr,
-        index: &Expr,
-    ) -> Option<Result<Ty, TypeError>> {
-        let ExprKind::ListLit(values) = &object.kind else {
-            return None;
-        };
-        if self.comptime_positions.get() == 0 || values.is_empty() {
-            return None;
-        }
-        let element = self.infer_list_elem(values).ok()?;
-        let elements = values
-            .iter()
-            .map(|value| {
-                self.eval_display_element(value)
-                    .ok()?
-                    .materialize_as(&element)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        let list = self.param_context.constant(CtValue::List(elements)).ok()?;
-        let index = {
-            let _lifting = self.lifting_position();
-            self.compile_dependent_ct_expr(index).ok()?
-        };
-        let value = self
-            .param_context
-            .list_get(&list, &index)
-            .map_err(param_error);
-        Some(value.map(|value| {
-            self.record_at(expr.source_span()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ParamValue {
-                    value,
-                    materialized: None,
-                    literal_target: None,
-                },
-            ));
-            self.record_at(expr.source_span()).ty = Some(element.clone());
-            element
-        }))
     }
 
     /// The element type of a list or set display, as upstream's

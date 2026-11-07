@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1094
+# swept-count	1095
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -311,6 +311,7 @@ assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	erro
 assets/type_error/comptime_dict_raising_subscript_raising_body.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_display_binding_runtime_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(2)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_display_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (load_from_mem vals.__getitem_param__[Int(1)]())]' value to 'SIMD[.int32, ((load_from_mem vals.__getitem_param__[Int(0)]()) * Int(2))]'
+assets/type_error/comptime_display_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Array[__literal_size__=Int(2)](Int(2), Int(1), __list_literal__=NoneType(None)).__getitem_param__[Int(0)]())]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_dtype_binding_scope.mojo	compile-reject	agree	error: use of unknown declaration 'lane'
 assets/type_error/comptime_field_names_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[StringSpan[ImmStaticOrigin], Int(len(#kgen.struct_field_types<:trait<@std::@traits::@anytype::@AnyType> T>))]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_display_not_copyable.mojo	compile-reject	agree	error: function instantiation failed

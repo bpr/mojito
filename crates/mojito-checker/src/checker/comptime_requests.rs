@@ -40,8 +40,8 @@ pub trait CalleeOracle {
 /// (`Checker::selected_call`), and neither is a `Dict` or `Set` one, which
 /// the elaborator folds as a literal; but a method of a literal is
 /// (`"abc".byte_length()`, `{"a": 1}.get("a")`), and so is
-/// a subscript of a dictionary or set display, whose `__getitem__` raises,
-/// and an operator over a tuple display (`(1, 2) < (1, 3)`), which calls
+/// a subscript of any display (`[2, 1][0]`, `(1, "a")[1]`, `{"a": 1}["a"]`),
+/// the display's `__getitem_param__` or `__getitem__` call, and an operator over a tuple display (`(1, 2) < (1, 3)`), which calls
 /// `Tuple`'s dunder.
 pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     struct Finder<'o, O> {
@@ -67,7 +67,10 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
                         ExprKind::Identifier(owner) if self.oracle.names_struct(owner))
                         || is_literal(object, self.oracle)
                 }
-                ExprKind::Index { object, .. } => is_keyed_display(object, self.oracle),
+                ExprKind::Index { object, .. } => {
+                    is_keyed_display(object, self.oracle)
+                        || matches!(object.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_))
+                }
                 ExprKind::Infix(op, left, right) if op.dunder().is_some() => {
                     is_tuple_display(left) || is_tuple_display(right)
                 }

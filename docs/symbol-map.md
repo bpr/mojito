@@ -1140,9 +1140,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   conversion; `aggregate_application` rebuilds a module display
   constant's raw list the same way), both through `literal_application`,
   which selects the constructor `record_display_construction` records
-  (`literal_constructor`, `collector_constructor`). A display a subscript
-  reads (`[1, 2][i]`) and a module display constant keep a raw element
-  list (`frozen_display`), each element frozen by `element_value`, a closed
+  (`literal_constructor`, `collector_constructor`). A module display
+  constant keeps a raw element list (`frozen_display`, R1728), each element frozen by `element_value`, a closed
   fieldwise construction to `CtValue::Struct` (`frozen_construction`). A type operand has
   that one reader too: `type_operand_expression` is the builder filtered
   to a type (`None` for a value), `denoted_type` the same filter with
@@ -2740,8 +2739,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction (`Extent(2, 3)`, `G[2](n)`) or a call (`Extent.square(4)`),
   as an application `native::mono` evaluates (`VmBackend::freeze`), and a
   struct parameter's default as one (`default_argument`,
-  `checker/declarations.rs`); only an element of a frozen display
-  (`element_value`, `checker/constraints.rs`, R1530), or a display element
+  `checker/declarations.rs`); only an element of a module display
+  constant's frozen list (`element_value`, `checker/constraints.rs`,
+  R1728), or a display element
   whose fieldwise construction does not apply (`frozen_struct_value`,
   R1727), freezes a closed fieldwise construction to `CtValue::Struct`. `param_expr`'s display spells an `__init__`
   application as its struct or instance (`symbol_ref::member_owner`, which

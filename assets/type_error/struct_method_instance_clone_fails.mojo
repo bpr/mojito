@@ -1,4 +1,4 @@
-# expect: function instantiation of `S.f
+# expect: in `S.f`
 # A struct method's template is instantiated per reached instance; the
 # instance whose loop reads past a literal display fails, as at the pin,
 # rather than trapping at run time.

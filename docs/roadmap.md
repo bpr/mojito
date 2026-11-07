@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1990**.
+Next free ID: **R1991**.
 
 ## Ordered Work
 
@@ -6012,6 +6012,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Float64` and a `String`.
   - Model: Fable, Not Planned.
 
+- [ ] **R1990 A subscript in a signature or type argument is no
+  application, as the parameter domain has no `load_from_mem` of a
+  reference result**
+
+  `def f(x: SIMD[DType.int8, [2, 1][0]]) -> Int: return len(x)` called
+  with `SIMD[DType.int8, [2, 1][0]](1, 2)` is rejected with "not an
+  associated comptime expression", where the pin prints `2`.
+  - At the pin the width is `load_from_mem` of the display's
+    `__getitem_param__[0]()` application, the same unfolded expression on
+    both sides, so the conversion is the identity.
+  - `build_ct` (`checker/constraints.rs`) has no arm for a subscript or a
+    reference-returning method application whose receiver is a display or
+    a call result. In a body such an expression is lifted whole
+    (`$comptime$<owner>$c<k>`), which a signature has no owner for.
+  - The lever: build the subscript as its getter's application over the
+    receiver's `store_to_mem`, wrapped in a parameter-domain
+    `load_from_mem` the elaborator evaluates as R1729's
+    `SemanticAdjustment::CompileTimeLoad` does. A display's subscript is
+    its `__getitem_param__` once R511 routes a constant index there.
+  - Probe: the program above: `2` at the pin.
+  - Probe: `def f(x: SIMD[DType.int8, [2, 1][0]]) -> SIMD[DType.int8, 2]`
+    (`assets/type_error/comptime_display_subscript_in_signature.mojo`) is
+    rejected by both, but the pin's message names the unfolded
+    `load_from_mem`.
+  - Probe: `SIMD[DType.int8, mk()[0]]` over `def mk() -> List[Int]` in a
+    signature: the pin names `(load_from_mem mk()[0])`.
+  - Probe: `SIMD[DType.int8, [2, 1].__getitem__(0)]` on both sides of the
+    same call: `2` at the pin.
+  - Found while landing R1530 (2026-11-07).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R387 A function applied in a parameter argument cannot print**
 
   Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
@@ -7829,28 +7861,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1530 A closed list display's element folds in a type**
-
-  `SIMD[DType.int8, [2, 1][0]]` is `SIMD[DType.int8, 2]` in Mojito, so `def
-  f(x: SIMD[DType.int8, [2, 1][0]]) -> SIMD[DType.int8, 2]: return x` runs,
-  where the pin rejects it, naming the unfolded `(load_from_mem
-  Array[__literal_size__=Int(2)](Int(2), Int(1),
-  __list_literal__=NoneType(None)).__getitem_param__[Int(0)]())`.
-  - `build_ct`'s `Index { object: ListLit }` arm (`checker/constraints.rs`)
-    folds `param_list.get` over the closed display.
-  - The lever: delete that arm once a display is its constructor's
-    application (R1529), so the read is the display's `__getitem_param__`.
-    Withdrawing it may need upstream's `load_from_mem` reading of
-    `__getitem_param__` over an application; the session that takes it
-    decides.
-  - Delete the frozen display element with the arm
-    (`Checker::frozen_display`, `Checker::element_value`), including
-    `comptime_display_subscript`'s reader; `comptime r = [NC(1), NC(2)][0]`
-    then takes the reference-result load (`SemanticAdjustment::
-    CompileTimeLoad`), as a user `__init__`'s `NC` already does.
-  - Found while planning R1472 (2026-10-27).
-  - Depends on R1729.
-  - Model: Opus, Not Planned.
 - [ ] **R1499 `@explicit_destroy` on a `trait` does not parse**
 
   Problem: `@explicit_destroy("baz must be closed") trait Baz: pass`
@@ -8880,6 +8890,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Mojito's bundled `Array` has no `__getitem_param__`, and the checker
     never routes a constant subscript to one.
   - Pinned by `conformance/probes/array_negative_literal_index.mojo`.
+  - Probe: `comptime q = [1, 2][i]` under `comptime for i in
+    range(k)` in a method instantiated at `k = 5`
+    (`assets/type_error/struct_method_per_call_clone_fails.mojo`) fails as
+    a VM pointer fault in the lifted thunk, where the pin fails the
+    `__getitem_param__` constraint "index is out of bounds".
   - Ledger name: `array-negative-literal-index`.
   - Found while landing R274 (2026-10-08).
   - Depends on nothing.

@@ -1105,12 +1105,6 @@ impl Checker {
         self.ct_value(expr, Recording::Record)
     }
 
-    /// [`Self::eval_associated_ct`] of an element of a display a subscript
-    /// reads, which it freezes element by element (R1530).
-    pub(super) fn eval_display_element(&self, element: &Expr) -> Result<CtValue, TypeError> {
-        self.element_value(element, Recording::Record)
-    }
-
     /// The frozen struct value of a closed fieldwise construction `expr`
     /// ([`Self::frozen_construction`]). `None` for any other expression.
     pub(super) fn frozen_struct_value(&self, expr: &Expr) -> Option<CtValue> {
@@ -1982,15 +1976,6 @@ impl Checker {
             // A tuple or list display is its literal constructor's
             // application at its natural type.
             _ if let Some(applied) = self.display_application(expr, None) => applied,
-            // An element of a literal display (`[1, 2][i]`): `param_list.get`
-            // over the frozen list.
-            ExprKind::Index { object, index }
-                if let Some(list) = self.frozen_display(object, recording) =>
-            {
-                context
-                    .list_get(&self.ct_param(list?)?, &build(index)?)
-                    .map_err(param_error)
-            }
             // A type application whose bracket argument parses as runtime
             // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
             // parse split for a single non-scalar argument).
@@ -3148,10 +3133,9 @@ impl Checker {
     }
 
     /// A list display's raw element list, or a tuple display's, each
-    /// element frozen ([`Self::element_value`]), which a subscript of the
-    /// display itself (`[1, 2][i]`, R1530) and a module display constant's
-    /// reads (`XS[1]`, `len(XS)`, `comptime for x in XS`) take element by
-    /// element. `None` for any other expression.
+    /// element frozen ([`Self::element_value`]), which a module display
+    /// constant's reads (`XS[1]`, `len(XS)`, `comptime for x in XS`) take
+    /// element by element (R1728). `None` for any other expression.
     fn frozen_display(
         &self,
         expr: &Expr,

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A subscript of a list or tuple display in a compile-time position is
+  now the display's subscript application, no longer a fold over a frozen
+  element list (R1530). `SIMD[DType.int8, [2, 1][0]]` is no longer
+  `SIMD[DType.int8, 2]`, so a signature spelling it is rejected, as at the
+  pin; a module constant `comptime M = [5, 6, 7][2]` and a local
+  `comptime t = (1, "a")[1]` are lifted applications, the latter no longer
+  reading freed storage; and a fieldwise element (`[D(1), D(2)][1]`) takes
+  the reference-result load.
 - A compile-time initializer that subscripts a display it builds
   (`comptime r = [mk(1), mk(2)][0]`) now loads the element out of the
   reference result, as the pin's `load_from_mem` does, so a non-`Copyable`

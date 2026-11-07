@@ -1,4 +1,4 @@
-# expect: function instantiation of `S.f
+# expect: in `S.f`
 # A struct's generic method is instantiated per call; the instance a reached
 # call needs fails, as at the pin, rather than trapping at run time.
 struct S:
