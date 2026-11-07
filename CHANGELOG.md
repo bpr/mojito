@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `and`/`or` whose left operand converts to the right operand's type
+  (`n or W(raw=50)` over an `@implicit` `Int` constructor, `Int32(0) or v`
+  over a vector, `"" or s` over a `String`) now runs as at the pin: the
+  left operand is tested at its own type and converted in the arm that
+  yields it, as upstream's `emitAndOr` does, where Mojito rejected it
+  (R1602).
 - The `assert cond[, message]` statement now parses and runs as at the
   pin: `assert` is reserved, allowed only in a function body, and lowered
   by the linker to the newly bundled `std.builtin.debug_assert.debug_assert`

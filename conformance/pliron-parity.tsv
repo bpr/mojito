@@ -30,6 +30,7 @@ assets/ok/always_inline_nodebug_type_construction.mojo	main	exe-differential	san
 assets/ok/always_inline_result_runs_no_move.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_small_calls.mojo	main	exe-differential	sanitized
 assets/ok/and_alias_construction_operand.mojo	main	exe-differential	sanitized
+assets/ok/and_or_left_operand_converts.mojo	main	exe-differential	sanitized
 assets/ok/and_or_operand_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/and_or_value_operands.mojo	main	exe-differential	sanitized
 assets/ok/application_generic_construction_parameter.mojo	main	exe-differential	sanitized

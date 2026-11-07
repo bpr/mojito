@@ -248,112 +248,7 @@ impl<'a> Flatten<'a> {
                     (value, None)
                 }
             };
-            let argument = match e.conversion_source_literal() {
-                Some(parameter) => self.materialize_literal(argument, &parameter, e.location()),
-                None => argument,
-            };
-            let argument = match e.conversion_materialization() {
-                Some(materialization) => {
-                    let (read, place) = self.materialize_conversion_source(
-                        argument,
-                        &materialization,
-                        e.location(),
-                    );
-                    read_place = read_place.or(place);
-                    read
-                }
-                None => argument,
-            };
-            // The conversion result is the constructed type, not the source
-            // expression's checked type; targets are concrete constructors.
-            // The checker records the converted-to type (with its arguments,
-            // `Optional[Int]`); the constructor's bare name is the fallback.
-            let provenance = source_place.as_ref().map(|place| place.root);
-            let recorded = e
-                .adjustments()
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ConversionResultType(ty) => {
-                        Some(ty)
-                    }
-                    _ => None,
-                })
-                .cloned();
-            let dest = match (recorded, target.split(".__init__").next()) {
-                (Some(ty), _) => self.fresh_typed(e.location(), provenance, ty),
-                (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
-                    e.location(),
-                    provenance,
-                    TyKind::Struct(constructed.to_string(), Vec::new()).into(),
-                ),
-                _ => self.fresh(e.location(), provenance),
-            };
-            let raises = e
-                .adjustments()
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ConversionRaises(error) => {
-                        Some(error)
-                    }
-                    _ => None,
-                })
-                .cloned();
-            let raises = self.raises(raises, e.location());
-            let instantiated_args = e
-                .adjustments()
-                .iter()
-                .find_map(|adjustment| {
-                    match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ConversionInstantiatedArguments(
-                        arguments,
-                    ) => Some(arguments.clone()),
-                    _ => None,
-                }
-                })
-                .unwrap_or_default();
-            self.emit(MirInstr::Call {
-                dest,
-                func: FuncRef::named(&target),
-                raises,
-                args: vec![argument],
-                kwargs: Vec::new(),
-                arg_places: vec![source_place.clone().or(read_place)],
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                receiver: None,
-                instantiated_args,
-                spread: None,
-            });
-            if let Some(source_place) = source_place {
-                // A view-constructor conversion result borrows its source: bind
-                // the temporary into a hidden retained slot whose loan keeps
-                // the source alive (and conflict-checked) until the consuming
-                // expression's last use of the view — the same persistent
-                // representation an explicit `var sp = Span(xs)` binding gets.
-                let loans = self.conversion_source_loans(e, source_place);
-                if !loans.is_empty() {
-                    let variable =
-                        self.temporary_storage(e, dest, e.indirect_result(), "$conv_view_r");
-                    let view_ty = self.var_types.get(&variable).cloned();
-                    self.establish_storage_loans(e, variable, loans.clone());
-                    if self.simple_place(e).is_none() {
-                        self.conversion_view_loans.insert(e.address(), loans);
-                    }
-                    let read = match view_ty {
-                        Some(ty) => self.fresh_typed(e.location(), Some(variable), ty),
-                        None => self.fresh(e.location(), Some(variable)),
-                    };
-                    self.emit(MirInstr::UseVar {
-                        dest: read,
-                        var: variable,
-                        mode: UseMode::Copy,
-                        constructor: None,
-                    });
-                    return read;
-                }
-            }
-            return dest;
+            return self.apply_conversion(e, &target, argument, source_place, read_place);
         }
         if let Some(value) = self.reference_result_value(e) {
             return value;
@@ -409,6 +304,117 @@ impl<'a> Flatten<'a> {
             return self.materialize_literal(value, &target, e.location());
         }
         self.expr_unconverted(e)
+    }
+
+    /// Apply `e`'s recorded implicit conversion to `target` to `argument`,
+    /// its source's value: the source literal's or nonmaterializable
+    /// source's materialization, then the constructor call. `source_place`
+    /// is the place a view constructor borrows and `read_place` the one a
+    /// conversion reads its source in.
+    pub(in crate::mir) fn apply_conversion(
+        &mut self,
+        e: Node<'a>,
+        target: &str,
+        argument: Reg,
+        source_place: Option<MirPlace>,
+        mut read_place: Option<MirPlace>,
+    ) -> Reg {
+        let argument = match e.conversion_source_literal() {
+            Some(parameter) => self.materialize_literal(argument, &parameter, e.location()),
+            None => argument,
+        };
+        let argument = match e.conversion_materialization() {
+            Some(materialization) => {
+                let (read, place) =
+                    self.materialize_conversion_source(argument, &materialization, e.location());
+                read_place = read_place.or(place);
+                read
+            }
+            None => argument,
+        };
+        // The conversion result is the constructed type, not the source
+        // expression's checked type; targets are concrete constructors.
+        // The checker records the converted-to type (with its arguments,
+        // `Optional[Int]`); the constructor's bare name is the fallback.
+        let provenance = source_place.as_ref().map(|place| place.root);
+        let recorded = e
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionResultType(ty) => Some(ty),
+                _ => None,
+            })
+            .cloned();
+        let dest = match (recorded, target.split(".__init__").next()) {
+            (Some(ty), _) => self.fresh_typed(e.location(), provenance, ty),
+            (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
+                e.location(),
+                provenance,
+                TyKind::Struct(constructed.to_string(), Vec::new()).into(),
+            ),
+            _ => self.fresh(e.location(), provenance),
+        };
+        let raises = e
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionRaises(error) => Some(error),
+                _ => None,
+            })
+            .cloned();
+        let raises = self.raises(raises, e.location());
+        let instantiated_args = e
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionInstantiatedArguments(
+                    arguments,
+                ) => Some(arguments.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(target),
+            raises,
+            args: vec![argument],
+            kwargs: Vec::new(),
+            arg_places: vec![source_place.clone().or(read_place)],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args,
+            spread: None,
+        });
+        if let Some(source_place) = source_place {
+            // A view-constructor conversion result borrows its source: bind
+            // the temporary into a hidden retained slot whose loan keeps
+            // the source alive (and conflict-checked) until the consuming
+            // expression's last use of the view — the same persistent
+            // representation an explicit `var sp = Span(xs)` binding gets.
+            let loans = self.conversion_source_loans(e, source_place);
+            if !loans.is_empty() {
+                let variable = self.temporary_storage(e, dest, e.indirect_result(), "$conv_view_r");
+                let view_ty = self.var_types.get(&variable).cloned();
+                self.establish_storage_loans(e, variable, loans.clone());
+                if self.simple_place(e).is_none() {
+                    self.conversion_view_loans.insert(e.address(), loans);
+                }
+                let read = match view_ty {
+                    Some(ty) => self.fresh_typed(e.location(), Some(variable), ty),
+                    None => self.fresh(e.location(), Some(variable)),
+                };
+                self.emit(MirInstr::UseVar {
+                    dest: read,
+                    var: variable,
+                    mode: UseMode::Copy,
+                    constructor: None,
+                });
+                return read;
+            }
+        }
+        dest
     }
 
     /// Whether a method call's reference result has an origin rooted at one

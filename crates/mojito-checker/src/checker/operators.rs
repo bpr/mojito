@@ -523,9 +523,7 @@ impl Checker {
     /// none, an ambiguous merge included (`0 or 2.5`), are each converted
     /// to `Bool`, which is then the result, and
     /// read in place for the conversion. A left operand converting to the
-    /// right's type is tested after its conversion here, where upstream
-    /// converts it in its arm, so only a literal's materialization is
-    /// accepted.
+    /// common type is tested at its own type and converted in its arm.
     fn infer_short_circuit(
         &self,
         span: Option<SourceSpan>,
@@ -547,13 +545,6 @@ impl Checker {
             self.expect_bool(right, &context)?;
             return Ok(Ty::bool());
         };
-        if ty != lt && !lt.kind().is_numeric_literal() {
-            return Err(TypeError::Unsupported(format!(
-                "a left operand of '{}' converted to the right operand's type '{ty}' is \
-                 not supported yet (roadmap R1602)",
-                op.symbol()
-            )));
-        }
         if self.condition_truthiness(&lt, &context)? {
             self.record_at(left.source_span()).truthiness_condition = true;
         }

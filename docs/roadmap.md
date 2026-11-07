@@ -3951,31 +3951,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1602 An `and`/`or` left operand that converts to the right
-  operand's type is rejected, where upstream tests it before converting it**
-
-  `n or W(raw=50)`, with `n = 2` an `Int` and `W` taking an `@implicit`
-  `Int` constructor, prints `W20` at the pin; Mojito rejects it ("a left
-  operand of 'or' converted to the right operand's type").
-  - Upstream's `emitAndOr` tests the left operand's own `Bool`, then
-    converts it to the common type in its arm; Mojito's
-    `Flatten::expr_with_adjustments` applies a recorded conversion where
-    the operand is evaluated, so the test would read the converted value
-    (`W.__bool__`, giving `W50`).
-  - Fix: evaluate the left source unconverted (`expr_unconverted`), test
-    it, and apply its recorded conversion in its arm
-    (`Flatten::short_circuit`); drop the checker's rejection in
-    `Checker::infer_short_circuit`.
-  - Probe: `Int32(0) or v` and `Int32(2) or v` over a 4-lane `int32`
-    vector print `[1, 0, 3, 4] [2, 2, 2, 2]` at the pin, splatting the
-    tested scalar; Mojito rejects both the same way.
-  - Probe: `"" or "a"`, `"b" and "c"`, and `"" or s` over a `String` print
-    `a`, `c`, and `s`'s text at the pin: each string literal is its own
-    `StringLiteral[value]` type, so the left operand converts too.
-  - Found while landing R97 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R102 A method's `*Ts` pack does not take a `Span` argument**
 
   Problem: `S().show(Span(xs), 1)` over `def show[*Ts: Copyable](self,

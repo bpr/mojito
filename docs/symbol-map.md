@@ -1480,7 +1480,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Truthiness` (`Checker::infer_short_circuit`, `checker/operators.rs`) is
   tested through `bool_conversion`, held in a slot its `__bool__` reads when
   that is a call (`hold_tested_operand`), and a memory-only result goes
-  through a result slot (`short_circuit_into_slot`). Both conditionals take
+  through a result slot (`short_circuit_into_slot`). A left operand that
+  converts to the common type is tested unconverted (`tested_operand`) and
+  converted in its arm (`convert_tested`, through
+  `Flatten::apply_conversion`, `lower_expr/entry.rs`, the conversion tail
+  `expr_with_adjustments` shares). Both conditionals take
   their arms' common type from `Checker::coerce_to_each_other`, upstream's
   `coerceTypesToEachOther`, over `Checker::common_type` (`CommonType`,
   `checker/operators.rs`), upstream's `findCommonType`; a conditional

@@ -122,28 +122,30 @@ impl<'a> Flatten<'a> {
         a: Node<'a>,
         b: Node<'a>,
     ) -> Reg {
-        let value_result = a
+        let value_result = (a
             .adjustments()
             .iter()
             .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness))
+            || converts_left_operand(a))
             && !node.ty().is_some_and(|ty| ty.is_bool());
         if value_result && !node.register_passable_result() {
             return self.short_circuit_into_slot(node, op, a, b);
         }
         let (cond, lhs) = if value_result {
-            let ra = self.expr(a);
+            let ra = self.tested_operand(a);
             let ty = self.f.reg_types.get(&ra.0).cloned().or_else(|| a.ty());
             if ty
                 .as_ref()
                 .is_some_and(|ty| ScalarConversion::Bool.casts_from(ty))
             {
                 let cond = self.bool_conversion(a.location(), ra, ty.as_ref());
-                (cond, self.region(|_| MirTerm::Yield(vec![ra])))
+                let lhs = self.region(|this| MirTerm::Yield(vec![this.convert_tested(a, ra)]));
+                (cond, lhs)
             } else {
                 let (held, cond) = self.hold_tested_operand(a, ra, ty.as_ref());
                 let lhs = self.region(|this| {
                     let moved = this.move_out_held(a, held, ty);
-                    MirTerm::Yield(vec![moved])
+                    MirTerm::Yield(vec![this.convert_tested(a, moved)])
                 });
                 (cond, lhs)
             }
@@ -261,7 +263,7 @@ impl<'a> Flatten<'a> {
         a: Node<'a>,
         b: Node<'a>,
     ) -> Reg {
-        let ra = self.expr(a);
+        let ra = self.tested_operand(a);
         let ty = self.f.reg_types.get(&ra.0).cloned().or_else(|| a.ty());
         let (held, cond) = self.hold_tested_operand(a, ra, ty.as_ref());
         let result = self.fresh_var();
@@ -285,7 +287,8 @@ impl<'a> Flatten<'a> {
         });
         let lhs = self.region(|this| {
             let moved = this.move_out_held(a, held, ty);
-            define(this, moved)
+            let converted = this.convert_tested(a, moved);
+            define(this, converted)
         });
         let (then, orelse) = short_circuit_arms(op, lhs, rhs);
         self.emit(MirInstr::If {
@@ -304,6 +307,33 @@ impl<'a> Flatten<'a> {
             constructor: None,
         });
         d
+    }
+
+    /// The value `a and b` / `a or b` tests: `a` at its own type, as
+    /// upstream's `emitAndOr` tests the left operand before converting it
+    /// to the result's type ([`Self::convert_tested`]).
+    fn tested_operand(&mut self, a: Node<'a>) -> Reg {
+        if !converts_left_operand(a) {
+            return self.expr(a);
+        }
+        let value = self.expr_unconverted(a);
+        if let Some(ty) = a.ty() {
+            self.f.reg_types.entry(value.0).or_insert(ty);
+        }
+        value
+    }
+
+    /// `value`, the tested left operand `a`, converted to the result's
+    /// type in its arm: by its recorded implicit conversion or literal
+    /// materialization.
+    fn convert_tested(&mut self, a: Node<'a>, value: Reg) -> Reg {
+        if let Some(target) = a.implicit_conversion() {
+            return self.apply_conversion(a, &target, value, None, None);
+        }
+        match a.literal_materialization() {
+            Some(target) => self.materialize_literal(value, &target, a.location()),
+            None => value,
+        }
     }
 
     /// Hold `value`, the owned value of `a`'s operand of type `ty`, in a
@@ -1215,6 +1245,13 @@ fn is_field_chain(node: Node<'_>) -> bool {
         CheckedOp::Member { .. } => node.member_object().is_some_and(is_field_chain),
         _ => false,
     }
+}
+
+/// Whether left operand `a` of `a and b` / `a or b` converts to the
+/// result's type, by a recorded implicit conversion or a literal's
+/// materialization.
+fn converts_left_operand(a: Node<'_>) -> bool {
+    a.implicit_conversion().is_some() || a.literal_materialization().is_some()
 }
 
 /// The then and else arms of `a and b` / `a or b`, from the arm yielding
