@@ -93,12 +93,11 @@ var x: Int = 1 + True
 
 The harness then also asserts the error contains that substring.
 
-An `ok` fixture may carry `# requires: discovery` (on its own line) when its
-semantics need the `Compiler`'s whole-program discovery/specialization
-handoff — e.g. the checker-inferred scalar-range constructor rewrite. The
-phase-composed `verify::*` corpus group is non-authoritative for that
-handoff (see AGENTS.md), so it skips such fixtures; the authoritative
-`vm_ok`/`assets_ok` Compiler trials still compile, verify, and execute them.
+An `ok` fixture may carry `# requires: discovery` (on its own line) to note
+that its semantics need the `Compiler`'s whole-program discovery/specialization
+handoff — e.g. the checker-inferred scalar-range constructor rewrite. Every
+corpus group that runs `ok` fixtures compiles through `Compiler`, so the
+harness does not read the directive: it documents the fixture.
 
 An `ownership_ok`/`ownership_error` fixture may carry `# requires: stdlib`
 when it names a bundled standard-library type (`StringSpan`, …). Those

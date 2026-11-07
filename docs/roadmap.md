@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2000**.
+Next free ID: **R2001**.
 
 ## Ordered Work
 
@@ -4521,8 +4521,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The callee signature's `origin_of(value)` is substituted at the call
     by name, and the caller's module binding wins over the callee's
     parameter.
-  - The same collision fails `assets/ok/comptime_match_patterns.mojo` in
-    the source-linked seams (`verify::ok`, `roundtrip::ok`).
+  - The same collision fails `assets/ok/comptime_match_patterns.mojo`
+    with the library linked from source (`MOJITO_STD_PACKAGE=0`).
   - Type and value parameters already shadow module bindings
     (`a_declarations_own_parameters_shadow_module_bindings` in
     `tests/checker_test.rs`); origins are the missing case.
@@ -4537,7 +4537,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   rather than the library's own `T`, so
   `assets/ok/ctfe_module_display_constant_requests.mojo` fails with "type
   'MaybeUninit[T]' … does not conform to trait 'Copyable'" when the library
-  is linked from source (the `verify::ok` and `roundtrip::ok` seams).
+  is linked from source (`MOJITO_STD_PACKAGE=0`).
   - The condition is evaluated outside the parameter scope that now
     shadows module bindings (`Checker::shadows_module_binding`).
   - Depends on nothing.
@@ -4546,12 +4546,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R1807 Three fixtures fail to check with the library linked from
   source, which the compiled package checks**
 
-  The raw phase seams (`link` → `elaborate` → `check_program`, as
-  `verify::ok` and `roundtrip::ok` run them, and `MOJITO_STD_PACKAGE=0`)
-  reject them; `Compiler` with the package runs them.
+  The raw phase seams (`link` → `elaborate` → `check_program`, and
+  `MOJITO_STD_PACKAGE=0`) reject them; `Compiler` with the package runs them.
   - `assets/ok/module_type_alias_reads.mojo`: "unknown type 'C'" for
     `comptime C = B` over `comptime B = Int`, since `Int` became a
     `std.simd` alias (1650c7c3).
+    With the package it now fails later, on R2000.
   - `assets/ok/static_string_parameter.mojo`: "unknown trait
     '__module$std$string$StaticString' in a type-parameter bound", already
     failing at 0db05093.
@@ -6767,6 +6767,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (the same construction in a module alias a struct parameter's default
     names) can then pin the wording with `# expect:`.
   - Found while landing R1788 (2026-11-02).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2000 A construction through a module type alias in a module
+  `comptime`'s parameter argument is rejected**
+
+  `comptime Zero = Keyed[V(5, 6)]` over `comptime V = SIMD[DType.int32,
+  2]` and `struct Keyed[key: V]` fails with "not a compile-time Int
+  constant: not an associated comptime expression", where the pin binds
+  the vector.
+  - The same `Keyed[V(5, 6)]()` written in `main` runs, as do
+    `comptime z = V(5, 6)` and `Keyed[SIMD[DType.int32, 2](5, 6)]` in the
+    module alias, so only the alias-named callee in a module alias's
+    application argument misses.
+  - A user struct's alias fails the same way: `comptime Zero = Keyed[P(5)]`
+    over `comptime P = Pt`.
+  - Look first at `Checker::selected_application_at`
+    (`checker/comptime_validation.rs`), whose `None` leads
+    `eval_associated_ct` to report the generic error (R1847).
+  - Probe: `assets/ok/module_type_alias_reads.mojo` runs (it fails in
+    `run`, `vm_ok`, `verify`, and `roundtrip` today).
+  - Found while landing R1996 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13247,27 +13269,6 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
-
-- [ ] **R1996 The corpus `verify` and `roundtrip` groups re-check the whole
-  standard library from source for every fixture**
-
-  Each test averages about 45 s in a debug build, against 1.6 s for
-  `vm_ok`, and the two groups together took about 152,000 CPU seconds of
-  the 2026-11-04 gate's nine-hour `check-default` step.
-  - `verify_trials` and `roundtrip_text` (`tests/corpus_test.rs`) run
-    `link` → `elaborate` → `check_program` → `lower_checked_program` on
-    the fixture and all of std.
-  - `vm_ok` compiles through `Compiler`, which reuses the cached std
-    package. `Compiler`'s `elaborated_mir()` (`src/compiler.rs`) gives
-    these groups the MIR they check without lowering std again.
-  - The raw path is documented as keeping "independent lowering
-    coverage". After the change, std's lowering runs once, when the
-    package is built, and each fixture's own code still goes through
-    every phase.
-  - Measure: time about 20 fixtures of each group before and after,
-    without running the whole binary.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1997 The corpus `artifact` group takes about 25 s per fixture
   where compiling and running it takes 1.6 s**

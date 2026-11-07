@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The corpus `verify` and `roundtrip` groups now compile each fixture
+  through `Compiler` against the cached std package, instead of linking and
+  checking all of std from source per fixture, and verify or round-trip the
+  fixture's own drop-elaborated MIR (R1996). A trial takes about 0.5 s
+  instead of about 52 s in a debug build, and the groups now run `lower-lit`
+  before verifying, as production does, so they no longer report its
+  storage-destroy findings. `# requires: discovery` fixtures join both groups.
 - A compile-time call of `SIMD`'s comparison members now folds their
   `pop.cmp` and lane-reduction bodies, as the pin folds them, instead of
   running a lifted thunk (R1574): `Tag[v.__lt__(w)]` is `Tag[v < w]`,

@@ -23,12 +23,12 @@
 //!   verifier finding in either run, the imported package's body findings
 //!   included. An `input()` fixture runs through the built binary with piped
 //!   stdin and `MOJITO_PRE_ELABORATION`.
-//! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
-//!   `check_program` → `lower_checked_program` →
-//!   `elaborate_drops_program` → verify) over every executable fixture
-//!   category.
+//! - `verify::<category>::<name>` — the production `Compiler`'s
+//!   drop-elaborated MIR (`elaborated_mir`), re-verified, over every
+//!   executable fixture category.
 //! - `roundtrip::<category>::<name>` — canonical-text round trips over the
-//!   drop-elaborated MIR of every executable fixture: disassemble → parse →
+//!   production `Compiler`'s drop-elaborated MIR of every executable
+//!   fixture's own bodies: disassemble → parse →
 //!   re-disassemble must reproduce the text byte-for-byte. The second
 //!   disassembly re-runs the canonical verifier and schema findings on the
 //!   parsed program, so it is also the artifact-side semantic gate.
@@ -39,20 +39,17 @@
 //!   error fixture must pin its message with `# expect:`.
 //!
 //! A fixture may pin the reported message with a top `# expect: <substring>`
-//! comment, and declare what its semantics need with `# requires: discovery`
-//! or `# requires: stdlib` (both valid Mojo — the lexer skips them). Corpus
+//! comment, and declare with `# requires: stdlib` (valid Mojo — the lexer
+//! skips it) that its ownership seam must enter at `link`. Corpus
 //! non-emptiness invariants are synthetic `*::guard_*` trials so a violation
 //! reads as an ordinary test failure.
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use mojito::analysis::elaborate_drops_program;
 use mojito::backend::VmBackend;
-use mojito::mir::lower_checked_program;
 use mojito::mir::text::{disassemble, parse_artifact};
-use mojito::mir::verify::verify;
 use mojito::{
-    Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
-    inject_prelude, link, parse,
+    Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate, inject_prelude,
+    link, parse,
 };
 use std::fs;
 use std::io::Write;
@@ -141,17 +138,6 @@ fn expected_substring(source: &str) -> Option<String> {
             .strip_prefix("expect:")
             .map(|s| s.trim().to_string())
     })
-}
-
-/// The `# requires: discovery` directive marks a fixture whose semantics need
-/// the `Compiler`'s whole-program specialization handoff (a bound default
-/// bound across passes, a struct instantiation only the driver's catalog
-/// records). The phase-composed `verify::*` seam is documented as
-/// non-authoritative for exactly that handoff (AGENTS.md), so such fixtures
-/// pin lowering and verification through the authoritative
-/// `vm_ok`/`assets_ok` Compiler trials instead.
-fn requires_discovery(path: &Path) -> bool {
-    requires(path, "discovery")
 }
 
 /// The `# requires: stdlib` directive marks a fixture that names bundled
@@ -553,28 +539,13 @@ fn verify_trials(trials: &mut Vec<Trial>) {
     let mut total = 0usize;
     for category in ["ok", "origin_ok", "ownership_ok"] {
         for (path, label) in labeled_fixtures(category) {
-            if requires_discovery(&path) {
-                continue;
-            }
             total += 1;
             let name = format!("verify::{label}::{}", stem(&path));
             trials.push(Trial::test(name, move || {
-                let program = link(&path).map_err(|error| fail(format!("link: {error}")))?;
-                let program =
-                    elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
-                let checked =
-                    check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
-                let mir = lower_checked_program(&checked);
-                if !mir.invariant_errors.is_empty() {
-                    return Err(fail(format!(
-                        "invariant errors: {:?}",
-                        mir.invariant_errors
-                    )));
-                }
                 // Drop elaboration must preserve every verification invariant
                 // the VM relies on: the executed program is the elaborated one.
-                let elaborated = elaborate_drops_program(mir);
-                let errors = verify(&elaborated);
+                let compiled = compile(&path)?;
+                let errors = &compiled.elaborated_mir().invariant_errors;
                 if !errors.is_empty() {
                     return Err(fail(format!("{errors:?}")));
                 }
@@ -590,29 +561,22 @@ fn verify_trials(trials: &mut Vec<Trial>) {
     }));
 }
 
-/// Canonical executable MIR for a fixture. Discovery-dependent fixtures use
-/// the authoritative compiler's cached MIR/artifact seam; raw phase fixtures
-/// deliberately retain their independent lowering coverage.
+/// The fixture compiled as production compiles it, importing the cached
+/// standard-library package: the fixture's own code goes through every
+/// phase, and std is checked once, when the package is built, rather than
+/// from source per fixture.
+fn compile(path: &Path) -> Result<mojito::CompiledProgram, Failed> {
+    Compiler::default()
+        .compile_path(path)
+        .map_err(|error| fail(format!("compile: {error}")))
+}
+
+/// Canonical executable MIR for a fixture: its own drop-elaborated bodies,
+/// beside the imported package's declarations they name. The package's
+/// bodies, the same for every fixture, are reprinted with the whole
+/// program by the `artifact` group's `emit_mir`.
 fn roundtrip_text(path: &Path) -> Result<String, Failed> {
-    if requires_discovery(path) {
-        let compiled = Compiler::default()
-            .compile_path(path)
-            .map_err(|error| fail(format!("compile: {error}")))?;
-        return compiled
-            .emit_mir()
-            .map_err(|error| fail(format!("emit MIR: {error}")));
-    }
-    let program = link(path).map_err(|error| fail(format!("link: {error}")))?;
-    let program = elaborate(program).map_err(|error| fail(format!("elaborate: {error}")))?;
-    let checked = check_program(&program).map_err(|error| fail(format!("check: {error:?}")))?;
-    let mir = lower_checked_program(&checked);
-    if !mir.invariant_errors.is_empty() {
-        return Err(fail(format!(
-            "invariant errors: {:?}",
-            mir.invariant_errors
-        )));
-    }
-    disassemble(&elaborate_drops_program(mir))
+    disassemble(compile(path)?.elaborated_mir())
         .map_err(|error| fail(format!("disassemble: {error}")))
 }
 

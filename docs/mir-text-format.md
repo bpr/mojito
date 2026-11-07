@@ -12,7 +12,9 @@ in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
 are enforced byte-for-byte over the drop-elaborated MIR of every executable
-corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
+corpus fixture's own bodies by the `roundtrip::*` group of
+`tests/corpus_test.rs` (the imported package's bodies are reprinted with the
+whole program by the `artifact::*` group), and
 `mojito exec [FILE]` loads a verified artifact, elaborates it to concrete MIR
 from `main` and module initialization, and runs it on the register VM
 (`artifact::run_artifact`). The artifact itself stays drop-elaborated MIR,
