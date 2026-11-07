@@ -1343,8 +1343,6 @@ impl Checker {
     ///   which no compile-time call resolves yet (R1646), it is the
     ///   attribute that body folds to
     ///   ([`Self::literal_initializer_body`]).
-    /// - `width > 1` elements are the `*elems` initializer, whose collector
-    ///   is no compile-time application yet: one lane per element.
     /// - A vector alias's one argument (`Int32(n)`), which no compile-time
     ///   call resolves through the alias yet: its lane cast and splat.
     fn staged_simd_construction(
@@ -1359,24 +1357,18 @@ impl Checker {
                 .and_then(|lanes| simd_construction(dtype, width as usize, &lanes))
                 .and_then(|vector| self.ct_param(vector))
         };
-        match args {
-            [argument] => match self.ct_value(argument, recording) {
-                Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => {
-                    (name != "SIMD").then(|| {
-                        self.literal_initializer_body(
-                            &mojito_types::types::canonical_simd_ty(dtype, width),
-                            literal,
-                        )
-                    })
-                }
-                value if name != "SIMD" => Some(vector(value.map(|value| vec![value]))),
-                _ => None,
-            },
-            _ if width > 1 && args.len() as i64 == width => Some(vector(
-                args.iter()
-                    .map(|lane| self.ct_value(lane, recording))
-                    .collect(),
-            )),
+        let [argument] = args else {
+            return None;
+        };
+        match self.ct_value(argument, recording) {
+            Ok(literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))) => (name != "SIMD")
+                .then(|| {
+                    self.literal_initializer_body(
+                        &mojito_types::types::canonical_simd_ty(dtype, width),
+                        literal,
+                    )
+                }),
+            value if name != "SIMD" => Some(vector(value.map(|value| vec![value]))),
             _ => None,
         }
     }

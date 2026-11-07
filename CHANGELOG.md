@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `SIMD` element list in a parameter position (`Tag[SIMD[DType.int32,
+  2](3, 3)]`) is now the application of `SIMD`'s `*elems` initializer, as
+  at the pin, where the checker folded it to the vector: it no longer
+  equals the splat `Tag[SIMD[DType.int32, 2](3)]`, and its lanes are read
+  in elaboration (R1692).
 - The bundled `List`, `Span`, and `Array` now declare upstream's
   `__getitem__(ref self, idx: Some[Indexer])` beside their `Int` overload
   (R1564), so `l[Int32(1)]` over a `List[Int]` prints the element instead

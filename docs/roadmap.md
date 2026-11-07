@@ -134,27 +134,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1692 `SIMD`'s element list in a parameter position is the
-  checker's fold, not an application**
-
-  `var a: Tag[SIMD[DType.int32, 2](3)] = Tag[SIMD[DType.int32, 2](3,
-  3)]()` over `struct Tag[v: SIMD[DType.int32, 2]]` prints `ok`, where the
-  pin rejects it, keeping the list as the application `SIMD(Int32(3),
-  Int32(3), __list_literal__=NoneType(None))`.
-  - `SIMD`'s `*elems` initializer is no compile-time application while its
-    `__list_literal__: NoneType` parameter has no value (R1691), so
-    `Checker::staged_simd_construction` (`checker/constraints.rs`) folds
-    the element list to the vector.
-  - Delete that `width > 1` element-list arm with the fix. `fn
-    simd_construction` stays while the vector-alias arm (`U256(0)`) does,
-    and `SimdConstructionError` stays in `mojito-types::ct` for MIR.
-  - Run `assets/ok/comptime_simd_initializer_applications.mojo` and every
-    fixture reading lanes of such a vector at check time: those reads then
-    need the elaborator.
-  - Found while landing R1642 (2026-10-30).
-  - Depends on R1691.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1731 A callee with a callable compile-time parameter, or a
   parameter holding a function, is no compile-time application**
 
