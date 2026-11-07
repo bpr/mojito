@@ -672,10 +672,22 @@ pub(super) fn loan_accesses(
             } else {
                 LoanAccess::Read
             };
-            let argument_access = |argument: usize| match resolved {
-                Some(callee) => callees.retained_access(callee, argument, true),
-                None if mojito_symbol::symbol::is_formatted_write(method) => LoanAccess::Read,
-                None => LoanAccess::Unclassified,
+            // A `def(...)` bound's `__call__` requirement call classifies
+            // its arguments by the bound's signature, as a call through the
+            // value did, and charges its capture accesses to the closure
+            // storage its receiver names.
+            let bound = mojito_mir::mir::bound_call_contract(instr, &f.reg_types);
+            let argument_access = |argument: usize| match (bound, resolved) {
+                (Some(contract), _) => contract
+                    .conventions
+                    .get(argument)
+                    .copied()
+                    .map_or(LoanAccess::Unclassified, access_for_convention),
+                (None, Some(callee)) => callees.retained_access(callee, argument, true),
+                (None, None) if mojito_symbol::symbol::is_formatted_write(method) => {
+                    LoanAccess::Read
+                }
+                (None, None) => LoanAccess::Unclassified,
             };
             let mut accesses = recv_place
                 .as_deref()
@@ -700,10 +712,11 @@ pub(super) fn loan_accesses(
                         .map(|place| (place, LoanAccess::Write, span_for(*dest))),
                 )
                 .collect::<Vec<_>>();
+            let storage = bound.and(recv_place.as_deref()).map(|place| place.root);
             accesses.extend(
                 capture_accesses
                     .iter()
-                    .map(|access| captured(access, *dest)),
+                    .map(|access| captured_through(access, *dest, storage)),
             );
             accesses
         }

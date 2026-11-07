@@ -2697,6 +2697,10 @@ impl<'a> Specializer<'a> {
                 {
                     *in_place = false;
                 }
+                // A `def(...)` bound's `__call__` requirement called on a
+                // function value is the value's own indirect call: a
+                // function type has no witness table.
+                mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
                 // `abs` on a nominal receiver is a checker-typed dunder
                 // dispatch the VM performs by name (`call_dunder`); rewrite
                 // it into an ordinary method call so the shared resolver and
@@ -3047,7 +3051,21 @@ impl<'a> Specializer<'a> {
                         let target = match resolved.as_deref().filter(|symbol| {
                             mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
                         }) {
-                            Some(dispatch) => self.witness(owner, receiver_name, dispatch)?,
+                            // A `def(...)` bound spelled over the callee's
+                            // binders names its requirement under a
+                            // signature the struct's table never spells:
+                            // its conformance answers it.
+                            Some(dispatch) => self
+                                .witness(owner, receiver_name, dispatch)
+                                .or_else(|missing| {
+                                    if mojito_symbol::symbol::is_callable_contract_dispatch(
+                                        dispatch,
+                                    ) {
+                                        self.callable_witness(owner, receiver_name)
+                                    } else {
+                                        Err(missing)
+                                    }
+                                })?,
                             None => mojito_symbol::symbol::resolve_method_symbol(
                                 &self.functions,
                                 nominal_template(receiver_name),

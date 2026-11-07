@@ -4499,8 +4499,23 @@ keyword argument places and, for nominal callable values, the callee place plus
 the exact checker-selected `__call__` symbol. A `def(...)`-typed parameter
 retains the same signature as an abstract dispatch symbol; its value is a
 function or closure, never a struct, since the checker rejects a nominal
-callable where a `def(...)` value is expected, as the pin does. The elaborator
-devirtualizes every nominal-callee `CallIndirect` into a `MethodCall` naming
+callable where a `def(...)` value is expected, as the pin does. A call
+through a monomorphic `def(...)` bound (`F: def(Int) -> Int`, `f(x)`) is not
+a `CallIndirect`: upstream reads the bound as a trait whose one requirement is
+`__call__`, so MIR lowers the call as that requirement's `MethodCall` on a
+read receiver, its `resolved` the bound's dispatch symbol
+(`mir::bound_call_contract`), and `mir::verify` rejects a `CallIndirect`
+through such a bound. Where the bound closes, the call folds as a witness
+lookup does, by one rule in `inline-parametric` and in the specializer: on a
+struct, closure storage included, to the member its `def(...)` conformance
+records (`MirDeclarations::callable_witness` when the bound spells its
+signature over the callee's binders), and on a function value, which has no
+witness table, to the value's own `CallIndirect`
+(`mir::indirect_from_bound_call`). The ownership analyses bind its arguments
+to the bound's signature (`register_ends::Callee::Contract`). A generic
+`def[...]` bound still lowers to `CallIndirect`. The elaborator
+devirtualizes every nominal-callee `CallIndirect`, which now comes only from a
+closure-storage value called by name (R1943), into a `MethodCall` naming
 the `__call__` instance, and that call is what demands the member (R1009).
 The member is the one the struct's witness table records for its
 `def(...)` conformance (`StructDeclaration::callable_witness`), as for a

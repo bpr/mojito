@@ -122,23 +122,28 @@ impl<'a> Flatten<'a> {
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, resolved.clone(), 0);
         let raises = self.raises(raises, call.location());
-        self.emit_call(MirInstr::CallIndirect {
-            dest,
-            callee,
-            resolved,
-            raises: raises.clone(),
-            args: arg_regs,
-            kwargs: kw_regs,
-            callee_place: callee_place.map(Box::new),
-            arg_places,
-            kwarg_places,
-            capture_accesses,
-            param_arg_regs,
-            param_decls,
-            instantiated_contract,
-            instantiated_args,
-            spread: Self::spread_position(args),
-        });
+        let callee_ty = self.f.reg_types.get(&callee.0).or(callable_ty).cloned();
+        self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
+            MirInstr::CallIndirect {
+                dest,
+                callee,
+                resolved,
+                raises: raises.clone(),
+                args: arg_regs,
+                kwargs: kw_regs,
+                callee_place: callee_place.map(Box::new),
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                param_arg_regs,
+                param_decls,
+                instantiated_contract,
+                instantiated_args,
+                spread: Self::spread_position(args),
+            },
+            callee_ty.as_ref(),
+            call.reference_result(),
+        ));
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
         self.error_region(raises);

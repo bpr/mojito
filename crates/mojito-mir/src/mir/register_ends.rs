@@ -381,7 +381,7 @@ impl<'f> RegisterEnds<'f> {
         &self,
         call: &MirSubscriptCall,
         receiver: Reg,
-        place: Option<&MirPlace>,
+        place: Option<&'f MirPlace>,
     ) -> Option<Callee<'f>> {
         Callee::resolve(
             self.declarations,
@@ -412,12 +412,14 @@ impl<'f> RegisterEnds<'f> {
     }
 }
 
-/// What a call binds: a declared function, or a requirement a call through
-/// a trait bound selects.
+/// What a call binds: a declared function, a requirement a call through
+/// a trait bound selects, or the one `__call__` requirement of a
+/// `def(...)` bound, which its signature spells.
 #[derive(Clone, Copy)]
 pub enum Callee<'a> {
     Declared(&'a MirFunctionDeclaration),
     Required(&'a TraitRequirement),
+    Contract(&'a FuncTy),
 }
 
 impl<'a> Callee<'a> {
@@ -431,11 +433,11 @@ impl<'a> Callee<'a> {
     /// through a bound, the requirement the bound trait or a parent
     /// declares. The bound is the one the call records it was selected
     /// through (`refined_bound`, upstream's downcast receiver), else the
-    /// receiver type parameter's own.
+    /// receiver type parameter's own, or its `def(...)` bound.
     pub fn resolve(
         declarations: &'a MirDeclarations,
         target: &str,
-        receiver: Option<&Ty>,
+        receiver: Option<&'a Ty>,
         refined_bound: Option<&[String]>,
     ) -> Option<Self> {
         declarations
@@ -451,6 +453,7 @@ impl<'a> Callee<'a> {
                     .flatten()
                     .map(Self::Required)
             })
+            .or_else(|| super::callable_bound_requirement(receiver?, target).map(Self::Contract))
     }
 
     /// The parameters the call binds its arguments to.
@@ -458,6 +461,7 @@ impl<'a> Callee<'a> {
         match self {
             Self::Declared(declaration) => declaration.into(),
             Self::Required(requirement) => requirement.into(),
+            Self::Contract(function) => function.into(),
         }
     }
 
@@ -466,7 +470,7 @@ impl<'a> Callee<'a> {
     pub const fn receiver_convention(self) -> Option<ArgConvention> {
         match self {
             Self::Declared(declaration) => declaration.receiver_convention,
-            Self::Required(_) => None,
+            Self::Required(_) | Self::Contract(_) => None,
         }
     }
 }

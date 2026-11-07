@@ -3621,6 +3621,7 @@ fn instantiated<'c>(
     let closures = instantiation.read_binders(&mut function)?;
     let mut blocks = std::mem::take(&mut function.blocks);
     fold_witnesses(&mut blocks, &function, declarations);
+    fold_bound_calls(&mut blocks, &function);
     adopt_callee_binders(&mut blocks, &function);
     function.blocks = blocks;
     Some(Instantiated {
@@ -3733,6 +3734,18 @@ fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations:
     }
 }
 
+/// Make each `def(...)` bound's `__call__` requirement call of `blocks`
+/// whose receiver the substitution made a function value that value's own
+/// indirect call, as a function type has no witness table to fold.
+fn fold_bound_calls(blocks: &mut [MirBlock], function: &MirFunction) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for region in instruction_regions_mut(instruction) {
+            fold_bound_calls(region, function);
+        }
+        mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
+    }
+}
+
 /// Give each indirect call of `blocks` whose callee the substitution made a
 /// generic callable the callee's own compile-time parameter declarations:
 /// a call through a callable binder named the contract's, which the
@@ -3778,8 +3791,16 @@ fn witness_of(
         return None;
     }
     let receiver = member_receiver_ty(function, instruction)?;
+    // A `def(...)` bound spelled over the callee's binders names its
+    // requirement under a signature the struct's table never spells: its
+    // conformance answers it.
     declarations
         .witness(receiver, requirement)
+        .or_else(|| {
+            mojito_symbol::symbol::is_callable_contract_dispatch(requirement)
+                .then(|| declarations.callable_witness(receiver))
+                .flatten()
+        })
         .map(str::to_string)
 }
 

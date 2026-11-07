@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2003**.
+Next free ID: **R2007**.
 
 ## Ordered Work
 
@@ -501,6 +501,13 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `run_thin(double, 2)` over `@always_inline("nodebug") def
     run_thin(f: def(Int) -> Int, x: Int) -> Int` keeps its call in
     concrete MIR, even with `f` unused.
+  - Probe: `apply(double, 5)` over `@always_inline def apply[F: def(Int)
+    -> Int](f: F, x: Int) -> Int: return f(x)` keeps its call (`mojito opt
+    --pass inline-parametric` over pipeline-off `emit-mir`); once inlined,
+    `fold_bound_calls` turns the bound's `__call__` requirement call into
+    the function value's `call.indirect`. `apply(Counter(10), 5)` keeps
+    its call too, `Inliner::inlined_blocks` declining it, where
+    `witness_of` would fold the call to `Counter.__call__`.
   - Probe: `run_it(get, 1)` over `@always_inline("nodebug") def
     run_it[F: def(Int) -> Int](f: F, x: Int) -> Int: return f(x)` and a
     capture-list `def get(y: Int) {k} -> Int` keeps its call; once
@@ -3721,36 +3728,90 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1933 A call through a `def(...)` bound is a `call.indirect`, not
-  the bound's `__call__` requirement call**
+- [ ] **R2004 An explicit `f.__call__(x)` on a `def(...)`-bound value is
+  rejected, and the checker does not spell `f(x)` as that call**
 
-  MIR lowers `f(x)` in `def apply[F: def(Int) -> Int](f: F, x: Int)` as
-  a `call.indirect` carrying the contract's `__trait_dispatch.__call__…`
-  symbol, where upstream reads a `def(...)` bound as a trait whose one
-  requirement is `__call__` and checks the call as `f.__call__(x)`.
-  - A struct's `def(...)` conformance and a closure storage's `__call__`
-    witness already record witness tables, which the elaborator reads
-    (`StructDeclaration::callable_witness`); what is left is the
-    instruction.
-  - The gap: a function value has no `__call__` witness, so a
-    `call.method` on it must become the value's own `call.indirect`
-    wherever `F` becomes a function type: the specializer, and
-    `inline-parametric`'s substitution.
-  - Every pre-elaboration reader of `call.indirect`'s callee place,
-    capture accesses, and generic contract (`inline_parametric`,
-    `canonicalize::fold_known_callees`, `mem2reg`, `loans`, `scan`,
-    `register_loans`, `call_defaults`, `register_ends`) must read the
-    `call.method` receiver the same way.
-  - Probe: pre-elaboration `emit-mir` of `apply` should hold a
-    `call.method` of `__call__` on `f`, while `apply(Counter(10), 5)`,
-    `apply(double, 5)`, and a `{imm k}` closure still print `15`, `10`,
-    and `8` on both backends.
-  - Then the specializer's struct-callee devirtualization of
-    `call.indirect` and `mir/verify/calls.rs`'s nominal-callee branch go.
-  - Split from R1877 (2026-11-05).
-  - Depends on R2001, since the probe reads `emit-mir` with the pipeline
-    off.
-  - Model: Fable, Not Planned.
+  `return f.__call__(x)` in `def apply[F: def(Int) -> Int](f: F, x: Int)`
+  fails "type 'F' has no method '__call__'", where the pin reads the bound
+  as a trait whose one requirement is `__call__` and prints `15`, `10`, `8`
+  for a callable struct, a function, and a `{imm k}` closure.
+  - The method lookup (`lookup_trait_methods`, `resolve_bound_method` in
+    `checker/method_calls/resolution.rs` and `checker/traits.rs`) should
+    synthesize the requirement's `MethodSig` from the `callable_bound`;
+    its `method_lowered_name("__trait_dispatch", …)` must equal
+    `callable_contract_target`.
+  - Then `infer_call_method` drops its `callable_bound: None` restriction,
+    so the checker spells `f(x)` as `f.__call__(x)`, as upstream's
+    `CallNode` does, and MIR lowering's `bound_call_from_indirect`
+    (`mir/bound_calls.rs`) goes.
+  - That moves `infer_call`'s call-through residue and effect recording
+    (`record_call_through`, `apply_call_through_effects`,
+    `record_call_environment_effects`) onto the method path; the
+    `assets/type_error` capture fixtures pin it.
+  - Probe: the shape above.
+  - Found while landing R1933 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2003 An indirect call still takes a struct callee, which the
+  elaborator devirtualizes**
+
+  `var g = add_k; print(g(5))` on a capture-list closure lowers to a
+  `call.indirect` whose callee is the closure's storage struct, where
+  upstream calls the storage's `__call__` method.
+  - Once a closure storage declares `__call__` (R1943), the checker spells
+    that call as a method call, and no struct callee reaches
+    `call.indirect`.
+  - Then delete the specializer `CallIndirect` arm's struct
+    devirtualization (`native/mono/specializer.rs`) and
+    `Self::callable_witness` if nothing else uses it,
+    `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and
+    Pliron's un-devirtualized nominal callable rejection
+    (`lower/closures.rs`, `capability.rs`), and make a struct-typed
+    `call.indirect` callee a verifier error.
+  - Probe: `emit-mir` of the shape above holds no `call.indirect` on a
+    struct-typed register, and it still prints `8` on both backends.
+  - Found while landing R1933 (2026-11-07).
+  - Depends on R1943.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2005 A call through a generic `def[...]` bound is a `call.indirect`,
+  not the bound's `__call__` requirement call**
+
+  `f[2](40)` in `def invoke[F: def[n: Int](Int) -> Int](f: F)` lowers to a
+  `call.indirect` with no dispatch symbol, where upstream calls the
+  bound's generic `__call__` requirement, as R1933 made the monomorphic
+  bound's call.
+  - `MirInstr::MethodCall` has no `instantiated_contract` field, so the
+    requirement call carries the bound's `param_decls` and solved
+    `instantiated_args`, and the verifier recomputes the contract with
+    `instantiate_generic_callable_contract`.
+  - `bound_call_contract`, `indirect_from_bound_call`, and
+    `register_ends::Callee::Contract` (`mir/bound_calls.rs`,
+    `mir/register_ends.rs`) then admit a `GenericFunc` bound, and
+    `verify_indirect_call` rejects that bound too.
+  - Probe: `invoke(add)` over `def add[n: Int](value: Int) -> Int` prints
+    `42` on both backends, and `emit-mir` of `invoke` holds a
+    `call.method` of `__call__`.
+  - Found while landing R1933 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2006 A struct field of a `def(...)`-bound type is rejected as
+  non-`Deinitable`**
+
+  `struct Holder[F: def(Int) -> Int]` with `var f: Self.F` fails "field
+  'f' has non-'Deinitable' type 'F'", where the pin accepts it and
+  `Holder(twice).run(4)` calling `self.f(x)` prints `8`.
+  - The field rule in `checker/traits.rs` reads only the parameter's
+    trait bounds; a `def(...)` bound's function-type trait implies
+    `Deinitable` at the pin.
+  - This also blocks reaching MIR lowering's field-invocation route of a
+    bound call (`emit_indirect_invocation`) from source.
+  - Probe: the shape above.
+  - Found while landing R1933 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1515 A bracket followed by a call is fused into the call's
   parameter list**

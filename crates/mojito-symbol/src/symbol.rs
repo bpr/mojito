@@ -2686,6 +2686,16 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
 
+/// Whether `symbol` dispatches a `__call__` requirement through a bound.
+///
+/// A `def(...)` bound's one requirement spells it, as a declared trait's
+/// `__call__` requirement does, so a user tries the exact witness first.
+pub fn is_callable_contract_dispatch(symbol: &str) -> bool {
+    split_method_symbol(symbol).is_some_and(|(receiver, method)| {
+        receiver == TRAIT_DISPATCH && (method == "__call__" || is_overload_of(method, "__call__"))
+    })
+}
+
 /// The specialization-key spelling of a type: a caller place a clone binder
 /// stands for spells as the first clone binder, at every depth.
 pub fn canonical_specialization_type(ty: &Ty) -> Ty {

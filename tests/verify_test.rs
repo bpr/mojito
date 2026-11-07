@@ -3154,3 +3154,114 @@ fn verifier_rejects_a_vector_bound_to_its_storage_slot() {
     );
     expect_finding(&program(f), "binding of Int32 to a slot of type");
 }
+
+const DEF_BOUND_APPLY: &str = "
+def apply[F: def(Int) -> Int](f: F, x: Int) -> Int:
+    return f(x)
+
+def double(x: Int) -> Int:
+    return x * 2
+
+def main():
+    print(apply(double, 5))
+";
+
+/// The `__call__` requirement call `apply`'s `f(x)` lowers to.
+fn bound_call(program: &mut MirProgram) -> &mut MirInstr {
+    program
+        .functions
+        .iter_mut()
+        .filter(|(name, _)| name == "apply")
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .find(|instruction| {
+            matches!(instruction, MirInstr::MethodCall { method, .. } if method == "__call__")
+        })
+        .expect("a call through a `def(...)` bound lowers to its `__call__` requirement call")
+}
+
+fn apply_findings(program: &MirProgram) -> Vec<String> {
+    verify(program)
+        .into_iter()
+        .filter(|error| error.contains("'apply'"))
+        .collect()
+}
+
+#[test]
+fn verifier_checks_a_def_bound_requirement_call() {
+    let mut program = lower_linked_source(DEF_BOUND_APPLY);
+    let (resolved, recv_writes) = match bound_call(&mut program) {
+        MirInstr::MethodCall {
+            resolved,
+            recv_writes,
+            ..
+        } => (resolved.clone(), *recv_writes),
+        _ => (None, true),
+    };
+    assert_eq!(
+        resolved.as_deref(),
+        Some("__trait_dispatch.__call__$ov$Int")
+    );
+    assert!(
+        !recv_writes,
+        "a `def(...)` bound's `__call__` reads its receiver"
+    );
+    assert_eq!(apply_findings(&program), Vec::<String>::new());
+
+    let mut wrong_target = program.clone();
+    if let MirInstr::MethodCall { resolved, .. } = bound_call(&mut wrong_target) {
+        *resolved = Some("__trait_dispatch.__call__$ov$Bool".to_string());
+    }
+    assert!(
+        apply_findings(&wrong_target)
+            .iter()
+            .any(|error| error.contains("does not match callable contract")),
+        "{:?}",
+        apply_findings(&wrong_target)
+    );
+
+    let mut writing = program.clone();
+    if let MirInstr::MethodCall { recv_writes, .. } = bound_call(&mut writing) {
+        *recv_writes = true;
+    }
+    assert!(
+        apply_findings(&writing)
+            .iter()
+            .any(|error| error.contains("takes its receiver `read`"))
+    );
+
+    let mut indirect = program;
+    let call = bound_call(&mut indirect);
+    if let MirInstr::MethodCall {
+        dest,
+        recv,
+        resolved,
+        args,
+        arg_places,
+        recv_place,
+        ..
+    } = call.clone()
+    {
+        *call = MirInstr::CallIndirect {
+            dest,
+            callee: recv,
+            resolved,
+            raises: None,
+            args,
+            kwargs: Vec::new(),
+            callee_place: recv_place,
+            arg_places,
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_contract: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        };
+    }
+    assert!(
+        apply_findings(&indirect)
+            .iter()
+            .any(|error| error.contains("is its `__call__` requirement call"))
+    );
+}

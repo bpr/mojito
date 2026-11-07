@@ -129,9 +129,51 @@ pub(super) fn verify_call_instruction(
             param_decls,
             instantiated_args,
             spread,
+            recv_writes,
+            raises,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+            // A `def(...)` bound's `__call__` requirement call binds the
+            // bound's signature on a read receiver, as a declared trait's
+            // requirement call binds its requirement.
+            if super::super::bound_call_contract(instruction, &cx.function.reg_types).is_some()
+                && let Some(contract) = cx
+                    .reg_ty(*recv)
+                    .and_then(mojito_types::types::callable_contract_ty)
+            {
+                let expected = mojito_symbol::symbol::callable_contract_target(contract);
+                if expected.as_deref() != Some(callee.as_str()) {
+                    errors.push(format!(
+                        "{prefix}: bound call target '{callee}' does not match callable contract '{}'",
+                        expected.unwrap_or_default()
+                    ));
+                }
+                if *recv_writes || receiver_convention.is_some() {
+                    errors.push(format!(
+                        "{prefix}: a `def(...)` bound's `__call__` takes its receiver `read`"
+                    ));
+                }
+                if !param_decls.is_empty()
+                    || !param_arg_regs.is_empty()
+                    || !instantiated_args.is_empty()
+                {
+                    errors.push(format!(
+                        "{prefix}: a monomorphic `def(...)` bound's call carries compile-time parameter metadata"
+                    ));
+                }
+                verify_callable_contract_call(
+                    prefix,
+                    cx.function,
+                    contract,
+                    raises.as_ref().map(|raises| &raises.ty),
+                    *dest,
+                    args,
+                    kwargs,
+                    arg_places,
+                    errors,
+                );
+            }
             if let Some(position) = spread {
                 verify_pack_spread(
                     prefix,
@@ -919,6 +961,16 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
     if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
         errors.push(format!(
             "{prefix}: indirect-call place metadata is not aligned with its arguments"
+        ));
+    }
+    if let Some(TyKind::Param {
+        callable_bound: Some(bound),
+        ..
+    }) = cx.reg_ty(*callee).map(Ty::kind)
+        && matches!(bound.kind(), TyKind::Func(_))
+    {
+        errors.push(format!(
+            "{prefix}: a call through a `def(...)` bound is its `__call__` requirement call, not an indirect call"
         ));
     }
     let stored_contract = cx

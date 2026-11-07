@@ -332,23 +332,44 @@ impl<'a> Flatten<'a> {
             let callee_place = self.callable_receiver_place(factory_node);
             let factory = self.callable_operand(factory_node);
             let payload = self.fresh_typed(call.location(), None, payload);
-            self.emit(MirInstr::CallIndirect {
-                dest: payload,
-                callee: factory,
-                resolved: None,
-                raises: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                callee_place: callee_place.map(Box::new),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_contract: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            });
+            // A factory through a `def(...)` bound is called through the
+            // bound's `__call__` requirement.
+            let factory_ty = factory_node
+                .ty()
+                .or_else(|| self.f.reg_types.get(&factory.0).cloned());
+            let bound_target = factory_ty
+                .as_ref()
+                .filter(|ty| {
+                    matches!(
+                        ty.kind(),
+                        TyKind::Param {
+                            callable_bound: Some(_),
+                            ..
+                        }
+                    )
+                })
+                .and_then(mojito_symbol::symbol::callable_contract_target);
+            self.emit(crate::mir::bound_calls::bound_call_from_indirect(
+                MirInstr::CallIndirect {
+                    dest: payload,
+                    callee: factory,
+                    resolved: bound_target,
+                    raises: None,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    callee_place: callee_place.map(Box::new),
+                    arg_places: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                    instantiated_contract: None,
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                },
+                factory_ty.as_ref(),
+                None,
+            ));
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::MakeVariant {
                 dest,
@@ -563,23 +584,27 @@ impl<'a> Flatten<'a> {
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, callable_target(&node.adjustments), 0);
         let raises = self.raises(call.raises(), call.location());
-        self.emit_call(MirInstr::CallIndirect {
-            dest,
-            callee,
-            resolved: callable_target(&node.adjustments),
-            raises: raises.clone(),
-            args: regs,
-            kwargs: kw,
-            callee_place: callee_place.map(Box::new),
-            arg_places,
-            kwarg_places,
-            capture_accesses,
-            param_arg_regs,
-            param_decls,
-            instantiated_contract,
-            instantiated_args,
-            spread: Self::spread_position(args),
-        });
+        self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
+            MirInstr::CallIndirect {
+                dest,
+                callee,
+                resolved: callable_target(&node.adjustments),
+                raises: raises.clone(),
+                args: regs,
+                kwargs: kw,
+                callee_place: callee_place.map(Box::new),
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                param_arg_regs,
+                param_decls,
+                instantiated_contract,
+                instantiated_args,
+                spread: Self::spread_position(args),
+            },
+            callable_ty.as_ref(),
+            call.reference_result(),
+        ));
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
         self.error_region(raises);
         dest

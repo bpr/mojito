@@ -55,6 +55,8 @@ pub mod text;
 pub mod verify;
 pub mod visit;
 
+mod bound_calls;
+pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
 mod call_addresses;
 pub use call_addresses::{
     address_call_operands, by_address_parameter, call_operand_parameters,
@@ -331,6 +333,24 @@ impl MirDeclarations {
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 self.structure(name)?.witness(requirement)
             }
+            _ => None,
+        }
+    }
+
+    /// The `__call__` a call through a `def(...)` bound runs on a
+    /// `receiver`: the member the receiver's struct (a reference's
+    /// referent's, an instance's template's) records for its `def(...)`
+    /// conformance, the one requirement of that function-type trait. A
+    /// bound spelled over a callee's binders names the requirement under
+    /// a signature the struct's table never spells, so the conformance is
+    /// found by its trait. `None` for any other type, or a struct
+    /// declaring none.
+    pub fn callable_witness(&self, receiver: &Ty) -> Option<&str> {
+        match receiver.kind() {
+            TyKind::Ref(reference) => self.callable_witness(&reference.referent),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
+                .structure(mojito_types::types::struct_template(name))?
+                .callable_witness(),
             _ => None,
         }
     }

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a monomorphic `def(...)` bound (`f(x)` in
+  `apply[F: def(Int) -> Int](f: F, x: Int)`) now lowers to the bound's
+  `__call__` requirement call on a read receiver instead of an indirect call,
+  as upstream reads the bound as a trait whose one requirement is `__call__`
+  (R1933). Where the bound closes, `inline-parametric` and the elaborator
+  fold it to a struct's `def(...)` witness or to a function value's own
+  indirect call, the ownership analyses bind its arguments to the bound's
+  signature, and `mir::verify` rejects an indirect call through such a bound.
+
 - The elaborator now answers a `conforms_to(T, Trait)` query in a call's
   bracket argument or a struct's parameter argument over a type the instance
   closes, as upstream's elaborator folds `#kgen.type_conforms_to_trait`
