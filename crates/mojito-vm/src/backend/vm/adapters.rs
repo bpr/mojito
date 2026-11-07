@@ -171,6 +171,11 @@ impl VmBackend {
         target: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
         use mojito_types::ct::CtValue;
+        // A string literal is the empty struct whose text its type carries.
+        if let Some(target) = target.filter(|ty| ty.is_string_literal()) {
+            return crate::runtime::literal_value(target)
+                .ok_or_else(|| crate::runtime::literal_type_error(Some(target)));
+        }
         let materialized = match value {
             // A reference is its own handle, never coerced: the referent is
             // thawed at the type the reference reads and stored in fresh

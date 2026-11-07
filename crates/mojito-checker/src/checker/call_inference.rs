@@ -333,7 +333,7 @@ impl Checker {
     /// their default initializer and their copy each build the one value
     /// the type names: the elaborator writes the closed type's default
     /// construction, the literal of its value, while a string literal's
-    /// run-time value is still the compiler's descriptor (R1862) and a
+    /// declared `__init__` is not yet its construction (R1973) and a
     /// numeric one's the compiler's field-less literal rather than an
     /// instance of the declared struct (R1968).
     fn literal_construction(

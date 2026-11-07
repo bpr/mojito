@@ -1,13 +1,13 @@
 # Upstream's `std/builtin/string_literal.mojo`. A literal `"ab"` is a
 # `StringLiteral["ab"]`, whose members are these bodies. An application is
-# this struct, but its run-time value is still the compiler's descriptor,
-# which the compiler builds by rule (R1862), so the default initializer's
+# this struct, and like upstream's it holds nothing at run time, but the
+# compiler still builds it by rule (R1973), so the default initializer's
 # empty body constructs nothing. `ptr` takes `pop.string.address` as the
 # `Pointer` itself, where upstream's wraps the `!kgen.pointer` it gives
 # with `unsafe_bitcast[Byte]()` (R221). The iterator members name the
 # bundled private iterator structs (R1866), and `split` returns the
 # `List[String]` `StringSpan.split` does (R189). `format` binds its
-# template to a local `comptime` (R1646, R1862), and the bundled
+# template to a local `comptime` (R1646, R1973), and the bundled
 # `format_to_comptime` parses it at run time (R425).
 #
 # Omitted: `as_c_string_span` and `as_c_string_slice` (R222), and the

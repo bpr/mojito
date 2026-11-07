@@ -59,7 +59,7 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("`len` call contract".into(), dest));
         }
         let arg = args[0];
-        if let Some(bytes) = self.str_consts.get(&arg.0) {
+        if let Some(bytes) = self.string_constant(arg) {
             let length = self.int_constant(ctx, bytes.len() as i64);
             self.reg_values.insert(dest.0, length);
             return Ok(());
@@ -72,12 +72,6 @@ impl FnLowering<'_> {
             .as_ref()
             .map(Ty::kind)
         {
-            Some(kind) if kind.is_string_literal() => {
-                let ptr = self.reg_ptr(ctx, arg)?;
-                let (_, len) = self.string_parts(ctx, ptr, dest);
-                self.reg_values.insert(dest.0, len);
-                Ok(())
-            }
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => {
                 let length = self.int_constant(ctx, elements.len() as i64);
                 self.reg_values.insert(dest.0, length);
@@ -248,21 +242,17 @@ impl FnLowering<'_> {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(self.unsupported_reg("`input` call contract".into(), dest));
         }
-        // The checker types the call result as the nominal String, or as
-        // `StringLiteral` on an unlinked seam. The 24-byte `MjString` the
-        // runtime fills starts with the same `{data, len}` words an
-        // `MjStrDesc` reads, so one storage shape serves either destination
-        // type.
-        let dest_ty = self.func.reg_types.get(&dest.0).cloned();
-        let Some(dest_ty) = dest_ty.filter(|ty| {
-            ty.is_string_literal()
-                || ty
-                    .kind()
-                    .as_non_simd_struct()
-                    .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
-        }) else {
+        // The checker types the call result as the nominal String, which
+        // the 24-byte `MjString` the runtime fills is.
+        if !self
+            .func
+            .reg_types
+            .get(&dest.0)
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
+        {
             return Err(self.unsupported_reg("`input` without a String result".into(), dest));
-        };
+        }
         if !self.try_write_string_bytes(ctx, args[0], dest)? {
             return Err(self.unsupported_reg("`input` prompt shape".into(), dest));
         }
@@ -276,21 +266,9 @@ impl FnLowering<'_> {
             vec![storage],
         );
         self.append(ctx, call.get_operation(), Some(dest));
+        // The line buffer is owned: the nominal String result is destroyed
+        // by drop elaboration.
         self.reg_values.insert(dest.0, storage);
-        // The line buffer is owned: a nominal String result is destroyed by
-        // drop elaboration, and a StringLiteral result registers the owned
-        // runtime descriptor the release rule frees through `str_runtime`.
-        if dest_ty.is_string_literal() {
-            let (data, len) = self.string_parts(ctx, storage, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-        }
         Ok(())
     }
 

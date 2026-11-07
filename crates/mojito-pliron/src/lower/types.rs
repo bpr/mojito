@@ -123,7 +123,7 @@ impl ScalarTy {
 /// `!kgen.simd` storage, and a one-field `TrivialRegisterPassable` struct as
 /// its field, as upstream's `LowerKGENToLLVM` type converter unwraps both;
 /// scalars (a one-lane storage) stay SSA; `None` and the field-less
-/// numeric literals are zero-sized; struct, tuple, and `StringLiteral`-descriptor aggregates take
+/// literals are zero-sized; struct, tuple, and `!kgen.string`-descriptor aggregates take
 /// their shared-engine layout, as does the two-word `{ invoke, env }`
 /// retained-callable value. A multi-lane storage keeps the lane-aligned
 /// aggregate as its storage and ABI form; `lower/simd.rs` computes on it as
@@ -135,9 +135,10 @@ pub fn lower_ty(
     declarations: &MirDeclarations,
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
-    // A numeric literal is upstream's field-less `IntLiteral[v]` or
-    // `FloatLiteral[v]`: its readers take the number from the type.
-    if ty.is_numeric_literal() {
+    // A literal is upstream's field-less `IntLiteral[v]`,
+    // `FloatLiteral[v]`, or `StringLiteral[v]`: its readers take the
+    // number or text from the type.
+    if ty.is_numeric_literal() || ty.is_string_literal() {
         return Ok(LowerTy::ZeroSized);
     }
     if matches!(ty.kind(), TyKind::Struct(..)) {
@@ -170,8 +171,7 @@ pub fn lower_ty(
         TyKind::None | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
-        // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor,
-        // as is a `!kgen.string`'s.
+        // A `!kgen.string`'s storage is the borrowed `MjStrDesc` descriptor.
         // A retained callable is the two-word `{ invoke, env }` value.
         TyKind::KgenSimd { .. }
         | TyKind::Error

@@ -161,13 +161,13 @@ impl FnLowering<'_> {
             self.cache_lazy(reg, value);
             return Ok(value);
         }
-        let construct = if self.erased.contains(&reg.0) {
-            format!("read of erased analysis register %r{}", reg.0)
-        } else if self.str_consts.contains_key(&reg.0) {
+        let construct = if self.is_string_constant(reg) {
             format!(
-                "StringLiteral value in register %r{} outside the supported constant contexts",
+                "string constant in register %r{} outside the supported constant contexts",
                 reg.0
             )
+        } else if self.erased.contains(&reg.0) {
+            format!("read of erased analysis register %r{}", reg.0)
         } else {
             format!("read of undefined register %r{}", reg.0)
         };

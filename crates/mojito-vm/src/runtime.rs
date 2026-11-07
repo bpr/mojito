@@ -308,16 +308,19 @@ impl fmt::Display for Value {
     }
 }
 
-/// The value of a register of the numeric literal type `ty`.
+/// The value of a register of the literal type `ty`.
 ///
-/// It is the `IntLiteral` or `FloatLiteral` struct with no fields, as
-/// upstream's is; its number is the type's `value` parameter
-/// ([`literal_of`]). `None` for any other type.
+/// It is the `IntLiteral`, `FloatLiteral`, or `StringLiteral` struct with
+/// no fields, as upstream's is; its number or text is the type's `value`
+/// parameter ([`literal_of`], [`mojito_types::types::TyKind::string_literal_text`]). `None` for
+/// any other type.
 pub fn literal_value(ty: &Ty) -> Option<Value> {
     let name = if ty.is_int_literal() {
         mojito_types::types::INT_LITERAL_TYPE_NAME
     } else if ty.is_float_literal() {
         mojito_types::types::FLOAT_LITERAL_TYPE_NAME
+    } else if ty.is_string_literal() {
+        mojito_types::types::STRING_LITERAL_TYPE_NAME
     } else {
         return None;
     };
@@ -340,12 +343,12 @@ pub fn literal_of(ty: &Ty) -> Option<ExactNum> {
         .or_else(|| kind.float_literal_value().cloned().map(ExactNum::Float))
 }
 
-/// The error for a numeric literal register whose type carries no value:
+/// The error for a literal register whose type carries no value:
 /// concrete MIR closes every literal type, so this is a compiler invariant
 /// violation.
 pub fn literal_type_error(ty: Option<&Ty>) -> RuntimeError {
     RuntimeError::TypeError(format!(
-        "a numeric literal register of type {} carries no closed value",
+        "a literal register of type {} carries no closed value",
         ty.map_or_else(|| "<unknown>".to_string(), ToString::to_string)
     ))
 }

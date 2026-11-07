@@ -129,7 +129,9 @@ command cannot use both.
    - `StringLiteral`: R1858 landed (the elaborator fills no unsolved
      binder), and R1859 landed (a `[s: StringLiteral]` parameter is the
      auto-parameterized application). R1860 and R1861 landed: the
-     value-less type is deleted, and R1862 deletes its descriptor.
+     value-less type is deleted, and R1862 deleted its descriptor;
+     R1971 → R1972 → R1973 remove the remaining struct exclusions and the
+     construction rule.
      R1863, R1864, and R1865 are independent.
 
    ```sh

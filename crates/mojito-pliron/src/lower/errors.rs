@@ -109,7 +109,7 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, src);
             return Ok(());
         }
-        if let Some(bytes) = self.str_consts.get(&src.0).cloned() {
+        if let Some(bytes) = self.string_constant(src) {
             let len = bytes.len() as u64;
             let len_value = self.uint_constant(ctx, len);
             let data = self.emit_alloc(ctx, len_value, 1, src);

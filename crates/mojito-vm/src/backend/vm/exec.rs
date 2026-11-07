@@ -346,6 +346,10 @@ impl VmBackend {
                         prog,
                         prog.mir.functions[function].1.reg_types.get(&dest.0),
                     ),
+                    // A string literal is the empty struct whose text its
+                    // type carries.
+                    Const::Str(_) => literal_register_value(prog, function, *dest)
+                        .unwrap_or_else(|| const_value(k))?,
                     _ => const_value(k)?,
                 };
                 regs[dest.0 as usize] = value;
@@ -674,7 +678,8 @@ impl VmBackend {
                 };
             }
             MirInstr::UnOp { op, dest, a, .. } => {
-                regs[dest.0 as usize] = self.apply_prefix(prog, *op, regs[a.0 as usize].clone())?;
+                let operand = operand_value(prog, function, regs, *a);
+                regs[dest.0 as usize] = self.apply_prefix(prog, *op, operand)?;
             }
             MirInstr::BinOp { op, dest, a, b, .. }
                 if is_literal_register(prog, function, *a)
@@ -701,18 +706,21 @@ impl VmBackend {
                 resolved,
                 ..
             } => {
-                let l = regs[a.0 as usize].clone();
-                let r = regs[b.0 as usize].clone();
+                let l = operand_value(prog, function, regs, *a);
+                let r = operand_value(prog, function, regs, *b);
                 let value = self.apply_binop(prog, *op, l, r, resolved.as_deref())?;
                 // A generic instance types a comparison over its parameter
                 // `Bool`, as its bound declares; sized scalars yield a mask.
                 let declared_bool = matches!(value, Value::Simd { .. })
                     && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::bool());
-                regs[dest.0 as usize] = if declared_bool {
-                    crate::runtime::builtin_convert(ScalarConversion::Bool, value)?
-                } else {
-                    value
-                };
+                regs[dest.0 as usize] =
+                    if let Some(literal) = literal_register_value(prog, function, *dest) {
+                        literal?
+                    } else if declared_bool {
+                        crate::runtime::builtin_convert(ScalarConversion::Bool, value)?
+                    } else {
+                        value
+                    };
             }
             MirInstr::Call {
                 dest,
@@ -2167,19 +2175,42 @@ fn register_literal(
 }
 
 /// The empty literal value of the register `register` of `function` when
-/// it is a numeric literal, whose number its type carries; `None` for a
-/// register of any other type.
+/// it is a numeric or string literal, whose number or text its type
+/// carries; `None` for a register of any other type.
 fn literal_register_value(
     prog: &Prog,
     function: usize,
     register: Reg,
 ) -> Option<Result<Value, RuntimeError>> {
     let ty = prog.mir.functions[function].1.reg_types.get(&register.0)?;
-    ty.is_numeric_literal().then(|| {
-        crate::runtime::literal_of(ty)
-            .and_then(|_| crate::runtime::literal_value(ty))
-            .ok_or_else(|| crate::runtime::literal_type_error(Some(ty)))
-    })
+    let closed = if ty.is_numeric_literal() {
+        crate::runtime::literal_of(ty).is_some()
+    } else if ty.is_string_literal() {
+        ty.kind().string_literal_text().is_some()
+    } else {
+        return None;
+    };
+    Some(
+        closed
+            .then(|| crate::runtime::literal_value(ty))
+            .flatten()
+            .ok_or_else(|| crate::runtime::literal_type_error(Some(ty))),
+    )
+}
+
+/// The value an operator reads from the register `register` of
+/// `function`: a string literal register is the empty struct whose text
+/// its type carries, which the operator reads as that text.
+fn operand_value(prog: &Prog, function: usize, regs: &[Value], register: Reg) -> Value {
+    prog.mir.functions[function]
+        .1
+        .reg_types
+        .get(&register.0)
+        .and_then(|ty| ty.kind().string_literal_text())
+        .map_or_else(
+            || regs[register.0 as usize].clone(),
+            |text| Value::Str(text.to_string()),
+        )
 }
 
 /// Upstream's stack allocation: a slot's storage exists from its allocation.

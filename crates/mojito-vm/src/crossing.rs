@@ -130,19 +130,22 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
     }
 }
 
-/// The compile-time value of a numeric literal register of the type `ty`.
+/// The compile-time value of a literal register of the type `ty`.
 ///
-/// The register holds the empty literal struct, so its number is the
-/// type's `value` parameter. `None` when `ty` is no closed literal type.
+/// The register holds the empty literal struct, so its number or text is
+/// the type's `value` parameter. `None` when `ty` is no closed literal type.
 pub fn literal_vm_to_ct(ty: &mojito_types::types::Ty) -> Option<CtValue> {
+    if let Some(text) = ty.kind().string_literal_text() {
+        return Some(CtValue::Str(text.to_string()));
+    }
     Some(match crate::runtime::literal_of(ty)? {
         crate::runtime::ExactNum::Int(value) => CtValue::IntLiteral(value),
         crate::runtime::ExactNum::Float(value) => CtValue::FloatLiteral(value),
     })
 }
 
-/// A runtime value the VM produced as a compile-time value. A numeric
-/// literal is the empty struct its type carries the number of, so it
+/// A runtime value the VM produced as a compile-time value. A literal is
+/// the empty struct its type carries the value of, so it
 /// crosses through [`literal_vm_to_ct`] at its type instead.
 pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
     match value {

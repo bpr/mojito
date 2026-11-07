@@ -31,19 +31,13 @@ impl FnLowering<'_> {
                 return self.lower_simd_binop(ctx, op, dest, a, b, dtype, width as usize);
             }
         }
-        if self.str_consts.contains_key(&a.0) && self.str_consts.contains_key(&b.0) {
+        if self.is_string_constant(a) && self.is_string_constant(b) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
         }
-        // Equality over runtime string-literal values (a `Dict[StringLiteral,
-        // …]` key probe) compares bytes — the VM's `Value::Str` equality.
+        // Equality over runtime strings compares bytes — the VM's
+        // `Value::Str` equality.
         let string_shaped = |lowering: &Self, reg: Reg| {
-            lowering.str_consts.contains_key(&reg.0)
-                || lowering.str_runtime.contains_key(&reg.0)
-                || lowering
-                    .func
-                    .reg_types
-                    .get(&reg.0)
-                    .is_some_and(Ty::is_string_literal)
+            lowering.is_string_constant(reg) || lowering.str_runtime.contains_key(&reg.0)
         };
         if matches!(op, InfixOp::Eq | InfixOp::Ne)
             && string_shaped(self, a)
@@ -51,7 +45,7 @@ impl FnLowering<'_> {
         {
             return self.lower_str_runtime_eq(ctx, op, dest, a, b);
         }
-        if self.str_consts.contains_key(&a.0) || self.str_consts.contains_key(&b.0) {
+        if self.is_string_constant(a) || self.is_string_constant(b) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
         }
         // `pointer + i` — provenance-preserving element arithmetic (the MIR

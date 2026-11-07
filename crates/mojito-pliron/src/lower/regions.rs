@@ -342,7 +342,7 @@ impl FnLowering<'_> {
                     || self.aliased_load_regs.contains(&src.0),
                 pointer_ref: self.pointer_slot_refs.contains(&src.0),
                 constant: if self.register_literal(*src).is_some()
-                    || self.str_consts.contains_key(&src.0)
+                    || self.is_string_constant(*src)
                     || self.int_consts.contains_key(&src.0)
                 {
                     Constant::Same(*src)
@@ -461,7 +461,7 @@ impl FnLowering<'_> {
                 }
             }
             let folded = constant.is_some_and(|src| {
-                self.register_literal(src).is_some() || self.str_consts.contains_key(&src.0)
+                self.register_literal(src).is_some() || self.is_string_constant(src)
             });
             match self.carriers[carrier].slots[position].clone() {
                 CarrySlot::Scalar(_) => {

@@ -466,8 +466,8 @@ impl MirDeclarations {
                 storage,
             )]));
         }
-        // A string literal's run-time value is the compiler's descriptor,
-        // not the declared struct's fields (R1862).
+        // A string literal's fields stay unanswered until its member
+        // instances are keyed by its text (R1971).
         if ty.is_string_literal() {
             return None;
         }

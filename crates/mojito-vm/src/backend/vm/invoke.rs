@@ -334,14 +334,6 @@ impl VmBackend {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
                     return crate::runtime::builtin_round_dir(method, &recv);
                 }
-                // A string literal is true when non-empty; a numeric
-                // literal's, a `SIMD`'s, and a `Bool`'s `__bool__` are
-                // their declared members.
-                ("__bool__", 0) if matches!(&recv, Value::Str(_)) => {
-                    return Ok(Value::Bool(
-                        matches!(&recv, Value::Str(text) if !text.is_empty()),
-                    ));
-                }
                 _ => {}
             }
         }

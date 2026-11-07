@@ -60,13 +60,7 @@ impl FnLowering<'_> {
                         .reg_types
                         .get(&reg.0)
                         .is_some_and(|ty| ty.kind().is_non_simd_struct())
-                    && (self.str_consts.contains_key(&reg.0)
-                        || self.str_runtime.contains_key(&reg.0)
-                        || self
-                            .func
-                            .reg_types
-                            .get(&reg.0)
-                            .is_some_and(Ty::is_string_literal))
+                    && (self.is_string_constant(reg) || self.str_runtime.contains_key(&reg.0))
                 {
                     return self.materialize_string_argument(ctx, reg, owned, dest);
                 }
@@ -409,8 +403,8 @@ impl FnLowering<'_> {
         }
     }
 
-    /// `StringLiteral` consumed as storage materializes on first use as a
-    /// borrowed `MjStrDesc` over its interned constant bytes.
+    /// A `!kgen.string` constant consumed as storage materializes on first
+    /// use as a borrowed `MjStrDesc` over its interned constant bytes.
     pub(super) fn reg_ptr(&mut self, ctx: &mut Context, reg: Reg) -> Result<Value, PlironError> {
         if let Some(value) = self.reg_values.get(&reg.0) {
             return Ok(*value);
@@ -428,7 +422,7 @@ impl FnLowering<'_> {
             self.cache_lazy(reg, storage);
             return Ok(storage);
         }
-        // A runtime string's `(data, len)` pair passed as a `StringLiteral`
+        // A runtime string's `(data, len)` pair passed as a descriptor
         // aggregate: the borrowed descriptor over the same bytes. Releasing
         // an owned buffer still reads the pair, not this storage.
         if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {

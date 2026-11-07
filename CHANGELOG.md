@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `StringLiteral[v]` register now holds nothing at run time, as
+  upstream's field-less struct holds nothing: the VM keeps the empty
+  literal struct, the native layout is zero-sized rather than a 16-byte
+  descriptor, and every reader takes the text from the register's type.
+  The MIR verifier holds a string literal to its own type, and a literal's
+  copy and operators are the declared struct's in the elaborator (R1862).
 - The value-less `StringLiteral` type is gone: every string literal's
   type carries its text, as upstream's `StringLiteral[value]` does, so a
   literal no longer coerces to a text-less literal type and a reflected

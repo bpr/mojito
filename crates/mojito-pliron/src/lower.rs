@@ -329,9 +329,10 @@ pub enum LowerTy {
     ZeroSized,
 }
 
-// Registers holding a compile-time string literal carry their exact bytes
-// (`str_consts`); consumers intern into the constant pool only on actual use,
-// so fold-only literals never emit a global.
+// A string literal register is zero-sized and its text is its type's; a
+// `!kgen.string` constant register carries its exact bytes (`str_consts`).
+// Consumers intern either into the constant pool only on actual use, so
+// fold-only strings never emit a global.
 
 /// A register holding a runtime string as a `(data, len)` SSA pair — the
 /// in-flight form of `MjStrDesc`. An `owned` descriptor carries a dedicated
@@ -374,7 +375,7 @@ struct FnLowering<'a> {
     /// Backend-side advance positions of pack-fallback iterator slots
     /// (the slot itself keeps the pack layout), keyed by iterator variable.
     pack_positions: HashMap<u32, Value>,
-    /// Registers holding a compile-time string literal (its exact bytes).
+    /// Registers holding a `!kgen.string` constant (its exact bytes).
     str_consts: HashMap<u32, Vec<u8>>,
     /// Registers holding a runtime string as a `(data, len)` SSA pair.
     str_runtime: HashMap<u32, RuntimeStr>,

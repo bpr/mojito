@@ -20,7 +20,6 @@ instruction	lifetime.keep_alive	unsupported	`lower-lit` erases every lifetime ma
 instruction	const	partial	Int/Float/Bool/Str/DType/None (a numeric literal is zero-sized) and function references as two-word callable values
 instruction	param_list.address	supported	the address of the interned constant element array (`mjplist_<n>`)
 instruction	store_to_mem	unsupported	compile-time memory has no run-time form; only a lifted compile-time evaluation holds one
-instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	type.construct_expr	unsupported	monomorphization leaves no type expression to construct; one that survives rejects
 instruction	literal.materialize	partial	`!kgen.simd` storage targets of any width (wrapping, VM-exact; a vector splats the converted lane); a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects
@@ -32,7 +31,7 @@ instruction	place.move	partial	marks the root partially initialized; later whole
 instruction	var.store	supported	sets the initialization flag
 instruction	unary	partial	checked scalar operand types
 instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
-instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort`/`_mojito_float_text` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
+instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`input`/`_mojito_abort`/`_mojito_float_text` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
 instruction	call.indirect	partial	contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject
 instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does
 instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
@@ -81,7 +80,7 @@ instruction	iter.next	partial	compiler-private runtime-pack storage only: the ho
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection
 type	Bool	supported	i1
-type	StringLiteral	supported	constant-pool literal registers and typed storage (borrowed MjStrDesc descriptor)
+type	StringLiteral	supported	zero-sized; its readers intern the text its type carries
 type	Float64	supported	f64
 type	None	supported	zero-sized
 type	Never	unsupported	uninhabited; no lowering

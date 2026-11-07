@@ -250,14 +250,16 @@ Rules:
 
 ### Strings and the constant pool
 
-- A **string literal** (`StringLiteral[value]`) is the borrowed descriptor
-  `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8, not
-  NUL-terminated, never owned by the consumer. Literal bytes live in private
+- A **string literal** (`StringLiteral[value]`) is zero-sized, as upstream's
+  field-less struct is: its text is the type's `value` parameter, and each
+  reader interns it where it uses it. Interned string bytes live in private
   constant globals named `mjstr_<n>` (an underscore — pliron identifiers
   admit no `.`), numbered in deterministic first-use order and deduplicated
   by content within a module.
-- A **`!kgen.string`** (`TyKind::KgenString`) is the same `MjStrDesc`
-  descriptor: a constant is its interned literal's, `pop.string.address`
+- A **`!kgen.string`** (`TyKind::KgenString`) is the borrowed descriptor
+  `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8,
+  not NUL-terminated, never owned by the consumer. A constant is its
+  interned bytes', `pop.string.address`
   reads its `data`, and `pop.string.size` its `len`. A closed parameter
   list of them is a private constant global `mjklist_<n>` of descriptors
   over the interned bytes.

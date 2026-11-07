@@ -5,7 +5,7 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Contribute one `DType` Hashable leaf to a caller-owned hasher — the
     /// VM's non-struct `__hash__` intrinsic: the value `hash_leaf_ty` names
     /// passes to the hasher's `_update_with_simd` instance at that type. A
@@ -87,16 +87,16 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Write the UTF-8 bytes of a string-valued register to stdout when the
-    /// register holds one of the supported string shapes — an interned
-    /// constant, a runtime `StringLiteral` (descriptor or typed storage), or a
-    /// nominal String. Returns whether the register was such a string.
+    /// register holds one of the supported string shapes — a string
+    /// constant (a literal's text its type carries), a runtime string pair,
+    /// or a nominal String or `StringSpan`. Returns whether the register was such a string.
     pub(super) fn try_write_string_bytes(
         &mut self,
         ctx: &mut Context,
         arg: Reg,
         dest: Reg,
     ) -> Result<bool, PlironError> {
-        if let Some(bytes) = self.str_consts.get(&arg.0).cloned() {
+        if let Some(bytes) = self.string_constant(arg) {
             self.write_literal_bytes(ctx, &bytes, dest);
             return Ok(true);
         }
@@ -105,17 +105,17 @@ impl<'a> FnLowering<'a> {
             return Ok(true);
         }
         // A nominal String's byte buffer (the VM's `write_to` bridge reads
-        // the same bytes), a `StringSpan` view's (`{data, size}` at the same
-        // offsets), or a runtime StringLiteral value's (typed storage)
-        // descriptor bytes.
-        let is_string = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+        // the same bytes), or a `StringSpan` view's (`{data, size}` at the
+        // same offsets).
+        let is_string = self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .is_some_and(|(name, _)| {
                 mojito_symbol::symbol::is_stdlib_string_struct(name)
                     || mojito_types::types::is_stdlib_string_span_struct(name)
-            }
-            Some(kind) => kind.is_string_literal(),
-            None => false,
-        };
+            });
         if is_string {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, size) = self.string_parts(ctx, ptr, dest);
@@ -234,44 +234,6 @@ impl<'a> FnLowering<'a> {
         address.get_result(ctx)
     }
 
-    /// Compile-time folding of the string-literal operators the VM evaluates
-    /// on `Value::Str`: `+` concatenates into a new interned literal, `==` and
-    /// `!=` fold to Bool constants. Both operands must be compile-time
-    /// literals — no runtime `StringLiteral` representation exists.
-    /// The `(data, len)` byte pair of a string-shaped operand: an interned
-    /// constant, a runtime string pair, or StringLiteral/String descriptor
-    /// storage.
-    pub(super) fn string_operand_parts(
-        &mut self,
-        ctx: &mut Context,
-        reg: Reg,
-        dest: Reg,
-    ) -> Result<(Value, Value), PlironError> {
-        if let Some(bytes) = self.str_consts.get(&reg.0).cloned() {
-            let global = self.shared.intern_string(ctx, &bytes);
-            let data = self.global_address(ctx, &global, dest);
-            let len = self.uint_constant(ctx, bytes.len() as u64);
-            return Ok((data, len));
-        }
-        if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {
-            return Ok((descriptor.data, descriptor.len));
-        }
-        match self.func.reg_types.get(&reg.0).map(Ty::kind) {
-            Some(kind) if kind.is_string_literal() || matches!(kind, TyKind::Error) => {
-                let ptr = self.reg_ptr(ctx, reg)?;
-                Ok(self.string_parts(ctx, ptr, dest))
-            }
-            Some(struct_ty)
-                if let Some((name, _)) = struct_ty.as_non_simd_struct()
-                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-            {
-                let ptr = self.reg_ptr(ctx, reg)?;
-                Ok(self.string_parts(ctx, ptr, dest))
-            }
-            _ => Err(self.unsupported_reg("string operand".into(), dest)),
-        }
-    }
-
     /// Runtime string equality: equal lengths and equal bytes, via an inline
     /// byte-compare loop over slot-backed state (mem2reg promotes it).
     pub(super) fn lower_str_runtime_eq(
@@ -282,8 +244,8 @@ impl<'a> FnLowering<'a> {
         a: Reg,
         b: Reg,
     ) -> Result<(), PlironError> {
-        let (a_data, a_len) = self.string_operand_parts(ctx, a, dest)?;
-        let (b_data, b_len) = self.string_operand_parts(ctx, b, dest)?;
+        let (a_data, a_len) = self.string_bytes(ctx, a, dest)?;
+        let (b_data, b_len) = self.string_bytes(ctx, b, dest)?;
         let i1_handle: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
         let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
         let i8_handle: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
@@ -371,6 +333,10 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// Compile-time folding of the string operators the VM evaluates on
+    /// `Value::Str`: `+` yields the literal its result type carries (or a
+    /// new `!kgen.string` constant), and `==` and `!=` fold to Bool
+    /// constants. Both operands are string constants.
     pub(super) fn lower_str_literal_binop(
         &mut self,
         ctx: &mut Context,
@@ -379,17 +345,18 @@ impl<'a> FnLowering<'a> {
         a: Reg,
         b: Reg,
     ) -> Result<(), PlironError> {
-        let (Some(lhs), Some(rhs)) = (
-            self.str_consts.get(&a.0).cloned(),
-            self.str_consts.get(&b.0).cloned(),
-        ) else {
+        let (Some(lhs), Some(rhs)) = (self.string_constant(a), self.string_constant(b)) else {
             return Err(self.unsupported_reg("runtime StringLiteral operand".into(), dest));
         };
         match op {
             InfixOp::Add => {
-                let mut bytes = lhs;
-                bytes.extend_from_slice(&rhs);
-                self.str_consts.insert(dest.0, bytes);
+                if self.register_string_literal(dest).is_some() {
+                    self.erased.insert(dest.0);
+                } else {
+                    let mut bytes = lhs;
+                    bytes.extend_from_slice(&rhs);
+                    self.str_consts.insert(dest.0, bytes);
+                }
                 Ok(())
             }
             InfixOp::Eq | InfixOp::Ne => {

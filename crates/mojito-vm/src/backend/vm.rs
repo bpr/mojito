@@ -545,9 +545,9 @@ impl VmBackend {
         active: &mut HashSet<u64>,
     ) -> Result<CtValue, RuntimeError> {
         use mojito_types::types::TyKind;
-        // A numeric literal is the empty struct whose number its type
+        // A literal is the empty struct whose number or text its type
         // carries.
-        if let Some(ty) = ty.filter(|ty| ty.is_numeric_literal()) {
+        if let Some(ty) = ty.filter(|ty| ty.is_numeric_literal() || ty.is_string_literal()) {
             return crate::crossing::literal_vm_to_ct(ty)
                 .ok_or_else(|| crate::runtime::literal_type_error(Some(ty)));
         }

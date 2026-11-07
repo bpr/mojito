@@ -120,8 +120,8 @@ point, as upstream's toolchain does.
   `StringLiteral["ab"]`) and of an explicit application, with the members
   that read its `!kgen.string` through `pop.string.size`,
   `pop.string.address`, and `#kgen.param.identical`. An application is
-  the declared struct, whose run-time value is still the compiler's
-  descriptor (roadmap R1862). The prelude exports it.
+  the declared struct, which holds nothing at run time, but is still
+  constructed by rule (roadmap R1973). The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
   bundles `_uint_type_of_width`, `_integral_type_of`, and

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1971**.
+Next free ID: **R1974**.
 
 ## Ordered Work
 
@@ -10916,34 +10916,68 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1862 A `StringLiteral[v]` register holds a 16-byte descriptor,
-  where upstream's struct is empty**
+- [ ] **R1971 `MirDeclarations::field_types` answers no fields for a
+  `StringLiteral[v]` application, where upstream's struct has zero**
 
-  A string literal's run-time value is the `{ptr, len}` descriptor
-  (`layout_of`'s arm in `mojito-native-core/src/layout.rs`, Pliron's
-  `MjStrDesc` in `lower/types.rs`, the VM's `Value::Str`), where the pin's
-  `StringLiteral[v]` carries no data and a conversion reads `v` from the
-  type.
-  - So the application, though the declared struct, is kept out of the
-    struct rules: `TyKind::as_non_simd_struct`, `MirDeclarations::field_types`,
-    `builtin_copy_is_value_read`, and the elaborator's
-    `declared_operator_receiver` (`mono/specializer.rs`) each exclude it,
-    and `unpack_in_blocks` (`mono/spread.rs`) names it beside the structs
-    it keeps whole.
-  - So the declared `__init__`'s empty body builds nothing: the checker
-    constructs `StringLiteral[v]()` by rule (`literal_construction` and
-    `infer_instance_construction`, `call_inference.rs`), and MIR's
-    `default_construction` writes the literal's text (`type_construction.rs`).
-  - Lever: `Const::Str` of a literal application writes an empty struct,
-    and a conversion to `String` or `StringSpan` reads the text from the operand's closed type.
+  The guard in `MirDeclarations::field_types` (`mojito-mir/src/mir.rs`)
+  returns `None` for a string literal, though its run-time value is now the
+  empty struct upstream's is.
+  - So `copy_is_identity` cannot reach the declared
+    `TrivialRegisterPassable`, and `trivially_register_passable_leaf`
+    (`mojito-types/src/types.rs`) keeps a `ty.is_string_literal()` arm.
+  - Lever: delete the guard and the leaf arm.
+  - Probe: with the guard gone, `assets/ok/string_literal_slice_members.mojo`
+    fails verification ("MIR function 'StringLiteral.join$mono$TInt' block
+    0: struct creation's result is no declared struct"), since the
+    literal's member instances are keyed without its text (R1863).
+  - Done when the guard and the leaf arm are gone and the probe runs on
+    both backends.
+  - Depends on R1863.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1972 `TyKind::as_non_simd_struct` excludes a `StringLiteral[v]`
+  application, so the struct rules never see it**
+
+  `as_non_simd_struct` (`mojito-types/src/types.rs`) answers `None` for a
+  string literal, where upstream's literal is an ordinary struct.
+  - Probe: with the exclusion gone, `assets/ok/comptime_ctfe.mojo` fails
+    ("untyped variable slot $0 ('NAME')" for `comptime NAME = "buf" +
+    "fer"`), and `assets/ok/module_constant_literal_bracket.mojo` fails
+    (`operator '+' over a struct value applies no
+    '@always_inline("builtin")' operator method`): the parameter domain
+    cannot fold `StringLiteral.__add__`'s `return {}`, which the checker
+    builds by rule.
+  - Probe: `assets/ok/string_literal_slice_members.mojo` then loses
+    `String.__init__$ov$StringLiteral$V$value$data`'s `value` binder to
+    `_REMOVED_ARG`, once `member_table_name` gives the literal the bare
+    `"StringLiteral"` table (R1863).
+  - Lever: the builtin fold folds `return {}` at the declared result type
+    `StringLiteral[#pop.string_concat<…>]`, as upstream's does.
+  - Do not re-add a literal check at one of the call sites without naming
+    the upstream rule it encodes.
+  - Depends on R1971 and R1863.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1973 `StringLiteral[v]()` is built by a compiler rule, not the
+  declared `__init__`**
+
+  The checker constructs a string literal by rule (`literal_construction`
+  and `infer_instance_construction`, `checker/call_inference.rs`), and
+  MIR's `default_construction` writes the text (`type_construction.rs`),
+  where upstream runs the struct's empty `__init__(out self)`.
+  - Lever: delete the string halves of both checker rules and the MIR arm,
+    so `Self()`, `StringLiteral[v]()`, and `{}` reach the declared
+    `__init__` and `Self(copy=x)` the synthesized copy. The numeric halves
+    stay for R1968.
   - Probe: `comptime template = StaticString(Self())` in
     `StringLiteral.format` fails to package the bundled library ("Undefined
-    variable '__module$std$string$_FormatUtils'"), so the bundled body
-    spells `StringLiteral[Self.value]()`; `comptime w = Self()` in a user
-    struct's method runs (found while landing R1655).
-  - Done when those five exclusions and the construction rule are gone.
-  - This is the string twin of R1850.
-  - Depends on R1861.
+    variable '__module$std$string$_FormatUtils'"; rebuild after the stdlib
+    edit, as the package is cached per build), so the bundled body spells
+    `StringLiteral[Self.value]()`.
+  - Probe: `comptime w = Self()` in a user struct's method runs.
+  - Done when the rule is gone and the bundled `format` spells
+    `StaticString(Self())`.
+  - Depends on R1972.
   - Model: Fable, Not Planned.
 
 - [ ] **R1863 A string literal's members share one member table, keyed by

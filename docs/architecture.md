@@ -5225,11 +5225,16 @@ string literal `"ab"` is upstream's `StringLiteral["ab"]`, the application of
 the struct `std/builtin/string_literal.mojo` declares, held as that
 struct's `TyKind::Struct` as `SIMD`'s is (`Ty::new` folds a closed slot to
 its text, and `TyKind::string_literal_value` reads it), and the elaborator
-keeps it under its template name. Its run-time value is still the
-compiler's `{ptr, len}` descriptor (R1862), so the struct rules that read
-fields, copies, and operator dunders (`as_non_simd_struct`,
-`MirDeclarations::field_types`, `builtin_copy_is_value_read`) leave it out,
-and `StringLiteral[v]()` is still built by rule. There is no value-less
+keeps it under its template name. Like upstream's, it holds nothing at
+run time: the VM keeps the empty `StringLiteral` struct
+(`runtime::literal_value`), the native layout is zero-sized, and every
+reader (a builtin's argument, an operator operand, a compile-time
+crossing, Pliron's `string_constant`) takes the text from the register's
+closed type. The MIR verifier holds a literal to its own type, so two
+texts are two types. Its copy and operators are the declared struct's,
+but `as_non_simd_struct` (R1972) and `MirDeclarations::field_types`
+(R1971) still leave it out, and `StringLiteral[v]()` is still built by
+rule (R1973). There is no value-less
 string literal type: a literal's members are the struct's, never a
 compiler rule, a compile-time string's meta is the literal type of its
 text, and a bare run-time `s: StringLiteral` argument auto-parameterizes as

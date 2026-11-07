@@ -411,21 +411,27 @@ impl VmBackend {
             // The `std.os.abort` crossing: an uncatchable trap carrying the
             // nominal String message (only `Raised` is catchable).
             "_mojito_abort" => {
-                let message = match args.first() {
+                let message = match args
+                    .first()
+                    .map(|value| literal_text_argument(value, arg_types, 0))
+                {
                     Some(value @ Value::Struct { .. }) => {
-                        match self.string_struct_literal(value)? {
+                        match self.string_struct_literal(&value)? {
                             Value::Str(text) => text,
                             _ => unreachable!("the string bridge returns a builtin string"),
                         }
                     }
-                    Some(Value::Str(text)) => text.clone(),
+                    Some(Value::Str(text)) => text,
                     _ => String::new(),
                 };
                 Err(RuntimeError::Abort(message))
             }
             // The compiler's own `len`: a pack cursor's length, and CTFE's
             // over a compile-time list. A program's `len` is the library's.
-            "len" => match args.into_iter().next() {
+            "len" => match args
+                .first()
+                .map(|value| literal_text_argument(value, arg_types, 0))
+            {
                 Some(Value::Str(s)) => Ok(Value::Int(s.len() as i64)),
                 Some(Value::ComptimeList(items)) if self.ctfe_fuel.is_some() => {
                     Ok(Value::Int(items.len() as i64))
@@ -457,7 +463,7 @@ impl VmBackend {
                 builtin_min_max(false, &a, &b)
             }
             "input" => {
-                let mut prompt = arg1(name, args)?;
+                let mut prompt = literal_text_argument(&arg1(name, args)?, arg_types, 0);
                 // A nominal String prompt reads back through the bridge.
                 if matches!(&prompt, Value::Struct { name, .. }
                     if mojito_symbol::symbol::is_stdlib_string_struct(name))
@@ -479,7 +485,7 @@ impl VmBackend {
                 }
             }
             "Error" => {
-                let mut argument = arg1(name, args)?;
+                let mut argument = literal_text_argument(&arg1(name, args)?, arg_types, 0);
                 // A nominal String message reads back through the
                 // struct-to-literal bridge before wrapping.
                 if matches!(&argument, Value::Struct { name, .. }
@@ -633,6 +639,21 @@ pub(super) fn erased_instance_value(prog: &Prog, value: Value, ty: &Ty) -> Value
         }
         value => value,
     }
+}
+
+/// A compiler builtin's argument `index` as the builtin reads it: a string
+/// literal is the empty struct whose text its type carries, which the
+/// builtin takes as that text; any other value is itself.
+fn literal_text_argument(
+    value: &Value,
+    arg_types: &[Option<mojito_types::types::Ty>],
+    index: usize,
+) -> Value {
+    arg_types
+        .get(index)
+        .and_then(Option::as_ref)
+        .and_then(|ty| ty.kind().string_literal_text())
+        .map_or_else(|| value.clone(), |text| Value::Str(text.to_string()))
 }
 
 /// `value` with the struct instance names of `original`, field by field:

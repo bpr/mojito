@@ -115,15 +115,14 @@ impl LayoutCx<'_> {
             // A `DType` is its one-byte upstream code.
             TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype => Ok(Layout::new(1, 1)),
             TyKind::None | TyKind::Generator(_) => Ok(Layout::ZERO),
-            // Upstream's `IntLiteral[v]` and `FloatLiteral[v]` are structs
-            // with no fields: the number is the type's `value` parameter.
-            kind if kind.is_numeric_literal() => Ok(Layout::ZERO),
-            // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
-            // (`MjStrDesc` in the runtime contract), which a `!kgen.string`
-            // is too, as KGEN lowers one to its address and size.
-            kind if kind.is_string_literal() || matches!(kind, TyKind::KgenString) => {
-                Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout)
-            }
+            // Upstream's `IntLiteral[v]`, `FloatLiteral[v]`, and
+            // `StringLiteral[v]` are structs with no fields: the number or
+            // text is the type's `value` parameter.
+            kind if kind.is_numeric_literal() || kind.is_string_literal() => Ok(Layout::ZERO),
+            // A `!kgen.string` is the borrowed descriptor
+            // `{ data: ptr, len: u64 }` (`MjStrDesc` in the runtime
+            // contract), as KGEN lowers one to its address and size.
+            TyKind::KgenString => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
             TyKind::Error => Ok(self.mj_error()),
@@ -410,8 +409,11 @@ mod tests {
 
     #[test]
     fn descriptor_error_and_pointer_layouts() {
+        // A string literal is upstream's field-less struct; the
+        // `!kgen.string` its `value` parameter is keeps the descriptor.
+        assert_eq!(layout_of(&Ty::string_literal_of("s")), Ok(Layout::ZERO));
         assert_eq!(
-            layout_of(&Ty::string_literal_of("s")),
+            layout_of(&Ty::new(TyKind::KgenString)),
             Ok(Layout::new(16, 8))
         );
         assert_eq!(layout_of(&Ty::error()), Ok(Layout::new(24, 8)));

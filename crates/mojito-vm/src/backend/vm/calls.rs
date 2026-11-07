@@ -24,7 +24,10 @@ pub(super) fn checked_const_value(
         CheckedConst::Int(value) => literal(crate::runtime::ExactNum::Int(value.clone()))?,
         CheckedConst::Float(value) => literal(crate::runtime::ExactNum::Float(value.clone()))?,
         CheckedConst::Bool(value) => Value::Bool(*value),
-        CheckedConst::String(value) => Value::Str(value.clone()),
+        CheckedConst::String(value) => ty
+            .filter(|ty| ty.is_string_literal())
+            .and_then(crate::runtime::literal_value)
+            .unwrap_or_else(|| Value::Str(value.clone())),
         CheckedConst::None => Value::None,
         CheckedConst::Dtype(dtype) => Value::Dtype(*dtype),
         // A `Construct` or `Evaluate` default runs code in interpreter

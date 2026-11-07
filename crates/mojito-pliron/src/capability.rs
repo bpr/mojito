@@ -435,7 +435,7 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "StringLiteral",
         CapabilityStatus::Supported,
-        "constant-pool literal registers and typed storage (borrowed MjStrDesc descriptor)",
+        "zero-sized; its readers intern the text its type carries",
     ),
     ("Float64", CapabilityStatus::Supported, "f64"),
     ("None", CapabilityStatus::Supported, "zero-sized"),

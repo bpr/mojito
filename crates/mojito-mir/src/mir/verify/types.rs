@@ -10,8 +10,9 @@ use mojito_types::types::{FuncTy, TySubst};
 /// Compatibility for verification purposes: either direction of the checker's
 /// coercion predicate. Lowering emits checker-approved conversions before
 /// values flow, so remaining differences are representational (erased
-/// origins, generic instantiation), not errors to re-litigate. A numeric
-/// literal is never one of them: it is compatible only with its own type. A
+/// origins, generic instantiation), not errors to re-litigate. A literal,
+/// string or numeric, is never one of them: it is compatible only with its
+/// own type. A
 /// type mentioning an unsubstituted parameter is not compared — instantiation
 /// is the checker's domain and the verifier never re-derives it.
 pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
@@ -27,18 +28,16 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found == expected {
         return true;
     }
-    // Every string literal is one held descriptor whatever its text, which
-    // the checker owns.
-    if found.is_string_literal() && expected.is_string_literal() {
-        return true;
-    }
-    // A numeric literal is used only at its own type, as upstream's
-    // `IntLiteral[v]` is: its conversion is an explicit `literal.materialize`
-    // (`#pop.int_literal_convert`). A side mentioning a parameter is the
-    // instance's to bind, possibly to the literal itself. An `IntLiteral`
-    // reaching a `FloatLiteral` stays the checker's coercion until the
-    // implicit initializer that converts it is declared (R1784).
-    if found.is_numeric_literal() || expected.is_numeric_literal() {
+    // A literal is used only at its own type, as upstream's
+    // `StringLiteral[v]`, `IntLiteral[v]`, and `FloatLiteral[v]` are: two
+    // texts are two types, and a numeric conversion is an explicit
+    // `literal.materialize` (`#pop.int_literal_convert`). A side mentioning
+    // a parameter is the instance's to bind, possibly to the literal
+    // itself. An `IntLiteral` reaching a `FloatLiteral` stays the checker's
+    // coercion until the implicit initializer that converts it is declared
+    // (R1784).
+    let is_literal = |ty: &Ty| ty.is_numeric_literal() || ty.is_string_literal();
+    if is_literal(found) || is_literal(expected) {
         return contains_type_param(found)
             || contains_type_param(expected)
             || (found.is_int_literal()
@@ -899,5 +898,15 @@ mod tests {
         assert!(!types_compatible(&five, &Ty::int()));
         assert!(!types_compatible(&five, &Ty::float64()));
         assert!(!types_compatible(&Ty::int(), &five));
+    }
+
+    #[test]
+    fn a_string_literal_is_compatible_only_with_its_own_type() {
+        let a = Ty::string_literal_of("a");
+        let b = Ty::string_literal_of("b");
+        assert!(types_compatible(&a, &a));
+        assert!(!types_compatible(&a, &b));
+        assert!(!types_compatible(&b, &a));
+        assert!(!types_compatible(&a, &Ty::new(TyKind::KgenString)));
     }
 }

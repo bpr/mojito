@@ -40,6 +40,12 @@ impl FnLowering<'_> {
                 self.erased.insert(dest.0);
                 Ok(())
             }
+            // A string literal is zero-sized: its readers take the text
+            // from the register's type ([`Self::string_constant`]).
+            MirConst::Str(_) if self.register_string_literal(dest).is_some() => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
             MirConst::Str(text) => {
                 self.str_consts.insert(dest.0, text.as_bytes().to_vec());
                 Ok(())
@@ -668,6 +674,32 @@ impl FnLowering<'_> {
             .reg_types
             .get(&reg.0)
             .and_then(mojito_vm::runtime::literal_of)
+    }
+
+    /// The text the string literal register `reg` holds, which its closed
+    /// `StringLiteral[v]` type carries: the register itself is zero-sized,
+    /// as upstream's literal struct is. `None` for a register of any other
+    /// type.
+    pub(super) fn register_string_literal(&self, reg: Reg) -> Option<&str> {
+        self.func
+            .reg_types
+            .get(&reg.0)
+            .and_then(|ty| ty.kind().string_literal_text())
+    }
+
+    /// The bytes of the string constant `reg` is: a string literal's text,
+    /// which its type carries ([`Self::register_string_literal`]), or a
+    /// `!kgen.string` constant's. Its readers intern the bytes only where
+    /// they use them.
+    pub(super) fn string_constant(&self, reg: Reg) -> Option<Vec<u8>> {
+        self.register_string_literal(reg)
+            .map(|text| text.as_bytes().to_vec())
+            .or_else(|| self.str_consts.get(&reg.0).cloned())
+    }
+
+    /// Whether `reg` is a string constant ([`Self::string_constant`]).
+    pub(super) fn is_string_constant(&self, reg: Reg) -> bool {
+        self.register_string_literal(reg).is_some() || self.str_consts.contains_key(&reg.0)
     }
 
     /// Whether `reg` is a numeric literal register, closed or not.

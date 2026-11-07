@@ -1147,7 +1147,7 @@ impl TyKind {
     /// or a literal one. A rule written for a declared struct reads this
     /// rather than matching [`TyKind::Struct`], since `SIMD`'s copies and
     /// lanes are still the compiler's own rules (R1575), a string literal's
-    /// run-time value is still the compiler's descriptor (R1862), and a
+    /// construction and member table are still the compiler's (R1972), and a
     /// numeric literal's operators, conformances, and materialization are
     /// still the compiler's (R1969), though each application is the
     /// declared struct.
@@ -2614,9 +2614,9 @@ pub fn contains_infer(ty: &Ty) -> bool {
 
 /// Whether the compile-time `StringLiteral` occurs anywhere in `ty`.
 ///
-/// Its runtime values are the literal representation rather than the nominal
-/// `String` struct's, so an instantiation argument that mentions it never
-/// selects a nominal-`String` instance.
+/// Its values are the empty literal struct rather than the nominal `String`
+/// struct's, so an instantiation argument that mentions it never selects a
+/// nominal-`String` instance.
 pub fn contains_string_literal(ty: &Ty) -> bool {
     mentions_open(ty, &|ty| ty.is_string_literal())
 }
@@ -4637,13 +4637,13 @@ pub fn callable_environment_coerces(
 
 /// Whether `Copyable.copy` on a value of this type has no callee.
 ///
-/// The compiler's own value types (`Bool`, literals, a string literal's
-/// application among them, tuples, packs, and variants) copy by the
-/// ordinary value read. Structs (a `SIMD` application included),
+/// The compiler's own value types (`Bool`, numeric literals, tuples,
+/// packs, and variants) copy by the ordinary value read. Structs (a `SIMD`
+/// and a `StringLiteral` application included),
 /// parametric, associated, and reference types resolve their `copy`
 /// through declarations or trait dispatch instead.
 pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
-    (!matches!(ty, TyKind::Struct(..)) || ty.is_string_literal() || ty.is_numeric_literal())
+    (!matches!(ty, TyKind::Struct(..)) || ty.is_numeric_literal())
         && !matches!(
             ty,
             TyKind::Param { .. }

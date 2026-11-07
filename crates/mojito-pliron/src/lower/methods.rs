@@ -458,7 +458,7 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
         let quoted =
-            self.str_consts.contains_key(&arg.0)
+            self.is_string_constant(arg)
                 || self.str_runtime.contains_key(&arg.0)
                 || self.func.reg_types.get(&arg.0).is_some_and(|ty| {
                     !matches!(ty.kind(), TyKind::Error) && ty.is_non_simd_struct()
@@ -469,7 +469,7 @@ impl FnLowering<'_> {
                 dest,
             ));
         }
-        if let Some(bytes) = self.str_consts.get(&arg.0).cloned() {
+        if let Some(bytes) = self.string_constant(arg) {
             let global = self.shared.intern_string(ctx, &bytes);
             let data = self.global_address(ctx, &global, dest);
             let len = self.uint_constant(ctx, bytes.len() as u64);
@@ -479,7 +479,7 @@ impl FnLowering<'_> {
             return Ok((descriptor.data, descriptor.len));
         }
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(kind) if kind.is_string_literal() || matches!(kind, TyKind::Error) => {
+            Some(TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

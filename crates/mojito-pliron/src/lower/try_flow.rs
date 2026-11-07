@@ -69,16 +69,16 @@ impl FnLowering<'_> {
         Ok(self.carrier_block(entry))
     }
 
-    /// The `(data, len)` byte pair of a string-carrying register: a
-    /// compile-time literal, a runtime string (an `Error` message included),
-    /// or a nominal String value.
+    /// The `(data, len)` byte pair of a string-carrying register: a string
+    /// constant (a literal's text its type carries), a runtime string pair,
+    /// an `Error` message, or a nominal String value.
     pub(super) fn string_bytes(
         &mut self,
         ctx: &mut Context,
         reg: Reg,
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
-        if let Some(bytes) = self.str_consts.get(&reg.0).cloned() {
+        if let Some(bytes) = self.string_constant(reg) {
             let global = self.shared.intern_string(ctx, &bytes);
             let data = self.global_address(ctx, &global, dest);
             let len = self.uint_constant(ctx, bytes.len() as u64);
@@ -96,10 +96,9 @@ impl FnLowering<'_> {
                 Ok(self.string_parts(ctx, ptr, dest))
             }
             // An error value displays as its bare message (the VM's
-            // `format_value` over `Value::Error`); a `StringLiteral` held in
-            // storage is its descriptor, whose data and length lead it as a
-            // String's do.
-            Some(kind) if kind.is_string_literal() || matches!(kind, TyKind::Error) => {
+            // `format_value` over `Value::Error`), whose data and length
+            // lead it as a String's do.
+            Some(TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
