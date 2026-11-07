@@ -54,8 +54,6 @@
 # - the `Copyable` conformance has no `else` message (R1115), and the copy
 #   constructor is not declared, so `copy` is the field-wise copy (R1832);
 # - `element_types` has no `@deprecated(use=Ts)` (R1925);
-# - `__len__(self)`, `__deinit__`, and `_write_to` read `Self.Ts.length`
-#   where upstream calls `Self.__len__()` (R1923);
 # - `__getitem_param__` returns `Pointer(_mlir_value=litref_elt)[]` where
 #   upstream returns `__get_litref_as_mvalue(litref_elt)`, and
 #   `consume_elements` is not declared (R1924);
@@ -650,7 +648,7 @@ struct VariadicPack[
         """Destructor that releases elements if owned."""
 
         comptime if Self.is_owned:
-            comptime for i in reversed(range(Self.Ts.length)):
+            comptime for i in reversed(range(Self.__len__())):
                 comptime element_type = Self.Ts[i]
                 _constrained_conforms_to[
                     conforms_to(element_type, Deinitable),
@@ -686,7 +684,7 @@ struct VariadicPack[
         Returns:
             The number of elements in the variadic pack.
         """
-        return Self.Ts.length
+        return Self.__len__()
 
     # ===-------------------------------------------------------------------===#
     # Operator dunders
@@ -731,7 +729,7 @@ struct VariadicPack[
         """
         writer.write_string(start)
 
-        comptime for i in range(Self.Ts.length):
+        comptime for i in range(Self.__len__()):
             comptime if i != 0:
                 writer.write_string(sep)
 

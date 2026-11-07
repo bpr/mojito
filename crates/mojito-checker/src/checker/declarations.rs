@@ -4702,16 +4702,23 @@ impl Checker {
                     &[],
                 )
             };
+            // The instance's origin tail is the one the bracket's origin
+            // arguments bound (`W[Self.o](copy=self)`).
+            let with_tail = |mut arguments: Vec<TyArg>| {
+                arguments.truncate(info.decls.len());
+                arguments.extend(partitioned.tail_arguments());
+                Self::struct_instance_type(name, arguments)
+            };
             let instance = match constructed {
                 Some(instance) => Some(instance.clone()),
                 None if param_args.is_empty() && info.decls.is_empty() => {
-                    Some(Self::struct_instance_type(name, Vec::new()))
+                    Some(with_tail(Vec::new()))
                 }
                 None if param_args.is_empty() => None,
                 None => self
                     .probe(resolve)
                     .ok()
-                    .map(|bound| Self::struct_instance_type(name, bound.arguments)),
+                    .map(|bound| with_tail(bound.arguments)),
             };
             if let Some(instance) = instance {
                 if constructed.is_none() && !param_args.is_empty() {

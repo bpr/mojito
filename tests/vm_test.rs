@@ -960,6 +960,12 @@ fn explicit_origins_select_overloads_and_compose_with_generic_parameters() {
 }
 
 #[test]
+fn self_in_a_struct_with_an_origin_parameter_names_the_receiver_type() {
+    let src = "struct W[mut: Bool, //, o: Origin[mut=mut]](Copyable, Sized):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\n    @staticmethod\n    def size() -> Int:\n        return 7\n\n    def __len__(self) -> Int:\n        return Self.size()\n\n    def twin(self) -> Self:\n        return Self(copy=self)\n\ndef total[*Ts: Writable](pack: VariadicPack[origin=_, element_trait=Writable, False, *Ts]) -> Int:\n    return len(pack)\n\ndef forward[*Ts: Writable](*args: *Ts) -> Int:\n    return total(args)\n\ndef main():\n    var x = 3\n    var w = W[origin_of(x)](5)\n    print(len(w), w.twin().n, W(copy=w).n)\n    print(forward(1, \"a\", 2.5))\n";
+    assert_eq!(vm(src), "7 5 5\n3\n");
+}
+
+#[test]
 fn contextual_origin_contract_selects_an_overloaded_function_value() {
     let src = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\ndef main():\n    var value = 40\n    var function: def(ref[origin_of(value)] Int) thin -> ref[origin_of(value)] Int = choose[origin_of(value)]\n    ref selected = function(value)\n    selected += 2\n    print(value)\n";
     assert_eq!(vm(src), "42\n");

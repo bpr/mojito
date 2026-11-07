@@ -4501,30 +4501,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1923 `Self` spelled as a value in a struct with an origin
-  parameter does not bind**
-
-  `Self.size()` and `Self(copy=self)` inside such a struct stop with
-  "generic 'VP' has no parameter named 'elt_is_mutable'" or "type 'W'
-  expects 0 type argument(s), got 2", where the pin calls the static
-  method and constructs the receiver's own type.
-  - `self_instance_spelling` (`checker/initializer_list.rs`) spells `Self`
-    as the template applied to every source parameter, infer-only ones by
-    keyword, but the application binder sees the origin-erased parameter
-    list, which knows neither the origin parameter nor, for a struct whose
-    origin is `Origin[mut=m]`, every infer-only slot.
-  - Probe: `struct W[mut: Bool, //, o: Origin[mut=mut]]` with a static
-    `size()` that `__len__` returns as `Self.size()`.
-  - Probe: the bundled `VariadicPack` reads `Self.Ts.length` in
-    `__len__(self)`, `__deinit__`, and `_write_to`, where upstream calls
-    `Self.__len__()`.
-  - Probe: `VariadicPack[origin=_, element_trait=AnyType, False, *Ts]`,
-    as the pin's own tests spell it, stops with "no parameter named
-    'origin'".
-  - Found while landing R1302 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1926 A default value cannot bind an origin parameter of its
   parameter's type**
 
@@ -11375,8 +11351,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The copy constructor's case spells the template's name, not `Self`
     (`S(copy=self)`), which re-infers the struct's parameters from the
     argument: a struct with a type pack and a copy constructor fails
-    ("expected VP[*Ts], found VP[()]"). Spelling `Self` fails for a struct
-    with an origin parameter until R1923 lands.
+    ("expected VP[*Ts], found VP[()]").
   - Probe: the bundled `VariadicPack` omits upstream's `__init__(out self,
     *, copy: Self)` and takes the field-wise copy.
   - Depends on R1923.

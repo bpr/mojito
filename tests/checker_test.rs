@@ -4957,6 +4957,21 @@ fn explicit_origins_participate_in_overload_and_generic_candidate_selection() {
 }
 
 #[test]
+fn struct_application_binds_erased_origin_parameters_by_keyword() {
+    let declaration = "struct W[mut: Bool, //, o: Origin[mut=mut]]:\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\n";
+    ok_std(&format!(
+        "{declaration}def main():\n    var x = 3\n    var w = W[mut=True, origin_of(x)](5)\n"
+    ));
+    let error = err_std(&format!(
+        "{declaration}def main():\n    var x = 3\n    var w = W[mut=3, origin_of(x)](5)\n"
+    ));
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { context, .. } if context.contains("'mut'")),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn explicit_origin_argument_binds_the_result_type_origin_slots() {
     // `slots[origin_of(xs)]` binds `o` inside the result's
     // `Pointer[Span[Int, o], ...]`, so the pointee is a span of `xs` and a

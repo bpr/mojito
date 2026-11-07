@@ -3830,6 +3830,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Self` spelled as a value inside a struct with an origin parameter binds:
+  `Self.size()` and `Self(copy=self)` call the static and copy the
+  receiver's own type, and a struct application binds an infer-only origin
+  slot or an origin's `mut` binder by keyword
+  (`VariadicPack[origin=_, element_trait=AnyType, False, *Ts]`), as at the
+  pin. A synthesized copy `W[o](copy=w)` keeps the bracket's origin, and the
+  bundled `VariadicPack` calls `Self.__len__()` as upstream does (R1923).
+
 - A conditional expression's register-passable result that needs
   destroying is now the `if`'s owned result: the binding or call taking
   it over keeps it alive up to there, where drop elaboration destroyed it

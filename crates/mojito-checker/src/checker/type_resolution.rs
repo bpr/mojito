@@ -151,6 +151,28 @@ impl ForwardedBrackets {
         self.kept[position] = attribute;
     }
 
+    /// This partition of a sub-list as one of the `len`-long source list
+    /// the sub-list's arguments sit at `positions` of, beside the `kept`
+    /// arguments the sub-list left out.
+    pub(super) fn embed(
+        self,
+        positions: &[usize],
+        len: usize,
+        kept: Vec<(usize, Option<TyArg>)>,
+    ) -> Self {
+        let mut embedded = Self {
+            positions: self.positions.iter().map(|&at| positions[at]).collect(),
+            kept: vec![None; len],
+        };
+        for (at, attribute) in self.kept.into_iter().enumerate() {
+            embedded.kept[positions[at]] = attribute;
+        }
+        for (position, attribute) in kept {
+            embedded.kept[position] = attribute;
+        }
+        embedded
+    }
+
     /// The source list's attributes, given the binder's `forwarded` ones.
     pub(super) fn scatter(&self, forwarded: BracketAttributes) -> BracketAttributes {
         let mut attributes = self.kept.clone();
@@ -1643,7 +1665,81 @@ impl Checker {
         result
     }
 
+    /// Keep back the keyword arguments naming a parameter the struct type
+    /// does not carry — an infer-only origin slot (`origin=_`) or the
+    /// `mut` binder an origin slot's mutability names (`mut=Self.mut`) —
+    /// as upstream binds every declared parameter by keyword, then
+    /// partition the rest ([`Self::partition_carried_struct_args`]).
     fn partition_struct_origin_args_uncollected(
+        &self,
+        name: &str,
+        source_params: &[mojito_ast::ast::TypeParam],
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<PartitionedStructArgs, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let erased_param = |argument: &ParamArg| match argument {
+            ParamArg::Named { name: keyword, .. } => source_params.iter().find(|param| {
+                param.name == *keyword
+                    && ((param.infer_only && super::is_origin_type_param(param))
+                        || param.is_origin_mutability_binder(source_params))
+            }),
+            _ => None,
+        };
+        if !args.iter().any(|argument| erased_param(argument).is_some()) {
+            return self.partition_carried_struct_args(name, source_params, args);
+        }
+        let mut kept = Vec::new();
+        let mut binders = Vec::new();
+        let mut carried = Vec::new();
+        let mut carried_positions = Vec::new();
+        for (position, argument) in args.iter().enumerate() {
+            let Some(param) = erased_param(argument) else {
+                carried.push(argument.clone());
+                carried_positions.push(position);
+                continue;
+            };
+            if super::is_origin_type_param(param) {
+                let (origin, mutability) = if origin_placeholder(argument) {
+                    (mojito_types::origin::Origin::Unbound, None)
+                } else {
+                    match self.resolve_origin_param_arg(argument) {
+                        Ok(resolved) => resolved,
+                        Err(_)
+                            if self.signature_origin_leniency.get()
+                                && syntactic_origin_argument(argument) =>
+                        {
+                            (mojito_types::origin::Origin::Unbound, None)
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                let attribute =
+                    self.accept_origin_argument(name, param, argument, origin, mutability)?;
+                kept.push((position, attribute));
+            } else {
+                binders.push((param, argument));
+                kept.push((position, None));
+            }
+        }
+        let mut partitioned = self.partition_carried_struct_args(name, source_params, &carried)?;
+        for (binder, argument) in binders {
+            check_origin_mutability_argument(
+                name,
+                source_params,
+                binder,
+                argument,
+                &partitioned.explicit_origins,
+            )?;
+        }
+        partitioned.brackets = partitioned
+            .brackets
+            .embed(&carried_positions, args.len(), kept);
+        Ok(partitioned)
+    }
+
+    /// Partition the arguments binding the parameters the struct type
+    /// carries: its explicit origin slots, and the origin-erased binder's.
+    fn partition_carried_struct_args(
         &self,
         name: &str,
         source_params: &[mojito_ast::ast::TypeParam],
@@ -5058,6 +5154,65 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
+}
+
+/// Check a keyword argument binding the `mut` binder of an origin slot:
+/// a Bool, or a value spelling one (`Self.mut`, `_`), and `True` only
+/// when the origin the application binds the slot to may be mutable.
+fn check_origin_mutability_argument(
+    struct_name: &str,
+    source_params: &[mojito_ast::ast::TypeParam],
+    binder: &mojito_ast::ast::TypeParam,
+    argument: &mojito_ast::ast::ParamArg,
+    explicit_origins: &[ExplicitStructOrigin],
+) -> Result<(), TypeError> {
+    use mojito_ast::ast::ParamArg;
+    let mut value = argument;
+    while let ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    let mismatch = |found: &str| TypeError::TypeMismatch {
+        expected: "Bool".to_string(),
+        found: found.to_string(),
+        context: format!("parameter '{}' of '{struct_name}'", binder.name),
+    };
+    let literal = match value {
+        ParamArg::Value(expression) => match &expression.kind {
+            ExprKind::Bool(literal) => Some(*literal),
+            ExprKind::Identifier(_) | ExprKind::Member { .. } => None,
+            ExprKind::Int(_) => return Err(mismatch("Int")),
+            ExprKind::Float(_) => return Err(mismatch("Float64")),
+            ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
+            _ => None,
+        },
+        ParamArg::Type(mojito_ast::ast::Type::SelfParam(_)) => None,
+        ParamArg::Type(_) => return Err(mismatch("a type")),
+        ParamArg::Named { .. } => None,
+    };
+    let immutable_slot = explicit_origins.iter().find(|explicit| {
+        matches!(
+            explicit.mutability,
+            Some(mojito_types::origin::Mutability::Immutable)
+        ) && source_params
+            .get(explicit.id.0 as usize)
+            .and_then(|slot| slot.origin_mutability.as_ref())
+            .is_some_and(|mutability| {
+                matches!(&mutability.kind, ExprKind::Identifier(name) if *name == binder.name)
+            })
+    });
+    if literal == Some(true)
+        && let Some(explicit) = immutable_slot
+    {
+        return Err(TypeError::TypeMismatch {
+            expected: format!(
+                "a mutable origin for parameter '{}' of '{struct_name}'",
+                source_params[explicit.id.0 as usize].name
+            ),
+            found: "an immutable origin".to_string(),
+            context: "explicit origin argument".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// A one-argument bracket as the argument a declared parameter list binds:
