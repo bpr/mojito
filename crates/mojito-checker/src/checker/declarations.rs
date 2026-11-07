@@ -2805,8 +2805,8 @@ impl Checker {
 
     /// The call diagnostic of a constructor candidate whose availability
     /// clause fails for the constructed type, which is then no candidate.
-    /// `method_arguments` bind the constructor's own parameters, which a
-    /// struct still solving its own leaves to the per-call clone.
+    /// `method_arguments` bind the constructor's own parameters; a caller
+    /// that has not solved them leaves the clause to the per-call clone.
     fn unavailable_constructor(
         &self,
         name: &str,
@@ -2815,7 +2815,7 @@ impl Checker {
         struct_decls: &[ParamDecl],
         struct_arguments: &[TyArg],
     ) -> Option<TypeError> {
-        if !struct_decls.is_empty() && !sig.decls.is_empty() {
+        if !struct_decls.is_empty() && method_arguments.len() < sig.decls.len() {
             return None;
         }
         self.method_constraint_result(sig, method_arguments, struct_decls, struct_arguments)
@@ -3623,7 +3623,7 @@ impl Checker {
                     }
                     if ok
                         && let Some(unavailable) =
-                            self.unavailable_constructor(name, sig, &[], &decls, &tyargs)
+                            self.unavailable_constructor(name, sig, &own.arguments, &decls, &tyargs)
                     {
                         availability_failure.get_or_insert(unavailable);
                         continue;

@@ -197,17 +197,23 @@ impl Checker {
                 // not the pointer's own place, must carry mutable capability
                 // (as upstream: a `Pointer[T, MutOrigin]` field is writable
                 // from any receiver).
+                // A nominal receiver's zero-argument `__getitem__` is the
+                // getter lvalue below.
                 if matches!(index.kind, ExprKind::EmptySubscript) {
-                    return match (self.infer(object)?).kind() {
+                    let receiver = self.infer(object)?;
+                    match receiver.kind() {
                         TyKind::Pointer { element, origin } => {
                             self.check_pointer_write(object, origin)?;
-                            Ok((*element).clone())
+                            return Ok((*element).clone());
                         }
-                        other => Err(TypeError::Unsupported(format!(
-                            "an empty subscript ('value[]') is the pointer dereference; \
-                             '{other}' is not a pointer"
-                        ))),
-                    };
+                        _ if self.has_empty_subscript_getter(&receiver) => {}
+                        other => {
+                            return Err(TypeError::Unsupported(format!(
+                                "an empty subscript ('value[]') is the pointer dereference; \
+                                 '{other}' is not a pointer"
+                            )));
+                        }
+                    }
                 }
                 // A pointer is a value: a store through it needs its origin's
                 // mutable capability (`check_pointer_write` below), not a
@@ -888,6 +894,24 @@ impl Checker {
         }
     }
 
+    /// Whether `receiver` declares a zero-argument `__getitem__`, which an
+    /// empty subscript (`value[]`) calls (`Optional`'s and `OwnedPointer`'s).
+    fn has_empty_subscript_getter(&self, receiver: &Ty) -> bool {
+        receiver
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, _)| {
+                self.structs
+                    .get(name)
+                    .and_then(|info| info.methods.get("__getitem__"))
+                    .is_some_and(|methods| {
+                        methods
+                            .iter()
+                            .any(|method| method.has_self && method.params.is_empty())
+                    })
+            })
+    }
+
     /// The nominal subscript `place`, of a `receiver` whose accessors form
     /// `lvalue`, as a place: the getter's mutable reference result, written
     /// through as a call returning one is.
@@ -1242,15 +1266,7 @@ impl Checker {
         // the EmptySubscript node is syntax-only and is not passed as an
         // ordinary argument.
         if matches!(index.kind, ExprKind::EmptySubscript) {
-            if obj_ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
-                self.structs.get(name).is_some_and(|info| {
-                    info.methods.get("__getitem__").is_some_and(|methods| {
-                        methods
-                            .iter()
-                            .any(|method| method.has_self && method.params.is_empty())
-                    })
-                })
-            }) {
+            if self.has_empty_subscript_getter(&obj_ty) {
                 return self.infer_method_call(
                     &span,
                     object,

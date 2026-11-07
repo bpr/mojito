@@ -1,6 +1,5 @@
-# Upstream's borrowed OwnedPointer dereference is the empty subscript
-# (`p[]`); Mojito reserves the empty subscript for raw pointers — a
-# recorded strict-subset gap (borrowed access spells `unsafe_ptr()[0]`).
+# OwnedPointer's borrowed dereference is the empty subscript (`p[]`), its
+# zero-argument `__getitem__`.
 from std.memory import OwnedPointer
 
 def main():

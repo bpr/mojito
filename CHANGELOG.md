@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `OwnedPointer` now has the pin's initializers (R1607):
+  `OwnedPointer(copy_value=s)`, a borrowed non-implicitly-copyable value
+  (the refined, lower-ranked `out self: OwnedPointer[_T]` overload), and
+  `other=` copy into a new allocation, where they matched no initializer.
+  `p[]` is its `__getitem__` reference, and `ptr()`/`unsafe_ptr()` return
+  `Pointer[T, origin_of(self)]`, so `print(p.unsafe_ptr()[0])` keeps `p`
+  alive through the read instead of stopping with "use after Pointer
+  deallocation". A constructor's `where` clause over its own parameters
+  now removes it from overload selection, and a field store through a
+  nominal `[]` (`p[].id = 9`, `opt[].id = 9`) is a place.
 - A struct declaration now records whether it declares `RegisterPassable`
   or `TrivialRegisterPassable` with no condition, decided on the template
   and kept by every instance, as upstream's declaration-level

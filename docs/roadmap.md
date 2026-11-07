@@ -2450,6 +2450,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the bundled `VariadicList.__iter__` takes `ref self` and passes
     `origin_of(self)`, where upstream's is `__iter__[self_origin:
     ImmOrigin](ref[self_origin] self)`.
+  - Probe: `def p[origin: Origin, //](ref[origin] self) -> Pointer[Int,
+    origin]: return Pointer(to=self.x)` is rejected ("expected
+    Pointer[Int, origin#0], found Pointer[Int, ImmOrigin(...)]"), and so
+    is a `ref self` method returning `self.ptr()` at `origin_of(self)`.
+    The bundled `OwnedPointer.ptr` and `unsafe_ptr` therefore take `ref
+    self` with their own bodies, where upstream's take `ref[origin] self`
+    and `unsafe_ptr` forwards to `ptr()`.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8483,10 +8490,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     alive, though a `Span` or `ref` over one does. `var p =
     xs.unsafe_ptr(); print(p[0].id)` over a `List` of a printing
     destructor destroys `xs` before the read, where the pin reads first.
-    So does `OwnedPointer.unsafe_ptr`, whose bundled return is also
-    interior where upstream's is `Pointer[T, origin]`
-    (`assets/ok/owned_pointer_api.mojo` prints `drop 9` before `held 9`;
-    `conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
+    `OwnedPointer.unsafe_ptr` returning upstream's `Pointer[T, origin]`
+    keeps its owner alive, so returning `origin_of(self)` is the fix.
   - Probe: `var s = String("hello"); var bytes = s.as_bytes(); f(bytes.
     unsafe_ptr(), 5)`, with `f` reading the pointer, traps with "use after
     Pointer deallocation", where the pin reads `h`. The bundled
@@ -12263,25 +12268,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R792, R178.
   - Model: Opus, Not Planned.
 
-- [ ] **R1607 `OwnedPointer` lacks upstream's refined initializers**
-
-  `OwnedPointer(copy_value=s)` matches no initializer, where the pin copies
-  `s` into a new allocation.
-  - Upstream declares four `__init__[_T](out self: OwnedPointer[_T], ...)`
-    overloads (`var value`, `copy_value=`, a copying `value` ranked lower by
-    a dummy `U: NoneType = None` binder, and `other=`), which define `T`
-    through the refined `out self` R1594 supports.
-  - The bundled `stdlib/std/memory/owned_pointer.mojo` declares one
-    `__init__(out self, var value: Self.T, /) where conforms_to(Self.T,
-    Movable)` instead.
-  - Upstream's `other=` body reads `other[]`, the empty subscript Mojito
-    reserves for raw pointers (a subset gap the bundled file records).
-  - Probe: `var p = OwnedPointer(copy_value=String("hi"));
-    print(p.unsafe_ptr()[0])` prints `hi` at the pin.
-  - Found while landing R1594 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
@@ -13138,6 +13124,10 @@ residue found inside a task moves to the task that owns its fix.
   - The initializers that copy a value into the allocation are deprecated
     upstream.
   - Port both from the pinned `std/memory/owned_pointer.mojo`.
+  - Probe: the bundled `other=` initializer copies through
+    `Self(copy_value=other[])`, where the pin's body is `self = {init_with
+    = lambda () -> Self.T: other[].copy()}`; respell it once `init_with=`
+    lands.
   - Found at the 2026-11-01 re-pin.
   - Depends on nothing.
   - Model: Opus, Not Planned.

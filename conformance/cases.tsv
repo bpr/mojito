@@ -225,7 +225,7 @@ insert-displacement	run	conformance/fixtures/insert_displacement.mojo
 string-positional-slice	reject	conformance/fixtures/string_positional_slice.mojo
 string-literal-slice	reject	conformance/fixtures/string_literal_slice.mojo
 unparameterized-string-literal	reject	conformance/fixtures/unparameterized_string_literal.mojo
-owned-pointer-deref	mojo-only	conformance/fixtures/owned_pointer_deref.mojo
+owned-pointer-deref	run	conformance/fixtures/owned_pointer_deref.mojo
 span-parameter-bare-element	reject	conformance/fixtures/span_parameter_bare_element.mojo
 len-string-units	reject	assets/type_error/string_len_ambiguous.mojo
 subtree-origin-cast	mojito-only	conformance/fixtures/subtree_origin_cast.mojo

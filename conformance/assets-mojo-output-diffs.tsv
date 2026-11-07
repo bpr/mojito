@@ -16,7 +16,6 @@ assets/ok/pliron_straightline.mojo	arithmetic	a shift past the bit width: Mojo p
 assets/ok/simd_shifts_masked.mojo	arithmetic	vector shifts disagree wholesale, including shifts past the lane width
 assets/ok/simd_floordiv_mod.mojo	arithmetic	signed floordiv at the type minimum: Mojo 0, Mojito -128
 assets/ok/pliron_scalar_casts.mojo	arithmetic	out-of-range float-to-int casts: Mojo 0, Mojito 44
-assets/ok/owned_pointer_api.mojo	drop-timing	the owner of an interior `unsafe_ptr()` is destroyed before the read through it in Mojito (drop 9 before held 9); roadmap R1155
 assets/ok/condition_truthiness_reads_in_place.mojo	drop-timing	the owners of `print`'s elements read through reference results die after the call in the order h, o, c in Mojito, c, h, o upstream; roadmap R1929
 assets/ok/call_result_pointer_deref_keeps_owner.mojo	drop-timing	the owner of a value read through a returned pointer and passed to `print` dies before the call in Mojito (del 12 before 12); roadmap R1929
 assets/ok/nominal_string_indexing.mojo	one-off	String subscript yields a character upstream (h), an Int in Mojito (104)
