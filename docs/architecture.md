@@ -7221,9 +7221,14 @@ point where a slot declared in a loop is uninitialized again.
   declares it when a member is first demanded from the type
   (`Specializer::declare_simd_instance`, display today), and files the
   `SIMD` member instances it demanded before under its name
-  (`Specializer::table_owner`). `symbol::member_table_name` is the one
+  (`Specializer::table_owner`). A string literal of known text has one
+  too (`StringLiteral$mono$V$22hi$22`), field-less, declared for every
+  literal type a discovered body holds
+  (`Specializer::declare_string_literal_instance`), so each text's member
+  instances fill its own table as upstream's `StringLiteral[value]`
+  instance holds them. `symbol::member_table_name` is the one
   mapping from a type to the declaration whose table a backend reads, a
-  struct's own name or that `SIMD` instance's, and
+  struct's own name or that `SIMD` or literal instance's, and
   `SymbolTable::type_uses` reads it too, so a register of a `SIMD` type,
   and a live struct's field of one (`SymbolTable::struct_uses`), keeps its
   instance's declaration live as a struct type keeps its own.

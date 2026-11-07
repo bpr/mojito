@@ -2720,6 +2720,43 @@ fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
 }
 
 #[test]
+fn a_string_literal_tables_its_members_in_its_text_s_instance() {
+    let source = "def main():\n\
+         \x20   var s = String()\n\
+         \x20   \"hi\".write_repr_to(s)\n\
+         \x20   \"a(b\".write_repr_to(s)\n\
+         \x20   \"a)b\".write_repr_to(s)\n\
+         \x20   print(s)\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let program = &specialized.program;
+    let mut instances = Vec::new();
+    for text in ["hi", "a(b", "a)b"] {
+        let ty = Ty::string_literal_of(text);
+        let name = mojito_symbol::symbol::member_table_name(&ty).expect("a known text names one");
+        let declaration = program
+            .declarations
+            .structure(&name)
+            .unwrap_or_else(|| panic!("`{name}` is declared"));
+        assert!(declaration.fields.is_empty(), "`{name}` is field-less");
+        let table: Vec<&str> = declaration
+            .members_of("write_repr_to")
+            .map(|entry| entry.symbol.as_str())
+            .collect();
+        let [instance] = table.as_slice() else {
+            panic!("`{name}` tables one `write_repr_to`, got {table:?}");
+        };
+        instances.push(*instance);
+    }
+    instances.sort_unstable();
+    instances.dedup();
+    assert_eq!(instances.len(), 3, "each text has its own instance");
+}
+
+#[test]
 fn an_undisplayed_simd_type_declares_its_instance() {
     let source = "@no_inline\n\
          def bump(x: Int32) -> Int32:\n\

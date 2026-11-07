@@ -161,14 +161,15 @@ impl<'t> SymbolTable<'t> {
         &self.types[ty]
     }
 
-    /// The member-table declarations the closed `SIMD` types and the
-    /// `Bool`s in `ty` use ([`member_table_name`]), which their serialized
-    /// spelling does not name as a struct type spells its name, and the
-    /// `SIMD` template a program declaring it names by any `SIMD` type.
+    /// The member-table declarations the closed `SIMD` types, the string
+    /// literals, and the `Bool`s in `ty` use ([`member_table_name`]), which
+    /// their serialized spelling does not name as a struct type spells its
+    /// name, and the `SIMD` template a program declaring it names by any
+    /// `SIMD` type.
     fn member_table_uses(&self, ty: &Ty) -> Vec<&'t str> {
         let tabled = RefCell::new(Vec::new());
         mentions(ty, &|nested| {
-            if nested.is_simd() || nested.kind().is_bool() {
+            if nested.is_simd() || nested.is_string_literal() || nested.kind().is_bool() {
                 tabled.borrow_mut().push(nested.clone());
             }
             false

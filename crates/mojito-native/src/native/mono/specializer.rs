@@ -656,8 +656,8 @@ impl<'a> Specializer<'a> {
 
     /// The concrete struct whose member table records an instance of
     /// `template` under `bindings`, with the key it records it under: its
-    /// owner instance, the `SIMD` instance its bound dtype and length name,
-    /// else its non-generic owner, when `template` is a member a backend
+    /// owner instance, the `SIMD` instance its bound dtype and length or
+    /// the `StringLiteral` instance its bound text names, else its non-generic owner, when `template` is a member a backend
     /// reaches from its struct's type ([`Self::table_key`]). `None` for any
     /// other function.
     fn table_owner(&mut self, template: &str, bindings: &Bindings) -> Option<(String, String)> {
@@ -670,7 +670,7 @@ impl<'a> Specializer<'a> {
             name.clone()
         } else {
             let owner = mojito_symbol::symbol::split_method_symbol(template)?.0;
-            self.simd_instance_ty(owner, bindings)
+            self.slot_instance_ty(owner, bindings)
                 .as_ref()
                 .and_then(mojito_symbol::symbol::member_table_name)
                 .map_or_else(|| owner.to_string(), std::borrow::Cow::into_owned)
@@ -678,12 +678,14 @@ impl<'a> Specializer<'a> {
         Some((name, key))
     }
 
-    /// The closed `SIMD` type a member of `owner` instantiates at, when
-    /// `owner` is `SIMD` and `bindings` binds its dtype and length: a
-    /// `SIMD` receiver carries its instance in its slots, not as a
+    /// The closed `SIMD` or string literal type a member of `owner`
+    /// instantiates at, when `owner` is `SIMD` and `bindings` binds its
+    /// dtype and length, or `StringLiteral` and they bind its text: such a
+    /// receiver carries its instance in its slots, not as a
     /// `self_instance`.
-    fn simd_instance_ty(&self, owner: &str, bindings: &Bindings) -> Option<Ty> {
-        if owner != mojito_types::types::SIMD_TYPE_NAME {
+    fn slot_instance_ty(&self, owner: &str, bindings: &Bindings) -> Option<Ty> {
+        let simd = owner == mojito_types::types::SIMD_TYPE_NAME;
+        if !simd && owner != mojito_types::types::STRING_LITERAL_TYPE_NAME {
             return None;
         }
         let arguments = self
@@ -694,7 +696,12 @@ impl<'a> Specializer<'a> {
             .map(|decl| bindings.values.get(&decl.binder()).cloned().map(TyArg::Val))
             .collect::<Option<Vec<_>>>()?;
         let ty = Ty::new(TyKind::Struct(owner.to_string(), arguments));
-        mojito_types::types::simd_shape(ty.kind()).map(|_| ty)
+        let closed = if simd {
+            mojito_types::types::simd_shape(ty.kind()).is_some()
+        } else {
+            mojito_symbol::symbol::member_table_name(&ty).is_some()
+        };
+        closed.then_some(ty)
     }
 
     /// The key a struct's member table records an instance of the method
@@ -3550,6 +3557,9 @@ impl<'a> Specializer<'a> {
             if ty.kind().known_simd().is_some() {
                 self.declare_simd_instance(owner, &ty)?;
             }
+            if ty.is_string_literal() {
+                self.declare_string_literal_instance(owner, &ty)?;
+            }
             let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
             };
@@ -3679,6 +3689,42 @@ impl<'a> Specializer<'a> {
                 (field.clone(), substituted)
             })
             .collect();
+        let declaration = self.instance_declaration(template, &name, fields, &bindings);
+        self.declare_output_struct(declaration);
+        Ok(())
+    }
+
+    /// Declare the `StringLiteral` instance the literal type `ty` of known
+    /// text names ([`mojito_symbol::symbol::member_table_name`]), unless it
+    /// is declared: upstream's `StringLiteral[value]` is a struct instance,
+    /// field-less, whose witness tables a backend reads from a value's
+    /// type, so each text's member instances join its own table.
+    fn declare_string_literal_instance(&mut self, owner: &str, ty: &Ty) -> Result<(), MonoError> {
+        let Some(name) = mojito_symbol::symbol::member_table_name(ty) else {
+            return Ok(());
+        };
+        if self.output_struct_positions.contains_key(name.as_ref()) {
+            return Ok(());
+        }
+        let (Some(template), Some((_, arguments))) = (
+            self.structs
+                .get(mojito_types::types::STRING_LITERAL_TYPE_NAME),
+            mojito_types::types::nominal_parts(ty),
+        ) else {
+            return Ok(());
+        };
+        let mut bindings = self.base_bindings();
+        bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("monomorphizing struct `{}`: {e}", template.name),
+            )
+        })?;
+        let fields = template
+            .fields
+            .iter()
+            .map(|(field, field_ty)| Ok((field.clone(), substitute_field(field_ty, &bindings)?)))
+            .collect::<Result<Vec<_>, MonoError>>()?;
         let declaration = self.instance_declaration(template, &name, fields, &bindings);
         self.declare_output_struct(declaration);
         Ok(())

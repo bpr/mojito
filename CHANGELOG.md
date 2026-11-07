@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A string literal's members are tabled per text, as upstream hangs a
+  `StringLiteral[value]` instance's witnesses off that instance: the
+  elaborator declares a field-less `StringLiteral` instance for each known
+  text, and a generic applied at two literal types is two instances
+  spelled by their texts, where they used to collide as one
+  `$mono$TStringLiteral` instance. `MirDeclarations::field_types` now
+  answers a literal's zero fields (R1863, R1971).
 - A `StringLiteral[v]` register now holds nothing at run time, as
   upstream's field-less struct holds nothing: the VM keeps the empty
   literal struct, the native layout is zero-sized rather than a 16-byte

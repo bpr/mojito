@@ -271,10 +271,6 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
     for argument in arguments {
         spelling.push('$');
         match argument {
-            // Overload keys intentionally collapse StringLiteral and nominal
-            // String, but generic instances cannot: their native layouts are
-            // a 16-byte borrowed descriptor versus a 24-byte owning value.
-            InstanceArg::Ty(ty) if ty.is_string_literal() => spelling.push_str("TStringLiteral"),
             InstanceArg::Ty(ty) => spelling.push_str(&sanitize(&format!(
                 "T{}",
                 ty_raw_in(ty, None, KeyMode::Instance)
@@ -302,15 +298,24 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 /// reads for a value of type `ty`.
 ///
 /// Upstream's witness tables hang off the struct instance a type names: a
-/// struct names its own, and a closed `SIMD` type
+/// struct names its own, a closed `SIMD` type
 /// the `SIMD` instance its dtype and width apply, so a scalar alias and its
-/// `SIMD[dt, 1]` spelling name one table. `None` for any other type, a
-/// symbolic `SIMD` included.
+/// `SIMD[dt, 1]` spelling name one table, and a string literal of known
+/// text the `StringLiteral` instance its text applies. `None` for any other
+/// type, a symbolic `SIMD` or literal included.
 /// This is the only mapping from a type to that declaration.
 pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
     match ty.kind() {
         struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
             Some(Cow::Borrowed(name))
+        }
+        kind if let Some(value @ mojito_types::ct::CtValue::KgenString(_)) =
+            kind.string_literal_value() =>
+        {
+            Some(Cow::Owned(instance_symbol(
+                mojito_types::types::STRING_LITERAL_TYPE_NAME,
+                &[InstanceArg::Value(value.clone())],
+            )))
         }
         kind if let Some((dtype, width)) = kind.known_simd() => {
             let canonical = canonical_simd_ty(dtype, width);
@@ -1468,11 +1473,20 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // `SIMD[DType.int32, 4]`), not as a struct's arguments.
         kind if kind.is_simd() => kind.to_string(),
         kind if kind.is_bool() => "Bool".to_string(),
-        // A literal's application spells its text as an instance argument.
-        kind if let Some(value) = kind.string_literal_value() => format!(
-            "{}$V{value}",
-            encode_identifier(mojito_types::types::STRING_LITERAL_TYPE_NAME)
-        ),
+        // A literal's application spells its text as an instance argument,
+        // each byte an instance spelling would collapse escaped, so two
+        // texts (`"a\nb"`, `"a b"`) never name one instance.
+        kind if let Some(value) = kind.string_literal_value() => {
+            let text = value.to_string();
+            format!(
+                "{}$V{}",
+                encode_identifier(mojito_types::types::STRING_LITERAL_TYPE_NAME),
+                match mode {
+                    KeyMode::Instance => escape_bytes(&text),
+                    KeyMode::Overload => text,
+                }
+            )
+        }
         TyKind::None => "None".to_string(),
         TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
         TyKind::ParamList(elem) => format!("__ParamList${}", ty_raw_in(elem, self_ty, mode)),

@@ -10916,25 +10916,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1971 `MirDeclarations::field_types` answers no fields for a
-  `StringLiteral[v]` application, where upstream's struct has zero**
-
-  The guard in `MirDeclarations::field_types` (`mojito-mir/src/mir.rs`)
-  returns `None` for a string literal, though its run-time value is now the
-  empty struct upstream's is.
-  - So `copy_is_identity` cannot reach the declared
-    `TrivialRegisterPassable`, and `trivially_register_passable_leaf`
-    (`mojito-types/src/types.rs`) keeps a `ty.is_string_literal()` arm.
-  - Lever: delete the guard and the leaf arm.
-  - Probe: with the guard gone, `assets/ok/string_literal_slice_members.mojo`
-    fails verification ("MIR function 'StringLiteral.join$mono$TInt' block
-    0: struct creation's result is no declared struct"), since the
-    literal's member instances are keyed without its text (R1863).
-  - Done when the guard and the leaf arm are gone and the probe runs on
-    both backends.
-  - Depends on R1863.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1972 `TyKind::as_non_simd_struct` excludes a `StringLiteral[v]`
   application, so the struct rules never see it**
 
@@ -10949,13 +10930,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     builds by rule.
   - Probe: `assets/ok/string_literal_slice_members.mojo` then loses
     `String.__init__$ov$StringLiteral$V$value$data`'s `value` binder to
-    `_REMOVED_ARG`, once `member_table_name` gives the literal the bare
-    `"StringLiteral"` table (R1863).
+    `_REMOVED_ARG` if `member_table_name` answers the literal's bare
+    `"StringLiteral"` from its `as_non_simd_struct` arm: the literal's
+    per-text instance arm has to stay ahead of it.
+  - The same exclusion keeps a `ty.is_string_literal()` arm in
+    `trivially_register_passable_leaf` (`mojito-types/src/types.rs`):
+    `MirDeclarations::copy_is_identity`, the checker's `memory_only`, CSE's
+    `built_in`, `call_results`, and the synthesized copy judge a literal
+    without reaching its declared `TrivialRegisterPassable`. Delete the arm
+    with the exclusion.
   - Lever: the builtin fold folds `return {}` at the declared result type
     `StringLiteral[#pop.string_concat<…>]`, as upstream's does.
   - Do not re-add a literal check at one of the call sites without naming
     the upstream rule it encodes.
-  - Depends on R1971 and R1863.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1973 `StringLiteral[v]()` is built by a compiler rule, not the
@@ -10979,25 +10967,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StaticString(Self())`.
   - Depends on R1972.
   - Model: Fable, Not Planned.
-
-- [ ] **R1863 A string literal's members share one member table, keyed by
-  the bare template**
-
-  `symbol::member_table_name` keys every non-`SIMD` struct by its bare
-  name, so the per-text instances of a `StringLiteral[v]` member would all
-  land in one `"StringLiteral"` table, where `SIMD` names its
-  `instance_symbol` table and upstream hangs witnesses off the instance.
-  - So Pliron writes a literal's `repr` through the nominal `String`'s
-    `write_repr_to` (`lower_repr_builtin`, `lower/methods.rs`), which mono
-    enqueues for it (`enqueue_repr_instance`, `mono/instances.rs`), and
-    the call-graph edge in `mojito-pliron/src/lib.rs` names `String`'s.
-  - Lever: `member_table_name` gives a literal application its
-    `instance_symbol` table, as it does `SIMD`; mono enqueues the literal's
-    own `write_repr_to`, and `display_member` finds it there.
-  - Probe: `repr("hi")` and `repr` of a `StringLiteral._from["a\nb"]()`
-    print `'hi'` and `'a\nb'` on Pliron through `StringLiteral.write_repr_to`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1864 A `@__nonmaterializable` value does not materialize
   before an implicit constructor of the parameter type**

@@ -466,11 +466,6 @@ impl MirDeclarations {
                 storage,
             )]));
         }
-        // A string literal's fields stay unanswered until its member
-        // instances are keyed by its text (R1971).
-        if ty.is_string_literal() {
-            return None;
-        }
         let (declaration, arguments) = self.struct_instance(ty)?;
         mojito_types::types::struct_field_types(
             &declaration.param_decls,
