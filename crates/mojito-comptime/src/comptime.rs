@@ -424,9 +424,6 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
         Type::ClosedStringLiteral => Some(Ty::string_literal()),
-        Type::Named(name, args) if name == "StringLiteral" && args.is_empty() => {
-            Some(Ty::string_literal())
-        }
         Type::None => Some(Ty::none()),
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
         Type::TypeOf(operand) => any_trait_source_type(operand),
@@ -476,7 +473,11 @@ fn source_type_from_ty_with_origins(
         }
         kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
         kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
-        kind if kind.is_string_literal() => Type::ClosedStringLiteral,
+        kind if let Some(value) = kind.string_literal_value() => Type::Named(
+            mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string(),
+            vec![ParamArg::Value(value.materialize((0, 0))?)],
+        ),
+        TyKind::StringLiteral => Type::ClosedStringLiteral,
         kind if kind.is_float64() || kind.is_float_literal() => {
             Type::Named("Float64".to_string(), Vec::new())
         }

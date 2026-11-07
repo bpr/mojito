@@ -10909,20 +10909,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1859 A `[s: StringLiteral]` parameter is typed by the value-less
-  literal**
-
-  A bare `StringLiteral` in a compile-time parameter's type is the
-  value-less `TyKind::StringLiteral(None)` (`ct_param_source_type`,
-  `comptime.rs`, and `SourceType::ClosedStringLiteral` in
-  `type_resolution.rs`), where upstream's is the declared struct with its
-  `value` parameter left to the argument.
-  - Probe: `def g[s: StringLiteral]() -> Int: return s.byte_length()`
-    prints `5` for `g["hello"]()`, through the declared member, and `s`'s
-    type carries no text.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1860 An untyped compile-time string is typed by the value-less
   `StringLiteral`**
 
@@ -10951,8 +10937,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `coerces`'s (application, value-less) arm (`types.rs`),
     `overload_support.rs`'s and `constraints.rs`'s arms, mangling
     (`symbol.rs`), MIR text's bare `StringLiteral` (`write.rs`,
-    `parse/types.rs`), `ct::source_type`, and
-    `ast::Type::ClosedStringLiteral`.
+    `parse/types.rs`), `ct::source_type`, the elaborator's
+    `ct_param_source_type` and `source_type_from_ty_with_origins`
+    (`comptime.rs`), and `ast::Type::ClosedStringLiteral`.
   - This is the string half of R1849.
   - Done when `TyKind::StringLiteral` is deleted.
   - Depends on R1858, R1859, R1860.

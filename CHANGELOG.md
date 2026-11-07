@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `[s: StringLiteral]` compile-time parameter is no longer typed by the
+  value-less `StringLiteral` in the elaborator's parameter metadata: it is
+  upstream's auto-parameterized `StringLiteral[_]`, and a specialized
+  clone spells a bound literal type as `StringLiteral[text]` rather than
+  dropping its text (R1859).
 - The elaborator no longer binds a type parameter a hash leaf's member
   call leaves unsolved to the value-less `StringLiteral`: a `Variant`
   alternative's `__hash__` solves its hasher binder from the argument, as
