@@ -3299,8 +3299,9 @@ kind: its from-end elements and its slice are reads of ordinary subscripts
 `$match<id>[i:$match<id>.__len__() - k]`).
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
-the statements after a `return`, `break`, `continue`, or `raise` are erased
-before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
+the statements after a `return`, `break`, `continue`, `raise`, a `comptime
+assert` that folds to `False`, or an `if` or `comptime if` with an `else`
+whose every arm ends that way are erased before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
 ops after a terminator, so they reach no slot, block, or nested function
 (`CheckedTables::nested_defs` reads the same rule). MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`), which every MIR phase reads; only

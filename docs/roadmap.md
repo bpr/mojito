@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1987**.
+Next free ID: **R1988**.
 
 ## Ordered Work
 
@@ -7727,21 +7727,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1587 An instance drops the `comptime assert`s after a selected
-  `comptime if` arm that never falls through**
+- [ ] **R1987 A `while True` or a `try` that never falls through does not
+  end its block**
 
-  `def k[n: Int]() -> Int` holding `comptime if n == 1: return 1`, then
-  `comptime assert n == 5, "never"` and `return 3`, prints `1` for
-  `k[1]()`, where the pin fails the instance: "constraint failed: never".
-  - `splice_comptime_arm` (`native/mono/select.rs`) discards the block's
-    tail when the taken arm returns, before `discharge_comptime_asserts`
-    judges what the instance keeps. The pin judges the tail's assertions.
-  - Probe: `comptime assert False, "never"` after the same `comptime if`,
-    with no trailing `return`, runs since R1576 and fails at the pin.
-  - A tail after a plain `return` is erased before either judges it
-    (`hir::Lower`'s `live_statements`, the pin's parser), so it stays
-    unjudged.
-  - Found while landing R1576 (2026-10-28).
+  The code after a `while True` that only returns, or a `try` whose body
+  and handlers all leave, stays live, so an instance judges its `comptime
+  assert`s, where the pin erases it as dead.
+  - `CheckedTables::ends_block` (`mojito-checked/src/checked.rs`) ends a
+    block at an `if` or `comptime if` whose every arm leaves, but never at
+    a loop or `try`.
+  - Probe: `def k[n: Int]() -> Int` holding `while True: return 1`, then
+    `comptime assert n == 5, "dead"`, fails `k[1]()` with "constraint
+    failed: dead", where the pin prints `1`.
+  - Probe: `try: return 1` with `except: return 2`, then the same
+    assertion, in a `raises` function: the same failure, and the pin
+    prints `1`.
+  - Read which loops upstream's `LowerSemanticCF` follows with
+    `hlcf.unreachable` before widening the rule; R1242 owns the
+    move-scan side of the same dead loop exit.
+  - Found while landing R1587 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1093
+# swept-count	1094
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -290,6 +290,7 @@ assets/type_error/comptime_application_computed_type_mismatch.mojo	compile-rejec
 assets/type_error/comptime_application_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (n * Int(2))]' value to 'SIMD[.int32, h(n)]'
 assets/type_error/comptime_application_runtime_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
+assets/type_error/comptime_assert_after_leaving_arm.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_assert_closed_false.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_assert_dynamic_value.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime assert' expression
 assets/type_error/comptime_assert_fails_at_instance.mojo	compile-reject	agree	error: function instantiation failed

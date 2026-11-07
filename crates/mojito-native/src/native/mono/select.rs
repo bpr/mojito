@@ -3,7 +3,8 @@
 //! else the else region, and the arm's instructions replace the op. An arm
 //! that completes yields the op's results; one that leaves (a `return`, a
 //! `break`) ends the block, and what followed the op goes with the untaken
-//! arms, never elaborated.
+//! arms, never elaborated, save its assertions, which the instance still
+//! judges.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -38,8 +39,13 @@ impl Specializer<'_> {
                         break;
                     }
                 }
-                splice_comptime_arm(block, index, taken, decided)
+                let tail = splice_comptime_arm(block, index, taken, decided)
                     .map_err(|construct| self.error(Some(template), construct))?;
+                if let Some(tail) = tail {
+                    let mut asserts = Vec::new();
+                    tail_asserts(&tail.instrs, &mut asserts);
+                    block.instrs.extend(asserts);
+                }
                 Ok(Some(0))
             }
             MirInstr::ComptimeAssert { value, message } => {
@@ -115,14 +121,15 @@ impl Decided {
 /// its else region when `None`, as `processComptimeIfOp` splices the region
 /// it elaborated: an arm ending in `comptime.yield` stands where the op
 /// stood, its values replacing the op's results, while an arm ending in any
-/// other terminator ends the block, dropping what followed the op. The
-/// registers of every dropped region and instruction are recorded dead.
+/// other terminator ends the block, dropping what followed the op, which is
+/// returned. The registers of every dropped region and instruction are
+/// recorded dead.
 pub(super) fn splice_comptime_arm(
     block: &mut MirBlock,
     index: usize,
     taken: Option<usize>,
     decided: &mut Decided,
-) -> Result<(), &'static str> {
+) -> Result<Option<MirBlock>, &'static str> {
     let (results, mut regions) = match block.instrs.remove(index) {
         MirInstr::ComptimeIf {
             results,
@@ -151,6 +158,7 @@ pub(super) fn splice_comptime_arm(
                 .replaced
                 .extend(results.iter().map(|reg| reg.0).zip(values));
             block.instrs.splice(index..index, arm.instrs);
+            Ok(None)
         }
         term => {
             let tail = MirBlock {
@@ -160,9 +168,30 @@ pub(super) fn splice_comptime_arm(
             defined_registers(std::slice::from_ref(&tail), &mut decided.dead);
             decided.dead.extend(results);
             block.instrs.extend(arm.instrs);
+            Ok(Some(tail))
         }
     }
-    Ok(())
+}
+
+/// The assertions of a tail an arm that leaves dropped, which the instance
+/// still judges as the pin does: those of the tail and of its runtime
+/// regions, never those under a `comptime if` or `comptime for` the tail
+/// holds, which are never elaborated.
+fn tail_asserts(instructions: &[MirInstr], asserts: &mut Vec<MirInstr>) {
+    for instruction in instructions {
+        match instruction {
+            MirInstr::ComptimeAssert { .. } => asserts.push(instruction.clone()),
+            MirInstr::ComptimeIf { .. } | MirInstr::ComptimeFor { .. } => {}
+            instruction => {
+                for block in mojito_mir::mir::instruction_regions(instruction)
+                    .into_iter()
+                    .flatten()
+                {
+                    tail_asserts(&block.instrs, asserts);
+                }
+            }
+        }
+    }
 }
 
 /// The text a compile-time string value holds: a `String`'s, a

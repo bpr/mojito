@@ -3991,11 +3991,13 @@ impl CheckedTables {
 
     /// The live prefix of statement list `body`: its statements up to and
     /// including the first that ends the block — a `return`, `break`,
-    /// `continue`, or `raise`, or a scope whose own live statements end
-    /// that way. The rest is dead, and lowering erases it as
-    /// `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the ops after a
-    /// terminator. An `if`, loop, or `try` never ends the block, even when
-    /// every arm leaves it.
+    /// `continue`, or `raise`, a `comptime assert` whose condition folds to
+    /// `False`, a scope whose own live statements end that way, or an `if`
+    /// or `comptime if` with an `else` every arm of which ends that way.
+    /// The rest is dead, and lowering erases it as `LowerSemanticCF`'s
+    /// `eraseOpToEndOfBlock` erases the ops after a terminator, before an
+    /// instance judges its assertions. A loop or `try` never ends the
+    /// block, even when every path through it leaves.
     pub fn live_statements<'a>(&self, body: &'a [CheckedStmtId]) -> &'a [CheckedStmtId] {
         body.iter()
             .position(|id| self.ends_block(*id))
@@ -4235,12 +4237,24 @@ impl CheckedTables {
                 | CheckedStmtOp::Break
                 | CheckedStmtOp::Continue
                 | CheckedStmtOp::Raise(_) => true,
-                CheckedStmtOp::Scope(body) => self
-                    .live_statements(body)
-                    .last()
-                    .is_some_and(|last| self.ends_block(*last)),
+                CheckedStmtOp::ComptimeAssert { fails, .. } => *fails,
+                CheckedStmtOp::Scope(body) => self.body_ends_block(body),
+                CheckedStmtOp::If { branches, orelse }
+                | CheckedStmtOp::ComptimeIf { branches, orelse } => {
+                    orelse.as_deref().is_some_and(|orelse| {
+                        self.body_ends_block(orelse)
+                            && branches.iter().all(|(_, body)| self.body_ends_block(body))
+                    })
+                }
                 _ => false,
             })
+    }
+
+    /// Whether the live statements of `body` end it.
+    fn body_ends_block(&self, body: &[CheckedStmtId]) -> bool {
+        self.live_statements(body)
+            .last()
+            .is_some_and(|last| self.ends_block(*last))
     }
 }
 

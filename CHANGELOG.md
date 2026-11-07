@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime assert` after a `comptime if` arm that returns is now
+  judged at the instance, as at the pin, so `k[1]()` over `comptime if n
+  == 1: return 1` then `comptime assert n == 5, "never"` fails with
+  "constraint failed: never" instead of printing `1` (R1587). An `if` or
+  `comptime if` with an `else` whose every arm leaves now ends its block,
+  so the code after it is dead and its assertions are never judged.
 - `conforms_to` and `reflect[...].name()` over a struct whose parameter is
   a constructed struct value (`conforms_to(W[K(4)], Intable)`,
   `reflect[W[P(3, True)]].name()`) or a `SIMDLength` now answer as at the
