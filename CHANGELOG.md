@@ -3651,6 +3651,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A conditional expression's register-passable result that needs
+  destroying is now the `if`'s owned result: the binding or call taking
+  it over keeps it alive up to there, where drop elaboration destroyed it
+  right after the `if` and MIR verification rejected the program.
+  `var p = Optional[Int](1) if c else Optional[Int](4)`, `o or
+  Optional[Int](4)`, `var o: Optional[Int] = 1 if c else None`, and
+  `R(1) if c else R(2)` over a `RegisterPassable` struct with a destructor
+  now run as at the pin. Pinned by a new fixture (R1603).
+
 - A trivially register-passable value read out of an owner and passed to a
   `read` parameter or `read self` receiver is loaded at call setup, as at
   the pin, so an owner whose last use it is dies before the call runs:

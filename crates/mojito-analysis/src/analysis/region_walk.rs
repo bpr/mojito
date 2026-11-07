@@ -34,6 +34,10 @@ pub(super) trait ForwardScan {
     /// Whether the walk enters `instr`'s regions. A region op it does not
     /// enter is observed and transferred as one instruction.
     fn enters(&self, instr: &MirInstr) -> bool;
+    /// Apply what a region op the walk entered does as control leaves it
+    /// normally: it defines its results, as an op's results are defined
+    /// after its regions run.
+    fn leave_op(&self, _state: &mut Self::State, _instr: &MirInstr) {}
 }
 
 /// A region's states per exit channel: the normal fall-off, every raise
@@ -325,7 +329,10 @@ where
             }
             let nested = walk_op(scan, state, instr, observer.as_deref_mut(), frames)?;
             flow.absorb_abnormal(scan, &nested);
-            current = nested.normal;
+            current = nested.normal.map(|mut state| {
+                scan.leave_op(&mut state, instr);
+                state
+            });
             continue;
         }
         if let Some(observer) = observer.as_deref_mut() {

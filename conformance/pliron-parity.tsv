@@ -262,6 +262,7 @@ assets/ok/conditional_expression_parameter_condition.mojo	main	exe-differential	
 assets/ok/conditional_expression_transfer.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_availability.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sanitized
+assets/ok/conditional_register_passable_result_owned.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_library_types_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	main	exe-differential	sanitized

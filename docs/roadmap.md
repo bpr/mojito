@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1977**.
+Next free ID: **R1978**.
 
 ## Ordered Work
 
@@ -1297,29 +1297,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1603 A conditional's register-passable result that needs
-  destroying is dropped before its use**
+- [ ] **R1977 A field read out of a struct temporary does not tie the
+  temporary's life to how the call takes the field**
 
-  `var p = Optional[Int](1) if c else Optional[Int](4)` fails with "invalid
-  checked program: … var.store ends owned register, which some path
-  reaching it has ended", where the pin prints the value.
-  - Drop elaboration (`mojito-analysis` `drops.rs`) places a `drop.reg`
-    of the `if`'s result register right after the `if`, ahead of the
-    `var.store` that consumes it, so the store ends a dead register.
-  - Only a result the checker proved register-passable is yielded as the
-    `if`'s value (`RegisterPassableResult`); a memory-only one goes
-    through a result slot and runs.
-  - Probe: a user `RegisterPassable` struct with a printing destructor,
-    `R(1) if c else R(2)`, fails the same way after `sroa`.
-  - Probe: `o or Optional[Int](4)` over `o: Optional[Int]` (R97's
-    `and`/`or` yield the same `if` result).
-  - Probe: `var o: Optional[Int] = 1 if c else None` and `= None if c
-    else 1`, whose arms convert to the annotation, fail the same way;
-    the pin prints `False` and `1`.
-  - Probe: `var v = 1 if c else Optional[Int](2)`, whose literal arm
-    converts to the other's type, fails the same way after `sroa`; the
-    pin prints `Optional[SIMD[DType.int, 1]]` for its type.
-  - Found while landing R97 (2026-10-28).
+  At the pin a field of an expression temporary is a projection of it: a
+  register-passable `read` parameter loads the field at call setup, so the
+  temporary dies before the call, and a by-address parameter lends the
+  field, so it dies after. Mojito's `field.get` of the owned register gets
+  neither rule.
+  - Probe: `show(R(5).x)` over `def show(i: Int)` and a `RegisterPassable`
+    `R` printing in its destructor prints `show 5`, `del 5`; the pin
+    prints `del 5` first.
+  - Probe: `print(R(5).x)` prints `del 5` before `5`; the pin prints it
+    after, as `print`'s variadic pack lends the field.
+  - Probe: `print((R(3) if c else R(4)).x)` misorders the same way.
+  - `gen(R(6).x)` over a generic `read` parameter already matches.
+  - R1570's call-setup load reads `single_hop` provenance, which only a
+    scalar read of a variable's place records (`RegisterLoanStep::new` in
+    `register_loans.rs`); a `field.get` of an owned register records none,
+    and a `lit.ref.pack` of its result does not retain the register.
+  - Found while landing R1603 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

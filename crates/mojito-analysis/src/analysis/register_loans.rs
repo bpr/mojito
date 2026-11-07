@@ -1195,6 +1195,32 @@ impl ForwardScan for DropFactsScan<'_> {
     fn enters(&self, _instr: &MirInstr) -> bool {
         true
     }
+
+    /// Each owned result of a region op is a fresh owned value, upstream's
+    /// owned SSA result: it carries its own root, so the instruction taking
+    /// it over keeps it live up to there, and the variable owners of the
+    /// values its arms yield in its place.
+    fn leave_op(&self, state: &mut DropFactsState, instr: &MirInstr) {
+        let mut results = Vec::new();
+        mojito_mir::mir::owned_result_regs(instr, &mut results);
+        let regions = mojito_mir::mir::instruction_regions(instr);
+        let first_register = self.values.first_register();
+        for (index, result) in results.into_iter().enumerate() {
+            let Some(root) = self.values.register_root(result) else {
+                continue;
+            };
+            let mut owners: BTreeSet<ValueRef> = regions
+                .iter()
+                .flat_map(|region| region.iter())
+                .filter_map(|block| handed_values(&block.term).get(index))
+                .flat_map(|value| state.registers.owners.get(&value.0).into_iter().flatten())
+                .filter(|part| part.root < first_register)
+                .copied()
+                .collect();
+            owners.insert(self.values.whole(root));
+            state.registers.owners.insert(result.0, owners);
+        }
+    }
 }
 
 /// The observer filling [`DropFacts`].

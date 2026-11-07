@@ -262,6 +262,7 @@ assets/ok/conditional_expression_parameter_condition.mojo	-	ineligible	no-scalar
 assets/ok/conditional_expression_transfer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/conditional_register_passable_result_owned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_library_types_unasked_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	-	ineligible	no-scalar-entry-shape
