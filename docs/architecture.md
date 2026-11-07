@@ -5826,7 +5826,10 @@ current Mojo:
   dispatched operator, by-value subscript, or display, and
   `ConversionIndirectResult` on an implicit conversion, whose
   constructor's memory-only `read` source is `ConversionReadsSource`, read
-  where it lies or in its own slot; a conditional
+  where it lies or in its own slot; a `@__nonmaterializable(T)` source the
+  conversion first materializes to `T` (`ConversionMaterializesSource`)
+  is that `T`'s constructor call, its memory-only result read from a
+  call-result slot when the converting constructor reads it; a conditional
   expression not proven register-passable is one too
   (`Node::indirect_result`). A consumer with a destination (a declaration,
   a `return`, an aggregate element) lowers through `Flatten::expr` and

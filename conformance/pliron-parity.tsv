@@ -724,6 +724,7 @@ assets/ok/nominal_string_split_forms.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_strip.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_unicode_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
+assets/ok/nonmaterializable_converts_through_target.mojo	main	exe-differential	sanitized
 assets/ok/nonmaterializable_struct.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized

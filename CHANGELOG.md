@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value whose struct declares `@__nonmaterializable(T)` now
+  materializes to `T` before an implicit constructor of the parameter
+  type, as upstream's conversion does: `g("a")` over an
+  `Optional[String]` parameter, `f["a"]()` over an `Optional[String]`
+  compile-time parameter, and a user struct at an `Optional` of its
+  target, where each was rejected. The package format moves to
+  `mojito-package 198` (R1864).
 - A string literal's members are tabled per text, as upstream hangs a
   `StringLiteral[value]` instance's witnesses off that instance: the
   elaborator declares a field-less `StringLiteral` instance for each known

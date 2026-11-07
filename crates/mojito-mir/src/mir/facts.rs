@@ -809,6 +809,22 @@ impl<'a> Node<'a> {
             })
     }
 
+    /// The materialization this node's implicit conversion applies to its
+    /// source before its constructor
+    /// ([`mojito_checked::checked::SemanticAdjustment::ConversionMaterializesSource`]).
+    pub(super) fn conversion_materialization(
+        self,
+    ) -> Option<mojito_checked::checked::ConversionMaterialization> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConversionMaterializesSource(
+                    materialization,
+                ) => Some((**materialization).clone()),
+                _ => None,
+            })
+    }
+
     /// Whether this node's implicit conversion binds its memory-only
     /// source to a `read` parameter
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).

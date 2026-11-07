@@ -1771,8 +1771,91 @@ impl Checker {
         )
     }
 
-    /// The selected implicit converting constructor from `from` to `to`.
+    /// The selected implicit converting constructor from `from` to `to`:
+    /// one of `to`'s that takes the value itself, else, for a value whose
+    /// struct declares `@__nonmaterializable(T)`, one that takes the `T`
+    /// it materializes to first, as upstream materializes such a value
+    /// before converting it.
     fn implicit_conversion_constructor(
+        &self,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<Option<SelectedConversion>, TypeError> {
+        if let Some(selected) = self.direct_conversion_constructor(from, to)? {
+            return Ok(Some(selected));
+        }
+        self.materializing_conversion_constructor(from, to)
+    }
+
+    /// The conversion from `from` to `to` through the target `from`'s
+    /// `@__nonmaterializable(T)` names: `T`'s `@implicit` constructor from
+    /// the value, then `to`'s from the `T`. A raising or borrowing
+    /// materialization, and a view constructor of `to` over the
+    /// materialized temporary, select nothing here.
+    fn materializing_conversion_constructor(
+        &self,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<Option<SelectedConversion>, TypeError> {
+        let Some(target) = self
+            .materialization_target(from)
+            .filter(|target| target != to && self.materializes_by_construction(from))
+        else {
+            return Ok(None);
+        };
+        let Some(materialize) = self
+            .direct_conversion_constructor(from, &target)?
+            .filter(|selected| selected.error.is_none() && selected.source_borrow.is_none())
+        else {
+            return Ok(None);
+        };
+        let Some(selected) = self
+            .direct_conversion_constructor(&target, to)?
+            .filter(|selected| selected.source_borrow.is_none())
+        else {
+            return Ok(None);
+        };
+        let instantiated_args =
+            self.conversion_instantiation(&target, &materialize.target, materialize.own_arguments);
+        Ok(Some(SelectedConversion {
+            materialization: Some(mojito_checked::checked::ConversionMaterialization {
+                constructor: materialize.target,
+                ty: target,
+                instantiated_args,
+                reads: !selected.consumes_source,
+            }),
+            ..selected
+        }))
+    }
+
+    /// The compile-time arguments the converting constructor `target` of
+    /// `to` takes: `to`'s binder prefix, then the constructor's own
+    /// arguments, as any construction passes them.
+    fn conversion_instantiation(
+        &self,
+        to: &Ty,
+        target: &str,
+        own_arguments: Vec<TyArg>,
+    ) -> Vec<TyArg> {
+        let TyKind::Struct(name, arguments) = to.kind() else {
+            return Vec::new();
+        };
+        let Some(info) = self.structs.get(name).filter(|_| {
+            mojito_symbol::symbol::lifecycle_constructor(target)
+                .is_some_and(|(_, method)| method == "__init__")
+        }) else {
+            return Vec::new();
+        };
+        let arguments = comptime_validation::positional_pack_arguments(&info.decls, arguments);
+        arguments[..info.decls.len().min(arguments.len())]
+            .iter()
+            .cloned()
+            .chain(own_arguments)
+            .collect()
+    }
+
+    /// The `@implicit` constructor of `to` that takes a `from` value itself.
+    fn direct_conversion_constructor(
         &self,
         from: &Ty,
         to: &Ty,
@@ -1894,6 +1977,7 @@ impl Checker {
                     error,
                     parameter: parameter.clone(),
                     own_arguments: own_arguments.clone(),
+                    materialization: None,
                 }))
             }
             _ => Err(TypeError::BadCall {
@@ -1943,6 +2027,7 @@ impl Checker {
             error,
             parameter,
             own_arguments,
+            materialization,
         } = selected;
         let span = expression.source_span();
         // Upstream converts a literal source to the constructor's parameter
@@ -1966,7 +2051,10 @@ impl Checker {
             }
             self.record_at(span.clone()).conversion_source_literal = Some(parameter);
         }
-        if !consumes_source && source_borrow.is_none() {
+        // A materialized source is the conversion's own temporary.
+        if materialization.is_some() {
+            self.record_at(span.clone()).conversion_materialization = materialization.map(Box::new);
+        } else if !consumes_source && source_borrow.is_none() {
             self.record_at(span.clone()).conversion_reads_source = true;
         }
         if let Some(error) = error {
@@ -1987,20 +2075,9 @@ impl Checker {
         // A constructor restates its struct's parameters, so the conversion
         // passes the converted-to type's binder prefix, then the
         // constructor's own arguments, as any construction does.
-        if let TyKind::Struct(name, arguments) = to.kind()
-            && mojito_symbol::symbol::lifecycle_constructor(&target)
-                .is_some_and(|(_, method)| method == "__init__")
-            && let Some(info) = self.structs.get(name)
-        {
-            let arguments = comptime_validation::positional_pack_arguments(&info.decls, arguments);
-            let instantiation = arguments[..info.decls.len().min(arguments.len())]
-                .iter()
-                .cloned()
-                .chain(own_arguments)
-                .collect::<Vec<_>>();
-            if !instantiation.is_empty() {
-                self.record_at(span.clone()).conversion_instantiation = Some(instantiation);
-            }
+        let instantiation = self.conversion_instantiation(to, &target, own_arguments);
+        if !instantiation.is_empty() {
+            self.record_at(span.clone()).conversion_instantiation = Some(instantiation);
         }
         self.record_at(span.clone()).implicit_conversion_type = Some(to.clone());
         self.record_at(span).implicit_conversion = Some(target);
@@ -2864,6 +2941,9 @@ struct SelectedConversion {
     /// The constructor's own compile-time arguments, solved from the
     /// source, in declaration order.
     own_arguments: Vec<TyArg>,
+    /// The materialization of a `@__nonmaterializable` source the
+    /// constructor converts the target of.
+    materialization: Option<mojito_checked::checked::ConversionMaterialization>,
 }
 
 /// The lowered body of a [`ComptimeAlias`]: a symbolic type template, a

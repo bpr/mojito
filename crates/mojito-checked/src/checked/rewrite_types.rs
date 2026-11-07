@@ -21,9 +21,9 @@ use super::{
     CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral, CheckedStmt,
     CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack, CheckedTables,
     CheckedTarget, CheckedTargetKind, CheckedTupleUnpackElement, ComptimeIteration,
-    ConformanceFacts, DeclarationEffect, EffectFacts, GenericInstantiation, IterationProtocol,
-    MethodInstantiation, OmittedSliceOperand, ReflectedFieldStep, SemanticAdjustment,
-    StructInstantiation,
+    ConformanceFacts, ConversionMaterialization, DeclarationEffect, EffectFacts,
+    GenericInstantiation, IterationProtocol, MethodInstantiation, OmittedSliceOperand,
+    ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
 };
 use crate::declaration::{
     ParameterizedAssociatedType, ParameterizedAssociatedValue, TraitDeclaration, TraitRequirement,
@@ -215,8 +215,24 @@ impl RewriteTypes for CheckedCallValueAdjustment {
             Self::MaterializeLiteral { target } => {
                 target.rewrite_types(rewrite);
             }
+            Self::MaterializeSource(materialization) => {
+                materialization.rewrite_types(rewrite);
+            }
             Self::ResolveCallable { target: _ } | Self::IndexNormalization { target: _ } => {}
         }
+    }
+}
+
+impl RewriteTypes for ConversionMaterialization {
+    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
+        let Self {
+            constructor: _,
+            ty,
+            instantiated_args,
+            reads: _,
+        } = self;
+        ty.rewrite_types(rewrite);
+        instantiated_args.rewrite_types(rewrite);
     }
 }
 
@@ -500,6 +516,9 @@ impl RewriteTypes for SemanticAdjustment {
                 f0.rewrite_types(rewrite);
             }
             Self::ConversionSourceLiteral(f0) => {
+                f0.rewrite_types(rewrite);
+            }
+            Self::ConversionMaterializesSource(f0) => {
                 f0.rewrite_types(rewrite);
             }
             Self::MaterializeLiteral(f0) => {

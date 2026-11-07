@@ -543,10 +543,16 @@ pub(in crate::checker) fn call_value_adjustments(
                 target: target.clone(),
             }]
         } else {
-            vec![CheckedCallValueAdjustment::ImplicitConversion {
-                target: target.clone(),
-                instantiated_args: facts.conversion_instantiation.clone().unwrap_or_default(),
-            }]
+            facts
+                .conversion_materialization
+                .clone()
+                .map(CheckedCallValueAdjustment::MaterializeSource)
+                .into_iter()
+                .chain([CheckedCallValueAdjustment::ImplicitConversion {
+                    target: target.clone(),
+                    instantiated_args: facts.conversion_instantiation.clone().unwrap_or_default(),
+                }])
+                .collect()
         }
     } else {
         facts

@@ -852,6 +852,7 @@ impl<'a> Flatten<'a> {
         site: SourceSpan,
     ) -> Reg {
         let mut value = raw;
+        let mut place = None;
         for adjustment in adjustments {
             value = match adjustment {
                 mojito_checked::checked::CheckedCallValueAdjustment::ResolveCallable { target } => {
@@ -881,7 +882,7 @@ impl<'a> Flatten<'a> {
                         raises: None,
                         args: vec![value],
                         kwargs: Vec::new(),
-                        arg_places: vec![None],
+                        arg_places: vec![place.take()],
                         kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
@@ -923,6 +924,14 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeLiteral {
                     target,
                 } => self.materialize_literal(value, target, site.clone()),
+                mojito_checked::checked::CheckedCallValueAdjustment::MaterializeSource(
+                    materialization,
+                ) => {
+                    let (read, read_place) =
+                        self.materialize_conversion_source(value, materialization, site.clone());
+                    place = read_place;
+                    read
+                }
             };
         }
         if adjustments.is_empty()
@@ -931,6 +940,47 @@ impl<'a> Flatten<'a> {
             value = self.materialize_register(value, &parameter_ty, site);
         }
         value
+    }
+
+    /// `value`, a `@__nonmaterializable` source, materialized to its
+    /// target through that target's `@implicit` constructor, the first
+    /// step of a conversion through a constructor of the target. A
+    /// memory-only target the converting constructor reads is bound to a
+    /// call-result slot, whose place the read is passed with, as upstream
+    /// reads a `__call_result_tmp__`.
+    pub(super) fn materialize_conversion_source(
+        &mut self,
+        value: Reg,
+        materialization: &mojito_checked::checked::ConversionMaterialization,
+        site: SourceSpan,
+    ) -> (Reg, Option<MirPlace>) {
+        let ty = materialization.ty.clone();
+        let dest = self.fresh_typed(site.clone(), None, ty.clone());
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(&materialization.constructor),
+            raises: None,
+            args: vec![value],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: materialization.instantiated_args.clone(),
+            spread: None,
+        });
+        if !materialization.reads || !owns_droppable_storage(&ty) {
+            return (dest, None);
+        }
+        let slot = self.call_result_slot(dest, ty.clone(), true);
+        let place = MirPlace::root(slot, Some(ty.clone()));
+        let read = self.fresh_typed(site, Some(slot), ty);
+        self.emit(MirInstr::LoadPlace {
+            dest: read,
+            place: place.clone(),
+        });
+        (read, Some(place))
     }
 
     pub(super) fn emit_checked_call_boundary(

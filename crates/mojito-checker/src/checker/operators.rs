@@ -723,6 +723,7 @@ impl Checker {
         let adjustments = super::method_calls::call_value_adjustments(facts);
         if facts.implicit_conversion.take().is_some() {
             facts.implicit_conversion_type = None;
+            facts.conversion_materialization = None;
         } else if matches!(
             facts.adjustment.as_deref(),
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))

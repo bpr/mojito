@@ -9599,6 +9599,43 @@ fn an_implicit_conversion_materializes_its_literal_source_at_the_parameter() {
 }
 
 #[test]
+fn a_nonmaterializable_value_materializes_before_the_parameter_types_constructor() {
+    // Upstream materializes the literal to `String`, then converts the
+    // `String` through `Optional[String]`'s `@implicit __init__(T)`.
+    let source = "def g(x: Optional[String]):\n    print(x.value())\n\
+                  def f[x: Optional[String] = None]():\n    if x:\n        print(x.value())\n\
+                  def main():\n    g(\"a\")\n    f[\"a\"]()\n";
+    let checked = checked_with_std(source).expect("check");
+    assert!(own_expressions(&checked).any(|expression| {
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                SemanticAdjustment::ConversionMaterializesSource(materialization)
+                    if materialization.ty.to_string() == "String"
+            )
+        })
+    }));
+}
+
+#[test]
+fn a_nonmaterializable_value_without_a_target_constructor_does_not_convert() {
+    // `Big` declares no `@implicit` constructor from `Lit`, so `Lit(4)`
+    // cannot become the `Big` that `Optional[Big]` converts from.
+    let error = err_std(
+        "struct Big(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\
+         @fieldwise_init\n@__nonmaterializable(Big)\nstruct Lit(TrivialRegisterPassable):\n    var k: Int\n\
+         def g(x: Optional[Big]):\n    pass\n\
+         def main():\n    g(Lit(4))\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("expected Optional[Big], found Lit"),
+        "{error}"
+    );
+}
+
+#[test]
 fn an_implicit_conversion_of_a_run_time_value_materializes_no_literal() {
     let source = "struct Tag(ImplicitlyCopyable):\n    var v: Int\n    @implicit\n    def __init__(out self, v: Int):\n        self.v = v\n\
                   def g(t: Tag):\n    print(t.v)\n\

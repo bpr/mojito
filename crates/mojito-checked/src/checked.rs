@@ -115,6 +115,9 @@ pub enum CheckedCallValueAdjustment {
     MaterializeLiteral {
         target: Ty,
     },
+    /// The materialization of a `@__nonmaterializable` source to its
+    /// target, which the `ImplicitConversion` after it converts.
+    MaterializeSource(Box<ConversionMaterialization>),
 }
 
 /// Call-boundary facts for one supplied argument.
@@ -605,6 +608,22 @@ pub enum ReflectedFieldStep {
     At(mojito_types::param_expr::ParamExpr),
 }
 
+/// The materialization an implicit conversion applies to its
+/// `@__nonmaterializable(T)` source before its converting constructor.
+///
+/// Upstream materializes the value to `T` and then converts the `T`: the
+/// target's `@implicit` constructor from the source, the target type, and
+/// the struct and own arguments that constructor takes. `reads` is set
+/// when the converting constructor reads the materialized value rather
+/// than consuming it, so a memory-only one is passed from its storage.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ConversionMaterialization {
+    pub constructor: String,
+    pub ty: Ty,
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
+    pub reads: bool,
+}
+
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`
 /// decides it once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -746,6 +765,9 @@ pub enum SemanticAdjustment {
     /// materializes its numeric-literal source at, as upstream converts the
     /// literal (`#pop.int_literal_convert`) before the `@implicit` call.
     ConversionSourceLiteral(Ty),
+    /// The `ImplicitConversion` at the same site first materializes its
+    /// source to its `@__nonmaterializable` target, and converts that.
+    ConversionMaterializesSource(Box<ConversionMaterialization>),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -6748,6 +6770,11 @@ fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
         if let Some(ty) = &facts.conversion_source_literal {
             adjustments.push(SemanticAdjustment::ConversionSourceLiteral(ty.clone()));
         }
+        if let Some(materialization) = &facts.conversion_materialization {
+            adjustments.push(SemanticAdjustment::ConversionMaterializesSource(
+                materialization.clone(),
+            ));
+        }
         if let Some(mutable) = &facts.conversion_source_borrow {
             adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
         }
@@ -7098,6 +7125,9 @@ node_facts! {
         /// The constructor parameter an implicit conversion's literal
         /// source materializes at.
         conversion_source_literal: Ty,
+        /// The materialization an implicit conversion applies to its
+        /// source before its constructor.
+        conversion_materialization: Box<ConversionMaterialization>,
         ty: Ty,
         binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.

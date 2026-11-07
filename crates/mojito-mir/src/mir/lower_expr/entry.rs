@@ -252,6 +252,18 @@ impl<'a> Flatten<'a> {
                 Some(parameter) => self.materialize_literal(argument, &parameter, e.location()),
                 None => argument,
             };
+            let argument = match e.conversion_materialization() {
+                Some(materialization) => {
+                    let (read, place) = self.materialize_conversion_source(
+                        argument,
+                        &materialization,
+                        e.location(),
+                    );
+                    read_place = read_place.or(place);
+                    read
+                }
+                None => argument,
+            };
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
             // The checker records the converted-to type (with its arguments,

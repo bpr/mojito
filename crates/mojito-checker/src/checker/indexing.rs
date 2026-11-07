@@ -863,6 +863,9 @@ impl Checker {
     ) {
         let value_source = value.source_span();
         self.clear_fact(&value_source, |facts| facts.implicit_conversion.take());
+        self.clear_fact(&value_source, |facts| {
+            facts.conversion_materialization.take()
+        });
         self.clear_fact(&value_source, |facts| facts.conversion_source_borrow.take());
         self.clear_fact(&value_source, |facts| facts.ty.take());
         if matches!(

@@ -1148,6 +1148,13 @@ and hand the storage the produced value (`variant.set`) or take the
 payload out of it (`variant.take`). The checked adjustments go with
 them, so the package format moves to `mojito-package 188`.
 
+The package format moves to `mojito-package 198` when a checked implicit
+conversion records the materialization of its `@__nonmaterializable`
+source (`ConversionMaterializesSource`, and the call boundary's
+`MaterializeSource`), which MIR lowering emits as the target's
+constructor call before the converting one (R1864). The MIR text is
+unchanged.
+
 Schema 1.174 removes the value-less `StringLiteral` atom (R1861): a
 string literal's type always carries its text, as upstream's
 `StringLiteral[value]` does, so every literal register is the

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1974**.
+Next free ID: **R1975**.
 
 ## Ordered Work
 
@@ -1160,6 +1160,26 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Confirm at the pin which `@export` spellings it accepts, then accept
     those, record the flag on the function's declaration, and root the
     pass at it as well as at the compilation's exports.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1974 Natively, a run-time read of a memory-only struct
+  parameter value fails as an untyped variable**
+
+  `if x: print(x.value())` in `def f[x: Optional[String] = None]()` runs
+  on the VM, but the Pliron backend rejects the instance ("unsupported
+  untyped variable `x`"), where upstream materializes the parameter
+  value into a typed temporary.
+  - The concrete MIR's variable holding the materialized parameter
+    carries no `var_tys` entry, which the VM does not need and
+    `var_lower_ty` (`mojito-pliron/src/lower/emit.rs`) does.
+  - A `[x: String]` parameter runs natively; `Optional[Int]` and
+    `Optional[String]` ones fail.
+  - Probe: `f[3]()` over `def f[x: Optional[Int] = None]()` and
+    `f["b"]()` over the `Optional[String]` form, natively.
+  - Then mark `assets/ok/nonmaterializable_converts_through_target.mojo`
+    `exe-differential` in the parity manifest.
+  - Found while landing R1864 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9591,6 +9611,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Both cases' `.expected` were rewritten by hand for R1837's storage
     `literal.materialize` (2026-11-06), and every such case's literal
     register types for R1849's MIR 1.172; re-bless them after the re-emit.
+  - The body's `note.or_else("")` calls a `deinit self` method on its
+    memory-only `Optional[String]` parameter value, which lowering keeps
+    in a register rather than in storage, as upstream materializes a
+    parameter value.
+  - Probe: `run` of
+    `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
+    fails verification of the same `$c1` body, where the pin reaches its
+    constraint failure.
+  - Probe: `print(x.or_else("none"))` in `def f[x: Optional[String] =
+    None]()` fails verification of `f` ("drop.reg destroys %r0 of
+    memory-only type Optional[String]"), where the pin prints `none`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10967,29 +10998,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StaticString(Self())`.
   - Depends on R1972.
   - Model: Fable, Not Planned.
-
-- [ ] **R1864 A `@__nonmaterializable` value does not materialize
-  before an implicit constructor of the parameter type**
-
-  An argument's implicit conversion records one constructor per span
-  (`NodeFacts::implicit_conversion`), so a value whose struct
-  declares `@__nonmaterializable(T)` cannot first become a `T` and then
-  convert through the parameter type's `@implicit` constructor from `T`,
-  as upstream's conversion does.
-  - Lever: when no constructor takes the value itself, try the parameter
-    type's from the materialization target
-    (`Checker::materialization_target`), and record both steps so MIR
-    lowering constructs the target first.
-  - Probe: `g("a")` over `def g(x: Optional[String])` and `f["a"]()`
-    over `def f[x: Optional[String] = None]()` are rejected ("expected
-    Optional[String], found StringLiteral"), where the pin prints `a`.
-  - Probe: `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
-    finds no overload, where the pin reaches its constraint failure.
-  - Probe: `g(Lit(4))` over `def g(x: Optional[Big])`, with `Lit` a
-    register-passable `@__nonmaterializable(Big)` struct and `Big` an
-    `@implicit` constructor from it, is rejected; the pin accepts it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1959 A literal reaches an implicit constructor's parameter
   through a second conversion, where upstream converts once**
