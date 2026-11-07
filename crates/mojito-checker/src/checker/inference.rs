@@ -39,7 +39,6 @@ pub(super) fn contextual_parameter_base(ty: &Ty, expr: &Expr) -> Result<String, 
         {
             Ok(name.clone())
         }
-        TyKind::Dtype => Ok("DType".to_string()),
         other => Err(TypeError::ContextualMember {
             member: contextual_member_name(expr),
             reason: format!(
@@ -2007,9 +2006,6 @@ impl Checker {
         if let Some(root_span) = contextual_root_span(expression) {
             let base = match expected.kind() {
                 struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
-                // `DType` is a compiler type here, whose members are
-                // upstream's `comptime` members of `struct DType`.
-                TyKind::Dtype => "DType".to_string(),
                 TyKind::Param { .. } => {
                     return Err(TypeError::ContextualMember {
                         member: contextual_member_name(expression),

@@ -661,7 +661,6 @@ impl ScopeCx<'_> {
             TyKind::None
             | TyKind::Never
             | TyKind::Infer
-            | TyKind::Dtype
             | TyKind::AnyTrait(_)
             | TyKind::Trait(_)
             | TyKind::TypeType

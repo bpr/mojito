@@ -1,91 +1,10 @@
-//! Display and hashing: stdout writes (the `input` prompt), hash leaves,
-//! intrinsic scalar formatting, and string comparison operators.
+//! Display: stdout writes (the `input` prompt), intrinsic scalar
+//! formatting, and string comparison operators.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// Contribute one `DType` Hashable leaf to a caller-owned hasher — the
-    /// VM's non-struct `__hash__` intrinsic: the value `hash_leaf_ty` names
-    /// passes to the hasher's `_update_with_simd` instance at that type. A
-    /// `Bool` or a `SIMD` hashes through its declared `__hash__`.
-    pub(super) fn lower_hash_leaf(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        receiver: &Ty,
-        hasher: Reg,
-        hasher_place: Option<&MirPlace>,
-    ) -> Result<(), PlironError> {
-        let register_ty = self.func.reg_types.get(&hasher.0).cloned();
-        let Some((hasher_name, _)) = register_ty
-            .as_ref()
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-        else {
-            return Err(self.unsupported_reg("`__hash__` without a nominal hasher".into(), dest));
-        };
-        let Some(place) = hasher_place else {
-            return Err(self.unsupported_reg(
-                "`__hash__` hasher argument without a mutable place".into(),
-                dest,
-            ));
-        };
-        let place = place.clone();
-        let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        if !matches!(receiver.kind(), TyKind::Dtype) {
-            return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
-        }
-        let target = self.hash_leaf_update_instance(dest, hasher_name, receiver)?;
-        let Some(expected) = self.signatures[&target].params.get(1).cloned() else {
-            return Err(self.unsupported_reg(format!("`{target}` takes no leaf"), dest));
-        };
-        let operand = match receiver.kind() {
-            // A `DType` hashes its code byte as a `UInt8`.
-            TyKind::Dtype => self.reg_value(ctx, recv, ScalarTy::Dtype)?,
-            _ => self.arg_value(ctx, recv, &expected, false, dest)?,
-        };
-        self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
-    }
-
-    /// The `hasher`'s `_update_with_simd` instance the elaborator minted at
-    /// the vector type the leaf `receiver` hashes as: the one whose value
-    /// parameter has that lane shape.
-    fn hash_leaf_update_instance(
-        &self,
-        dest: Reg,
-        hasher_name: &str,
-        receiver: &Ty,
-    ) -> Result<String, PlironError> {
-        let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(receiver));
-        let mut instances = self
-            .struct_member_symbols(hasher_name, "_update_with_simd")
-            .map(|(_, symbol)| symbol)
-            .filter(|symbol| {
-                shape.is_some()
-                    && self
-                        .signatures
-                        .get(*symbol)
-                        .and_then(|signature| signature.params.get(1))
-                        .and_then(lane_shape)
-                        == shape
-            });
-        match (instances.next(), instances.next()) {
-            (Some(symbol), None) => Ok(symbol.to_string()),
-            (None, _) => Err(self.unsupported_reg(
-                format!(
-                    "hashing a `{receiver}` leaf without a compiled `{hasher_name}._update_with_simd` instance"
-                ),
-                dest,
-            )),
-            _ => Err(self.unsupported_reg(
-                format!("hashing a `{receiver}` leaf with ambiguous `{hasher_name}._update_with_simd` instances"),
-                dest,
-            )),
-        }
-    }
-
     /// Write the UTF-8 bytes of a string-valued register to stdout when the
     /// register holds one of the supported string shapes — a string
     /// constant (a literal's text its type carries), a runtime string pair,
@@ -375,19 +294,5 @@ impl FnLowering<'_> {
                 dest,
             )),
         }
-    }
-}
-
-/// The `(dtype, width)` lane shape a lowered parameter of a vector type
-/// has, `None` for any other.
-fn lane_shape(ty: &LowerTy) -> Option<(Dtype, i64)> {
-    match ty {
-        LowerTy::Scalar(ScalarTy::Int) => Some((Dtype::Int, 1)),
-        LowerTy::Scalar(ScalarTy::UInt) => Some((Dtype::UInt, 1)),
-        LowerTy::Scalar(ScalarTy::Float64) => Some((Dtype::Float64, 1)),
-        LowerTy::Scalar(ScalarTy::Bool) => Some((Dtype::Bool, 1)),
-        LowerTy::Scalar(ScalarTy::Sized(dtype)) => Some((*dtype, 1)),
-        LowerTy::Aggregate { ty, .. } => super::support::simd_dims(ty),
-        LowerTy::Scalar(ScalarTy::Ptr | ScalarTy::Dtype) | LowerTy::ZeroSized => None,
     }
 }

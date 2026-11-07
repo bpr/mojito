@@ -151,7 +151,7 @@ pub fn lower_ty(
         // The MLIR builtin `i1` is `Bool`'s held `!kgen.scalar<bool>`.
         TyKind::I1 => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         // A `!kgen.dtype` is the one-byte code a `DType` holds.
-        TyKind::Dtype | TyKind::KgenDtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
+        TyKind::KgenDtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         // The MLIR builtin `ui8` is held as the `UInt8` it casts from.
         TyKind::Ui8 => Ok(LowerTy::Scalar(ScalarTy::of_dtype(Dtype::UInt8))),
         // The MLIR builtin `index` is held as the `Int` it casts from.

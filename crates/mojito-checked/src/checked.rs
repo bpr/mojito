@@ -4881,8 +4881,6 @@ pub enum CheckedConst {
     Bool(bool),
     String(String),
     None,
-    /// A `DType.<name>` default.
-    Dtype(mojito_ast::ast::Dtype),
     /// A default that is an `@implicit` conversion of `arg`: the omitted-arg
     /// slot materializes by running the converting constructor `target` on the
     /// folded literal (e.g. a `None` default for an `Optional[T]` parameter runs
@@ -4924,9 +4922,6 @@ impl CheckedConst {
             ExprKind::Bool(value) => Some(Self::Bool(*value)),
             ExprKind::Str(value) => Some(Self::String(value.clone())),
             ExprKind::None => Some(Self::None),
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") => {
-                mojito_ast::ast::Dtype::from_name(field).map(Self::Dtype)
-            }
             ExprKind::Prefix(PrefixOp::Neg, inner) => match Self::from_expr(inner)? {
                 Self::Int(value) => Some(Self::Int(value.neg())),
                 Self::Float(value) => Some(Self::Float(value.neg())),
@@ -4948,13 +4943,6 @@ impl CheckedConst {
             CheckedOp::Bool(value) => Some(Self::Bool(*value)),
             CheckedOp::Str(value) => Some(Self::String(value.clone())),
             CheckedOp::None => Some(Self::None),
-            CheckedOp::Member { object, field }
-                if tables.expression(*object).is_some_and(
-                    |object| matches!(&object.op, CheckedOp::Identifier(name) if name == "DType"),
-                ) =>
-            {
-                mojito_ast::ast::Dtype::from_name(field).map(Self::Dtype)
-            }
             CheckedOp::Prefix(PrefixOp::Neg, inner) => match Self::from_node(tables, *inner)? {
                 Self::Int(value) => Some(Self::Int(value.neg())),
                 Self::Float(value) => Some(Self::Float(value.neg())),

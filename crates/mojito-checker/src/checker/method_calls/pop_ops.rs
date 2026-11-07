@@ -286,7 +286,7 @@ impl Checker {
             .iter()
             .map(|excluded| {
                 context
-                    .constant(CtValue::Dtype(*excluded))
+                    .constant(mojito_types::types::dtype_value(*excluded))
                     .and_then(|excluded| context.infix(InfixOp::Ne, &dtype, &excluded))
             })
             .reduce(|left, right| context.infix(InfixOp::And, &left?, &right?))

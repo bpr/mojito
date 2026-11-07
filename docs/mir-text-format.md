@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.176
+mojito-mir 1.177
 ```
 
-The writer emits 1.176. The reader accepts 1.0 through 1.176; *Schema 1.0*
+The writer emits 1.177. The reader accepts 1.0 through 1.177; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,14 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.177 removes the `DType` type tag and `checked_dtype` (R1936):
+`DType` is the bundled library struct `std.builtin.dtype.DType`, an
+ordinary nominal record over one `kgen_dtype` field. A `DType` value is
+the `ct_struct` of that field, `ct_dtype(name)` and the `dtype(name)`
+constant are only the `#kgen.dtype.constant` attribute, typed
+`kgen_dtype`, and a run-time `DType` default is a `checked_evaluate`. The
+package format moves to `mojito-package 201`.
+
 Schema 1.176 adds the parameter-expression operators `simd_cmp_eq`,
 `simd_cmp_ne`, `simd_cmp_lt`, `simd_cmp_le`, `simd_reduce_and`, and
 `simd_reduce_or` (R1574): `pop.cmp` over two `!kgen.simd` storages, a
@@ -1679,7 +1687,7 @@ rational; reprinting reduces it.
 
 `CheckedConst` uses `checked_int`, `checked_float`, `checked_bool`,
 `checked_string`, or `checked_none` with the same fidelity rules, plus
-`checked_dtype(name)`, `checked_construct { target, arg }` for an
+`checked_construct { target, arg }` for an
 implicit-conversion default (schema 1.173 adds an optional
 `parameter: <type>`, the constructor parameter a literal `arg`
 materializes at), and `checked_evaluate("function")` for a
@@ -1831,7 +1839,7 @@ The complete `Ty` tag set is:
 
 ```text
 Int UInt Bool Float64 None Never Infer
-DType Self Error
+Self Error
 func { environment, params, names, return_type, required, variadic,
        kw_variadic, positional_only, keyword_only, raises, error_type,
        conventions, ref_params, ref_return, transfers }
@@ -1913,8 +1921,8 @@ one a function signature or call still carries.
 `pop.dtype.to_ui8` gives and `pop.cast_to_builtin` gives from a `UInt8`'s
 `!kgen.scalar<ui8>` storage; both backends hold it as that `UInt8`.
 `kgen_dtype` (schema 1.164) is upstream's `!kgen.dtype`, the type of a
-`#kgen.dtype.constant<…>` attribute, which both backends hold as the
-`DType` builtin's one-byte code.
+`#kgen.dtype.constant<…>` attribute, which both backends hold as its
+one-byte code; a `DType` is held as this one field.
 
 `i1` (schema 1.133) is upstream's MLIR builtin `i1`, what
 `Bool.__mlir_i1__` returns and `pop.cast_to_builtin` gives from a `Bool`'s

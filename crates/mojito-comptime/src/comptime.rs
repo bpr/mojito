@@ -480,7 +480,6 @@ fn source_type_from_ty_with_origins(
             Type::Named("Float64".to_string(), Vec::new())
         }
         TyKind::None => Type::None,
-        TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),
         TyKind::KgenDeferred => mlir_source_type("!kgen.deferred"),
         TyKind::KgenTarget => mlir_source_type("!kgen.target"),
@@ -578,7 +577,9 @@ fn source_type_from_ty_with_origins(
         kind if let Some((dtype, width)) = kind.as_simd() => Type::Named(
             "SIMD".to_string(),
             vec![
-                ParamArg::Value(CtValue::Dtype(dtype.known()?).materialize((0, 0))?),
+                ParamArg::Value(
+                    mojito_types::types::dtype_value(dtype.known()?).materialize((0, 0))?,
+                ),
                 ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),

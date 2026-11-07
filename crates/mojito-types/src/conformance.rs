@@ -282,11 +282,11 @@ pub fn modelled_conformance(
         "Intable" => ty.is_numeric_literal() || matches!(ty.kind(), TyKind::Pointer { .. }),
         "Floatable" => ty.is_float_literal(),
         "Indexer" => ty.is_int_literal(),
-        "Equatable" => ty.is_numeric_literal() || matches!(ty.kind(), TyKind::Dtype),
+        "Equatable" => ty.is_numeric_literal(),
         "Comparable" => ty.is_numeric_literal(),
         "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
         "Absable" | "Roundable" => false,
-        "Hashable" => builtin_hashable_ty(ty),
+        "Hashable" => false,
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 return every(items, trait_name, element);
@@ -346,7 +346,7 @@ pub fn modelled_declares(
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases are out of the way.
 pub fn is_scalar(ty: &Ty) -> bool {
-    ty.is_bool() || ty.is_string_literal() || matches!(ty.kind(), TyKind::None | TyKind::Dtype)
+    ty.is_bool() || ty.is_string_literal() || matches!(ty.kind(), TyKind::None)
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
@@ -356,10 +356,6 @@ pub fn is_numeric(ty: &Ty) -> bool {
 
 pub fn is_numeric_like(ty: &Ty) -> bool {
     is_numeric(&default_literal(ty))
-}
-
-pub fn builtin_hashable_ty(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Dtype)
 }
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
@@ -379,7 +375,7 @@ pub fn thin_callable(ty: &Ty) -> bool {
 /// Whether the compiler-modelled `ty` stands in for an upstream struct
 /// declaring `TrivialRegisterPassable`, or is a type upstream gives that
 /// conformance: a `SIMD` value, `Bool`, a numeric literal, `NoneType`,
-/// `DType`, a `Pointer`, or a thin function.
+/// a `Pointer`, or a thin function.
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
@@ -388,7 +384,6 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
         || matches!(
             ty.kind(),
             TyKind::None
-                | TyKind::Dtype
                 | TyKind::Pointer { .. }
                 | TyKind::Index
                 | TyKind::I1

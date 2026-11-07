@@ -28,12 +28,10 @@ pub const BUILTIN_CALLEES: &[&str] = &[
 /// The methods of compiler-private values a method call may name without
 /// a checker-selected symbol.
 ///
-/// They are the methods of strings, packs, SIMD vectors, `DType`,
-/// pointers, and hashable scalars: the arms of
-/// `backend::vm::invoke::method_call` that run before struct dispatch, and
-/// the `DType` predicates.
+/// They are the methods of strings, packs, SIMD vectors, `DType`, and
+/// pointers: the arms of `backend::vm::invoke::method_call` that run
+/// before struct dispatch, and the `DType` predicates.
 pub const INTRINSIC_METHODS: &[&str] = &[
-    "__hash__",
     "__floor__",
     "__ceil__",
     "__trunc__",

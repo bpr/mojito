@@ -339,7 +339,7 @@ fn a_literal_compared_at_an_open_simd_type_folds_once_the_dtype_closes() {
         bindings.bind_name(
             "dt",
             context
-                .constant(CtValue::Dtype(Dtype::Int32))
+                .constant(crate::types::dtype_value(Dtype::Int32))
                 .expect("a dtype is a constant"),
         );
         bindings.bind_name("x", at(value));
@@ -1104,7 +1104,7 @@ fn dtype_float_query_answers_only_a_required_value() {
         bindings.bind_name(
             "dt",
             context
-                .constant(CtValue::Dtype(dtype))
+                .constant(crate::types::dtype_value(dtype))
                 .expect("a dtype is a constant"),
         );
         bindings
@@ -1157,7 +1157,7 @@ fn dtype_predicate_folds_on_replacement() {
             bindings.bind_name(
                 "dt",
                 context
-                    .constant(CtValue::Dtype(dtype))
+                    .constant(crate::types::dtype_value(dtype))
                     .expect("a dtype is a constant"),
             );
             assert_eq!(

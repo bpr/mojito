@@ -2195,7 +2195,15 @@ impl Checker {
         let ExprKind::Identifier(name) = &object.kind else {
             return None;
         };
-        if name != "DType" || self.lookup(name).is_some() || self.structs.contains_key(name) {
+        // The bundled struct's members answer once registered; before then
+        // (a builtin body folded while the struct's own members check), and
+        // for a name it does not declare, the member is read by name.
+        if name != mojito_types::types::DTYPE_TYPE_NAME
+            || self.lookup(name).is_some()
+            || self
+                .type_member_value(object, field)
+                .is_some_and(|value| value.is_ok())
+        {
             return None;
         }
         Some(
@@ -2301,7 +2309,12 @@ impl Checker {
         };
         if !mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(&field.as_str())
             || !matches!(&object.kind, ExprKind::Identifier(name)
-                if name == "DType" && self.lookup(name).is_none() && !self.structs.contains_key(name))
+                if name == mojito_types::types::DTYPE_TYPE_NAME
+                    && self.lookup(name).is_none()
+                    && self
+                        .structs
+                        .get(name)
+                        .is_none_or(|info| !info.methods.contains_key(field.as_str())))
         {
             return None;
         }
@@ -2326,7 +2339,7 @@ impl Checker {
             let dtype = match dtype {
                 SimdDtype::Known(dtype) => self
                     .param_context
-                    .constant(mojito_types::ct::CtValue::Dtype(dtype))
+                    .constant(mojito_types::types::dtype_value(dtype))
                     .map_err(|error| TypeError::Unsupported(error.to_string()))?,
                 SimdDtype::Expr(dtype) => dtype,
             };

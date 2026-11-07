@@ -5,9 +5,7 @@ use super::*;
 use mojito_types::types::TyKind;
 pub use mojito_types::types::{builtin_copy_is_value_read, callable_environment_coerces, coerces};
 
-pub(super) use mojito_types::conformance::{
-    builtin_hashable_ty, is_numeric, is_scalar, simd_valued_ty,
-};
+pub(super) use mojito_types::conformance::{is_numeric, is_scalar, simd_valued_ty};
 pub(super) use mojito_types::types::default_literal;
 
 /// The failed `comptime assert` of upstream's `@implicit
@@ -43,11 +41,7 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
         kind if kind.is_simd() => true,
-        TyKind::None
-        | TyKind::Struct(_, _)
-        | TyKind::Dtype
-        | TyKind::Error
-        | TyKind::ComptimeList(_) => true,
+        TyKind::None | TyKind::Struct(_, _) | TyKind::Error | TyKind::ComptimeList(_) => true,
         // A tuple prints if every element prints.
         TyKind::Tuple(elems) => elems.iter().all(is_printable),
         _ => false,
@@ -97,7 +91,8 @@ impl Checker {
         is_numeric(ty)
             || ty.is_bool()
             || ty.is_string_literal()
-            || matches!(ty.kind(), TyKind::None | TyKind::Dtype)
+            || matches!(ty.kind(), TyKind::None)
+            || mojito_types::types::is_dtype(ty)
             || self.equatable_bound(ty)
     }
 
@@ -567,7 +562,7 @@ impl Checker {
             source: span.source.clone(),
             syntax_id: syntax,
         };
-        let dtype_argument = CtValue::Dtype(dtype)
+        let dtype_argument = mojito_types::types::dtype_value(dtype)
             .materialize(span.span)
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(

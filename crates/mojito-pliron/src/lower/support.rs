@@ -202,7 +202,7 @@ pub fn scalar_type(
     match ty.kind() {
         kind if kind.is_bool() => Ok(ScalarTy::Bool),
         TyKind::I1 => Ok(ScalarTy::Bool),
-        TyKind::Dtype | TyKind::KgenDtype => Ok(ScalarTy::Dtype),
+        TyKind::KgenDtype => Ok(ScalarTy::Dtype),
         TyKind::Ui8 => Ok(ScalarTy::of_dtype(mojito_ast::ast::Dtype::UInt8)),
         TyKind::Index => Ok(ScalarTy::Int),
         kind if kind.is_simd() => {

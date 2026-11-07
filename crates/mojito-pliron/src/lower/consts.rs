@@ -200,7 +200,11 @@ impl FnLowering<'_> {
                     value.to_f64().map(|v| v.to_bits().to_le_bytes().to_vec())
                 }
                 (kind, CtValue::Bool(value)) if kind.is_bool() => Some(vec![u8::from(*value)]),
-                (TyKind::Dtype | TyKind::KgenDtype, CtValue::Dtype(dtype)) => {
+                (TyKind::KgenDtype, CtValue::Dtype(dtype)) => Some(vec![dtype.code()]),
+                (_, value)
+                    if mojito_types::types::is_dtype(element)
+                        && let Some(dtype) = mojito_types::types::dtype_of_value(value) =>
+                {
                     Some(vec![dtype.code()])
                 }
                 (ty, value) if let Some(dtype) = scalar_simd_dtype(ty) => {
@@ -219,7 +223,8 @@ impl FnLowering<'_> {
         }
         let align = match element.kind() {
             kind if kind.is_bool() => 1,
-            TyKind::Dtype | TyKind::KgenDtype => 1,
+            TyKind::KgenDtype => 1,
+            _ if mojito_types::types::is_dtype(element) => 1,
             ty if let Some(dtype) = scalar_simd_dtype(ty) => lane_bytes(dtype) as u32,
             _ => 8,
         };

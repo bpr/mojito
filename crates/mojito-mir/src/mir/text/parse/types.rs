@@ -39,7 +39,6 @@ impl Decoder {
                     return None;
                 }
                 "Infer" => Ty::infer(),
-                "DType" => Ty::dtype(),
                 "TypeType" => TyKind::TypeType.into(),
                 "KgenString" => TyKind::KgenString.into(),
                 "PopIntLiteral" => TyKind::PopIntLiteral.into(),

@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 176;
+pub const VERSION_MINOR: u16 = 177;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -292,7 +292,6 @@ pub const TYPE_SPELLINGS: &[&str] = &[
     "IntLiteral",
     "FloatLiteral",
     "Infer",
-    "DType",
     "func",
     "generic_func",
     "overload",
@@ -511,7 +510,6 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::None => "None",
         TyKind::Never => "Never",
         TyKind::Infer => "Infer",
-        TyKind::Dtype => "DType",
         TyKind::Func(_) => "func",
         TyKind::GenericFunc(_) => "generic_func",
         TyKind::Overload(_) => "overload",

@@ -833,7 +833,7 @@ fn solve_simd_slot_values(
         && let Some(actual_dtype) = actual_dtype
     {
         let value = match actual_dtype {
-            SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+            SimdDtype::Known(dtype) => mojito_types::types::dtype_value(dtype),
             SimdDtype::Expr(expr) => expr.require_constant().unwrap_or(CtValue::Expr(expr)),
         };
         out.entry(reference.name.to_string()).or_insert(value);
@@ -1662,7 +1662,7 @@ impl Checker {
     ) {
         if !arguments
             .iter()
-            .any(|argument| matches!(argument, TyArg::Val(CtValue::Dtype(_))))
+            .any(|argument| matches!(argument, TyArg::Val(value) if mojito_types::types::dtype_of_value(value).is_some()))
         {
             return;
         }
@@ -1675,7 +1675,10 @@ impl Checker {
                 },
                 mojito_ast::ast::ParamArg::Type(_) => continue,
             };
-            if matches!(self.eval_associated_ct(expression), Ok(CtValue::Dtype(_))) {
+            if self
+                .eval_associated_ct(expression)
+                .is_ok_and(|value| mojito_types::types::dtype_of_value(&value).is_some())
+            {
                 // Its value was solved already; inference only records how
                 // it lowers.
                 let _ = self.infer(expression);

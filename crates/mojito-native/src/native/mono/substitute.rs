@@ -556,7 +556,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         kind if let Some((dtype, width)) = kind.as_simd() => Ty::simd(
             match &dtype {
                 SimdDtype::Expr(expr) => match eval_ct(expr, bindings) {
-                    Ok(CtValue::Dtype(known)) => SimdDtype::Known(known),
+                    Ok(value) if let Some(known) = mojito_types::types::dtype_of_value(&value) => {
+                        SimdDtype::Known(known)
+                    }
                     _ => dtype,
                 },
                 SimdDtype::Known(_) => dtype,

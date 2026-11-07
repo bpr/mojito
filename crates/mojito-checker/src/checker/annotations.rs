@@ -96,7 +96,9 @@ impl Checker {
         }
         if let mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) = arg {
             match self.self_param_value(param) {
-                Some(CtValue::Dtype(dtype)) => return Ok(SimdDtype::Known(dtype)),
+                Some(value) if let Some(dtype) = mojito_types::types::dtype_of_value(&value) => {
+                    return Ok(SimdDtype::Known(dtype));
+                }
                 Some(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::dtype()) => {
                     return Ok(SimdDtype::Expr(expr));
                 }
@@ -123,7 +125,9 @@ impl Checker {
             let _lifting = self.lifting_position();
             let evaluated = self.eval_associated_ct(expr);
             match evaluated {
-                Ok(CtValue::Dtype(dtype)) => return Ok(SimdDtype::Known(dtype)),
+                Ok(value) if let Some(dtype) = mojito_types::types::dtype_of_value(&value) => {
+                    return Ok(SimdDtype::Known(dtype));
+                }
                 Ok(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::dtype()) => {
                     return Ok(SimdDtype::Expr(expr));
                 }
@@ -136,6 +140,15 @@ impl Checker {
                     }
                 }
             }
+        }
+        // A run-time variable is no parameter value, as at the pin.
+        if let mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) = arg
+            && self.lookup(name).is_some()
+        {
+            return Err(TypeError::DynamicParameterValue);
         }
         Err(TypeError::BadDtype(match arg {
             mojito_ast::ast::ParamArg::Value(Expr {
@@ -163,9 +176,12 @@ impl Checker {
             return Some(dtype.clone());
         }
         if self.lookup_tparam(name).is_none()
-            && let Some(CtValue::Dtype(dtype)) = self.module_values.get(name)
+            && let Some(dtype) = self
+                .module_values
+                .get(name)
+                .and_then(mojito_types::types::dtype_of_value)
         {
-            return Some(SimdDtype::Known(*dtype));
+            return Some(SimdDtype::Known(dtype));
         }
         self.value_parameter_in_scope(name)
             .filter(|expr| expr.meta().as_value() == Some(&Ty::dtype()))
@@ -219,8 +235,6 @@ pub(super) fn simd_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, TypeErro
 pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::int()),
-        // A `DType` value, and the type of a `[dtype: DType]` value parameter.
-        "DType" => Some(Ty::dtype()),
         "UInt" => Some(Ty::uint()),
         "Bool" => Some(Ty::bool()),
         "Float64" => Some(Ty::float64()),

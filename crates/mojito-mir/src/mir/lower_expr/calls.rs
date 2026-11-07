@@ -872,7 +872,7 @@ impl<'a> Flatten<'a> {
             Const::Bool(_) => Some(Ty::bool()),
             Const::Str(text) => Some(Ty::string_literal_of(text)),
             Const::None => Some(Ty::none()),
-            Const::Dtype(_) => Some(Ty::dtype()),
+            Const::Dtype(_) => Some(Ty::kgen_dtype()),
             Const::Function(_) | Const::FunctionInstance { .. } => function_ty,
             Const::Param(value) => value.meta().as_value().cloned(),
             Const::Value(value) => mojito_types::param_expr::MetaTy::of_value(value)

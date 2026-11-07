@@ -317,7 +317,6 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
         || matches!(
             ty.kind(),
             TyKind::None
-                | TyKind::Dtype
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8

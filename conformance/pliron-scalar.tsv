@@ -368,6 +368,7 @@ assets/ok/dtype_keyed_method_value_struct.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/dtype_keyed_overload_beside_keyed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_overload_beside_plain.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_overload_family.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_library_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_runtime_surface.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_struct_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -655,6 +656,7 @@ assets/ok/mlir_deferred_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_kgen_dtype_layer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_kgen_scalar_comptime_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_generic_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_gep.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_ops.mojo	-	ineligible	no-scalar-entry-shape

@@ -688,7 +688,6 @@ impl Decoder {
                 "checked_float" => self.float_literal(inner).map(CheckedConst::Float),
                 "checked_bool" => self.boolean(inner).map(CheckedConst::Bool),
                 "checked_string" => self.string(inner).map(CheckedConst::String),
-                "checked_dtype" => self.dtype(inner).map(CheckedConst::Dtype),
                 "checked_evaluate" => self.string(inner).map(|function| CheckedConst::Evaluate {
                     function,
                     arguments: Vec::new(),

@@ -518,9 +518,9 @@ pub enum CtValue {
         spelling: Option<Ty>,
         elements: Vec<Self>,
     },
-    /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
-    /// value parameter. Materializes as the member spelling, which type
-    /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
+    /// A `#kgen.dtype.constant<…> : !kgen.dtype` attribute, the one field
+    /// of a `DType` value ([`crate::types::dtype_value`]). Materializes as
+    /// its `__mlir_attr` spelling.
     Dtype(mojito_ast::ast::Dtype),
     /// A compile-time SIMD vector — the binding of a `[key: SIMD[DType.d, w]]`
     /// value parameter (`AHasher[key: U256]`). Lanes are already wrapped to
@@ -1196,7 +1196,7 @@ impl CtValue {
             Self::Bool(_) => "Bool".to_string(),
             Self::None => "NoneType".to_string(),
             Self::Str(_) => "String".to_string(),
-            Self::Dtype(_) => "DType".to_string(),
+            Self::Dtype(_) => crate::types::KGEN_DTYPE_TYPE_SPELLING.to_string(),
             Self::Simd { dtype, lanes } => {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.len())
             }
@@ -1309,7 +1309,7 @@ impl CtValue {
             {
                 Some(value)
             }
-            (value @ Self::Dtype(_), TyKind::Dtype | TyKind::KgenDtype) => Some(value),
+            (value @ Self::Dtype(_), TyKind::KgenDtype) => Some(value),
             // An `ui8` holds its `UInt8` lane, as the VM and LLVM do.
             (
                 value @ Self::Simd {
@@ -1577,15 +1577,28 @@ impl CtValue {
                     }
                 }
             },
-            Self::Dtype(dtype) => ExprKind::Member {
+            // The typed attribute `` __mlir_attr.`#kgen.dtype.constant<si64> : !kgen.dtype` ``.
+            Self::Dtype(_) => ExprKind::Member {
                 object: Box::new(Expr {
-                    kind: ExprKind::Identifier("DType".to_string()),
+                    kind: ExprKind::Identifier("__mlir_attr".to_string()),
                     span,
                     source: None,
                     syntax_id: mojito_common::token::SyntaxId::fresh(),
                 }),
-                field: dtype.name().to_string(),
+                field: self.to_string(),
             },
+            // A `DType` is the struct's member that names it, `DType.int64`.
+            Self::Struct { .. } if let Some(dtype) = crate::types::dtype_of_value(self) => {
+                ExprKind::Member {
+                    object: Box::new(Expr {
+                        kind: ExprKind::Identifier(crate::types::DTYPE_TYPE_NAME.to_string()),
+                        span,
+                        source: None,
+                        syntax_id: mojito_common::token::SyntaxId::fresh(),
+                    }),
+                    field: dtype.name().to_string(),
+                }
+            }
             // The literal's parameter read, `"text".value`, which re-folds to
             // this value.
             Self::KgenString(text) => ExprKind::Member {
@@ -1646,7 +1659,7 @@ impl CtValue {
             Self::Simd { dtype, lanes } => ExprKind::Call {
                 name: "SIMD".to_string(),
                 param_args: vec![
-                    ParamArg::Value(Self::Dtype(*dtype).materialize(span)?),
+                    ParamArg::Value(crate::types::dtype_value(*dtype).materialize(span)?),
                     ParamArg::Value(Self::Int(lanes.len() as i64).materialize(span)?),
                 ],
                 args: lanes
@@ -1765,11 +1778,10 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         ),
         kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
         TyKind::None => Type::None,
-        TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         kind if let Some((dtype, width)) = kind.known_simd() => Type::Named(
             "SIMD".to_string(),
             vec![
-                ParamArg::Value(CtValue::Dtype(dtype).materialize(span)?),
+                ParamArg::Value(crate::types::dtype_value(dtype).materialize(span)?),
                 ParamArg::Value(CtValue::Int(width).materialize(span)?),
             ],
         ),
@@ -1866,7 +1878,11 @@ impl fmt::Display for CtValue {
             Self::Bool(b) => write!(f, "{b}"),
             Self::None => write!(f, "None"),
             Self::Str(s) => write!(f, "{s:?}"),
-            Self::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
+            Self::Dtype(dtype) => write!(
+                f,
+                "#kgen.dtype.constant<{}> : !kgen.dtype",
+                dtype.kgen_mnemonic()
+            ),
             // Upstream's rendering of a SIMD parameter value.
             Self::Simd { dtype, lanes } => {
                 write!(f, "[")?;
@@ -1883,6 +1899,10 @@ impl fmt::Display for CtValue {
                     }
                 }
                 write!(f, "] : SIMD[DType.{}, {}]", dtype.name(), lanes.len())
+            }
+            // A `DType` displays as the member that names it.
+            Self::Struct { .. } if let Some(dtype) = crate::types::dtype_of_value(self) => {
+                write!(f, "DType.{}", dtype.name())
             }
             Self::Struct { name, fields } => {
                 write!(f, "{name}(")?;

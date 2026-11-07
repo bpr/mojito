@@ -4678,14 +4678,13 @@ impl<'a> Flatten<'a> {
         if let mojito_types::param_expr::ParamKind::DeclRef(_) = expr.kind() {
             return self.enclosing_value_binder_read(expr, site);
         }
-        if let mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Dtype(
-            dtype,
-        )) = expr.kind()
+        if let mojito_types::param_expr::ParamKind::Constant(value) = expr.kind()
+            && let Some(dtype) = mojito_types::types::dtype_of_value(value)
         {
             let dest = self.fresh_typed(site.clone(), None, Ty::dtype());
             self.emit(MirInstr::Const {
                 dest,
-                k: Const::Dtype(*dtype),
+                k: Const::Value(mojito_types::types::dtype_value(dtype)),
             });
             return Some(dest);
         }
@@ -5172,7 +5171,7 @@ fn close_register_types(
                             Const::Bool(_) => Some(Ty::bool()),
                             Const::Str(text) => Some(Ty::string_literal_of(text)),
                             Const::None => Some(Ty::none()),
-                            Const::Dtype(_) => Some(Ty::dtype()),
+                            Const::Dtype(_) => Some(Ty::kgen_dtype()),
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.
                             Const::Function(_) | Const::FunctionInstance { .. } => None,

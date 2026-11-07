@@ -122,7 +122,9 @@ impl<'a> Flatten<'a> {
             .iter()
             .find_map(|adjustment| match adjustment {
                 SemanticAdjustment::DtypeConstant { dtype } => Some(match dtype.clone() {
-                    mojito_types::types::SimdDtype::Known(dtype) => Ok(Const::Dtype(dtype)),
+                    mojito_types::types::SimdDtype::Known(dtype) => {
+                        Ok(Const::Value(mojito_types::types::dtype_value(dtype)))
+                    }
                     mojito_types::types::SimdDtype::Expr(expr) => Err(expr),
                 }),
                 _ => None,

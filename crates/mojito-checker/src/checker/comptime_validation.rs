@@ -1650,7 +1650,6 @@ impl Checker {
                         | TyKind::Index
                         | TyKind::I1
                         | TyKind::Ui8
-                        | TyKind::Dtype
                         | TyKind::KgenDtype
                         | TyKind::KgenDeferred
                         | TyKind::KgenTarget
@@ -2968,7 +2967,6 @@ impl Checker {
                         | TyKind::I1
                         | TyKind::Ui8
                         | TyKind::None
-                        | TyKind::Dtype
                         | TyKind::KgenDtype
                         | TyKind::Struct(..)
                         | TyKind::KgenDeferred
@@ -6220,7 +6218,6 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8
-                | TyKind::Dtype
                 | TyKind::KgenDtype
                 | TyKind::KgenSimd { .. }
                 | TyKind::Struct(..)
@@ -6266,6 +6263,7 @@ impl ApplicableShape<'_> {
             SourceType::SelfType => Some(SlotType::Owner),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
+            ty if is_mlir_source(ty, "!kgen.dtype") => Some(SlotType::Scalar(Ty::kgen_dtype())),
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
                 Some(SlotType::Declared(ty.clone(), None))
             }

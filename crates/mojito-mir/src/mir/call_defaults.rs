@@ -2185,7 +2185,6 @@ fn literal_type(literal: &CheckedConst) -> Ty {
         CheckedConst::Bool(_) => Ty::bool(),
         CheckedConst::String(text) => Ty::string_literal_of(text),
         CheckedConst::None => Ty::none(),
-        CheckedConst::Dtype(_) => Ty::dtype(),
         CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => Ty::error(),
     }
 }
@@ -2197,7 +2196,6 @@ fn literal_constant(literal: &CheckedConst) -> Const {
         CheckedConst::Float(value) => Const::FloatLiteral(value.clone()),
         CheckedConst::Bool(value) => Const::Bool(*value),
         CheckedConst::String(value) => Const::Str(value.clone()),
-        CheckedConst::Dtype(value) => Const::Dtype(*value),
         CheckedConst::None | CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => {
             Const::None
         }

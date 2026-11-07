@@ -1062,23 +1062,6 @@ impl Prog {
             .map(String::as_str)
     }
 
-    /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
-    /// `leaf` calls: the instance in the hasher's member table at the leaf's
-    /// vector type.
-    fn hash_leaf_update(&self, hasher: &str, leaf: &mojito_types::types::Ty) -> Option<usize> {
-        let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(leaf));
-        self.struct_member_instances(hasher, "_update_with_simd")
-            .find(|&(index, _)| {
-                self.mir.functions[index]
-                    .1
-                    .param_types
-                    .get(1)
-                    .and_then(|value| mojito_types::types::simd_shape(peel_references(value)))
-                    == shape
-            })
-            .map(|(index, _)| index)
-    }
-
     /// The function index of the member `method` the struct `name` runs for
     /// a dispatch with `argc` arguments besides the receiver, from its
     /// declaration's member table: the one instance under the key callable
@@ -1119,21 +1102,6 @@ impl Prog {
             (Some((_, symbol)), None) => self.index_of(symbol),
             _ => None,
         }
-    }
-
-    /// Each instance of the member `method` in the struct `name`'s member
-    /// table, its overloads included, with its function index.
-    fn struct_member_instances<'p>(
-        &'p self,
-        name: &str,
-        method: &'p str,
-    ) -> impl Iterator<Item = (usize, &'p str)> + 'p {
-        self.structs
-            .get(name)
-            .into_iter()
-            .flat_map(|declaration| &declaration.members)
-            .filter(move |(key, _)| key.split('$').next() == Some(method))
-            .filter_map(|(_, symbol)| Some((self.index_of(symbol)?, symbol.as_str())))
     }
 
     /// Whether any struct owns the lifecycle member `member` (e.g.
@@ -1378,6 +1346,10 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::PopFloatLiteral(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)) => Value::Attribute(value),
+        // A `DType` is held as its one `!kgen.dtype` field.
+        CtValue::Struct { .. } if let Some(dtype) = mojito_types::types::dtype_of_value(&value) => {
+            Value::Dtype(dtype)
+        }
         CtValue::Struct { name, fields } => Value::Struct {
             name,
             fields: fields

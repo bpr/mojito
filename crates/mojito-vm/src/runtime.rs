@@ -13,7 +13,7 @@ use mojito_types::ct::{
     CtLane, CtValue, ScalarConversion, bool_lane_binop, convert_lane, float_lane_binop,
     int_lane_binop, lane_compare, wrap_lane,
 };
-use mojito_types::types::{Ty, canonical_simd_ty};
+use mojito_types::types::Ty;
 
 /// A runtime value produced by evaluating an expression.
 #[derive(Debug, Clone)]
@@ -473,30 +473,6 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             type_name(a),
             type_name(b)
         ))),
-    }
-}
-
-/// The checked type a runtime `DType` Hashable leaf hashes as.
-///
-/// The hasher's `_update_with_simd` instance is selected by it. A `Bool` or a
-/// `SIMD` hashes through its declared `__hash__`, so only this leaf remains.
-pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
-    Some(match value {
-        // Upstream's `DType.__hash__` hashes its code as a `UInt8`.
-        Value::Dtype(_) => canonical_simd_ty(Dtype::UInt8, 1),
-        _ => return None,
-    })
-}
-
-/// The value a Hashable leaf contributes to its hasher, typed as `hash_leaf_ty`
-/// names it: a `DType` contributes its code.
-pub fn hash_leaf_value(value: Value) -> Value {
-    match value {
-        Value::Dtype(dtype) => Value::Simd {
-            dtype: Dtype::UInt8,
-            lanes: SimdLanes::Int(vec![i128::from(dtype.code())]),
-        },
-        other => other,
     }
 }
 
@@ -2383,12 +2359,5 @@ mod tests {
             simd_bitcast(Dtype::UInt32, 1, &bytes).unwrap(),
             ints(Dtype::UInt32, &[4631])
         );
-        // A `Bool` hashes through its declared `__hash__`, so it is no leaf.
-        assert_eq!(hash_leaf_ty(&Value::Bool(true)), None);
-        assert_eq!(
-            hash_leaf_value(Value::Dtype(Dtype::Int8)),
-            ints(Dtype::UInt8, &[i128::from(Dtype::Int8.code())])
-        );
-        assert_eq!(hash_leaf_ty(&Value::Int(1)), None);
     }
 }

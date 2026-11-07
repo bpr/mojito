@@ -368,6 +368,7 @@ assets/ok/dtype_keyed_method_value_struct.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_beside_keyed.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_beside_plain.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_family.mojo	main	exe-differential	sanitized
+assets/ok/dtype_library_struct.mojo	main	exe-differential	sanitized
 assets/ok/dtype_runtime_surface.mojo	main	exe-differential	sanitized
 assets/ok/dtype_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
@@ -655,6 +656,7 @@ assets/ok/mlir_deferred_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
 assets/ok/mlir_kgen_dtype_layer.mojo	main	exe-differential	sanitized
+assets/ok/mlir_kgen_scalar_comptime_alias.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_generic_element.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_gep.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_ops.mojo	main	exe-differential	sanitized

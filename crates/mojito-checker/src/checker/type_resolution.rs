@@ -107,7 +107,7 @@ pub(super) fn dtype_attribute(
     bracket_attribute(
         argument,
         &TyArg::Val(match dtype {
-            SimdDtype::Known(dtype) => CtValue::Dtype(*dtype),
+            SimdDtype::Known(dtype) => mojito_types::types::dtype_value(*dtype),
             SimdDtype::Expr(expr) => CtValue::Expr(expr.clone()),
         }),
     )
@@ -200,20 +200,6 @@ impl Checker {
     /// validates struct names and type-argument counts.
     pub(super) fn ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         self.resolve_ty_from_anno(ty)
-    }
-
-    /// The type a value-parameter argument `expr` states before its value
-    /// is read: a member's declared type ([`Self::member_value_type`]), or,
-    /// bound to a `DType` or `!kgen.dtype` parameter `ty`, its compiled
-    /// expression's type. A `#kgen.dtype.constant` and a `DType` member
-    /// share their value (`CtValue::Dtype`) while `DType` is a compiler type
-    /// (R1936), so the value alone does not tell them apart.
-    fn argument_value_type(&self, expr: &Expr, ty: &Ty) -> Option<Ty> {
-        self.member_value_type(expr).or_else(|| {
-            matches!(ty.kind(), TyKind::KgenDtype | TyKind::Dtype)
-                .then(|| self.compile_dependent_ct_expr(expr).ok()?.meta().value_ty())
-                .flatten()
-        })
     }
 
     /// The argument of a generator-typed parameter (`apply[Twice]()`,
@@ -3100,7 +3086,7 @@ impl Checker {
                         )));
                     }
                     let actual = self
-                        .argument_value_type(expr, ty)
+                        .member_value_type(expr)
                         .or_else(|| self.ct_value_ty(&value, ty))
                         .ok_or_else(|| TypeError::TypeMismatch {
                             expected: ty.to_string(),
@@ -4832,7 +4818,6 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::None
         | TyKind::Never
-        | TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType

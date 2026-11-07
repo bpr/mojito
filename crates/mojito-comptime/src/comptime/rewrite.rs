@@ -155,9 +155,9 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     // no symbolic slot), so a symbolic one is left as it is.
                     kind if let Some((dtype, width)) = kind.as_simd() => {
                         if let (Some(mut dtype), Some(mut width)) = (
-                            dtype
-                                .known()
-                                .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span)),
+                            dtype.known().and_then(|dtype| {
+                                mojito_types::types::dtype_value(dtype).materialize(e.span)
+                            }),
                             width
                                 .known()
                                 .and_then(|width| CtValue::Int(width).materialize(e.span)),
@@ -228,10 +228,9 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         return;
                     }
                     kind if let Some((dtype, width)) = kind.as_simd() => {
-                        let Some(dtype) = dtype
-                            .known()
-                            .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span))
-                        else {
+                        let Some(dtype) = dtype.known().and_then(|dtype| {
+                            mojito_types::types::dtype_value(dtype).materialize(e.span)
+                        }) else {
                             return;
                         };
                         let Some(width) = width

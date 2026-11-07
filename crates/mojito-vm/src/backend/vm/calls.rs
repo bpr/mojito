@@ -29,7 +29,6 @@ pub(super) fn checked_const_value(
             .and_then(crate::runtime::literal_value)
             .unwrap_or_else(|| Value::Str(value.clone())),
         CheckedConst::None => Value::None,
-        CheckedConst::Dtype(dtype) => Value::Dtype(*dtype),
         // A `Construct` or `Evaluate` default runs code in interpreter
         // context (`bind_for_call`), so it never reaches this pure
         // value-folder.

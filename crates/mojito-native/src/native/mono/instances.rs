@@ -48,13 +48,9 @@ impl Specializer<'_> {
         }
     }
 
-    /// Enqueue the instances a lowered builtin `__hash__(hasher)` leaf calls:
-    /// for a `DType` receiver, the hasher's `_update_with_simd`
-    /// instantiated at the type the leaf hashes as (`hash_leaf_ty`), its
-    /// dtype and width binders solved from that type as a call's argument
-    /// solves them; and for a Variant receiver, the `__hash__` of every
-    /// nominal alternative (the lowered tag switch dispatches whichever is
-    /// active).
+    /// Enqueue the instances a lowered builtin `__hash__(hasher)` over a
+    /// Variant receiver calls: the `__hash__` of every nominal alternative
+    /// (the lowered tag switch dispatches whichever is active).
     pub(super) fn enqueue_hash_leaf_instances(
         &mut self,
         owner: &str,
@@ -67,17 +63,6 @@ impl Specializer<'_> {
         };
         let hasher_ty = peel_refs(hasher_ty).clone();
         if !hasher_ty.kind().is_non_simd_struct() {
-            return Ok(());
-        }
-        if matches!(receiver.kind(), TyKind::Dtype) {
-            let leaf = mojito_types::types::hash_leaf_ty(receiver);
-            self.nominal_method_instance(
-                owner,
-                &hasher_ty,
-                "_update_with_simd",
-                1,
-                std::slice::from_ref(&leaf),
-            )?;
             return Ok(());
         }
         if let TyKind::Variant(alternatives) = receiver.kind() {

@@ -139,6 +139,13 @@ impl ParamContext {
         {
             return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
         }
+        // A `!kgen.simd` lane attribute (`` `#kgen.simd<1> : !kgen.scalar<ui8>` ``)
+        // stays the storage type's constant its alias declares.
+        if let (TyKind::KgenSimd { .. }, CtValue::Simd { dtype, lanes }) = (ty.kind(), &value)
+            && crate::types::kgen_simd_ty(*dtype, lanes.len() as i64) == *ty
+        {
+            return self.typed_constant(value, ty);
+        }
         let value = value
             .materialize_as(ty)
             .ok_or_else(|| ParamError::TypeMismatch {
@@ -1281,15 +1288,23 @@ impl ParamContext {
                 lanes: vec![crate::ct::CtLane::Int(i128::from(mask))],
             })
         };
+        let field = self.field(
+            dtype,
+            crate::ct::MLIR_VALUE_FIELD,
+            MetaTy::value(Ty::kgen_dtype()),
+        );
         let matches = |mask: u8| {
-            let own = self.op(ParamOp::DtypeToUi8, std::slice::from_ref(dtype))?;
+            let own = self.op(ParamOp::DtypeToUi8, &[field.clone()?])?;
             let masked = self.op(ParamOp::BitAnd, &[own, code(mask)?])?;
             self.infix(InfixOp::Ne, &masked, &code(0)?)
         };
         let is = |other: Dtype| {
             self.op(
                 ParamOp::Eq,
-                &[dtype.clone(), self.constant(CtValue::Dtype(other))?],
+                &[
+                    dtype.clone(),
+                    self.constant(crate::types::dtype_value(other))?,
+                ],
             )
         };
         let or = |left, right| self.op(ParamOp::BoolOr, &[left, right]);
@@ -2234,17 +2249,17 @@ impl ParamContext {
         Ok(self.make(result, ParamKind::Op { op, operands }))
     }
 
-    /// `pop.dtype.to_ui8` over a `DType`: its code once the dtype is
+    /// `pop.dtype.to_ui8` over a `!kgen.dtype`: its code once the dtype is
     /// constant, and otherwise the node, a `UInt8`.
     fn build_dtype_code(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
         if let Some(dtype) = operands[0].as_constant() {
             self.count_fold();
             return self.constant(fold_primitive(ParamOp::DtypeToUi8, &[dtype])?);
         }
-        if *operands[0].meta() != MetaTy::value(Ty::dtype()) {
+        if *operands[0].meta() != MetaTy::value(Ty::kgen_dtype()) {
             return Err(ParamError::TypeMismatch {
                 operation: ParamOp::DtypeToUi8.name().to_string(),
-                expected: "DType".to_string(),
+                expected: crate::types::KGEN_DTYPE_TYPE_SPELLING.to_string(),
                 found: operands[0].meta().to_string(),
             });
         }
@@ -3255,9 +3270,7 @@ pub fn builtin_application_value(
     let [argument] = args else {
         return None;
     };
-    let CtValue::Dtype(dtype) = argument.as_constant()? else {
-        return None;
-    };
+    let dtype = crate::types::dtype_of_value(argument.as_constant()?)?;
     Some(
         dtype
             .float_query(query)
@@ -4371,7 +4384,7 @@ impl MetaTy {
                     .collect(),
             ),
             CtValue::Set { elements, .. } => Self::Set(all(elements)),
-            CtValue::Dtype(_) => Self::value(Ty::dtype()),
+            CtValue::Dtype(_) => Self::value(Ty::kgen_dtype()),
             CtValue::Simd { dtype, lanes } => {
                 Self::value(crate::types::canonical_simd_ty(*dtype, lanes.len() as i64))
             }
@@ -5522,8 +5535,9 @@ fn is_pop_literal_operation(op: ParamOp, operands: &[ParamExpr]) -> bool {
 fn is_scalar_domain(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Index | TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype
-    ) || ty.kind().is_simd()
+        TyKind::Index | TyKind::I1 | TyKind::Ui8 | TyKind::KgenDtype
+    ) || crate::types::is_dtype(ty)
+        || ty.kind().is_simd()
         || ty.is_numeric_literal()
         || ty.is_string_literal()
         || ty.is_bool()

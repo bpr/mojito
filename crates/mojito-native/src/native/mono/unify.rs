@@ -466,8 +466,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             };
             unify_simd_slot(
                 dtype.is_expr().then(|| slot_expr(&dtype)).flatten(),
-                dtype.known().map(CtValue::Dtype),
-                actual_dtype.known().map(CtValue::Dtype),
+                dtype.known().map(mojito_types::types::dtype_value),
+                actual_dtype.known().map(mojito_types::types::dtype_value),
                 pattern,
                 actual,
                 bindings,

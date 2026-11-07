@@ -113,7 +113,7 @@ impl LayoutCx<'_> {
         match ty.kind() {
             TyKind::Index => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
-            TyKind::I1 | TyKind::Ui8 | TyKind::Dtype | TyKind::KgenDtype => Ok(Layout::new(1, 1)),
+            TyKind::I1 | TyKind::Ui8 | TyKind::KgenDtype => Ok(Layout::new(1, 1)),
             TyKind::None | TyKind::Generator(_) => Ok(Layout::ZERO),
             // Upstream's `IntLiteral[v]`, `FloatLiteral[v]`, and
             // `StringLiteral[v]` are structs with no fields: the number or

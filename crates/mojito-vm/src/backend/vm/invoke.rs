@@ -292,50 +292,13 @@ impl VmBackend {
                 .and_then(mojito_symbol::symbol::split_method_symbol)
                 .map(|(owner, _)| owner.to_string()),
         };
-        // Intrinsic dunders on a built-in numeric/hashable value; a struct with
+        // `Floorable`/`Ceilable`/`Truncable` on a whole number; a struct with
         // its own implementation still dispatches to its method below.
-        if declared_owner.is_none() {
-            match (method, args.len()) {
-                // Hashable `DType` leaf: contribute the value
-                // `hash_leaf_value` names to the caller-owned hasher through
-                // its `_update_with_simd` instance at `hash_leaf_ty`'s type.
-                // A `Bool` or a `SIMD` runs its declared `__hash__` instead.
-                ("__hash__", 1) => {
-                    let place = arg_places.first().and_then(Option::as_ref).ok_or_else(|| {
-                        RuntimeError::Unsupported(
-                            "vm: Hashable.__hash__ needs a mutable hasher place".into(),
-                        )
-                    })?;
-                    let hasher = args[0].clone();
-                    let Value::Struct { name, .. } = &hasher else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "Hashable.__hash__ expected a Hasher, got {}",
-                            crate::runtime::type_name(&hasher)
-                        )));
-                    };
-                    let leaf = crate::runtime::hash_leaf_ty(&recv).ok_or_else(|| {
-                        RuntimeError::TypeError(format!(
-                            "cannot hash {} as a scalar leaf",
-                            crate::runtime::type_name(&recv)
-                        ))
-                    })?;
-                    let fidx = prog.hash_leaf_update(name, &leaf).ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: Hasher `{name}` has no `_update_with_simd` for {leaf}"
-                        ))
-                    })?;
-                    let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv)];
-                    let (_, variables) = self.call_frame(prog, fidx, arguments)?;
-                    let updated = variables.into_iter().next().unwrap_or(Value::None);
-                    self.store_at_call_place(frame_id, place, updated, regs, vars)?;
-                    return Ok(Value::None);
-                }
-                // `Floorable`/`Ceilable`/`Truncable` on a whole number.
-                ("__floor__" | "__ceil__" | "__trunc__", 0) => {
-                    return crate::runtime::builtin_round_dir(method, &recv);
-                }
-                _ => {}
-            }
+        if declared_owner.is_none()
+            && matches!(method, "__floor__" | "__ceil__" | "__trunc__")
+            && args.is_empty()
+        {
+            return crate::runtime::builtin_round_dir(method, &recv);
         }
         match &recv {
             // A specialized pack's storage answers `Sized` where it stands:

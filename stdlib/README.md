@@ -128,9 +128,15 @@ point, as upstream's toolchain does.
   the declared struct, which holds nothing at run time, but is still
   constructed by rule (roadmap R1973). The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
-  `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
-  bundles `_uint_type_of_width`, `_integral_type_of`, and
-  `_unsigned_integral_type_of`.
+  `pop.bitcast`, re-exported by `std.memory`.
+- `std/builtin/dtype.mojo` — upstream's `struct DType` over
+  `!kgen.dtype`, its mask aliases, `_int_type_of_width`,
+  `_uint_type_of_width`, `_integral_type_of`, and
+  `_unsigned_integral_type_of`. The members R65 has not admitted, the four
+  float queries (builtin until R1937), `__mlir_type`, and `KeyElement`
+  (R237) are omitted, and the keyword `__init__` spells `!kgen.dtype`
+  where upstream writes `Self._mlir_type` (R2007); the file header lists
+  each departure. The prelude exports `DType`.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
   and `TrivialRegisterPassable` traits; the prelude exports all three.
   `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,

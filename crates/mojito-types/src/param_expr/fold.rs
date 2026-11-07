@@ -200,7 +200,10 @@ pub fn fold_invert(value: &CtValue) -> Result<CtValue, ParamError> {
 /// and is an error rather than an ordering.
 pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, ParamError> {
     use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
-    if let (CtValue::Dtype(left), CtValue::Dtype(right)) = (left, right) {
+    if let (Some(left), Some(right)) = (
+        crate::types::dtype_of_value(left),
+        crate::types::dtype_of_value(right),
+    ) {
         return match op {
             Eq => Ok(left == right),
             Ne => Ok(left != right),
@@ -462,7 +465,7 @@ pub fn fold_dtype_from_ui8(code: &CtValue) -> Result<CtValue, ParamError> {
         .ok_or_else(|| unsupported(&format!("DType code {lane} is not supported yet")))
 }
 
-/// `pop.dtype.to_ui8` over a concrete `DType`: its code, a `UInt8`.
+/// `pop.dtype.to_ui8` over a concrete `!kgen.dtype`: its code, a `UInt8`.
 pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
     match dtype {
         CtValue::Dtype(dtype) => Ok(CtValue::Simd {
@@ -470,7 +473,7 @@ pub fn fold_dtype_to_ui8(dtype: &CtValue) -> Result<CtValue, ParamError> {
             lanes: vec![CtLane::Int(i128::from(dtype.code()))],
         }),
         _ => Err(unsupported(
-            "'pop.dtype.to_ui8' expects a compile-time 'DType'",
+            "'pop.dtype.to_ui8' expects a compile-time '!kgen.dtype'",
         )),
     }
 }

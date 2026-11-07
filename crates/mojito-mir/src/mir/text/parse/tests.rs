@@ -1906,7 +1906,7 @@ fn declaration_metadata_reprints_byte_identically() {
         defaults: vec![
             Some(CheckedConst::Bool(true)),
             Some(CheckedConst::None),
-            Some(CheckedConst::Dtype(Dtype::Float64)),
+            None,
             Some(CheckedConst::Evaluate {
                 function: "$default$aaa_first$made".into(),
                 arguments: Vec::new(),
@@ -2150,7 +2150,8 @@ fn symbolic_simd_slots_round_trip() {
     assert_eq!(parsed.program.functions[0].1.reg_types[&0], symbolic);
     assert_eq!(write::program(&parsed.program), text);
     let folded = only_register_type(&artifact_with_register_type(
-        "simd { dtype: ct_expr(param_constant(ct_dtype(float64))), width: 1 }",
+        "simd { dtype: ct_expr(param_constant(ct_struct { name: DType, fields: \
+         [ct_field { name: _mlir_value, value: ct_dtype(float64) }] })), width: 1 }",
     ));
     assert_eq!(folded, Ty::float64());
 }

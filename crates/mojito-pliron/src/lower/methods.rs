@@ -59,26 +59,6 @@ impl FnLowering<'_> {
         kwarg_places: &[Option<MirPlace>],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
-        // A `DType` Hashable leaf: contribute it to the caller-owned hasher
-        // through the hasher's compiled `_update_with_simd` (the VM's
-        // non-struct `__hash__` intrinsic).
-        if resolved.is_none()
-            && method == "__hash__"
-            && args.len() == 1
-            && kwargs.is_empty()
-            && let Some(receiver) = self.func.reg_types.get(&recv.0).cloned()
-            && !receiver.is_non_simd_struct()
-            && !matches!(receiver.kind(), TyKind::Ref(..))
-        {
-            return self.lower_hash_leaf(
-                ctx,
-                dest,
-                recv,
-                &receiver,
-                args[0],
-                arg_places.first().and_then(Option::as_ref),
-            );
-        }
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
         if matches!(
@@ -86,13 +66,6 @@ impl FnLowering<'_> {
             Some(TyKind::Pointer { .. })
         ) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
-        }
-        if matches!(
-            self.func.reg_types.get(&recv.0).map(Ty::kind),
-            Some(TyKind::Dtype)
-        ) && args.is_empty()
-        {
-            return self.lower_dtype_predicate(ctx, dest, recv, method);
         }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):
         // the declared stub body must never execute, and the bridged bytes
@@ -277,83 +250,6 @@ impl FnLowering<'_> {
             let (address, _) = self.place_address(ctx, place, dest)?;
             self.mem_copy(ctx, address, recv_ptr, size, dest);
         }
-        Ok(())
-    }
-
-    /// `DType`'s `Bool` queries over the code byte, spelled as upstream's
-    /// mask tests: bit 64 marks a float, bit 128 a sized integer, bit 1 a
-    /// signed type, and `DType.int` and `DType.uint` are the unsized
-    /// integers.
-    fn lower_dtype_predicate(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        method: &str,
-    ) -> Result<(), PlironError> {
-        if !mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
-            return Err(self.unsupported_reg(format!("DType method `{method}`"), dest));
-        }
-        let code = self.reg_value(ctx, recv, ScalarTy::Dtype)?;
-        let has_bit = |this: &mut Self, ctx: &mut Context, mask: u8| {
-            let mask = this.sized_int_constant(ctx, Dtype::UInt8, u64::from(mask));
-            let and = AndOp::new(ctx, code, mask);
-            this.append(ctx, and.get_operation(), Some(dest));
-            let zero = this.sized_int_constant(ctx, Dtype::UInt8, 0);
-            let test = ICmpOp::new(ctx, ICmpPredicateAttr::NE, and.get_result(ctx), zero);
-            this.append(ctx, test.get_operation(), Some(dest));
-            test.get_result(ctx)
-        };
-        let float = has_bit(self, ctx, mojito_ast::ast::DTYPE_FLOAT_MASK);
-        let sized_integer = has_bit(self, ctx, mojito_ast::ast::DTYPE_INTEGER_MASK);
-        let signed = has_bit(self, ctx, mojito_ast::ast::DTYPE_SIGNED_MASK);
-        let index = self.dtype_constant(ctx, Dtype::Int);
-        let is_index = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, index);
-        self.append(ctx, is_index.get_operation(), Some(dest));
-        let unsigned_index = self.dtype_constant(ctx, Dtype::UInt);
-        let is_unsigned_index = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, unsigned_index);
-        self.append(ctx, is_unsigned_index.get_operation(), Some(dest));
-        let is_unsigned_index = is_unsigned_index.get_result(ctx);
-        let unsized_integer = OrOp::new(ctx, is_index.get_result(ctx), is_unsigned_index);
-        self.append(ctx, unsized_integer.get_operation(), Some(dest));
-        let integral = OrOp::new(ctx, unsized_integer.get_result(ctx), sized_integer);
-        self.append(ctx, integral.get_operation(), Some(dest));
-        let integral = integral.get_result(ctx);
-        let result = match method {
-            "is_floating_point" => float,
-            "is_integral" => integral,
-            "is_signed" => {
-                let signed_integral = AndOp::new(ctx, integral, signed);
-                self.append(ctx, signed_integral.get_operation(), Some(dest));
-                let or = OrOp::new(ctx, float, signed_integral.get_result(ctx));
-                self.append(ctx, or.get_operation(), Some(dest));
-                or.get_result(ctx)
-            }
-            "is_unsigned" => {
-                let unsigned = self.bool_constant(ctx, true);
-                let unsigned = XorOp::new(ctx, signed, unsigned);
-                self.append(ctx, unsigned.get_operation(), Some(dest));
-                let and = AndOp::new(ctx, sized_integer, unsigned.get_result(ctx));
-                self.append(ctx, and.get_operation(), Some(dest));
-                let or = OrOp::new(ctx, is_unsigned_index, and.get_result(ctx));
-                self.append(ctx, or.get_operation(), Some(dest));
-                or.get_result(ctx)
-            }
-            "is_numeric" => {
-                let or = OrOp::new(ctx, integral, float);
-                self.append(ctx, or.get_operation(), Some(dest));
-                or.get_result(ctx)
-            }
-            "is_half_float" => {
-                let half = self.dtype_constant(ctx, Dtype::Float16);
-                let is_half = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, half);
-                self.append(ctx, is_half.get_operation(), Some(dest));
-                is_half.get_result(ctx)
-            }
-            // `is_float8`: no Mojito dtype is an eight-bit float.
-            _ => self.bool_constant(ctx, false),
-        };
-        self.reg_values.insert(dest.0, result);
         Ok(())
     }
 

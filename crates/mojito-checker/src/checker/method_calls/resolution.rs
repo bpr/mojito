@@ -566,8 +566,8 @@ impl Checker {
         Ok(selected.map(Some))
     }
 
-    /// The methods a built-in value answers with no callee: `copy`,
-    /// `__hash__`, and the `std.math` operation dunders.
+    /// The methods a built-in value answers with no callee: `copy` and
+    /// the `std.math` operation dunders.
     fn resolve_builtin_method(
         &self,
         site: MethodCallSite<'_>,
@@ -604,33 +604,6 @@ impl Checker {
                 obj_ty.clone(),
                 vec![],
                 vec![],
-            ))));
-        }
-        // A `DType` leaf hashes into the caller-provided hasher through its
-        // `_update_with_simd` at `hash_leaf_ty`'s type. A `SIMD`'s and a
-        // `Bool`'s `__hash__` are their declared members. The `mut` argument is a place so its
-        // updated state is committed by ordinary call lowering.
-        if method == "__hash__"
-            && args.len() == 1
-            && kwargs.is_empty()
-            && param_args.is_empty()
-            && builtin_hashable_ty(obj_ty)
-        {
-            let hasher = self.infer(&args[0])?;
-            let hasher_trait = super::super::hasher_trait();
-            if !self.conforms_to(&hasher, &hasher_trait) {
-                return Err(TypeError::TraitNotSatisfied {
-                    param: "hasher".to_string(),
-                    ty: hasher.to_string(),
-                    reason: self.trait_failure_reason(&hasher, &hasher_trait),
-                    trait_name: hasher_trait,
-                });
-            }
-            self.check_place(&args[0])?;
-            return Ok(Ok(Some(intrinsic_resolution(
-                Ty::none(),
-                vec![Some(ArgConvention::Mut)],
-                vec![hasher],
             ))));
         }
         // A scalar's `std.math` operation dunders are the methods upstream's

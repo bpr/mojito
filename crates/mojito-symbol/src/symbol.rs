@@ -2970,10 +2970,19 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
                 next,
             )
         }
-        b'd' => {
+        b'D' => {
             let (name, next) = until(b';')?;
             (
                 Some(CtValue::Dtype(mojito_ast::ast::Dtype::from_name(name)?)),
+                next,
+            )
+        }
+        b'd' => {
+            let (name, next) = until(b';')?;
+            (
+                Some(mojito_types::types::dtype_value(
+                    mojito_ast::ast::Dtype::from_name(name)?,
+                )),
                 next,
             )
         }
@@ -3285,7 +3294,10 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
         CtValue::Index(value) => out.push_str(&format!("x{value};")),
-        CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
+        CtValue::Struct { .. } if let Some(dtype) = mojito_types::types::dtype_of_value(value) => {
+            out.push_str(&format!("d{};", dtype.name()));
+        }
+        CtValue::Dtype(dtype) => out.push_str(&format!("D{};", dtype.name())),
         CtValue::Simd { dtype, lanes } => {
             out.push_str(&format!("v{}:{};[", dtype.name(), lanes.len()));
             for lane in lanes {
@@ -3401,7 +3413,6 @@ impl TypeNameSpeller<'_> {
             kind if kind.is_float_literal() => self.simd(&"DType.float64", &1),
             kind if kind.is_bool() => self.qualify("std.builtin.bool", "Bool"),
             TyKind::None => self.qualify("std.builtin.none", "NoneType"),
-            TyKind::Dtype => self.qualify("std.builtin.dtype", "DType"),
             TyKind::Error => self.qualify("std.builtin.error", "Error"),
             kind if kind.is_string_literal() => {
                 self.qualify("std.builtin.string_literal", "StringLiteral")
@@ -3470,7 +3481,9 @@ impl TypeNameSpeller<'_> {
                 let lane = format!("DType.{}", dtype.name());
                 format!("{elements} : {}", self.simd(&lane, &lanes.len()))
             }
-            CtValue::Dtype(_) => self.dtype(value),
+            CtValue::Struct { .. } if mojito_types::types::dtype_of_value(value).is_some() => {
+                self.dtype(value)
+            }
             CtValue::Type(ty) => self.name(ty),
             CtValue::Struct { fields, .. } => match fields.as_slice() {
                 [(_, field)] => self.value(field),
@@ -3537,7 +3550,6 @@ fn reflected_base_name(ty: &Ty) -> String {
 
         kind if kind.is_bool() => "Bool",
         TyKind::None => "NoneType",
-        TyKind::Dtype => "DType",
         TyKind::Error => "Error",
         kind if kind.is_string_literal() => "StringLiteral",
         TyKind::Variant(_) => "Variant",

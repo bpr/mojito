@@ -2057,7 +2057,7 @@ impl Checker {
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
                     && let Some(dtype) = Dtype::from_name(field) =>
             {
-                self.ct_param(CtValue::Dtype(dtype))
+                self.ct_param(mojito_types::types::dtype_value(dtype))
             }
             // Upstream's KGEN types (`comptime KS = __mlir_type.`!kgen.string``)
             // and untyped attributes (`` __mlir_attr.`#pop.fmf<fast>` ``).
@@ -2288,7 +2288,7 @@ impl Checker {
             && left_built
                 .meta()
                 .as_value()
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Dtype))
+                .is_some_and(mojito_types::types::is_dtype)
             && super::inference::contextual_root_span(right).is_some()
         {
             rooted = super::inference::with_contextual_root(
@@ -2758,7 +2758,7 @@ impl Checker {
         // its dtype, known or the expression a template names.
         if let Some(dtype) = self.comptime_dtype(name) {
             return match dtype {
-                SimdDtype::Known(dtype) => self.ct_param(CtValue::Dtype(*dtype)),
+                SimdDtype::Known(dtype) => self.ct_param(mojito_types::types::dtype_value(*dtype)),
                 SimdDtype::Expr(expr) => Ok(self.param_context.intern(expr)),
             };
         }

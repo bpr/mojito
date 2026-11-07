@@ -16,7 +16,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{Dtype, KwArg, SyntaxOrigins};
+use mojito_ast::ast::{KwArg, SyntaxOrigins};
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut};
 use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::IntLiteral;
@@ -386,22 +386,7 @@ fn checked_literal(constant: &CheckedConst, at: &Expr) -> Option<Expr> {
         CheckedConst::Bool(value) => Some(spelled(ExprKind::Bool(*value))),
         CheckedConst::String(value) => Some(spelled(ExprKind::Str(value.clone()))),
         CheckedConst::None => Some(spelled(ExprKind::None)),
-        CheckedConst::Dtype(dtype) => Some(dtype_member(*dtype, at)),
         CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => None,
-    }
-}
-
-/// `DType.<dtype>` at `at`'s location.
-fn dtype_member(dtype: Dtype, at: &Expr) -> Expr {
-    Expr {
-        kind: ExprKind::Member {
-            object: Box::new(Expr {
-                kind: ExprKind::Identifier("DType".to_string()),
-                ..at.clone()
-            }),
-            field: dtype.name().to_string(),
-        },
-        ..at.clone()
     }
 }
 

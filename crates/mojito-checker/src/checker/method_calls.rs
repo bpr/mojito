@@ -9,7 +9,6 @@ use super::*;
 
 mod builtin_types;
 mod call_contract;
-mod dtype_receivers;
 mod intrinsic_receivers;
 mod llvm_intrinsic;
 mod mc_infer;

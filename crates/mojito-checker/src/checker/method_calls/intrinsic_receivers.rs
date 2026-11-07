@@ -39,9 +39,6 @@ impl Checker {
         {
             return Ok(Some(ty));
         }
-        if *obj_ty == TyKind::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
-            return self.infer_dtype_predicate(site).map(Some);
-        }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
         if obj_ty
@@ -55,7 +52,7 @@ impl Checker {
             return self.infer_raw_optional_method(site).map(Some);
         }
         // `x.write_to(writer)` on an intrinsic Writable receiver with no
-        // declared `write_to` (`DType`) is
+        // declared `write_to` (`Error`) is
         // `writer.write(x)`: the checker records the operand swap and MIR
         // lowers the host-formatted `Writer.write` shape. Every struct, a
         // `SIMD` or valued literal whose members are declared, and a

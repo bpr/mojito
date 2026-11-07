@@ -2125,7 +2125,7 @@ impl Checker {
             CtValue::Bool(_) => Some(Ty::bool()),
             CtValue::None => Some(Ty::none()),
             CtValue::Str(text) => Some(Ty::string_literal_of(text)),
-            CtValue::Dtype(_) => Some(Ty::dtype()),
+            CtValue::Dtype(_) => Some(Ty::kgen_dtype()),
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),
             CtValue::PopIntLiteral(_) => Some(TyKind::PopIntLiteral.into()),
@@ -2971,7 +2971,6 @@ impl Checker {
         }
         super::builtins::is_numeric(ty)
             || ty.is_string_literal()
-            || matches!(ty.kind(), TyKind::Dtype)
             || super::builtins::simd_valued_ty(ty)
             || match ty.kind() {
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {

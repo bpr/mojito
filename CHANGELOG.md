@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `DType` is now upstream's library struct, bundled in
+  `std/builtin/dtype.mojo` over one `!kgen.dtype` field, instead of a
+  compiler type (R1936). Its members are `#kgen.dtype.constant`
+  attributes, and `__eq__`, `__ne__`, the `is_*` queries, `write_to`,
+  `write_repr_to`, `__hash__`, `_from_ui8`, and the keyword
+  `__init__(mlir_value=)` are its declared bodies, so `d.__eq__(.int64)`,
+  `DType(mlir_value=…)`, and `DType._from_ui8(…)` run, and a vector's
+  `write_repr_to` writes `|DType.|uint16` as at the pin. `TyKind::Dtype`,
+  `CheckedConst::Dtype`, and the checker's, VM's, and Pliron's builtin
+  `DType` predicates and hash leaf are gone; a closed `DType` is the struct
+  value over its attribute, still displayed `DType.<name>`, so instance
+  names do not change. A module alias of a typed `#kgen.simd<…> :
+  !kgen.scalar<ui8>` attribute now keeps its storage type. MIR text moves
+  to schema 1.177 and the package format to `mojito-package 201`. The
+  struct omits `KeyElement` (R237) and spells its `__init__` parameter
+  `!kgen.dtype` (R2007); the four float queries stay builtin (R1937).
+
 - A call through a monomorphic `def(...)` bound (`f(x)` in
   `apply[F: def(Int) -> Int](f: F, x: Int)`) now lowers to the bound's
   `__call__` requirement call on a read receiver instead of an indirect call,

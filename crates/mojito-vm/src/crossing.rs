@@ -83,6 +83,10 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::List(items) => Ok(Value::ComptimeList(
             items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
         )),
+        // A `DType` is held as its one `!kgen.dtype` field.
+        CtValue::Struct { .. } if let Some(dtype) = mojito_types::types::dtype_of_value(value) => {
+            Ok(Value::Dtype(dtype))
+        }
         CtValue::Struct { name, fields } => Ok(Value::Struct {
             name: name.clone(),
             fields: fields

@@ -2580,8 +2580,8 @@ SIMD dtype and width selection is likewise a checked adjustment rather than
 MIR-side syntax evaluation. Span-indexed call/conversion maps remain only as
 public compatibility queries and are not part of lowering.
 
-Specialization values include `CtValue::Dtype`, nominal `CtValue::Struct`
-instances, `CtValue::Trait` (a trait bound to a trait-valued parameter,
+Specialization values include nominal `CtValue::Struct` instances (a
+`DType` among them, the struct over its `CtValue::Dtype` attribute), `CtValue::Trait` (a trait bound to a trait-valued parameter,
 which has no run-time form, and which a type binder bounded by that
 parameter, `T: Tr`, is checked against at each use), and `CtValue::Pointer { memory, offset }`
 leaves. A live pointer

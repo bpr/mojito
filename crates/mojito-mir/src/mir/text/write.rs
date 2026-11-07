@@ -2193,7 +2193,6 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
         TyKind::Infer => "Infer".into(),
-        TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),
         TyKind::KgenString => "KgenString".into(),
         TyKind::PopIntLiteral => "PopIntLiteral".into(),
@@ -2620,7 +2619,6 @@ fn checked_const(value: &CheckedConst) -> String {
         CheckedConst::Bool(v) => positional("checked_bool", &v.to_string()),
         CheckedConst::String(v) => positional("checked_string", &quote(v)),
         CheckedConst::None => "checked_none".into(),
-        CheckedConst::Dtype(v) => positional("checked_dtype", v.name()),
         CheckedConst::Construct {
             target,
             arg,

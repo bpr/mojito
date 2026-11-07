@@ -154,10 +154,11 @@ impl SimdDtype {
     pub fn known(&self) -> Option<Dtype> {
         match self {
             Self::Known(dtype) => Some(*dtype),
-            Self::Expr(expr) => match expr.require_constant() {
-                Ok(CtValue::Dtype(dtype)) => Some(dtype),
-                _ => None,
-            },
+            Self::Expr(expr) => expr
+                .require_constant()
+                .ok()
+                .as_ref()
+                .and_then(dtype_of_value),
         }
     }
 
@@ -360,6 +361,35 @@ pub fn simd_length_ty() -> Ty {
 /// Whether `ty` is upstream's `SIMDLength`.
 pub fn is_simd_length(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(name, args) if name == SIMD_LENGTH_TYPE_NAME && args.is_empty())
+}
+
+/// Whether `ty` is upstream's `DType`.
+pub fn is_dtype(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, args) if name == DTYPE_TYPE_NAME && args.is_empty())
+}
+
+/// The closed `DType` value of `dtype`: upstream's `DType.<name>` member,
+/// the struct over its one `#kgen.dtype.constant` field.
+pub fn dtype_value(dtype: Dtype) -> CtValue {
+    CtValue::Struct {
+        name: DTYPE_TYPE_NAME.to_string(),
+        fields: vec![(
+            crate::ct::MLIR_VALUE_FIELD.to_string(),
+            CtValue::Dtype(dtype),
+        )],
+    }
+}
+
+/// The dtype a closed `DType` value ([`dtype_value`]) is, or `None` for
+/// any other value.
+pub fn dtype_of_value(value: &CtValue) -> Option<Dtype> {
+    match value {
+        CtValue::Struct { name, fields } if name == DTYPE_TYPE_NAME => match fields.as_slice() {
+            [(_, CtValue::Dtype(dtype))] => Some(*dtype),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The lane count a `SIMDLength` value is, `Int(mlir_value=length._mlir_value)`:
@@ -600,10 +630,6 @@ pub enum TyKind {
     /// type application whose constructor participates in literal inference and
     /// must be solved before checked HIR is produced.
     Infer,
-    /// The compile-time-only type of a `[dtype: DType]` value parameter. No
-    /// runtime value inhabits it; specialization folds every use to a
-    /// concrete `DType.<dt>` spelling before checking.
-    Dtype,
     /// A non-generic function, synthesized from a `def` signature or lowered
     /// from a function-type annotation.
     Func(Box<FuncTy>),
@@ -737,7 +763,8 @@ pub enum TyKind {
     /// [`CtValue::Dtype`](crate::ct::CtValue::Dtype), and
     /// `pop.dtype.to_ui8` and `pop.dtype.from_ui8` convert it to and from
     /// its one-byte code. It has no members and conforms to no trait. Both
-    /// backends hold it as they hold the `DType` builtin.
+    /// backends hold it as its one-byte code, and a `DType` as this one
+    /// field.
     KgenDtype,
     /// Upstream's KGEN vector storage `!kgen.simd<width, dtype>`, the type
     /// of a `SIMD`'s `_mlir_value` field, displayed
@@ -898,6 +925,17 @@ impl Ty {
             LazyLock::new(|| simd_node(SimdDtype::Known(Dtype::Float64), SimdWidth::Known(1)));
         TY.clone()
     }
+    /// `DType`, the struct `std.builtin.dtype` declares over one
+    /// `!kgen.dtype` field.
+    pub fn dtype() -> Self {
+        static TY: LazyLock<Ty> = LazyLock::new(|| {
+            Ty(Arc::new(TyNode::new(TyKind::Struct(
+                DTYPE_TYPE_NAME.to_string(),
+                Vec::new(),
+            ))))
+        });
+        TY.clone()
+    }
 }
 
 dataless_types! {
@@ -907,8 +945,6 @@ dataless_types! {
     never => Never,
     /// An inference hole, `_`.
     infer => Infer,
-    /// The `DType` value-parameter type.
-    dtype => Dtype,
     /// `Self` inside a trait.
     self_type => SelfType,
     /// The MLIR builtin `index`.
@@ -1534,6 +1570,10 @@ pub const TYPE_LIST_TYPE_NAME: &str = "TypeList";
 /// The name of upstream's `SIMDLength`, the type of `SIMD`'s width.
 pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 
+/// The name of upstream's `DType`, declared in `std.builtin.dtype`: the
+/// type of `SIMD`'s element slot.
+pub const DTYPE_TYPE_NAME: &str = "DType";
+
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
 
@@ -1736,9 +1776,9 @@ pub fn mlir_attribute_spelling(
 /// The parameter an MLIR type operand reads the `_mlir_value` of.
 ///
 /// `n._mlir_value` and `Self.dtype._mlir_value` read a `SIMDLength`'s
-/// `index` storage, and a `DType`'s, which is the parameter itself while
-/// `DType` is a compiler type (R1936). `None` for an operand that reads no
-/// `_mlir_value`.
+/// `index` storage and a `DType`'s `!kgen.dtype`, which an MLIR type
+/// spelling reads through the struct value itself. `None` for an operand
+/// that reads no `_mlir_value`.
 pub fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
     use mojito_ast::ast::{Expr, ExprKind, ParamArg, Type};
     match arg {
@@ -1770,10 +1810,10 @@ pub fn scalar_range_parts(ty: &TyKind) -> Option<(&'static str, mojito_ast::ast:
         .iter()
         .chain(std::iter::once(&FLOAT_STRIDED_RANGE))
         .find(|family| *family == name || name.ends_with(&format!("${family}")))?;
-    let [TyArg::Val(CtValue::Dtype(dtype))] = arguments.as_slice() else {
+    let [TyArg::Val(dtype)] = arguments.as_slice() else {
         return None;
     };
-    Some((family, *dtype))
+    Some((family, dtype_of_value(dtype)?))
 }
 
 pub const OPTIONAL_TYPE_NAME: &str = "Optional";
@@ -3557,7 +3597,6 @@ impl fmt::Display for TyKind {
         }
         match self {
             Self::Infer => write!(f, "_"),
-            Self::Dtype => write!(f, "DType"),
             Self::None => write!(f, "None"),
             Self::Never => write!(f, "Never"),
             Self::Func(func) => write_callable(f, None, func, false),
@@ -4103,7 +4142,7 @@ pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
 /// It is built directly, since its slots are already canonical.
 fn simd_node(dtype: SimdDtype, width: SimdWidth) -> Ty {
     let dtype = match dtype {
-        SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+        SimdDtype::Known(dtype) => dtype_value(dtype),
         SimdDtype::Expr(expr) => CtValue::Expr(expr),
     };
     let length = match width {
@@ -4139,11 +4178,11 @@ fn simd_struct_slots(kind: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// A `SIMD` application's dtype argument as its slot: a `DType` value, or a
 /// `DType`-typed expression.
 fn simd_dtype_slot(value: &CtValue) -> Option<SimdDtype> {
+    if let Some(dtype) = dtype_of_value(value) {
+        return Some(SimdDtype::Known(dtype));
+    }
     match value {
-        CtValue::Dtype(dtype) => Some(SimdDtype::Known(*dtype)),
-        CtValue::Expr(expr)
-            if matches!(expr.meta().as_value().map(Ty::kind), Some(TyKind::Dtype)) =>
-        {
+        CtValue::Expr(expr) if expr.meta().as_value().is_some_and(is_dtype) => {
             Some(SimdDtype::Expr(expr.clone()))
         }
         _ => None,
@@ -4207,7 +4246,7 @@ fn canonical_simd_application(kind: &TyKind) -> Option<Ty> {
 pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
     let dtype = match dtype {
         SimdDtype::Expr(expr) => match expr.as_constant() {
-            Some(CtValue::Dtype(dtype)) => SimdDtype::Known(*dtype),
+            Some(value) if let Some(dtype) = dtype_of_value(value) => SimdDtype::Known(dtype),
             Some(other) => {
                 return Err(ParamError::TypeMismatch {
                     operation: "SIMD element type".to_string(),
@@ -4227,17 +4266,6 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
         (SimdDtype::Known(dtype), SimdWidth::Known(width)) => canonical_simd_ty(dtype, width),
         (dtype, width) => simd_node(dtype, width),
     })
-}
-
-/// The type a `DType` Hashable leaf contributes to its hasher as.
-///
-/// A `DType` hashes its code as a `UInt8` (upstream's `DType.__hash__`). A
-/// `Bool` or a `SIMD` hashes through its declared `__hash__`.
-pub fn hash_leaf_ty(ty: &Ty) -> Ty {
-    match ty.kind() {
-        TyKind::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
-        _ => ty.clone(),
-    }
 }
 
 /// The `(dtype, width)` shape of a SIMD-valued type — an exact literal
@@ -4679,8 +4707,7 @@ pub const fn binder_read_takes_slot(ty: &TyKind) -> bool {
 pub fn copy_is_identity(ty: &TyKind) -> bool {
     matches!(
         ty,
-        TyKind::Dtype
-            | TyKind::Index
+        TyKind::Index
             | TyKind::I1
             | TyKind::Ui8
             | TyKind::KgenDtype
@@ -5644,7 +5671,6 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::None
         | TyKind::Never
         | TyKind::Infer
-        | TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
@@ -6244,8 +6270,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::Dtype
-        | TyKind::AnyTrait(_)
+        TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
@@ -6638,6 +6663,7 @@ fn closed_argument(argument: &TyArg) -> bool {
                     | CtValue::Dtype(_)
                     | CtValue::Simd { .. } // A `SIMD`'s known lane count.
             ) || known_simd_length(value).is_some()
+                || dtype_of_value(value).is_some()
         }
         TyArg::Origin(origin) => matches!(origin, crate::origin::Origin::Unbound),
     }
@@ -6648,7 +6674,6 @@ fn closed_kind(kind: &TyKind) -> bool {
     match kind {
         TyKind::None
         | TyKind::Never
-        | TyKind::Dtype
         | TyKind::Index
         | TyKind::I1
         | TyKind::Ui8
@@ -7582,7 +7607,7 @@ mod simd_slot_tests {
     fn closed_slots_fold_to_known_and_canonicalize() {
         let context = ParamContext::detached();
         let float64 = context
-            .constant(CtValue::Dtype(Dtype::Float64))
+            .constant(dtype_value(Dtype::Float64))
             .expect("a constant");
         assert_eq!(
             simd_ty_from_slots(SimdDtype::Expr(float64), SimdWidth::Known(1)).expect("closed"),
@@ -7667,7 +7692,7 @@ mod simd_slot_tests {
         referenced_parameters(&scalar, &mut referenced);
         assert!(referenced.contains("dt") && referenced.contains("width"));
         let values = HashMap::from([
-            ("dt".to_string(), CtValue::Dtype(Dtype::Float64)),
+            ("dt".to_string(), dtype_value(Dtype::Float64)),
             ("width".to_string(), CtValue::Int(1)),
         ]);
         let bindings = ParamBindings::from_named_values(&context, &values);

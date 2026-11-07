@@ -2987,10 +2987,8 @@ impl<'a> Specializer<'a> {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
-                        // A `DType` Hashable leaf contributes to the hasher
-                        // through the hasher's `_update_with_simd` instance
-                        // at `hash_leaf_ty`'s type; enqueue those instances
-                        // for the lowered leaf dispatch.
+                        // A Variant receiver's lowered `__hash__` dispatches
+                        // to its alternatives'; enqueue those instances.
                         if method == "__hash__"
                             && args.len() == 1
                             && kwargs.is_empty()
