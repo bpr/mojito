@@ -3352,3 +3352,33 @@ fn an_unread_borrowed_pack_leaves_one_reduced_instance_for_every_arity() {
         .collect::<Vec<_>>();
     assert_eq!(calls, [1, 1]);
 }
+
+#[test]
+fn conformance_bracket_argument_keys_its_instance_by_the_answer() {
+    let source = "def f[c: Bool]():\n\
+                  \x20   print(c)\n\
+                  \n\
+                  struct Plain:\n\
+                  \x20   var x: Int\n\
+                  \n\
+                  \x20   def __init__(out self):\n\
+                  \x20       self.x = 1\n\
+                  \n\
+                  def g[T: AnyType]():\n\
+                  \x20   f[conforms_to(T, Copyable)]()\n\
+                  \n\
+                  def main():\n\
+                  \x20   g[Int]()\n\
+                  \x20   g[Plain]()\n";
+    let specialized = specialized_main(source);
+    let mut instances: Vec<&str> = specialized
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| name.starts_with("f$mono"))
+        .collect();
+    instances.sort_unstable();
+    // `Int` conforms and `Plain` does not.
+    assert_eq!(instances, ["f$mono$Vfalse", "f$mono$Vtrue"]);
+}

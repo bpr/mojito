@@ -1460,6 +1460,38 @@ impl ParamContext {
         })
     }
 
+    /// Rebuild `expr` with every `conforms_to` query `oracle` answers
+    /// replaced by its `Bool`, through the folding constructors, as
+    /// upstream's elaborator folds `#kgen.type_conforms_to_trait` over a
+    /// concrete type, so what sits above an answered query closes too
+    /// (`not conforms_to(T, Copyable)`). A query the oracle leaves (`None`)
+    /// is rebuilt as it is.
+    pub fn answer_conformances(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut ConformsOracle<'_>,
+    ) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| self.conformance_answer(node, oracle))
+    }
+
+    /// Rebuild `ty` with every `conforms_to` query `oracle` answers in the
+    /// parameter expressions it embeds replaced by its `Bool`
+    /// (`Box[conforms_to(T, Copyable)]`), as [`Self::answer_conformances`]
+    /// rebuilds one expression.
+    pub fn answer_type_conformances(
+        &self,
+        ty: &Ty,
+        oracle: &mut ConformsOracle<'_>,
+    ) -> Result<Ty, ParamError> {
+        crate::types::rewrite_ty(
+            ty,
+            &mut Answering {
+                context: self,
+                answer: &mut |node| self.conformance_answer(node, oracle),
+            },
+        )
+    }
+
     /// Rebuild `expr` with every type member read `oracle` answers replaced
     /// by its answer at the read's declared type (a literal `7` read as the
     /// `Int` a requirement declares), through the folding constructors, so
@@ -1641,6 +1673,10 @@ impl ParamContext {
                     &self.answer_queries(right, answer)?,
                 ));
             }
+            ParamKind::Conforms {
+                subject,
+                trait_name,
+            } => self.conforms(&self.answer_queries(subject, answer)?, trait_name)?,
             ParamKind::Select { elements, index } => {
                 return self.select(elements.clone(), &self.answer_queries(index, answer)?);
             }
@@ -1711,6 +1747,23 @@ impl ParamContext {
             _ => return Ok(expr.clone()),
         };
         Ok(answer(&rebuilt)?.unwrap_or(rebuilt))
+    }
+
+    /// The `Bool` `oracle` answers for the `conforms_to` query `node`, as
+    /// the node [`Self::answer_queries`] puts in its place; `None` for any
+    /// other node.
+    fn conformance_answer(
+        &self,
+        node: &ParamExpr,
+        oracle: &mut ConformsOracle<'_>,
+    ) -> Result<Option<ParamExpr>, ParamError> {
+        match node.kind() {
+            ParamKind::Conforms {
+                subject,
+                trait_name,
+            } => self.constant_answer(oracle(subject, trait_name).map(CtValue::Bool)),
+            _ => Ok(None),
+        }
     }
 
     /// An oracle's constant answer as the node [`Self::answer_queries`]
@@ -4644,6 +4697,11 @@ impl fmt::Display for ReflectQuery {
 /// `Ok(None)` leaves the query as it is.
 pub type ReflectOracle<'a> =
     dyn FnMut(&ParamExpr, &ReflectQuery) -> Result<Option<CtValue>, ParamError> + 'a;
+
+/// What answers a `conforms_to` query over a subject at an instance:
+/// whether the subject conforms to the named trait, or `None` to leave the
+/// query as it is.
+pub type ConformsOracle<'a> = dyn FnMut(&ParamExpr, &str) -> Option<bool> + 'a;
 
 /// What answers a type member read over a subject at an instance: the
 /// subject, the member's name, and a parameterized member's bound

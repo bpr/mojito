@@ -78,20 +78,35 @@ pub(super) fn default_construct_parameters(
 }
 
 /// Substitute `bindings` through `function`. Each read of a retained
-/// callable runtime parameter is the function its argument names.
+/// callable runtime parameter is the function its argument names, and each
+/// `conforms_to` query in a call's bracket argument is the `Bool`
+/// `conforms` answers for it, as upstream's elaborator folds
+/// `#kgen.type_conforms_to_trait` over a concrete type.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
+    conforms: &ConformsAnswer<'_>,
 ) -> Result<(), MonoError> {
     substitute_callable_parameter_reads(
         &mut function.blocks,
         &function.var_names,
         &bindings.callables,
     );
-    walk_function_mut(&mut Substitution { bindings }, function)?;
+    walk_function_mut(
+        &mut Substitution {
+            bindings,
+            conforms: Some(conforms),
+        },
+        function,
+    )?;
     copy_builtin_receivers(&mut function.blocks, &function.reg_types);
     Ok(())
 }
+
+/// What answers a `conforms_to` query at the instance a substitution
+/// builds: whether the subject conforms to the named trait, or `None` for a
+/// subject the instance leaves open.
+pub(super) type ConformsAnswer<'a> = dyn Fn(&ParamExpr, &str) -> Option<bool> + 'a;
 
 /// Rewrite each dispatched `copy()` whose receiver this instance makes a
 /// built-in with a value-read copy into that value copy. `Copyable.copy` is
@@ -215,7 +230,13 @@ pub(super) fn substitute_blocks_metadata(
     blocks: &mut [MirBlock],
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
-    walk_blocks_mut(&mut Substitution { bindings }, blocks)
+    walk_blocks_mut(
+        &mut Substitution {
+            bindings,
+            conforms: None,
+        },
+        blocks,
+    )
 }
 
 /// A closed struct type's source declaration, with its own parameters bound
@@ -859,12 +880,22 @@ pub(super) fn array_display_construction(
 /// as upstream's elaborator substitutes through MLIR's `AttrTypeReplacer`.
 struct Substitution<'b> {
     bindings: &'b Bindings,
+    conforms: Option<&'b ConformsAnswer<'b>>,
 }
 
 impl MutTypeVisitor for Substitution<'_> {
     type Error = MonoError;
 
     fn visit_ty(&mut self, ty: &mut Ty, site: TySite) -> Result<(), MonoError> {
+        if let Some(conforms) = self.conforms
+            && !ty.is_closed()
+        {
+            *ty = ParamContext::detached()
+                .answer_type_conformances(ty, &mut |subject, trait_name| {
+                    conforms(subject, trait_name)
+                })
+                .map_err(|error| unsupported_param(&error))?;
+        }
         match (substitute_ty(ty, self.bindings), site) {
             (Ok(closed), _) => *ty = closed,
             // A construction left sits in a compile-time branch not yet
@@ -878,6 +909,14 @@ impl MutTypeVisitor for Substitution<'_> {
     }
 
     fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), MonoError> {
+        if let (TyArg::Val(CtValue::Expr(expr)), Some(conforms)) = (&*arg, self.conforms) {
+            let answered = ParamContext::detached()
+                .answer_conformances(expr, &mut |subject, trait_name| {
+                    conforms(subject, trait_name)
+                })
+                .map_err(|error| unsupported_param(&error))?;
+            *arg = TyArg::Val(CtValue::Expr(answered));
+        }
         *arg = substitute_arg(arg, self.bindings)?;
         Ok(())
     }
@@ -1294,4 +1333,14 @@ fn fresh_register(ty: Ty, n_regs: &mut u32, reg_types: &mut HashMap<u32, Ty>) ->
     *n_regs += 1;
     reg_types.insert(reg.0, ty);
     reg
+}
+
+/// A parameter expression error a substitution meets as the contextual
+/// unsupported boundary.
+fn unsupported_param(error: &mojito_types::param_expr::ParamError) -> MonoError {
+    MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct: error.to_string(),
+    }
 }

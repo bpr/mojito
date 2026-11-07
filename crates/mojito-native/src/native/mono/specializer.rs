@@ -1170,7 +1170,10 @@ impl<'a> Specializer<'a> {
         default_construct_parameters(&mut function.blocks, bindings, &self.source.declarations)?;
         self.elaborate_comptime_ops(name, &mut function, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
-        substitute_function(&mut function, bindings).map_err(|mut e| {
+        let conforms = |subject: &ParamExpr, trait_name: &str| {
+            self.subject_conforms(subject, trait_name, bindings)
+        };
+        substitute_function(&mut function, bindings, &conforms).map_err(|mut e| {
             e.function.get_or_insert_with(|| name.to_string());
             e
         })?;
@@ -2316,16 +2319,7 @@ impl<'a> Specializer<'a> {
             ParamKind::Conforms {
                 subject,
                 trait_name,
-            } => {
-                // A type shape is the type the instance substitutes, each
-                // application in it answered (`H[_current_target()]`).
-                let ty = match (subject.kind(), eval_ct(subject, bindings)) {
-                    (_, Ok(CtValue::Type(ty))) => ty,
-                    (ParamKind::TypeShape(ty), _) => substitute_ty(ty, bindings).ok()?,
-                    _ => return None,
-                };
-                self.type_conforms(&ty, trait_name, &mut HashSet::new())
-            }
+            } => self.subject_conforms(subject, trait_name, bindings),
             ParamKind::Op {
                 op: mojito_types::param_expr::ParamOp::BoolAnd,
                 operands,
@@ -2334,6 +2328,24 @@ impl<'a> Specializer<'a> {
             }),
             _ => None,
         }
+    }
+
+    /// Whether the type `subject` closes to under the bindings conforms to
+    /// `trait_name`; `None` for a subject the instance leaves open. A type
+    /// shape is the type the instance substitutes, each application in it
+    /// answered (`H[_current_target()]`).
+    fn subject_conforms(
+        &self,
+        subject: &ParamExpr,
+        trait_name: &str,
+        bindings: &Bindings,
+    ) -> Option<bool> {
+        let ty = match (subject.kind(), eval_ct(subject, bindings)) {
+            (_, Ok(CtValue::Type(ty))) => ty,
+            (ParamKind::TypeShape(ty), _) => substitute_ty(ty, bindings).ok()?,
+            _ => return None,
+        };
+        self.type_conforms(&ty, trait_name, &mut HashSet::new())
     }
 
     /// A parameter defaulting to a recorded constructor over a generic struct

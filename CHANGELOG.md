@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator now answers a `conforms_to(T, Trait)` query in a call's
+  bracket argument or a struct's parameter argument over a type the instance
+  closes, as upstream's elaborator folds `#kgen.type_conforms_to_trait`
+  (R2001). `f[conforms_to(T, Copyable)]()` no longer fails "is not a
+  compile-time constant here", and with `MOJITO_PRE_ELABORATION=0` a
+  program no longer fails at the bundled `VariadicList.__deinit__`.
+
 - `CompiledProgram::emit_mir` and `mojito emit-mir` now write the program's
   own bodies and only the imported package bodies its elaboration looks up
   (`CompiledProgram::artifact_mir`), rather than every std body (R1997). An

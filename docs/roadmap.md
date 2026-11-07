@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2002**.
+Next free ID: **R2003**.
 
 ## Ordered Work
 
@@ -4491,23 +4491,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2001 The elaborator does not fold `conforms_to` over a concrete
-  type, so every program fails with the pre-elaboration pipeline off**
+- [ ] **R2002 A lifted `comptime for` over a value pack passes its
+  `ParameterList` to `__iter__` as a register, which the VM refuses as a
+  reference receiver, with the pre-elaboration pipeline off**
 
-  With `MOJITO_PRE_ELABORATION=0`, `def main(): print(1)` fails `run` and
-  `emit-mir` with "in `VariadicList.__deinit__`: unsupported
-  'conforms_to(UInt8, Deinitable)' is not a compile-time constant here",
-  where the pin prints `1`.
-  - The bundled `VariadicList.__deinit__`'s `comptime assert
-    conforms_to(Self.element_type, Deinitable)` folds when the pipeline
-    runs (`inline_parametric` reads `conforms_to`); without it the
-    elaborator's own parameter evaluation answers `ParamError::NotConstant`.
-  - Upstream's elaborator answers `#kgen.type_conforms_to_trait` over a
-    concrete type itself, whatever ran before it.
-  - It blocks every probe that reads `MOJITO_PRE_ELABORATION=0` output.
-  - Probe: `MOJITO_PRE_ELABORATION=0 mojito run` of `def main():
-    print(1)` prints `1`.
-  - Found while landing R1997 (2026-11-07).
+  With `MOJITO_PRE_ELABORATION=0`, `def total[*values: Int]() -> Int`
+  summing `comptime for value in values` and called as `total[1, 2, 3]()`
+  fails with "VM CTFE failed for '$comptime$total$c0…': vm: reference
+  receiver for method 'ParameterList….__iter__' must be a place", where
+  the pin and the default pipeline print `6`.
+  - The lifted thunk calls `__iter__(ref self)` on the `ParameterList`
+    value its construction leaves in a register; upstream's lowering
+    materializes an rvalue receiver of a `ref self` method into a
+    temporary before the call.
+  - With the pipeline on, `inline-parametric` and `mem-2-reg` remove the
+    call, so only the pipeline-off path reaches the VM's check.
+  - Probe: the program above, and `assets/ok/bracket_function_application.mojo`,
+    both with `MOJITO_PRE_ELABORATION=0`.
+  - Found while landing R2001 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9670,6 +9671,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `print(x.or_else("none"))` in `def f[x: Optional[String] =
     None]()` fails verification of `f` ("drop.reg destroys %r0 of
     memory-only type Optional[String]"), where the pin prints `none`.
+  - Probe: with `MOJITO_PRE_ELABORATION=0`, any program reaching the
+    bundled `_assert_enabled` (`assets/ok/generic_alias_construction.mojo`,
+    `and_alias_construction_operand.mojo`,
+    `generic_display_argument_infers_parameter.mojo`) fails verification
+    of that package body ("call.method deinit receiver destroys %r18 of
+    memory-only type String"); the pipeline's passes hide it when on.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
