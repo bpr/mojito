@@ -855,33 +855,48 @@ impl Checker {
         cond: &Expr,
         test: ComptimeTest,
     ) -> Result<GenericConstraint, TypeError> {
+        self.compile_comptime_condition(cond, test)
+            .map(|condition| condition.constraint)
+    }
+
+    /// A `comptime if` or `comptime assert` condition compiled to both its
+    /// bound reading and its canonical parameter value, and recorded.
+    fn compile_comptime_condition(
+        &self,
+        cond: &Expr,
+        test: ComptimeTest,
+    ) -> Result<CompiledCondition, TypeError> {
         let _position = self.comptime_position();
         let inlined = self.inline_local_comptime_values(cond);
         let condition = self.check_ct_bool(&inlined, test)?;
         self.record_comptime_condition(cond, &condition);
-        Ok(condition.constraint)
+        Ok(condition)
     }
 
     /// A `comptime assert`: its condition is checked as a `comptime if`
     /// condition is, never judged here — the elaborator judges it per
     /// reached instance, and its message is a compile-time string
     /// ([`Self::check_assert_message`]). The condition's bound reading,
-    /// for the knowledge it introduces. A condition over no parameter that
-    /// folds to `False` is recorded as a failing assertion, which ends
-    /// every path through it.
+    /// for the knowledge it introduces. A condition the pin's parameter
+    /// canonicalizer folds to `False` — a closed one, or an open one such as
+    /// `n != n` or `False and n == 2` — is recorded as a failing assertion,
+    /// which ends every path through it.
     pub(super) fn check_comptime_assert(
         &self,
         cond: &Expr,
         message: Option<&Expr>,
     ) -> Result<GenericConstraint, TypeError> {
-        let constraint = self.check_comptime_condition(cond, ComptimeTest::Assert)?;
+        let CompiledCondition { constraint, value } =
+            self.compile_comptime_condition(cond, ComptimeTest::Assert)?;
         if let Some(message) = message {
             self.check_assert_message(message)?;
         }
-        if matches!(
-            self.fold_closed_constraint(constraint.clone()),
-            GenericConstraint::Bool(false)
-        ) {
+        if value.as_bool() == Some(false)
+            || matches!(
+                self.fold_closed_constraint(constraint.clone()),
+                GenericConstraint::Bool(false)
+            )
+        {
             self.record_at(cond.source_span()).failing_assertion = true;
         }
         Ok(constraint)

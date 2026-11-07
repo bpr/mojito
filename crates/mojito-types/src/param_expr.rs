@@ -2407,9 +2407,10 @@ impl ParamContext {
         })
     }
 
-    /// Numeric comparison. Constants fold; identical operands decide `==` and
-    /// `<=` (and refute `<`); an integer `==` whose difference is a nonzero
-    /// constant is refuted. Anything else is a residual proposition.
+    /// Numeric comparison. Constants fold; identical operands prove `==`,
+    /// and an integer `==` whose difference is a constant is decided by it.
+    /// Anything else, `n < n` and `n <= n` included, is a residual
+    /// proposition, as the pin's canonicalizer keeps it.
     fn build_comparison(
         &self,
         op: ParamOp,
@@ -2450,8 +2451,8 @@ impl ParamContext {
             ),
             None => (left, right),
         };
-        if left == right && left.is_total() {
-            return Ok(self.boolean(op != ParamOp::Lt));
+        if op == ParamOp::Eq && left == right && left.is_total() {
+            return Ok(self.boolean(true));
         }
         if op == ParamOp::Eq
             && let Some(domain) = domain

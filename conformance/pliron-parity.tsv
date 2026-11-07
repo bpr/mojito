@@ -147,6 +147,7 @@ assets/ok/comptime_applied_constant_in_signature.mojo	main	exe-differential	sani
 assets/ok/comptime_array_materialized_frozen.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_ends_out_result_path.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_judged_per_instance.mojo	main	exe-differential	sanitized
+assets/ok/comptime_assert_open_false_ends_path.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_proves_conformance.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_proves_proposition.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_static_string_message.mojo	main	exe-differential	sanitized

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime assert` whose condition reads a parameter but folds to
+  `False` under the pin's canonicalizer (`n != n`, `n - n == 1`, `False
+  and n == 2`) now ends its path, so a `comptime if` whose other arm
+  returns no longer reports a missing return (R1588). The canonicalizer
+  no longer decides `n < n` or `n <= n`, which the pin keeps open.
 - A `SIMD` element list in a parameter position (`Tag[SIMD[DType.int32,
   2](3, 3)]`) is now the application of `SIMD`'s `*elems` initializer, as
   at the pin, where the checker folded it to the vector: it no longer

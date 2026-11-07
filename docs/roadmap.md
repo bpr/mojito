@@ -5975,24 +5975,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Float64` and a `String`.
   - Model: Fable, Not Planned.
 
-- [ ] **R1588 A `comptime assert` over a parameter that the pin folds to
-  `False` does not end a return path**
-
-  `def k[n: Int]() -> Int` whose `comptime if n == 1:` returns and whose
-  `else:` holds `comptime assert n != n, "x"` is rejected ("'k' does not
-  return a value on every path"), where the pin prints `1` for `k[1]()`.
-  - `Checker::check_comptime_assert` records a failing assertion only
-    when `fold_closed_constraint` decides its condition, which needs a
-    condition over no parameter. The pin's parameter canonicalizer also
-    folds an open one.
-  - Probe: `n - n == 1` and `False and n == 2` behave the same.
-  - The pin keeps `n == 2 and False` and `n < n` open (rejected there
-    too), so the fold must match the canonicalizer, not three-valued
-    logic.
-  - Found while landing R1576 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R387 A function applied in a parameter argument cannot print**
 
   Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
