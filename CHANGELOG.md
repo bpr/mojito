@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `IntLiteral` now declares upstream's non-negative-exponent `__pow__`, so
+  `(2).__pow__(10)` and `2 ** 10` are the declared dunder rather than the
+  checker's literal rule. Its `where (type_of(exp)() >= 0)` compiles: a
+  construction through `type_of` in a compile-time position is the
+  construction of the type it denotes, a literal construction compares
+  through its declared dunder, and a `where` operand that is a builtin
+  call recorded before its body folded is folded at each call. A negative
+  literal exponent is now that clause's compile-time error instead of an
+  elaboration failure, until R1821 ports the negative overload (R1855).
 - `IntLiteral[v]` and `FloatLiteral[v]` are now the applications of the
   structs `std.builtin.int_literal` and `std.builtin.float_literal`
   declare, as upstream's are: the compiler's own literal type kinds and

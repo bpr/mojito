@@ -1719,7 +1719,10 @@ impl Checker {
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
     pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        if let Some(construction) = self.type_member_construction(expr) {
+        if let Some(construction) = self
+            .type_member_construction(expr)
+            .or_else(|| self.type_of_construction(expr))
+        {
             return self.called_application(&construction);
         }
         let selected = self.selected_application(expr)?;
@@ -2661,7 +2664,9 @@ impl Checker {
         }
         let typed = self.run_time_typing(expr);
         self.instance_inferences.borrow_mut().remove(&span);
-        typed.ok().filter(|ty| ty.kind().is_non_simd_struct())
+        typed
+            .ok()
+            .filter(|ty| ty.kind().is_non_simd_struct() || ty.kind().is_numeric_literal())
     }
 
     /// `expr` typed as a run-time expression in a compile-time position,
@@ -2833,6 +2838,41 @@ impl Checker {
         }
     }
 
+    /// The value of the builtin application `function(args)` a `where`
+    /// clause recorded before the callee's body folded
+    /// ([`Self::fold_builtin_bodies`]), as upstream's
+    /// `foldInlineBuiltinFunction` folds the call where it is built: the
+    /// body over the arguments, when that closes. `None` for a callee with
+    /// no folded body, or a fold that stays symbolic.
+    pub(super) fn builtin_application_value(
+        &self,
+        function: &str,
+        args: &[ParamExpr],
+    ) -> Option<CtValue> {
+        let family = function
+            .split_once(mojito_symbol::symbol::OV_SEP)
+            .map_or(function, |(family, _)| family);
+        let function = self
+            .applicable_functions
+            .get(family)?
+            .iter()
+            .find(|candidate| candidate.symbol() == function && candidate.folded_body.is_some())?;
+        let (instance, arguments) = if function.on_instance {
+            let (instance, arguments) = args.split_first()?;
+            let instance = match instance.kind() {
+                ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
+                _ => return None,
+            };
+            (Some(instance), arguments)
+        } else {
+            (None, args)
+        };
+        match self.folded_builtin_call(function, instance.as_ref(), arguments, None) {
+            BuiltinFold::Folded(folded) => folded.as_constant().cloned(),
+            BuiltinFold::Applied | BuiltinFold::Unbound => None,
+        }
+    }
+
     /// The application `selected` denotes ([`Self::called_application`]):
     /// the callable applied to its arguments, or a builtin body folded over
     /// them. `None` for a result no parameter expression holds or a
@@ -2880,59 +2920,88 @@ impl Checker {
             &applied,
             mojito_types::param_expr::MetaTy::value(result),
         );
-        if let Some(body) = &function.folded_body {
-            let mut bindings = mojito_types::param_expr::ParamBindings::new();
-            for (slot, argument) in arguments.iter().enumerate() {
-                let id = super::annotations::builtin_body_binder(&function.key, slot, "").id;
-                // A `ref` slot's body reads the referent its reference holds.
-                let argument = &self.param_context.referent(argument).ok()?;
-                // A type slot binds the type its argument's shape names, so
-                // the folded body is typed at the instance (`Int`, not `T`).
-                if let ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) =
-                    argument.kind()
-                {
-                    bindings.bind_type(id.clone(), ty.clone());
-                }
-                bindings.bind(id, argument.clone());
+        match self.folded_builtin_call(function, instance.as_ref(), &arguments, Some(&application))
+        {
+            BuiltinFold::Folded(folded) => Some(folded),
+            BuiltinFold::Applied => Some(application),
+            BuiltinFold::Unbound => None,
+        }
+    }
+
+    /// `function`'s folded builtin body over `arguments`, at `instance` for
+    /// a method, as [`Self::selected_call`] substitutes a call's arguments
+    /// into it. A struct value it builds is spelled as `application`, and
+    /// is no value without one.
+    fn folded_builtin_call(
+        &self,
+        function: &ApplicableFunction,
+        instance: Option<&Ty>,
+        arguments: &[ParamExpr],
+        application: Option<&ParamExpr>,
+    ) -> BuiltinFold {
+        let Some(body) = &function.folded_body else {
+            return BuiltinFold::Applied;
+        };
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        for (slot, argument) in arguments.iter().enumerate() {
+            let id = super::annotations::builtin_body_binder(&function.key, slot, "").id;
+            // A `ref` slot's body reads the referent its reference holds.
+            let Ok(argument) = self.param_context.referent(argument) else {
+                return BuiltinFold::Unbound;
+            };
+            // A type slot binds the type its argument's shape names, so
+            // the folded body is typed at the instance (`Int`, not `T`).
+            if let ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) =
+                argument.kind()
+            {
+                bindings.bind_type(id.clone(), ty.clone());
             }
-            let nominal = instance
-                .as_ref()
-                .and_then(mojito_types::types::nominal_parts);
-            let declared = match &nominal {
-                Some((owner, instance_args)) => {
-                    let decls = &self.structs.get(template_name(owner))?.decls;
-                    let declared =
-                        mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
-                    self.bind_declared(&mut bindings, decls, &declared).ok()?;
-                    Some((decls, declared))
+            bindings.bind(id, argument);
+        }
+        let nominal = instance.and_then(mojito_types::types::nominal_parts);
+        let declared = match &nominal {
+            Some((owner, instance_args)) => {
+                let Some(info) = self.structs.get(template_name(owner)) else {
+                    return BuiltinFold::Unbound;
+                };
+                let decls = &info.decls;
+                let declared =
+                    mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
+                if self.bind_declared(&mut bindings, decls, &declared).is_err() {
+                    return BuiltinFold::Unbound;
                 }
-                None => None,
-            };
-            let replaced = |expr: &ParamExpr| {
-                self.param_context
-                    .replace(expr, &bindings)
-                    .ok()
-                    .filter(|folded| {
-                        declared.as_ref().is_none_or(|(decls, instance_args)| {
-                            !reads_rebound_binder(folded, decls, instance_args)
-                        })
+                Some((decls, declared))
+            }
+            None => None,
+        };
+        let replaced = |expr: &ParamExpr| {
+            self.param_context
+                .replace(expr, &bindings)
+                .ok()
+                .filter(|folded| {
+                    declared.as_ref().is_none_or(|(decls, instance_args)| {
+                        !reads_rebound_binder(folded, decls, instance_args)
                     })
-            };
-            let folded = match body {
-                FoldedBody::Value(value) => replaced(value).map(|folded| {
-                    respelled_struct_value(&self.param_context, folded, &application)
-                }),
-                FoldedBody::Fields(fields) => fields
+                })
+        };
+        let folded = match body {
+            FoldedBody::Value(value) => replaced(value).and_then(|folded| match application {
+                Some(application) => Some(respelled_struct_value(
+                    &self.param_context,
+                    folded,
+                    application,
+                )),
+                None => (!matches!(folded.kind(), ParamKind::StructValue { .. })).then_some(folded),
+            }),
+            FoldedBody::Fields(fields) => application.and_then(|application| {
+                fields
                     .iter()
                     .map(|(name, value)| Some((name.clone(), replaced(value)?)))
                     .collect::<Option<Vec<_>>>()
-                    .map(|fields| self.param_context.struct_value(&fields, &application)),
-            };
-            if folded.is_some() {
-                return folded;
-            }
-        }
-        Some(application)
+                    .map(|fields| self.param_context.struct_value(&fields, application))
+            }),
+        };
+        folded.map_or(BuiltinFold::Applied, BuiltinFold::Folded)
     }
 
     /// The name a call of `method` on `object` spells, the struct instance
@@ -2954,7 +3023,13 @@ impl Checker {
             self.compile_dependent_ct_expr(object).ok()?
         };
         let instance = receiver.meta().as_value()?.clone();
-        let (owner, _) = instance.kind().as_non_simd_struct()?;
+        // A numeric literal is its declared struct's application, whose
+        // dunders a literal construction (`type_of(exp)()`) applies.
+        let owner = match instance.kind() {
+            kind if kind.is_int_literal() => mojito_types::types::INT_LITERAL_TYPE_NAME,
+            kind if kind.is_float_literal() => mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+            kind => kind.as_non_simd_struct()?.0.as_str(),
+        };
         let name = format!("{}.{method}", template_name(owner));
         self.applicable_functions
             .get(&name)?
@@ -6219,6 +6294,18 @@ impl ApplicableShape<'_> {
 /// `application`: a struct value it builds is spelled as the call, which
 /// the pin displays and the elaborator answers (`L(n) + L(1)` for the
 /// `Self(...)` its `__add__` returns).
+/// What a builtin body makes of a call ([`Checker::folded_builtin_call`]).
+enum BuiltinFold {
+    /// The body's value over the call's arguments.
+    Folded(ParamExpr),
+    /// No body, or a fold that does not stand for the call: the call stays
+    /// its application.
+    Applied,
+    /// An argument or the instance binds no slot of the body: the call is
+    /// no parameter expression.
+    Unbound,
+}
+
 fn respelled_struct_value(
     context: &mojito_types::param_expr::ParamContext,
     folded: ParamExpr,

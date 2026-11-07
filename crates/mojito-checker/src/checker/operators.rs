@@ -251,13 +251,33 @@ impl Checker {
         // dunder, `a.__add__(b)` else the reflected `b.__radd__(a)`, as
         // upstream's `emitBinOpCall` resolves it, so its type carries the
         // value the dunder's attribute folds (`2 + 3` is `IntLiteral[5]`).
-        // An operator neither literal declares (`2 / 3`, `2 ** 3`) falls
-        // through to the literal rule below. In a compile-time position its
+        // An operator neither literal declares (`2 / 3`) falls through to
+        // the literal rule below. In a compile-time position its
         // value is the shared folder's (`infix_value`).
         if let Some(span) = &span
             && let Some(ty) = self.infer_literal_operator(span, op, left, right, &lt, &rt)?
         {
             return Ok(ty);
+        }
+        // `IntLiteral.__pow__` takes only an exponent its `where` clause
+        // admits, and no `Int` power stands in for a rejected one: the
+        // pair is that call's error.
+        if matches!(op, Pow) && lt.is_int_literal() && rt.is_int_literal() {
+            let call = super::initializer_list::spelled_node(
+                left,
+                u32::MAX,
+                ExprKind::MethodCall {
+                    object: Box::new(left.clone()),
+                    method: "__pow__".to_string(),
+                    args: vec![right.clone()],
+                    kwargs: Vec::new(),
+                },
+                left.span,
+            );
+            return Err(self
+                .probe(|| self.infer(&call))
+                .err()
+                .unwrap_or_else(|| bad_infix_operator(op, &lt, &rt)));
         }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
@@ -327,7 +347,7 @@ impl Checker {
         }
         // A float literal's `**` is `Float64`'s `__pow__` (`4.0 ** 0.5`), its
         // left operand materialized, as upstream's `FloatLiteral` declares
-        // none; only an `IntLiteral` pair stays a literal power.
+        // none; an `IntLiteral` pair's is `IntLiteral.__pow__` above.
         if let Some(span) = &span
             && matches!(op, Pow)
             && common.as_ref().is_some_and(Ty::is_float_literal)
@@ -798,7 +818,7 @@ impl Checker {
     /// [`Self::literal_rule_type`]. `None` for any other operands, and for
     /// a comparison, which is a `Bool` below.
     fn literal_rule(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Option<Ty>, TypeError> {
-        use InfixOp::{Add, BitAnd, BitOr, BitXor, Div, FloorDiv, Mod, Mul, Pow, Shl, Shr, Sub};
+        use InfixOp::{Add, BitAnd, BitOr, BitXor, Div, FloorDiv, Mod, Mul, Shl, Shr, Sub};
         if !numeric_literals(lt, rt) {
             return Ok(None);
         }
@@ -811,7 +831,7 @@ impl Checker {
                 let product = self.literal_rule_type(Mul, &quotient, rt)?;
                 self.literal_rule_type(Sub, lt, &product).map(Some)
             }
-            Mod | Pow | Shl | Shr | BitAnd | BitOr | BitXor if !float => {
+            Mod | Shl | Shr | BitAnd | BitOr | BitXor if !float => {
                 self.literal_rule_type(op, lt, rt).map(Some)
             }
             _ => Ok(None),

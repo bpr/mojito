@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1970**.
+Next free ID: **R1971**.
 
 ## Ordered Work
 
@@ -5307,6 +5307,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1970 A local `comptime` value of a literal-typed call is lifted at
+  `Int`, while its function returns the literal unconverted**
+
+  `comptime y = (2).__add__(3); print(y)` fails "invalid checked program:
+  MIR function '$comptime$main$c0' block 0: return of IntLiteral[5] from a
+  function returning Int", where the pin prints `5`.
+  - A literal dunder's application has no folded value (its body returns
+    `{}` at an attribute-typed result), so the check lifts it
+    (`Checker::lifted_application`, `checker/comptime_validation.rs`).
+  - MIR's `request_applications` (`mir.rs`) declares the thunk at the
+    application's type, a materialized `Int`, but lowers the call's
+    `IntLiteral[5]` result as the return value with no conversion.
+  - Upstream keeps the binding at the literal's own type and
+    materializes it where it is used.
+  - Probe: `comptime y = (2).__pow__(3); print(y)` fails the same way,
+    where the pin prints `8`.
+  - Probe: `comptime y = IntLiteral[(5).value](); print(y)` fails
+    elaboration ("keeps the parameter constant `$comptime$main$c0()`"),
+    where the pin prints `5`.
+  - Found while landing R1855 (2026-11-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1208 A parameterized `comptime` value's declared type cannot read
   the member's own parameters**
 
@@ -6846,7 +6869,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `declared_operator_receiver` (`mono/specializer.rs`) exclude a numeric
   literal application, so no declared-struct rule reaches it.
   - The checker's literal rule (`Checker::literal_rule_type`,
-    `operators.rs`) types `/`, `**`, unary `-`/`~`, and a mixed
+    `operators.rs`) types `/`, unary `-`/`~`, and a mixed
     `IntLiteral`/`FloatLiteral` pair instead of the declared dunders.
   - `conformance::modelled_conformance` answers a literal's traits by
     name: it calls a literal `Comparable` and `Equatable`, which the
@@ -7618,17 +7641,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
 - [ ] **R1821 An integer literal to a negative literal power is a type
   error, where the pin computes a float literal**
 
-  `var a = 2**-1` fails ("integer literal exponent must be a non-negative
-  u32"), where the pin prints `0.5`, and `(-1)**-3` is `-1.0`.
+  `print(2 ** -1)` and `(2).__pow__(-1)` fail ("invalid call to
+  '__pow__': violated constraint"), where the pin prints `0.5`, and
+  `(-1)**-3` is `-1.0`.
   - Upstream's `IntLiteral.__pow__` is two overloads selected by a
     `where` on the exponent's sign. The negative one returns the type of
     `1.0 / IntLiteral[base ** -exp]`, a `FloatLiteral`.
   - Port the negative overload to `stdlib/std/builtin/int_literal.mojo`
-    beside the non-negative one R1855 ports. The pair differs only in its
-    `where` clause, which R1172 owns.
+    beside the non-negative one. The pair differs only in its `where`
+    clause, which R1172 owns.
+  - Its signature reads `type_of(-exp)` (`IntLiteral.__neg__`, R1853) and
+    divides a `FloatLiteral` by an `IntLiteral` (R1784).
+  - Landing it deletes the `Pow` arm of `Checker::infer_infix`
+    (`checker/operators.rs`) that reports a rejected `IntLiteral` pair's
+    `__pow__` error instead of materializing it to `Int`.
   - Zero to a negative power is `nan`.
   - Found at the 2026-11-01 re-pin.
-  - Depends on R1855, R1172.
+  - Depends on R1172, R1853, R1784.
   - Model: Opus, Not Planned.
 
 - [ ] **R1822 A `match` cluster keys an unspelled `Equal` member under the
@@ -9622,32 +9651,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `unused_params::Operand` keeps an `Option<Reg>` that no operand leaves
     empty; both collapse with it.
   - Found while landing R1158 (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1855 `IntLiteral.__pow__`'s `where (type_of(exp)() >= 0)` is an
-  unsupported constraint operand, so a literal power is the checker's rule**
-
-  `(2).__pow__(10)` is "type 'IntLiteral[2]' has no method '__pow__'",
-  where the pin prints `1024`.
-  - Porting upstream's non-negative overload fails "unsupported generic
-    constraint operand" (`Checker::constraint_operand`,
-    `checker/constraints.rs`): `type_of(exp)()` constructs a literal, and
-    `called_application` excludes a struct construction.
-  - The fix reads that construction as the literal it is, so the
-    comparison is `IntLiteral.__ge__`'s `#pop<int_literal_cmp>` attribute,
-    which the parameter builder already folds.
-  - Then port the overload and drop the `Pow` arm of the literal rule in
-    `Checker::infer_infix` for an `IntLiteral` pair, so `2 ** 10` is the
-    declared dunder (`Checker::infer_literal_operator`).
-  - Probe: `print((2).__pow__(10), 2 ** 10)` prints `1024 1024` at the pin.
-  - Probe: `(2.5).__pow__(2.0)` stays rejected, since `FloatLiteral`
-    declares no `__pow__`.
-  - Probe: `print(2 ** -1)` prints `0.5` at the pin through the
-    negative-exponent overload; the literal rule types it by the
-    unfolded `#pop<int_literal_bin<pow 2, -1>>`, which elaboration
-    rejects ("keeps symbolic type").
-  - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

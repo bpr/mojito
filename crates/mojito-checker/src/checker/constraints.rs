@@ -2345,14 +2345,16 @@ impl Checker {
         } else {
             right_built
         };
-        if struct_valued(&left_built) || struct_valued(&right_built) {
+        let dunder_operand =
+            |built: &ParamExpr| struct_valued(built) || literal_construction(built);
+        if dunder_operand(&left_built) || dunder_operand(&right_built) {
             let mut candidates = Vec::new();
-            if struct_valued(&left_built)
+            if dunder_operand(&left_built)
                 && let Some(dunder) = op.dunder()
             {
                 candidates.push((left, dunder, Some(right)));
             }
-            if struct_valued(&right_built)
+            if dunder_operand(&right_built)
                 && let Some(dunder) = op.reflected_dunder()
             {
                 candidates.push((right, dunder, Some(left)));
@@ -2505,7 +2507,7 @@ impl Checker {
         let _lifting = self.lifting_position();
         let struct_operand = |operand: &Expr| {
             self.compile_dependent_ct_expr(operand)
-                .is_ok_and(|built| struct_valued(&built))
+                .is_ok_and(|built| struct_valued(&built) || literal_construction(&built))
         };
         if !struct_operand(left) && !struct_operand(right) {
             return None;
@@ -3708,7 +3710,15 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let base = self.compile_dependent_ct_expr(object).ok()?;
-        if let mojito_types::param_expr::ParamKind::StructValue { .. } = base.kind() {
+        if let mojito_types::param_expr::ParamKind::StructValue { fields, .. } = base.kind() {
+            // A name no stored field holds is a struct parameter, read off
+            // the value's type ([`Self::value_type_argument`]): `self.value`
+            // of a field-less `IntLiteral[value]`.
+            if fields.iter().all(|(name, _)| name != field)
+                && self.value_type_argument(object, field).is_some()
+            {
+                return None;
+            }
             return Some(
                 self.param_context
                     .field(&base, field, base.meta().clone())
@@ -5686,10 +5696,18 @@ impl Checker {
                 // As for a type argument, an opaque atom stays unfolded: the
                 // pin finds no evidence for `n // -2 == -4` even at `n = 7`
                 // (`assets/type_error/param_expr_where_unfolded_atom.mojo`).
-                context
-                    .replace(expression, &bindings)
-                    .ok()
-                    .map(|replaced| TyArg::Val(replaced.into_value()))
+                // A builtin call the clause recorded before its callee's
+                // body folded folds now, as upstream folds it where built;
+                // an operator atom inside any other operand stays unfolded.
+                context.replace(expression, &bindings).ok().map(|replaced| {
+                    let answered = match replaced.kind() {
+                        mojito_types::param_expr::ParamKind::Apply { function, args } => {
+                            self.builtin_application_value(function, args)
+                        }
+                        _ => None,
+                    };
+                    TyArg::Val(answered.unwrap_or_else(|| replaced.into_value()))
+                })
             }
         }
     }
@@ -6120,6 +6138,20 @@ fn struct_valued(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(|ty| ty.kind().is_non_simd_struct() && !ty.kind().is_bool())
+}
+
+/// Whether `value` constructs a numeric literal (`type_of(exp)()` over `exp:
+/// IntLiteral[_]`), which compares through the literal's operator dunder,
+/// as any struct value does.
+fn literal_construction(value: &ParamExpr) -> bool {
+    matches!(
+        value.kind(),
+        mojito_types::param_expr::ParamKind::Apply { .. }
+            | mojito_types::param_expr::ParamKind::StructValue { .. }
+    ) && value
+        .meta()
+        .as_value()
+        .is_some_and(|ty| ty.kind().is_numeric_literal())
 }
 
 fn is_simd_length_value(value: &ParamExpr) -> bool {

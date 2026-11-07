@@ -502,6 +502,7 @@ assets/ok/int_literal_bool_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_index_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_parameter_value.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/int_literal_pow_dunder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_literal_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/int_mod_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape

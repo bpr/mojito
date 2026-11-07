@@ -289,6 +289,31 @@ impl Checker {
         is_type_of(object).then(|| self.denoted_type(object, "the receiver 'type_of'"))
     }
 
+    /// The construction a call through `type_of(operand)` spells (`type_of(
+    /// exp)()` over `exp: IntLiteral[_]` is `IntLiteral[exp's value]()`),
+    /// as [`Self::infer_type_of_read`] types it at run time and upstream
+    /// reads `type_of`'s result as that type in a parameter expression too.
+    /// `None` for any other expression.
+    pub(super) fn type_of_construction(&self, expression: &Expr) -> Option<Expr> {
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expression.kind
+        else {
+            return None;
+        };
+        if !param_args.is_empty() || !is_type_of(callee) {
+            return None;
+        }
+        let ty = self
+            .denoted_type(callee, "a construction through 'type_of'")
+            .ok()?;
+        self.alias_construction(expression, &ty, callee, args, kwargs)
+            .ok()
+    }
+
     /// The construction a call of a struct's `comptime` type member spells
     /// (`T.four()` over `comptime four = T[n=4]` is `T[n=4]()`), as
     /// [`Self::infer_type_alias_read`] types it. `None` for any other

@@ -3,14 +3,15 @@
 # dunders, `__pos__`, the `IntLiteral[_]`-taking `__add__`, `__sub__`, and
 # `__mul__`, `__floordiv__`, `__mod__`, the shifts and bitwise dunders,
 # `__bool__`, `__int__`, `__ceil__`, `__floor__`, `__trunc__`, `write_to`,
-# `write_repr_to`, and `__mlir_index__`. A literal `4` is its application
-# `IntLiteral[4]`, as is an explicit one (`IntLiteral[(4).value]()`), and a
-# bare `IntLiteral` parameter is upstream's per-call `IntLiteral[_]`. Not
-# ported: `__neg__`, `__invert__`, and `__ceildiv__`, whose signatures call
-# a dunder declared below them (R1853); the `FloatLiteral`-taking `__add__`,
-# `__sub__`, and `__mul__` and `__truediv__`, which construct a
-# `FloatLiteral` from `self` (R1784); and `__pow__`, whose `where` clause
-# constructs a literal (R1855, R1821).
+# `write_repr_to`, `__mlir_index__`, and the non-negative-exponent
+# `__pow__`. A literal `4` is its application `IntLiteral[4]`, as is an
+# explicit one (`IntLiteral[(4).value]()`), and a bare `IntLiteral`
+# parameter is upstream's per-call `IntLiteral[_]`. Not ported: `__neg__`,
+# `__invert__`, and `__ceildiv__`, whose signatures call a dunder declared
+# below them (R1853); the `FloatLiteral`-taking `__add__`, `__sub__`, and
+# `__mul__` and `__truediv__`, which construct a `FloatLiteral` from `self`
+# (R1784); and the negative-exponent `__pow__`, which differs from the
+# other only in its `where` clause (R1821).
 """Implements the IntLiteral class."""
 
 from std.math import Ceilable, Floorable, Truncable
@@ -234,6 +235,31 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
 
         Returns:
             `self * rhs` value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __pow__(
+        self, exp: IntLiteral[_]
+    ) -> IntLiteral[
+        __mlir_attr[
+            `#pop<int_literal_bin<pow `,
+            self.value,
+            `,`,
+            exp.value,
+            `>> : !pop.int_literal`,
+        ]
+    ] where (type_of(exp)() >= 0):
+        """Return the value raised to the power of the given positive exponent.
+
+        Args:
+            exp: The exponent value.
+
+        Constraints:
+            The exp argument is non-negative.
+
+        Returns:
+            The value of `self` raised to the power of `exp`.
         """
         return {}
 
