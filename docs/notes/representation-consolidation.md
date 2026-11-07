@@ -126,7 +126,8 @@ command cannot use both.
      readers take the number from its type. R1851 landed: the literal
      types are the declared structs' applications, and R1968 → R1969
      move their construction and member rules onto those structs. R1855 (`IntLiteral.__pow__`'s constraint) is beside them.
-   - `StringLiteral`: R1858, R1859, R1860 → R1861 → R1862 delete the
+   - `StringLiteral`: R1858 landed (the elaborator fills no unsolved
+     binder); R1859, R1860 → R1861 → R1862 delete the
      value-less type and its descriptor. R1863, R1864, and R1865 are
      independent.
 

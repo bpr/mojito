@@ -10909,20 +10909,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1936.
   - Model: Opus, Not Planned.
 
-- [ ] **R1858 An unsolved type binder is the value-less `StringLiteral`
-  in the elaborator**
-
-  `Specializer`'s receiver-call instantiation (`mono/instances.rs`)
-  binds every type binder the arguments leave unsolved to the value-less
-  `StringLiteral`, where upstream never elaborates a call with an unsolved
-  type parameter.
-  - Lever: the checker records each binder's solution or default on the
-    call, so the elaborator reads it instead of filling one.
-  - Probe: `rg -n "Ty::string_literal\(\)" crates/mojito-native/src/native/mono/instances.rs`
-    finds only `nominal_method_instance`'s generic fill.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1859 A `[s: StringLiteral]` parameter is typed by the value-less
   literal**
 

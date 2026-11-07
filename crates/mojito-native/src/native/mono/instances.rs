@@ -76,7 +76,6 @@ impl Specializer<'_> {
                 &hasher_ty,
                 "_update_with_simd",
                 1,
-                &[],
                 std::slice::from_ref(&leaf),
             )?;
             return Ok(());
@@ -84,7 +83,7 @@ impl Specializer<'_> {
         if let TyKind::Variant(alternatives) = receiver.kind() {
             for alternative in alternatives {
                 if alternative.kind().is_non_simd_struct() {
-                    self.enqueue_nominal_method_instance(
+                    self.nominal_method_instance(
                         owner,
                         alternative,
                         "__hash__",
@@ -97,35 +96,18 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Enqueue one nominal method instance reached by a lowered intrinsic
-    /// rather than an explicit MIR call: the receiver binds the owner's
-    /// parameters, `method_bindings` bind the method's own type parameters in
-    /// declaration order, and any remaining type parameter (a `Some[..]`
-    /// sugar spelling) instantiates at the builtin string.
-    pub(super) fn enqueue_nominal_method_instance(
-        &mut self,
-        owner: &str,
-        receiver: &Ty,
-        method: &str,
-        argc: usize,
-        method_bindings: &[Ty],
-    ) -> Result<(), MonoError> {
-        self.nominal_method_instance(owner, receiver, method, argc, method_bindings, &[])
-            .map(drop)
-    }
-
     /// The instance one nominal method reached by a lowered intrinsic
-    /// names, enqueued (see [`Self::enqueue_nominal_method_instance`]):
-    /// `argument_types`, when given, solve the method's own binders as a
-    /// call's arguments would before any remaining type parameter takes
-    /// the builtin string. `None` when the receiver declares no such method.
+    /// rather than an explicit MIR call names, enqueued: the receiver binds
+    /// the owner's parameters and `argument_types` solve the method's own
+    /// binders as a call's arguments would. Every type parameter must be
+    /// solved, as upstream never elaborates a call with an unsolved one.
+    /// `None` when the receiver declares no such method.
     pub(super) fn nominal_method_instance(
         &mut self,
         owner: &str,
         receiver: &Ty,
         method: &str,
         argc: usize,
-        method_bindings: &[Ty],
         argument_types: &[Ty],
     ) -> Result<Option<String>, MonoError> {
         let Some((name, arguments)) = struct_receiver(receiver) else {
@@ -160,33 +142,33 @@ impl Specializer<'_> {
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             }
         }
-        let own_binders: Vec<ParamRef> = declaration
-            .param_decls
-            .iter()
-            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
-            .map(ParamDecl::binder)
-            .filter(|binder| !bindings.types.contains_key(binder))
-            .collect();
-        for (binder, ty) in own_binders.into_iter().zip(method_bindings) {
-            bindings.types.insert(binder, ty.clone());
-        }
         for (pattern, actual) in declaration.param_types.iter().zip(argument_types) {
             unify(pattern, actual, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
-        for decl in &declaration.param_decls {
-            if let ParamDecl::Type { .. } = decl
-                && !bindings.types.contains_key(&decl.binder())
-            {
-                bindings.types.insert(decl.binder(), Ty::string_literal());
-            }
-        }
-        for ty in &declaration.param_types {
-            if let TyKind::Param { binder, .. } = ty.kind()
-                && !bindings.types.contains_key(binder)
-            {
-                bindings.types.insert(binder.clone(), Ty::string_literal());
-            }
+        let unsolved = declaration
+            .param_decls
+            .iter()
+            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
+            .map(ParamDecl::binder)
+            .chain(
+                declaration
+                    .param_types
+                    .iter()
+                    .filter_map(|ty| match ty.kind() {
+                        TyKind::Param { binder, .. } => Some(binder.clone()),
+                        _ => None,
+                    }),
+            )
+            .find(|binder| !bindings.types.contains_key(binder));
+        if let Some(binder) = unsolved {
+            return Err(self.error(
+                Some(owner),
+                format!(
+                    "monomorphizing `{target}`: its arguments leave the type parameter `{}` unsolved",
+                    binder.name
+                ),
+            ));
         }
         let mut arguments =
             self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;

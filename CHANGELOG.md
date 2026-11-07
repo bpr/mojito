@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator no longer binds a type parameter a hash leaf's member
+  call leaves unsolved to the value-less `StringLiteral`: a `Variant`
+  alternative's `__hash__` solves its hasher binder from the argument, as
+  upstream's call inference does, and an unsolved binder is an
+  elaboration error, as upstream never elaborates such a call (R1858).
 - `IntLiteral` now declares upstream's non-negative-exponent `__pow__`, so
   `(2).__pow__(10)` and `2 ** 10` are the declared dunder rather than the
   checker's literal rule. Its `where (type_of(exp)() >= 0)` compiles: a
