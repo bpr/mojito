@@ -1349,12 +1349,13 @@ impl<'a> Flatten<'a> {
         // An operand read at its call's setup lends through setup loans, and
         // its read begins after them.
         let setup = self.awaits_setup_read(expression);
+        let written = expression.borrow_mutability() == Some(true);
         let place = self.materialize_call_reference_place(
             expression,
             handle,
             &materialized_reference,
             None,
-            (setup, false),
+            (setup, written),
         );
         if setup && let Some(pending) = self.setup_reference.as_mut() {
             pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));

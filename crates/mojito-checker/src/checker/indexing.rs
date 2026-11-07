@@ -912,7 +912,7 @@ impl Checker {
             .and_then(|contract| contract.reference_result)
             .map(|reference| reference.mutability);
         match mutability {
-            Some(mutability) if mutability != mojito_types::origin::Mutability::Immutable => {
+            Some(mutability) if self.require_writable_reference(mutability) => {
                 self.record_at(span).reference_value_use = Some(true);
                 Ok(referent)
             }
@@ -1928,9 +1928,13 @@ impl Checker {
         // that referent for the projection; it does not first create an owned
         // copy of the whole value. Retain the handle exactly as method and
         // chained-subscript receivers do, including for linear referents.
+        // A place check that writes through the handle already marked it
+        // mutable; projecting the written field keeps that mark.
         if let Some(reference) = self.infer_reference_value(object) {
-            self.record_at(object.source_span()).reference_value_use =
-                Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
+            let mut facts = self.record_at(object.source_span());
+            let written = facts.reference_value_use == Some(true);
+            facts.reference_value_use =
+                Some(written || reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
         if field == "length"
             && let Some(read) = self.simd_length_read(span.clone(), &obj_ty)

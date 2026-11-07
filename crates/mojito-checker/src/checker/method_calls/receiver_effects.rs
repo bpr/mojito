@@ -95,10 +95,18 @@ impl Checker {
                     _ => None,
                 });
             if let Some(reference) = returned_reference {
-                if reference.mutability != mojito_types::origin::Mutability::Mutable {
+                if !self.require_writable_reference(reference.mutability) {
                     return Err(TypeError::ImmutableBinding(
                         "reference-returning method receiver".to_string(),
                     ));
+                }
+                // The method writes through a handle whose mutability is the
+                // instance's: it lends mutably, as a store through it does.
+                if matches!(
+                    reference.mutability,
+                    mojito_types::origin::Mutability::Param(_)
+                ) {
+                    self.record_at(object.source_span()).reference_value_use = Some(true);
                 }
             } else {
                 self.check_place(object)?;
@@ -108,6 +116,30 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Whether a write through a reference of `mutability` may stand. A
+    /// parametric one (`Origin[mut=m]`) names an origin parameter of the
+    /// enclosing struct: the write is recorded as the method's requirement
+    /// on it, judged per instantiation at each call site
+    /// (`judge_parametric_origin_writes`).
+    pub(in crate::checker) fn require_writable_reference(
+        &self,
+        mutability: mojito_types::origin::Mutability,
+    ) -> bool {
+        match mutability {
+            mojito_types::origin::Mutability::Mutable => true,
+            mojito_types::origin::Mutability::Immutable => false,
+            mojito_types::origin::Mutability::Param(id) => {
+                if (id.0 as usize) < self.enclosing_struct_type_params.get()
+                    && let Some(frame) = self.parametric_write_frames.borrow_mut().last_mut()
+                    && !frame.contains(&id)
+                {
+                    frame.push(id);
+                }
+                true
+            }
+        }
     }
 
     /// A method body writing through a parametric-mut ref field is legal

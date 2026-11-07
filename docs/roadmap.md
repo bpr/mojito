@@ -2656,26 +2656,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1573 A write through a parametric-mutability `ref` field's
-  element is a loan conflict or a rejection**
-
-  In `struct View[m: Bool, //, o: Origin[mut=m]]` with `var src: ref[o]
-  List[C]`, a `mut self` method's `self.src[0].n = 3` fails ownership
-  ("access to '$call_ref_r5.n' conflicts with live reference"), and
-  `self.src[0].inc()` over a `mut self` `inc` is rejected ("expression
-  must be mutable in assignment"), where `self.src[0] += 1` and
-  `self.src[0] = x` run (`assets/extensions/ok/ref_field_parametric_mut_*`).
-  - The hidden reference an accessor returns lends immutably when its
-    mutability is a parameter (`materialize_call_reference_place`,
-    `mir/calls.rs`), unless the caller writes through it in place, which
-    only an augmented store tells it today.
-  - Direct `ref` fields are a kept extension, so the fixture's rule
-    ("judged per instantiation") is Mojito's: make the field store and the
-    `mut` method call follow it as `+=` does.
-  - Found while landing R1552 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.

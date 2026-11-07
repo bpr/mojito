@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field store into, and a `mut self` method call on, the element a
+  parametric-mut `ref` field reaches (`self.src[0].n = 3`,
+  `self.src[0].inc()` over `ref[o] List[C]` with `o: Origin[mut=m]`)
+  now write through the view and are judged per instantiation, as
+  `self.src[0] += 1` is, where the store failed ownership and the call
+  was rejected (R1573).
 - An existential `Some[Trait]` parameter is now the anonymous
   `[T: Trait]` binder its argument deduces, as upstream desugars it: a
   literal argument materializes (`StringLiteral` to `String`) or

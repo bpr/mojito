@@ -1652,6 +1652,7 @@ assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	-	ineligible	no
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_parametric_mut_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape

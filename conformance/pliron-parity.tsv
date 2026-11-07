@@ -1668,6 +1668,7 @@ assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	main	exe-differ
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_parametric_mut_element_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_reborrow_read.mojo	main	exe-differential	sanitized
