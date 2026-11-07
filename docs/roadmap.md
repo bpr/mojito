@@ -401,33 +401,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1601 A VM struct value names the instance whose body built it, so
-  one an erased (`_REMOVED_ARG`) clone returns finds no member of its
-  caller's instance**
-
-  `print(B[T, n].make(x))` in `def g[T: ..., n: Int]`, over `struct B[T:
-  ImplicitlyCopyable & Writable & Deinitable, n: Int]` with a static
-  `make(v: Self.T) -> Self`, stops the VM with "`B$mono$TString$V$REMOVED$ARG`
-  has no `write_to` instance to display it", where the pin and the Pliron
-  backend print `B(a)`.
-  - `remove-unused-params` removes `n` from `make`, so its clone builds a
-    `B[String, _REMOVED_ARG]`. The VM's display looks `write_to` up by
-    that name (`struct_member_instances`, `vm/dispatch.rs`), and only the
-    concrete `B[String, 3]` has one.
-  - Upstream's struct value is its layout, which an unread parameter does
-    not change. Lever: key a VM struct value's members by its template and
-    layout, or retype the erased clone's result to its caller's instance.
-  - `MOJITO_PRE_ELABORATION=0` runs it; `print(b.v)` on the result runs.
-  - The same through `type_of(b).make(b.v)`.
-  - Probe: `comptime z = S[2](5)` then `print(z)`, over a `@fieldwise_init
-    struct S[n: Int](Writable)` whose one field is `x: Int`, stops the VM
-    with "`S$mono$V$REMOVED$ARG` has no `write_to` instance", where the pin
-    prints `5`; so does `print(S[2].Z)` over `comptime Z = Self(7)`.
-    `print(z.x)` runs.
-  - Found while landing R1599 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1276 A region is a `Vec<MirBlock>` the verifier holds to one
   block, where upstream's `hlcf` regions are `SizedRegion<1>`**
 

@@ -3651,6 +3651,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value an erased (`_REMOVED_ARG`) clone builds displays through its
+  caller's `write_to`: `print(B[T, n].make(x))` over a `make` that reads
+  no `n`, a compile-time `S[2](5)`, and a `comptime Z = Self(7)` member
+  print as at the pin. Pinned by a new fixture (R1601).
+
 - A generic capture-list closure called through a closure-trait binder
   with explicit parameters (`f[2](40)` over `F: def[n: Int](Int) -> Int`)
   elaborates: the closure storage's `__call__` witness now takes the

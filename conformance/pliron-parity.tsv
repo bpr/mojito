@@ -373,6 +373,7 @@ assets/ok/entry_redeclares_library_names.mojo	main	exe-differential	sanitized
 assets/ok/enum_like_callable_binder_cases.mojo	main	exe-differential	sanitized
 assets/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
 assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
+assets/ok/erased_clone_result_members.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized
 assets/ok/error_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized
