@@ -379,7 +379,7 @@ pub fn thin_callable(ty: &Ty) -> bool {
 /// Whether the compiler-modelled `ty` stands in for an upstream struct
 /// declaring `TrivialRegisterPassable`, or is a type upstream gives that
 /// conformance: a `SIMD` value, `Bool`, a numeric literal, `NoneType`,
-/// `DType`, or a thin function.
+/// `DType`, a `Pointer`, or a thin function.
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
@@ -389,6 +389,7 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
             ty.kind(),
             TyKind::None
                 | TyKind::Dtype
+                | TyKind::Pointer { .. }
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8

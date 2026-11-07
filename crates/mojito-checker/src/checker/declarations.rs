@@ -1931,6 +1931,7 @@ impl Checker {
         );
         // An initializer's `out self` follows the arguments its refined
         // annotation may read (`origin_of(iterable)`).
+        let mut param_tys = Vec::with_capacity(m.params.len());
         for (index, p) in m.params.iter().enumerate() {
             if index == m.receiver_index {
                 self.bind_method_receiver(self_ty, m, self_writable)?;
@@ -1958,6 +1959,7 @@ impl Checker {
                 }
                 mojito_ast::ast::ParamKind::Regular => pty,
             };
+            param_tys.push(pty.clone());
             let writable = ref_parameter_is_writable(p, &reference_type_params);
             let binder = matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref))
                 .then(|| self.reference_parameter_struct_binder(p.origin.as_deref()))
@@ -1975,6 +1977,14 @@ impl Checker {
         }
         if m.receiver_index >= m.params.len() {
             self.bind_method_receiver(self_ty, m, self_writable)?;
+        }
+        let constructs = m.self_convention == Some(mojito_ast::ast::ArgConvention::Out);
+        let none: Ty = TyKind::None.into();
+        let result = if constructs { &none } else { ret_ty };
+        if let Some(error) =
+            self.builtin_signature_rejection(&m.decorators, &m.params, &param_tys, result)
+        {
+            return Err(error);
         }
         self.check_method_body(MethodBody {
             name: &m.name,

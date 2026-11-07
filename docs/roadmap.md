@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1991**.
+Next free ID: **R1992**.
 
 ## Ordered Work
 
@@ -9157,33 +9157,27 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1523 An `@always_inline("builtin")` body the pin rejects is
-  accepted outside the fold's domain**
+- [ ] **R1991 An `@always_inline("builtin")` body is judged by its
+  unchecked syntax, not by the calls its check resolves**
 
-  The pin judges every builtin body by its fold, where Mojito judges only a
-  body in the compile-time call domain (`applicable_declarations`: scalar
-  parameters by value, a declared result) and only the constructs
-  `builtin_body_rejection` lists.
-  - A body the fold cannot read (a host-implemented callee, a `Bool`
-    conversion) keeps its call an application instead of being rejected.
-  - Probe: `def g(mut n: Int): n += 1` under the decorator runs, where the
-    pin says "does not support this argument convention"; so does `def
-    g(n: Int, s: String) -> Int: return n + n`.
-  - Probe: `print(n)` before `return n + n` runs, where the pin says "does
-    not support MLIR operation lit.ref.immut"; so does `return Int(b)` over
-    a `b: Bool`.
-  - Probe: `return min(n, 3)` runs, where the pin says "only supports calls
-    to other '@always_inline("builtin")' functions": `min` is
-    `std.math`'s library overloads, and `calls_ordinary_function` asks
-    only `applicable_functions`, the compile-time call domain, which holds
-    neither overload.
-  - Probe: `return L(n)` or `return Self(n)` in a builtin static method of
-    a `@fieldwise_init struct L` runs, where the pin says "only supports
-    calls to other '@always_inline("builtin")' functions":
-    `calls_ordinary_function` exempts every construction, where the pin
-    admits only a builtin `__init__`.
-  - Found while landing R1395 (2026-10-27).
-  - Depends on R1522.
+  The pin's fold judges the checked body, each call at its resolved callee
+  and each argument at the convention it passes by, where Mojito's
+  `non_builtin_operation` reads the AST before the check, by name.
+  - Probe: `return Int(b)` over a `b: Bool` runs, where the pin says "does
+    not support MLIR operation lit.ref.immut": `calls_ordinary_function`
+    sees that some `Int.__init__` is builtin, and cannot tell which
+    overload the call resolves to, nor that it takes `b` by reference.
+  - Probe: `print(n)` before `return n + n`, and `return abs(n)`, are
+    rejected with "only supports calls to other
+    '@always_inline("builtin")' functions", where the pin says "does not
+    support MLIR operation lit.ref.immut": an argument passed to a generic
+    or memory-only `read` parameter is a reference the fold cannot take,
+    and the pin judges it before the call.
+  - The lever: judge a builtin body during its body check, over each call's
+    resolved callee and argument conventions, as the pin's
+    `foldInlineBuiltinFunction` walks the body's ops.
+  - Found while landing R1523 (2026-11-07).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1527 A run-time call of an `@always_inline("builtin")` callable

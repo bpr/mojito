@@ -2973,6 +2973,7 @@ impl Checker {
             captures,
             ret: ret_anno,
             body,
+            decorators,
             ..
         } = &stmt.kind
         else {
@@ -3009,6 +3010,11 @@ impl Checker {
             named_result,
             ..
         } = def_shape(params);
+        if let Some(error) =
+            self.builtin_signature_rejection(decorators, params, &param_tys, &ret_ty)
+        {
+            return Err(error);
+        }
         // Type parameters are in scope while checking the body (as bare
         // `T`), and value parameters as the typed references a dependent
         // parameter expression names (`Buf[n + 1]`).

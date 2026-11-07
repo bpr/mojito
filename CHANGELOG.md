@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `@always_inline("builtin")` callable's signature is now judged as the
+  pin judges it, called or not: a variadic, `mut`, `var`, `ref`, or
+  `deinit` argument, or an argument or result that is not trivially
+  register-passable, is rejected with "does not support this argument
+  convention". A builtin body's construction through a non-builtin
+  `__init__` and a comparison converting a `FloatLiteral` operand are
+  rejected too, and `Pointer` now conforms to `TrivialRegisterPassable`.
 - A subscript of a list or tuple display in a compile-time position is
   now the display's subscript application, no longer a fold over a frozen
   element list (R1530). `SIMD[DType.int8, [2, 1][0]]` is no longer

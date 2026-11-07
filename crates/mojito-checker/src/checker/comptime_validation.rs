@@ -229,6 +229,12 @@ impl ApplicableFunction {
         self.lowered.as_deref().unwrap_or(&self.key)
     }
 
+    /// How many of its [`Self::argument_slots`] are run-time arguments, the
+    /// last ones: `self`, the runtime parameters, and the collector.
+    pub(in crate::checker) fn runtime_slot_count(&self) -> usize {
+        self.params.len() + usize::from(self.takes_self()) + usize::from(self.collector.is_some())
+    }
+
     /// The compile-time parameters, then `self`, then the runtime
     /// parameters, in [`Checker::called_application`]'s argument order, each
     /// declared as its slot's own binder

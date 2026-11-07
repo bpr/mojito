@@ -44,7 +44,9 @@ impl Checker {
             .collect();
         if let Some(error) = declarations.iter().find_map(|declaration| {
             self.in_owner_scope(declaration, |checker| {
-                checker.builtin_body_rejection(declaration)
+                checker
+                    .applicable_signature_rejection(declaration)
+                    .or_else(|| checker.builtin_body_rejection(declaration))
             })
             .unwrap_or_else(|| self.builtin_body_rejection(declaration))
         }) {
@@ -73,6 +75,40 @@ impl Checker {
                 return Ok(());
             }
         }
+    }
+
+    /// The pin's rejection of a builtin callable's signature, whose fold
+    /// takes every argument by value in a register: a variadic parameter, a
+    /// `mut`, `var`, `ref`, or `deinit` one, or a parameter or result whose
+    /// type (`tys`, one per parameter) is not trivially register-passable.
+    /// `None` for any callable not declared builtin; its receiver is
+    /// [`Self::fold_builtin_bodies`]' to judge.
+    pub(super) fn builtin_signature_rejection(
+        &self,
+        decorators: &[mojito_ast::ast::Decorator],
+        params: &[mojito_ast::ast::FnParam],
+        tys: &[Ty],
+        result: &Ty,
+    ) -> Option<TypeError> {
+        if !matches!(InlineLevel::of(decorators), Ok(InlineLevel::Builtin)) {
+            return None;
+        }
+        let in_register = |ty: &Ty| self.passes_in_register(ty);
+        let by_value = |param: &mojito_ast::ast::FnParam, ty: &Ty| {
+            param.kind == mojito_ast::ast::ParamKind::Regular
+                && matches!(
+                    param.convention,
+                    None | Some(ArgConvention::Imm | ArgConvention::Out)
+                )
+                && in_register(ty)
+        };
+        let result_by_value = matches!(result.kind(), TyKind::None) || in_register(result);
+        (params
+            .iter()
+            .zip(tys)
+            .any(|(param, ty)| !by_value(param, ty))
+            || !result_by_value)
+            .then(|| builtin_rejection("does not support this argument convention"))
     }
 
     /// `f` run where each argument slot of `declaration` is a binder of its
@@ -188,11 +224,44 @@ impl Checker {
         })
     }
 
+    /// [`Self::builtin_signature_rejection`] of an applicable `declaration`,
+    /// judged before its body, as the pin judges a signature first: a
+    /// run-time argument slot or a result whose type is not trivially
+    /// register-passable.
+    fn applicable_signature_rejection(
+        &self,
+        declaration: &ApplicableDeclaration<'_>,
+    ) -> Option<TypeError> {
+        let slots = declaration.function.argument_slots(self.self_ty.as_ref())?;
+        let result = match declaration.function.result() {
+            SourceType::SelfType => self.self_ty.clone(),
+            result => self.ty_from_anno(result).ok(),
+        };
+        let runtime = slots.len() - declaration.function.runtime_slot_count();
+        let by_value = slots[runtime..]
+            .iter()
+            .filter_map(slot_ty)
+            .chain(
+                result
+                    .as_ref()
+                    .filter(|_| !declaration.function.constructs()),
+            )
+            .all(|ty| matches!(ty.kind(), TyKind::None) || self.passes_in_register(ty));
+        (!by_value).then(|| builtin_rejection("does not support this argument convention"))
+    }
+
+    /// Whether a builtin callable's fold takes a `ty` argument by value in
+    /// a register: `ty` is trivially register-passable.
+    fn passes_in_register(&self, ty: &Ty) -> bool {
+        self.is_trivial_register_passable(ty) || self.conforms_to(ty, "TrivialRegisterPassable")
+    }
+
     /// The pin's rejection of a builtin body: a `raises` declaration, an
     /// early `return`, a statement `if` or a loop, a `var` reassigned after
     /// its initializer, or a call of a callable that is not itself builtin
-    /// (an ordinary function, `//`, `%`, or `**` over `Int`, a
-    /// `FloatLiteral` operand converted to `Float64`).
+    /// (an ordinary function, a construction by a non-builtin `__init__`,
+    /// `//`, `%`, or `**` over `Int`, a `FloatLiteral` operand converted to
+    /// `Float64`).
     fn builtin_body_rejection(&self, declaration: &ApplicableDeclaration<'_>) -> Option<TypeError> {
         if declaration.function.raises() {
             return Some(builtin_rejection(
@@ -241,7 +310,8 @@ impl Checker {
     /// parameter no overload of which is builtin (`self.ord()`), an
     /// operator over a non-literal operand whose `SIMD` dunder is not
     /// builtin (`//`, `%`, or `**`: `SIMD.__floordiv__`, `__mod__`, and
-    /// `__pow__`), or arithmetic converting a `FloatLiteral` operand.
+    /// `__pow__`), or arithmetic or a comparison converting a
+    /// `FloatLiteral` operand.
     fn non_builtin_operation(
         &self,
         declaration: &ApplicableDeclaration<'_>,
@@ -253,9 +323,24 @@ impl Checker {
             receivers: Vec<String>,
             /// The methods of the struct declaring the body.
             methods: &'a [mojito_ast::ast::Method],
+            /// The name of the struct declaring the body, which `Self`
+            /// constructs.
+            owner: Option<&'a str>,
+            /// The names of the body's operands typed `FloatLiteral`.
+            float_literals: Vec<String>,
             found: bool,
         }
         impl Operations<'_> {
+            /// Whether `operand` is a `FloatLiteral`: a literal, or an
+            /// operand of that type.
+            fn float_literal(&self, operand: &Expr) -> bool {
+                match &operand.kind {
+                    ExprKind::Float(_) => true,
+                    ExprKind::Identifier(name) => self.float_literals.contains(name),
+                    _ => false,
+                }
+            }
+
             /// Whether `object.method(...)` calls a method of a `Self`
             /// operand no overload of which is builtin.
             fn calls_ordinary_method(&self, object: &Expr, method: &str) -> bool {
@@ -292,14 +377,22 @@ impl Checker {
                                 .is_none_or(|dunder| !self.checker.simd_dunder_is_builtin(dunder))
                     }
                     ExprKind::Infix(
-                        InfixOp::Add | InfixOp::Sub | InfixOp::Mul | InfixOp::Div,
+                        InfixOp::Add
+                        | InfixOp::Sub
+                        | InfixOp::Mul
+                        | InfixOp::Div
+                        | InfixOp::Eq
+                        | InfixOp::Ne
+                        | InfixOp::Lt
+                        | InfixOp::Gt
+                        | InfixOp::Le
+                        | InfixOp::Ge,
                         left,
                         right,
-                    ) => {
-                        matches!(left.kind, ExprKind::Float(_))
-                            != matches!(right.kind, ExprKind::Float(_))
-                    }
-                    ExprKind::Call { name, .. } => self.checker.calls_ordinary_function(name),
+                    ) => self.float_literal(left) != self.float_literal(right),
+                    ExprKind::Call { name, .. } => self.checker.calls_ordinary_function(
+                        self.owner.filter(|_| name == "Self").unwrap_or(name),
+                    ),
                     ExprKind::MethodCall { object, method, .. } => {
                         self.checker.calls_ordinary_static_method(object, method)
                             || self.calls_ordinary_method(object, method)
@@ -315,28 +408,33 @@ impl Checker {
                 };
             }
         }
-        let methods = match declaration.owner.map(|owner| &owner.kind) {
-            Some(StmtKind::Struct { methods, .. }) => methods.as_slice(),
-            _ => &[],
+        let (methods, owner) = match declaration.owner.map(|owner| &owner.kind) {
+            Some(StmtKind::Struct { methods, name, .. }) => {
+                (methods.as_slice(), Some(name.as_str()))
+            }
+            _ => (&[][..], None),
         };
-        let receivers = self
-            .self_ty
-            .as_ref()
-            .and_then(|self_ty| {
-                let slots = declaration.function.argument_slots(Some(self_ty))?;
-                Some(
-                    slots
-                        .into_iter()
-                        .filter(|slot| slot_ty(slot) == Some(self_ty))
-                        .map(|slot| slot.name().to_string())
-                        .collect(),
-                )
-            })
+        let slots = declaration
+            .function
+            .argument_slots(self.self_ty.as_ref())
             .unwrap_or_default();
+        let named = |typed: &dyn Fn(&Ty) -> bool| {
+            slots
+                .iter()
+                .filter(|slot| slot_ty(slot).is_some_and(typed))
+                .map(|slot| slot.name().to_string())
+                .collect()
+        };
         let mut operations = Operations {
             checker: self,
-            receivers,
+            receivers: self
+                .self_ty
+                .as_ref()
+                .map(|self_ty| named(&|ty| ty == self_ty))
+                .unwrap_or_default(),
             methods,
+            owner,
+            float_literals: named(&Ty::is_float_literal),
             found: false,
         };
         mojito_ast::visit::walk_stmt(&mut operations, statement);
@@ -364,16 +462,17 @@ impl Checker {
     }
 
     /// Whether a call spelled `name` applies a callable no overload of which
-    /// is builtin.
+    /// is builtin: a function, or a construction by a struct's `__init__`
+    /// (a synthesized fieldwise one is never builtin).
     fn calls_ordinary_function(&self, name: &str) -> bool {
         self.binding_scope(name).is_none_or(|scope| scope == 0)
             && self
                 .applicable_functions
                 .get(name)
                 .is_some_and(|overloads| {
-                    overloads.iter().all(|function| {
-                        !function.constructs() && function.inline != InlineLevel::Builtin
-                    })
+                    overloads
+                        .iter()
+                        .all(|function| function.inline != InlineLevel::Builtin)
                 })
     }
 

@@ -2297,7 +2297,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`checker/builtin_fold.rs`) rejects a builtin receiver the pin refuses,
   and `non_builtin_operation` a call of a non-builtin method of a `Self`
   operand or an operator whose `SIMD` dunder is not builtin (`//`, read
-  through `simd_dunder_is_builtin`). The elaborator's `Specializer::demand_application` passes a
+  through `simd_dunder_is_builtin`). `builtin_signature_rejection`,
+  run by `check_def` and `bind_and_check_method` over the resolved
+  parameter types (and by `applicable_signature_rejection` before an
+  applicable body is judged), rejects a builtin argument or result the
+  fold cannot take by value in a register. The elaborator's `Specializer::demand_application` passes a
   method's receiver as its first runtime argument. `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
   `MlirOp::lowering`), a vector's or scalar's `_mlir_value` (a
