@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1985**.
+Next free ID: **R1987**.
 
 ## Ordered Work
 
@@ -1626,6 +1626,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1986 A store through a `ref` result whose origin mutability is a
+  function's own parameter is accepted**
+
+  `def poke[m: Bool, //, o: Origin[mut=m]](p: Pointer[Box, o]): p[][0] =
+  9`, over a `Box` whose `__getitem__(ref self, i: Int) -> ref[self.v]
+  Int`, runs and prints `9`, where the pin rejects it: "expression must be
+  mutable in assignment".
+  - Cause: `require_writable_reference`
+    (`checker/method_calls/receiver_effects.rs`) treats every
+    `Mutability::Param` as writable. It records the write for a judgment at
+    each instantiation only when the parameter is the enclosing struct's,
+    so a function's own origin parameter is never judged.
+  - Upstream judges the binder inside the generic body and rejects there,
+    as `check_pointer_write` already does for a direct `Pointer` store
+    ("write through a Pointer whose origin mutability is not known here").
+  - Probe: the same body over `List[Int]` once R1985 drops
+    `List.__setitem__` (`assets/type_error/pointer_param_symbolic_origin_write.mojo`).
+  - Found while landing R1564 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1216 A store through a pointer read by its handle does not
   destroy the value it replaces**
 
@@ -1646,6 +1667,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     writes through the reference the inlined `Tuple.__getitem__` returns
     and never destroys `Inner(60)`, where the pin prints `del 60` before
     the next `print`.
+  - Probe: `b[0] = P(5)` over a struct whose `__getitem__(ref self, i:
+    Int) -> ref[self.v] P` has no `__setitem__`, and `ref r = b[0]` then
+    `r = P(5)`, never destroy `P(1)`, where the pin prints `del 1` at the
+    store.
   - Found while landing R352 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8638,6 +8663,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     subscripts.
   - Declaration changes in the stdlib's `String`/`StringSpan`.
   - Ledger name: `string-span-byte-index`, `string-codepoint-index`.
+  - Probe: `s[byte=Int32(1)]` and `s[codepoint=UInt8(2)]` over a `String`
+    match no overload, where upstream's `byte=` and `codepoint=` overloads
+    take an `[I: Indexer, //]` binder and the pin prints `b` and `c`; the
+    bundled ones take `Int` only (found while landing R1564, 2026-11-07).
   - Depends on R183, the same declaration change on the positional
     subscript.
   - Model: Fable, Planned.
@@ -12996,17 +13025,29 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1564 The bundled `List` has no `__getitem__` over an `Indexer`**
+- [ ] **R1985 The bundled `List` declares a `__setitem__` upstream's does
+  not, so a store at an `Indexer` index is rejected**
 
-  `l[Int32(1)]` over a `List[Int]` is rejected ("no overload matches the
-  supplied arguments"), where the pin prints the element.
-  - Upstream's `List` declares `__getitem__(ref self, idx: Some[Indexer])`
-    beside the `Int` overload, and every sized integer scalar is an
-    `Indexer` since R1550.
-  - Port the overload into `stdlib/std/collections/list.mojo`, then check
-    `Span`, `Array`, and `String` subscripts against upstream's.
-  - Found while landing R1550 (2026-10-28).
-  - Depends on nothing.
+  `l[Int32(0)] = 7` over a `List[Int]` is rejected ("no overload matches
+  the supplied arguments"), where the pin stores through the reference
+  `__getitem__(ref self, idx: Some[Indexer])` returns.
+  - Upstream's `List` has no `__setitem__`; the bundled one keeps an
+    `Int`-only `__setitem__` (`stdlib/std/collections/list.mojo`), which
+    every subscript store selects.
+  - Dropping it, as upstream, runs `l[Int32(0)] = 7` and every `Int` store
+    through the getter's reference, but two gaps then show.
+  - The replaced element is never destroyed (R1216):
+    `assets/ok/subscript_write_back_lifecycle.mojo` loses its `del` lines.
+  - A store through `p[][0]` over a `Pointer` of parametric mutability is
+    accepted (R1986): six `assets/type_error/*pointer*write*` fixtures
+    then report "immutable reference returned by '__getitem__'" instead,
+    and `pointer_param_symbolic_origin_write.mojo` and
+    `pointer_field_symbolic_generic_body_write.mojo` run.
+  - When it lands, drop the `List.__setitem__` row from
+    `seeded_transfer_effects` (`checker/overload_support.rs`) and the
+    sentence on it in `docs/features.md`'s argument-exclusivity row.
+  - Found while landing R1564 (2026-11-07).
+  - Depends on R1216, R1986.
   - Model: Opus, Not Planned.
 
 - [ ] **R1663 `SIMD.write_padded` is missing**

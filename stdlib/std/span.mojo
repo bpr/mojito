@@ -11,6 +11,7 @@ from std.collections.array import Array
 from std.collections.list import List
 
 from std.builtin.builtin_slice import ContiguousSlice
+from std.builtin.int import Indexer, index
 from std.iter import Iterable, Iterator, StopIteration
 from std.string import String, StringSpan
 
@@ -165,6 +166,15 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
         if index < 0 or index >= self._size:
             _mojito_abort("Span index out of range")
         return self._data[index]
+
+    @inline(.always)
+    def __getitem__(ref self, idx: Some[Indexer]) -> ref[
+        Self.origin._get_owned_interior["element"]
+    ] Self.T:
+        var i = index(idx)
+        if i < 0 or i >= self._size:
+            _mojito_abort("Span index out of range")
+        return self._data[i]
 
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,
     # or reversed bounds abort instead of normalizing, and the result is a

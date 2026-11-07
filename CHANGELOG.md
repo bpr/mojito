@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `List`, `Span`, and `Array` now declare upstream's
+  `__getitem__(ref self, idx: Some[Indexer])` beside their `Int` overload
+  (R1564), so `l[Int32(1)]` over a `List[Int]` prints the element instead
+  of matching no overload. A store at an `Indexer` index into a `List`
+  still waits on dropping its Mojito-only `__setitem__` (R1985).
 - `OwnedPointer` now has the pin's initializers (R1607):
   `OwnedPointer(copy_value=s)`, a borrowed non-implicitly-copyable value
   (the refined, lower-ranked `out self: OwnedPointer[_T]` overload), and

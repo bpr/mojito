@@ -7,6 +7,7 @@
 
 from std.memory.alloc import unsafe_alloc
 
+from std.builtin.int import Indexer, index
 from std.hash import Hasher
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
@@ -198,6 +199,12 @@ struct Array[T: AnyType, length: Int](
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[index]
+
+    @inline(.always)
+    def __getitem__(
+        ref self, idx: Some[Indexer]
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        return self.data[index(idx)]
 
     @inline(.always)
     def unsafe_get(

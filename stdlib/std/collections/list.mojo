@@ -10,6 +10,7 @@
 
 from std.string import check_slice_bounds
 from std.builtin.builtin_slice import ContiguousSlice, StridedSlice
+from std.builtin.int import Indexer, index
 from std.span import Span
 
 from std.memory.alloc import Allocation, Layout, alloc, dealloc
@@ -345,6 +346,16 @@ struct List[T: AnyType](
         if index < 0 or index >= self._len:
             _mojito_abort("List index out of range")
         return self._storage._alloc._ptr[index]
+
+    @__unsafe_nested_origins_read_only
+    @inline(.always)
+    def __getitem__(
+        ref self, idx: Some[Indexer]
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        var i = index(idx)
+        if i < 0 or i >= self._len:
+            _mojito_abort("List index out of range")
+        return self._storage._alloc._ptr[i]
 
     # Internal value accessor for generic library code that needs an owned copy.
     # Keeping this distinct from overloaded `__getitem__` also avoids erasing the
