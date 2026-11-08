@@ -2257,13 +2257,17 @@ impl Checker {
         reason = "TODO: make an associated function or use the receiver"
     )]
     fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
-        // A literal's fit into a symbolic lane is the instantiation's to check.
+        // An integer literal converts at any lane (a `bool` one to whether it
+        // is nonzero), as upstream's unconstrained `SIMD.__init__(IntLiteral)`
+        // does. A literal's fit into a symbolic lane is the instantiation's
+        // to check.
         match (value, target.kind()) {
             (CtValue::IntLiteral(_), kind)
-                if let Some((dtype, width)) = kind.as_simd()
-                    && !width.is_inferred() =>
+                if kind
+                    .as_simd()
+                    .is_some_and(|(_, width)| !width.is_inferred()) =>
             {
-                dtype.licenses(int_literal_materializes_to_dtype)
+                true
             }
             (CtValue::FloatLiteral(_), kind)
                 if let Some((dtype, width)) = kind.as_simd()

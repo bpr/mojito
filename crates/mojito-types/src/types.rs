@@ -4651,15 +4651,17 @@ fn coerces_to_simd(from: &TyKind, to_dtype: &SimdDtype, to_width: &SimdWidth) ->
 /// Whether a value of type `ty` can be a `dtype` SIMD element (a construction
 /// argument, or the non-SIMD operand of an elementwise operator that splats).
 ///
-/// A numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD
-/// fits. Into a symbolic dtype an integer or floating literal fits (the
-/// literal's fit is the instantiation's to check, as upstream), a concrete
-/// scalar never does, and a width-one vector of the same expression does.
+/// An integer literal fits any lane, as upstream's unconstrained
+/// `SIMD.__init__(IntLiteral)` does (a `bool` lane is whether it is
+/// nonzero); a float literal fits a float lane; a same-dtype width-1 SIMD
+/// fits. Into a symbolic dtype a float literal fits too (the literal's fit
+/// is the instantiation's to check, as upstream), a concrete scalar never
+/// does, and a width-one vector of the same expression does.
 pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
     match (ty, dtype) {
-        (kind, SimdDtype::Known(dtype)) if kind.is_int_literal() => *dtype != Dtype::Bool,
+        (kind, _) if kind.is_int_literal() => true,
         (kind, SimdDtype::Known(dtype)) if kind.is_float_literal() => dtype.is_float(),
-        (kind, SimdDtype::Expr(_)) if kind.is_numeric_literal() => true,
+        (kind, SimdDtype::Expr(_)) if kind.is_float_literal() => true,
         (kind, SimdDtype::Known(dtype)) if kind.is_bool() => *dtype == Dtype::Bool,
         (kind, dtype) => {
             matches!(kind.as_simd(), Some((d, SimdWidth::Known(1))) if d == *dtype)

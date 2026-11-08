@@ -36,6 +36,15 @@ ratchet; the stop on a lost fixture or growth over `--max-growth`; the
 baseline refresh commit; `--start N` and `--dry-run`; the one-line in-place
 progress display with full output only in the per-step logs.
 
+Make the progress line say what its clocks are. Today it nests
+`claude_loop.py`'s line inside the runner's, so it shows two unlabeled
+timers: `[  3725s] claude_loop.py  [   740s] R1991 …`, the step's elapsed
+time (redrawn every second) beside the current task's (redrawn every 5 s,
+`TICK` in `claude_loop.py`). Show instead, e.g.
+`batch 5/13 · loop 1h02m │ R1991 12m20s · <title>`: the batch and step
+named, durations as hours and minutes, and the task clock parsed from the
+child's line rather than echoed.
+
 Leave `scripts/pmir-batches` as a thin wrapper (`--note
 docs/notes/representation-consolidation.md`), or delete it once nothing
 names it.

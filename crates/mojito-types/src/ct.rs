@@ -145,14 +145,17 @@ impl CtLane {
     /// Materialize an exact integer literal into one lane of `dtype`, as
     /// upstream's `SIMD.__init__(IntLiteral)` does: an integer lane wraps at
     /// the dtype's width, a float lane rounds the exact literal once, and a
-    /// `bool` lane is `None`.
+    /// `bool` lane is whether the literal is nonzero, as the pin's
+    /// `#pop.int_literal_convert` is.
     pub fn of_int_literal(literal: &IntLiteral, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
         if dtype.is_float() {
             return Self::of_float_literal(&FloatLiteral::from_int(literal), dtype);
         }
+        if dtype == mojito_ast::ast::Dtype::Bool {
+            return Some(Self::Bool(!literal.is_zero()));
+        }
         let bits = dtype.bit_width();
         match dtype {
-            mojito_ast::ast::Dtype::Bool => None,
             _ if dtype.is_unsigned() => literal.wrapping_unsigned(bits).map(i128::from),
             _ => literal.wrapping_signed(bits).map(i128::from),
         }
@@ -1358,6 +1361,16 @@ impl CtValue {
                     _ => None,
                 }
             }
+            // Upstream's `@implicit SIMD.__init__(value: Bool)` splats the
+            // `Bool` across its `bool` lanes.
+            (Self::Bool(value), kind)
+                if let Some((mojito_ast::ast::Dtype::Bool, width)) = kind.known_simd() =>
+            {
+                usize::try_from(width).ok().map(|width| Self::Simd {
+                    dtype: mojito_ast::ast::Dtype::Bool,
+                    lanes: vec![CtLane::Bool(value); width],
+                })
+            }
             (value @ Self::Simd { .. }, kind) if let Some((target, width)) = kind.known_simd() => {
                 let Self::Simd { dtype, lanes } = &value else {
                     unreachable!("guard established a SIMD value");
@@ -2039,7 +2052,8 @@ mod tests {
         assert_eq!(int(-1, Dtype::UInt8), Some(CtLane::Int(255)));
         assert_eq!(int(70000, Dtype::Int16), Some(CtLane::Int(4464)));
         assert_eq!(int(-2, Dtype::Int), Some(CtLane::Int(-2)));
-        assert_eq!(int(1, Dtype::Bool), None);
+        assert_eq!(int(2, Dtype::Bool), Some(CtLane::Bool(true)));
+        assert_eq!(int(0, Dtype::Bool), Some(CtLane::Bool(false)));
         let tenth = FloatLiteral::parse_decimal("0.1").expect("decimal literal");
         assert_eq!(
             CtLane::of_float_literal(&tenth, Dtype::Float32),

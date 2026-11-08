@@ -4557,30 +4557,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1960 An integer literal does not convert to a `bool` lane, so
-  `~` over a mask fails, where the pin's `#pop.int_literal_convert`
-  takes any lane**
-
-  `~m` over a `Scalar[DType.bool]` or `SIMD[DType.bool, 2]` mask fails
-  ("literal value -1 cannot be represented as Bool", or for a vector "cannot
-  materialize IntLiteral[-1] as SIMD[DType.bool, 2]"), where the pin prints
-  `False` and `[False, False]`.
-  - `SIMD.__invert__` is upstream's `self ^ -1`, whose `-1` converts to
-    `Self` at a `bool` lane.
-  - `CtLane::of_int_literal` (`mojito-types/src/ct.rs`) refuses a `bool`
-    lane, and the MIR verifier's vector arm of `literal.materialize`
-    (`verify/instr.rs`) tests `types::splats_to`, the checker's literal
-    coercion rule, which refuses one too.
-  - Lever: convert an integer literal to an `i1` lane as the pin does
-    (its low bit or nonzero, per the pin), in `CtLane`, the VM, and
-    Pliron, and accept any lane in the verifier's vector arm as its
-    scalar arm does.
-  - Probe: `assets/ok/math_log.mojo` fails in `std.math.frexp`'s mask
-    `~`.
-  - Found while landing R1845 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2007 A struct's `comptime` member that constructs the struct
   through an initializer typed by a struct alias does not evaluate**
 

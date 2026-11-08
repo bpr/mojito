@@ -1111,6 +1111,7 @@ assets/ok/simd_arithmetic_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bitwise_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bitwise_reductions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_fill_initializers.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_bool_lane_int_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_masks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast_float_thresholds.mojo	-	ineligible	no-scalar-entry-shape

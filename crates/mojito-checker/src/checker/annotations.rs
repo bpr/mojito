@@ -199,25 +199,6 @@ impl Checker {
     }
 }
 
-pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
-    match dtype {
-        Dtype::Int
-        | Dtype::UInt
-        | Dtype::Int8
-        | Dtype::Int16
-        | Dtype::Int32
-        | Dtype::Int64
-        | Dtype::UInt8
-        | Dtype::UInt16
-        | Dtype::UInt32
-        | Dtype::UInt64 => true,
-        // Integer and floating literals round during floating materialization;
-        // overflow is the corresponding IEEE infinity.
-        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => true,
-        Dtype::Bool => false,
-    }
-}
-
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
 /// is `Ty::float64()` (Mojo unifies `Float64` with `SIMD[DType.float64, 1]`).
 pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {

@@ -501,9 +501,6 @@ pub fn fold_literal_convert(
     let vector_ty = crate::types::storage_value_ty(ty);
     let (dtype, width) = crate::types::simd_shape(vector_ty.kind()).ok_or_else(no_value)?;
     let lane = match (op, literal) {
-        (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) if dtype == Dtype::Bool => {
-            Some(CtLane::Bool(!value.is_zero()))
-        }
         (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value)) => {
             CtLane::of_int_literal(value, dtype)
         }

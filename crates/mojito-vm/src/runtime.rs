@@ -1292,10 +1292,6 @@ pub fn materialize_literal(
                 RuntimeError::TypeError(format!("cannot materialize a literal as {target}"))
             })?;
             match value {
-                // A `bool` lane holds whether the literal is nonzero.
-                ExactNum::Int(value) if dtype == Dtype::Bool => {
-                    Some(CtLane::Bool(!value.is_zero()))
-                }
                 ExactNum::Int(value) => CtLane::of_int_literal(value, dtype),
                 ExactNum::Float(value) => CtLane::of_float_literal(value, dtype),
             }

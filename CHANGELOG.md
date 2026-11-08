@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An integer literal converts at a `bool` lane, as the pin's
+  `#pop.int_literal_convert` does, to whether it is nonzero (R1960):
+  `~` over a `Scalar[DType.bool]` or bool-vector mask inverts it in every
+  path, `m ^ 1` and `var x: Scalar[DType.bool] = 2` check, and a
+  `Scalar[DType.bool]` or `SIMD[DType.bool, n]` value parameter binds a
+  `Bool` or an integer literal (`g[True]()`, `h[1]()`) instead of keeping
+  its parameter constant after monomorphization.
+
 - A subscript or a reference-returning getter call in a signature, a type
   argument, or a struct `comptime` member is the getter's compile-time
   application read through upstream's `load_from_mem` (R1990):

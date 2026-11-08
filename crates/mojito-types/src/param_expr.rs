@@ -3904,8 +3904,8 @@ pub enum ParamOp {
     /// the first operand names, a type shape as [`ParamOp::SimdSplat`]'s is
     /// (upstream's `SIMD.__init__(IntLiteral)`, and
     /// `IntLiteral.__mlir_index__` at `!kgen.scalar<index>`). A lane wraps
-    /// to its dtype ([`crate::ct::CtLane::of_int_literal`]); a `bool` lane
-    /// is whether the literal is nonzero.
+    /// to its dtype, and a `bool` lane is whether the literal is nonzero
+    /// ([`crate::ct::CtLane::of_int_literal`]).
     IntLiteralConvert,
     /// `#pop<float_literal_convert<v>> : T`: a `!pop.float_literal`, the
     /// second operand, rounded once into every lane of the float
