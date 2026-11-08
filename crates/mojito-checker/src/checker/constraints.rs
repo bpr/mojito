@@ -166,9 +166,16 @@ impl Checker {
     }
 
     /// `scalar` converted to `annotation`, a `SIMD` type of any width, and
-    /// splat across its lanes. `None` for any other annotation or value.
+    /// splat across its lanes. `None` for any other annotation or value,
+    /// and for `Int`, `UInt`, and `Float64`, whose constants keep their host
+    /// value ([`has_host_scalar_value`]).
+    ///
+    /// [`has_host_scalar_value`]: mojito_types::types::has_host_scalar_value
     fn splat_at_annotation(&self, scalar: &CtValue, annotation: &SourceType) -> Option<CtValue> {
-        let ty = self.ty_from_anno(annotation).ok()?;
+        let ty = self
+            .ty_from_anno(annotation)
+            .ok()
+            .filter(|ty| !mojito_types::types::has_host_scalar_value(ty.kind()))?;
         let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
         let width = usize::try_from(width).ok()?;
         mojito_types::ct::simd_construction_lanes(dtype, width, std::slice::from_ref(scalar))
