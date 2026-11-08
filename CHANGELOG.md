@@ -19,6 +19,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module `comptime` constant annotated with a sized scalar type is
+  converted to that type where it is declared, so a constant folded from
+  it wraps to its width as at the pin: `comptime H = Q + 254` over
+  `comptime Q: UInt8 = 5` is `3`, not `259`, and `-Q` is `251` (R1571).
+  The stale R541, R576, and R602 entries, whose probes already ran, are
+  closed with it.
 - A value-parameter pattern that is an operator expression now unifies
   with an actual of the same operator node by node, as at the pin:
   `g[w: Int](x: B[w * 2])` called with `B[n * 2]()` binds `w = n`, and so

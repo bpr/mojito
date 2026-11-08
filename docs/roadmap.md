@@ -1140,34 +1140,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R541 Natively, an applied constant of a sized scalar type fails IR
-  verification**
-
-  Problem: `comptime W = lane(SIMD[DType.int32, 4](1, 2, 3, 4))` over
-  `def lane(v: SIMD[DType.int32, 4]) -> Int32`, then `print(W)`, prints `4`
-  on the VM and at the pin, and stops natively with "llvm.ptr is not
-  builtin.integer or a vector of it".
-  - An applied constant of type `Tuple` or `Int` runs natively; the frozen
-    one-lane vector does not.
-  - Found while landing R517 (2026-10-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R576 Natively, a module constant declared at a sized scalar type
-  fails IR verification**
-
-  Problem: `comptime S: UInt8 = 2`, then `print(S)`, prints `2` on the VM
-  and at the pin, and stops natively with "llvm.ptr is not builtin.integer
-  or a vector of it".
-  - The bundled `std.os.os.SEEK_END: UInt8` fails the same way, with or
-    without the compiled package.
-  - An untyped integer constant (`O_CREAT`) runs natively.
-  - R541 is the same failure for an applied constant of a sized scalar
-    type, so one fix may close both.
-  - Found while landing R563 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R987 Native code drops every function's inline level**
 
   A `nodebug`, `builtin`, or `always` callee the elaborator leaves as a
@@ -4718,23 +4690,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1571 A compile-time operator over a `comptime` constant
-  annotated with a sized integer does not wrap to its width**
-
-  `comptime Q: UInt8 = 5; comptime H = Q + 254` prints `259`, where the
-  pin prints `3`: the constant folds as an unbounded integer, not a
-  `UInt8`.
-  - Probe: `-Q` prints `-5` (pin `251`) and `Q << 6` prints `320` (pin
-    `64`); a local `comptime k: UInt8 = 5` does the same.
-  - `comptime J = UInt8(5) * 100` folds right (`244`), so the
-    annotation's conversion, not the fold, loses the width.
-  - R602 (a local annotated sized constant is no parameter value) and
-    R576 (natively, such a module constant fails IR verification) are the
-    same annotation's other symptoms; one fix may close all three.
-  - Found while planning R1552 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1604 A symbolic compile-time `and`/`or` takes only integer or
   `Bool` operands of one type**
 
@@ -5098,31 +5053,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `-12` and `4` at the pin, at module scope and in a body.
   - Found while landing R1552 (2026-10-28), which retired R684's run-time
     shape.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R602 A local `comptime` constant annotated with a sized scalar is
-  no parameter value**
-
-  `comptime c: Int8 = 5` (or `= Int8(5)`) then `show[c]()`, for
-  `def show[x: Int8]()`, fails with "not a compile-time Int constant: c",
-  where the pin prints `5`.
-  - `Checker::bind_template_comptime` (`checker/comptime_validation.rs`)
-    folds a closed initializer to its constant only when the binding is
-    unannotated ("which an annotation would convert"): no parameter
-    expression converts the constant to the annotated type.
-  - `comptime c = Int8(5)` runs, and so do annotations of `Int`, `UInt`,
-    and a struct (`comptime e: E = E(7)`).
-  - Probe: `comptime v: SIMD[DType.int32, 2] = [3, 4]` (or `=
-    SIMD[DType.int32, 2](3, 4)`) then `f[v]()` in `main`, over `def f[v:
-    SIMD[DType.int32, 2]]()` returning `v.reduce_add()`, fails with "not a
-    compile-time Int constant: v", where the pin prints `7`; `f[[3, 4]]()`
-    runs (found while landing R1666, 2026-10-30).
-  - Probe: `comptime c: Float32 = 1.5` then `show[c]()` for
-    `def show[x: Float32]()`, in a body with or without binders (pin: `1.5`).
-  - The original shape, `comptime y: Int = 5` then `f[y]()`, now runs.
-  - Found while landing R601 (2026-10-10); rescoped while landing R1372
-    (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

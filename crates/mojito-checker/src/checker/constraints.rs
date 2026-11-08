@@ -96,7 +96,8 @@ impl Checker {
     /// order, with the one parameter-expression builder: an integer literal
     /// into the module's constants and the program's table every symbol
     /// speller reads, an `Int`-annotated one as its `Int` into the module's
-    /// values and that table, any other attribute into the module's values,
+    /// values and that table, a `SIMD`-annotated one as that `SIMD` value
+    /// into the module's values, any other attribute into the module's values,
     /// and a literal as its initializer. One that reads a declaration not
     /// yet registered builds in the declaration pass instead.
     pub(super) fn fold_module_constants(&mut self, stmts: &[Stmt]) {
@@ -114,9 +115,10 @@ impl Checker {
             if !type_params.is_empty() {
                 continue;
             }
-            // A vector annotation converts a scalar initializer by
-            // splatting it across the lanes, as `SIMD`'s implicit scalar
-            // constructor does.
+            // A `SIMD` annotation converts a scalar initializer to its
+            // dtype, splatting it across the lanes, as `SIMD`'s implicit
+            // scalar constructor does: `comptime Q: UInt8 = 5` is the
+            // `UInt8`, whose operators wrap to its width.
             if let Some(annotation) = ty
                 && let Some(vector) = self
                     .closed_module_constant(value)
@@ -163,10 +165,12 @@ impl Checker {
         }
     }
 
-    /// `scalar` splat across the lanes of `annotation`, a vector type of
-    /// more than one lane. `None` for any other annotation or value.
+    /// `scalar` converted to `annotation`, a `SIMD` type of any width, and
+    /// splat across its lanes. `None` for any other annotation or value.
     fn splat_at_annotation(&self, scalar: &CtValue, annotation: &SourceType) -> Option<CtValue> {
-        let (dtype, width) = self.vector_annotation(annotation)?;
+        let ty = self.ty_from_anno(annotation).ok()?;
+        let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
+        let width = usize::try_from(width).ok()?;
         mojito_types::ct::simd_construction_lanes(dtype, width, std::slice::from_ref(scalar))
             .ok()
             .map(|lanes| CtValue::Simd { dtype, lanes })
