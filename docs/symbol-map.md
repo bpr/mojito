@@ -2294,7 +2294,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `spells_asserting_builtin`), so `Checker::record_folded_builtin_call`
   records a run-time call of one over compile-time arguments as its folded
   parameter value, as upstream's parser folds the call, and returns the pin's rejection of a body construct its fold
-  refuses (`builtin_body_rejection`); then
+  refuses (`builtin_body_rejection`), deferring a body whose calls
+  `body_operations` flags as non-builtin by name
+  (`Checker::builtin_ordinary_calls`) to `Checker::builtin_call_rejection`,
+  which `check_def` and `bind_and_check_method` run after the body check:
+  it walks the body's calls in evaluation order and rejects one whose
+  resolved callee's positional collector takes an argument
+  (`passes_by_reference`, over `declared_collector`) with
+  `lit.ref.immut`, then a flagged one; then
   `Checker::reclassify_signatures_over_folded_builtins` classifies again
   each signature that applied one of those builtins before it folded
   (`SIMD.reduce_add`'s `SIMDLength` width). A static method's body is folded and
@@ -2320,7 +2327,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`struct_comparison`); `param_expr::write_operator_application` shows
   such a call in operator form. `builtin_convention_rejection`
   (`checker/builtin_fold.rs`) rejects a builtin receiver the pin refuses,
-  and `non_builtin_operation` a call of a non-builtin method of a `Self`
+  and `body_operations` a call of a non-builtin method of a `Self`
   operand or an operator whose `SIMD` dunder is not builtin (`//`, read
   through `simd_dunder_is_builtin`). `builtin_signature_rejection`,
   run by `check_def` and `bind_and_check_method` over the resolved

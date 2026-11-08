@@ -42,15 +42,30 @@ impl Checker {
             // application, which the elaborator runs.
             .filter(|declaration| !declaration.function.has_collector())
             .collect();
-        if let Some(error) = declarations.iter().find_map(|declaration| {
-            self.in_owner_scope(declaration, |checker| {
-                checker
+        // A body calling a callable no overload of which is builtin is
+        // judged at its body check, over the calls it resolves
+        // ([`Self::builtin_call_rejection`]), and folds no body meanwhile.
+        let mut deferred = HashSet::new();
+        for declaration in &declarations {
+            let judge = |checker: &Self| {
+                let rejection = checker
                     .applicable_signature_rejection(declaration)
-                    .or_else(|| checker.builtin_body_rejection(declaration))
-            })
-            .unwrap_or_else(|| self.builtin_body_rejection(declaration))
-        }) {
-            return Err(error);
+                    .or_else(|| checker.builtin_body_rejection(declaration));
+                (
+                    rejection,
+                    checker.body_operations(declaration, declaration.body).1,
+                )
+            };
+            let (rejection, calls) = self
+                .in_owner_scope(declaration, |checker| judge(checker))
+                .unwrap_or_else(|| judge(self));
+            if let Some(error) = rejection {
+                return Err(error);
+            }
+            if !calls.is_empty() {
+                deferred.insert(declaration.function.symbol().to_string());
+                self.builtin_ordinary_calls.extend(calls);
+            }
         }
         self.mark_asserting_builtins(&declarations);
         let mut pending: Vec<&ApplicableDeclaration<'_>> = declarations.iter().collect();
@@ -61,6 +76,9 @@ impl Checker {
                 .collect();
             let before = pending.len();
             pending.retain(|declaration| {
+                if deferred.contains(declaration.function.symbol()) {
+                    return true;
+                }
                 let Some(body) = self
                     .folded_builtin_body(declaration)
                     .filter(|body| !applies_any(body, &unfolded))
@@ -266,6 +284,71 @@ impl Checker {
             .then(|| builtin_rejection("does not support this argument convention"))
     }
 
+    /// The pin's rejection of the calls of a body `decorators` declare
+    /// builtin, judged over what the body's check resolved, as upstream's
+    /// `foldInlineBuiltinFunction` walks the body's ops in order: the first
+    /// call, its arguments' before it, that passes an argument by reference
+    /// to its callee ([`Self::passes_by_reference`]), or that calls a
+    /// callable no overload of which is builtin
+    /// ([`Checker::builtin_ordinary_calls`]).
+    pub(super) fn builtin_call_rejection(
+        &self,
+        decorators: &[mojito_ast::ast::Decorator],
+        body: &[Stmt],
+    ) -> Option<TypeError> {
+        struct Calls<'a> {
+            checker: &'a Checker,
+            /// Each rejected call's source range and rejection, in source
+            /// order, an enclosing call before the calls in its arguments.
+            rejected: Vec<(mojito_common::token::Span, TypeError)>,
+        }
+        impl mojito_ast::visit::Visitor for Calls<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                let (name, args) = match &expr.kind {
+                    ExprKind::Call { name, args, .. } => (Some(name.as_str()), args),
+                    ExprKind::MethodCall { args, .. } => (None, args),
+                    ExprKind::Invoke { callee, args, .. }
+                        if matches!(callee.kind, ExprKind::Member { .. }) =>
+                    {
+                        (None, args)
+                    }
+                    _ => return,
+                };
+                let span = expr.source_span();
+                let rejection = if self.checker.passes_by_reference(&span, name, args) {
+                    Some(builtin_rejection(
+                        "does not support MLIR operation lit.ref.immut",
+                    ))
+                } else {
+                    self.checker
+                        .builtin_ordinary_calls
+                        .contains(&span)
+                        .then(non_builtin_call)
+                };
+                self.rejected
+                    .extend(rejection.map(|error| (expr.span, error)));
+            }
+        }
+        if !matches!(InlineLevel::of(decorators), Ok(InlineLevel::Builtin)) {
+            return None;
+        }
+        let mut calls = Calls {
+            checker: self,
+            rejected: Vec::new(),
+        };
+        mojito_ast::visit::walk_block(&mut calls, body);
+        let mut first: Option<(mojito_common::token::Span, TypeError)> = None;
+        for (range, error) in calls.rejected {
+            let evaluated_first = first
+                .as_ref()
+                .is_none_or(|((start, end), _)| *start <= range.0 && range.1 <= *end);
+            if evaluated_first {
+                first = Some((range, error));
+            }
+        }
+        first.map(|(_, error)| error)
+    }
+
     /// `f` run where each argument slot of `declaration` is a binder of its
     /// own ([`super::annotations::builtin_body_binder`]) under the slot's
     /// name, in a parameter scope opened at the level `f` receives, within
@@ -443,12 +526,84 @@ impl Checker {
         self.is_trivial_register_passable(ty) || self.conforms_to(ty, "TrivialRegisterPassable")
     }
 
-    /// The pin's rejection of a builtin body: a `raises` declaration, an
-    /// early `return`, a statement `if` or a loop, a `var` reassigned after
-    /// its initializer, or a call of a callable that is not itself builtin
-    /// (an ordinary function, a construction by a non-builtin `__init__`,
-    /// `//`, `%`, or `**` over `Int`, a `FloatLiteral` operand converted to
-    /// `Float64`).
+    /// Whether the call at `span` passes one of its arguments by reference
+    /// to the parameters its resolved callee declares, as upstream binds a
+    /// `lit.ref.immut` to it: an argument its positional collector takes
+    /// (`print(n)`, `g(n)` over `g(*xs: Int)`). A spelled construction is
+    /// judged at the initializer it calls.
+    fn passes_by_reference(&self, span: &SourceSpan, name: Option<&str>, args: &[Expr]) -> bool {
+        let site = match self
+            .fact(span, |facts| facts.adjustment.as_ref())
+            .as_deref()
+        {
+            Some(mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
+                construction,
+            }) => construction.0.source_span(),
+            _ => span.clone(),
+        };
+        self.declared_collector(&site, name)
+            .is_some_and(|positional| args.len() > positional)
+    }
+
+    /// How many positional arguments the regular parameters of the callee
+    /// the check resolved at `site` take before its positional collector
+    /// takes the rest, if it declares one: the struct method its target
+    /// names, else the function `name` binds, the overload its target names
+    /// among several.
+    fn declared_collector(&self, site: &SourceSpan, name: Option<&str>) -> Option<usize> {
+        let target = self
+            .fact(site, |facts| facts.overload_target.as_ref())
+            .or_else(|| {
+                self.fact(site, |facts| facts.selected_call.as_ref())
+                    .map(|call| call.target)
+            });
+        let method = target.as_deref().and_then(|target| {
+            let (owner, _) = mojito_symbol::symbol::split_method_symbol(target)?;
+            let (method, qualifier) = mojito_symbol::symbol::method_of_symbol(owner, target)?;
+            let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
+            let overloads = self.structs.get(owner)?.methods.get(method)?;
+            let self_ty = self.self_instance_ty(owner);
+            overloads
+                .iter()
+                .find(|sig| {
+                    mojito_symbol::symbol::overload_qualifier(&method_lowered_name(
+                        owner,
+                        method,
+                        sig,
+                        self_ty.as_ref(),
+                    )) == qualifier
+                })
+                .or_else(|| overloads.first().filter(|_| overloads.len() == 1))
+        });
+        if let Some(sig) = method {
+            return sig
+                .variadic
+                .as_ref()
+                .map(|_| sig.variadic_index.unwrap_or(sig.params.len()));
+        }
+        let name = name?;
+        let bound = self.lookup(name)?;
+        let callee = match bound.kind() {
+            TyKind::Overload(candidates) => candidates.iter().find(|candidate| {
+                target.is_some()
+                    && callable_lowered_name(name, candidate).as_deref() == target.as_deref()
+            })?,
+            _ => bound,
+        };
+        let function = callee.callable()?;
+        function.variadic.as_ref().map(|_| {
+            mojito_symbol::symbol::VariadicKey::from_callable(callee)
+                .map_or(function.params.len(), |collector| collector.position())
+        })
+    }
+
+    /// The pin's rejection of a builtin body that its statements show: a
+    /// `raises` declaration, an early `return`, a statement `if` or a loop,
+    /// a `var` reassigned after its initializer, or an operator the fold
+    /// cannot inline (`//`, `%`, or `**` over `Int`, a `FloatLiteral`
+    /// operand converted to `Float64`). From the first statement calling a
+    /// callable no overload of which is builtin on, the body is judged at
+    /// its body check instead ([`Self::builtin_call_rejection`]).
     fn builtin_body_rejection(&self, declaration: &ApplicableDeclaration<'_>) -> Option<TypeError> {
         if declaration.function.raises() {
             return Some(builtin_rejection(
@@ -468,11 +623,8 @@ impl Checker {
             })
             .collect();
         let last = declaration.body.len().saturating_sub(1);
-        declaration
-            .body
-            .iter()
-            .enumerate()
-            .find_map(|(index, statement)| match &statement.kind {
+        for (index, statement) in declaration.body.iter().enumerate() {
+            let rejection = match &statement.kind {
                 StmtKind::VarDecl { name, .. } if reassigned.contains(name.as_str()) => {
                     Some(builtin_rejection("could not resolve operand value"))
                 }
@@ -486,24 +638,36 @@ impl Checker {
                     "does not support MLIR operation lit.loop",
                 )),
                 StmtKind::For { .. } => Some(non_builtin_call()),
-                _ => self.non_builtin_operation(declaration, statement),
-            })
+                _ => {
+                    let (operator, calls) =
+                        self.body_operations(declaration, std::slice::from_ref(statement));
+                    if !calls.is_empty() {
+                        return None;
+                    }
+                    operator.then(non_builtin_call)
+                }
+            };
+            if rejection.is_some() {
+                return rejection;
+            }
+        }
+        None
     }
 
-    /// The first operation of `statement`, in `declaration`'s body, that
-    /// calls a callable the pin's fold cannot inline: an applicable
-    /// function or static method not declared builtin (`h(n)`,
-    /// `Self.ok(n)`, `G[1].ok(n)`), a method of `self` or of a `Self`
-    /// parameter no overload of which is builtin (`self.ord()`), an
-    /// operator over a non-literal operand whose `SIMD` dunder is not
-    /// builtin (`//`, `%`, or `**`: `SIMD.__floordiv__`, `__mod__`, and
+    /// The operations of `statements`, in `declaration`'s body, that the
+    /// pin's fold cannot inline, as the body's syntax names them: whether
+    /// one is an operator over a non-literal operand whose `SIMD` dunder is
+    /// not builtin (`//`, `%`, or `**`: `SIMD.__floordiv__`, `__mod__`, and
     /// `__pow__`), or arithmetic or a comparison converting a
-    /// `FloatLiteral` operand.
-    fn non_builtin_operation(
+    /// `FloatLiteral` operand; and the calls of a callable no overload of
+    /// which is builtin: an applicable function or static method
+    /// (`h(n)`, `Self.ok(n)`, `G[1].ok(n)`), or a method of `self` or of a
+    /// `Self` parameter (`self.ord()`).
+    fn body_operations(
         &self,
         declaration: &ApplicableDeclaration<'_>,
-        statement: &Stmt,
-    ) -> Option<TypeError> {
+        statements: &[Stmt],
+    ) -> (bool, Vec<SourceSpan>) {
         struct Operations<'a> {
             checker: &'a Checker,
             /// The names of the body's operands typed `Self`.
@@ -515,7 +679,8 @@ impl Checker {
             owner: Option<&'a str>,
             /// The names of the body's operands typed `FloatLiteral`.
             float_literals: Vec<String>,
-            found: bool,
+            operator: bool,
+            calls: Vec<SourceSpan>,
         }
         impl Operations<'_> {
             /// Whether `operand` is a `FloatLiteral`: a literal, or an
@@ -551,17 +716,18 @@ impl Checker {
         }
         impl mojito_ast::visit::Visitor for Operations<'_> {
             fn visit_expr(&mut self, expr: &Expr) {
-                self.found |= match &expr.kind {
+                let ordinary_call = match &expr.kind {
                     ExprKind::Infix(
                         op @ (InfixOp::FloorDiv | InfixOp::Mod | InfixOp::Pow),
                         left,
                         right,
                     ) => {
-                        !(matches!(left.kind, ExprKind::Int(_))
+                        self.operator |= !(matches!(left.kind, ExprKind::Int(_))
                             && matches!(right.kind, ExprKind::Int(_)))
                             && op
                                 .dunder()
-                                .is_none_or(|dunder| !self.checker.simd_dunder_is_builtin(dunder))
+                                .is_none_or(|dunder| !self.checker.simd_dunder_is_builtin(dunder));
+                        false
                     }
                     ExprKind::Infix(
                         InfixOp::Add
@@ -576,7 +742,10 @@ impl Checker {
                         | InfixOp::Ge,
                         left,
                         right,
-                    ) => self.float_literal(left) != self.float_literal(right),
+                    ) => {
+                        self.operator |= self.float_literal(left) != self.float_literal(right);
+                        false
+                    }
                     ExprKind::Call { name, .. } => self.checker.calls_ordinary_function(
                         self.owner.filter(|_| name == "Self").unwrap_or(name),
                     ),
@@ -593,6 +762,9 @@ impl Checker {
                     },
                     _ => false,
                 };
+                if ordinary_call {
+                    self.calls.push(expr.source_span());
+                }
             }
         }
         let (methods, owner) = match declaration.owner.map(|owner| &owner.kind) {
@@ -622,10 +794,11 @@ impl Checker {
             methods,
             owner,
             float_literals: named(&Ty::is_float_literal),
-            found: false,
+            operator: false,
+            calls: Vec::new(),
         };
-        mojito_ast::visit::walk_stmt(&mut operations, statement);
-        operations.found.then(non_builtin_call)
+        mojito_ast::visit::walk_block(&mut operations, statements);
+        (operations.operator, operations.calls)
     }
 
     /// Whether `SIMD` declares its `method` dunder builtin, as an operator

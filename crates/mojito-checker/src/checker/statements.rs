@@ -3371,6 +3371,11 @@ impl Checker {
                     self.lifting_owner.clone()
                 };
                 result = self.check_block(body, Some(&ret_ty), false);
+                if result.is_ok()
+                    && let Some(error) = self.builtin_call_rejection(decorators, body)
+                {
+                    result = Err(error);
+                }
                 self.lifting_owner = enclosing;
                 self.named_result_context.pop();
                 self.deferred_result_bodies.pop();

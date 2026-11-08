@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1125
+# swept-count	1126
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -199,6 +199,7 @@ assets/type_error/absable_no_power.mojo	compile-reject	agree	error: 'T' does not
 assets/type_error/abs_undeclared_absable.mojo	compile-reject	agree	error: invalid call to 'abs': value passed to 'value' cannot be converted from 'S' to 'T', argument type 'S' does not conform to trait 'Absable'
 assets/type_error/advanced_origins_untracked_local.mojo	compile-reject	agree	error: invalid call to 'observe_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/allocation_implicit_drop.mojo	compile-reject	agree	error: 'allocation' abandoned without being explicitly destroyed: An `Allocation` owns heap storage and must be consumed before it goes out of scope. Deallocate it with `dealloc(allocation^)`, or call `unsafe_leak()` to take ownership of the underlying pointer.
+assets/type_error/always_inline_builtin_collector_argument.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support MLIR operation lit.ref.immut
 assets/type_error/always_inline_builtin_fieldwise_construction.mojo	compile-reject	agree	error: '@always_inline("builtin")' only supports calls to other '@always_inline("builtin")' functions
 assets/type_error/always_inline_builtin_float_literal_comparison.mojo	compile-reject	agree	error: '@always_inline("builtin")' only supports calls to other '@always_inline("builtin")' functions
 assets/type_error/always_inline_builtin_floor_division.mojo	compile-reject	agree	error: '@always_inline("builtin")' only supports calls to other '@always_inline("builtin")' functions

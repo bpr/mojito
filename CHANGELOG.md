@@ -77,6 +77,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `@always_inline("builtin")` body's calls are judged after its body
+  check, over the callees the check resolved, in evaluation order (R1991):
+  an argument a positional collector takes (`print(n)`, `total(n)` over
+  `*values: Int`) is rejected with the pin's "does not support MLIR
+  operation lit.ref.immut" instead of "only supports calls to other
+  '@always_inline("builtin")' functions". A generic or memory-only `read`
+  parameter's argument is not yet judged (R2048, R2047), and a callee is
+  still judged by its spelled name (R2049).
+
 - A `pop` op's `fastmathFlags=` attribute reaches LLVM, as at the pin
   (R1600): each instance closes a computed flag, and the native backend
   writes it on the `fadd`, `fsub`, `fmul`, or `llvm.fma` call, while a

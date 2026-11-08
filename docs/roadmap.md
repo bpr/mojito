@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2047**.
+Next free ID: **R2050**.
 
 ## Ordered Work
 
@@ -9185,26 +9185,51 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1991 An `@always_inline("builtin")` body is judged by its
-  unchecked syntax, not by the calls its check resolves**
+- [ ] **R2048 A builtin body passing an argument to a `read` parameter of
+  a type that is not trivially register-passable is not rejected**
 
-  The pin's fold judges the checked body, each call at its resolved callee
-  and each argument at the convention it passes by, where Mojito's
-  `non_builtin_operation` reads the AST before the check, by name.
+  The pin's fold binds a `lit.ref.immut` to such an argument and rejects
+  it, before it judges the call, whatever type the call instantiates the
+  parameter at.
   - Probe: `return Int(b)` over a `b: Bool` runs, where the pin says "does
-    not support MLIR operation lit.ref.immut": `calls_ordinary_function`
-    sees that some `Int.__init__` is builtin, and cannot tell which
-    overload the call resolves to, nor that it takes `b` by reference.
-  - Probe: `print(n)` before `return n + n`, and `return abs(n)`, are
-    rejected with "only supports calls to other
-    '@always_inline("builtin")' functions", where the pin says "does not
-    support MLIR operation lit.ref.immut": an argument passed to a generic
-    or memory-only `read` parameter is a reference the fold cannot take,
-    and the pin judges it before the call.
-  - The lever: judge a builtin body during its body check, over each call's
-    resolved callee and argument conventions, as the pin's
-    `foldInlineBuiltinFunction` walks the body's ops.
-  - Found while landing R1523 (2026-11-07).
+    not support MLIR operation lit.ref.immut": `Int(b)` calls
+    `__init__[T: Intable](out self: Scalar[target_dtype], value: T)`.
+  - Probe: `return abs(n)`, `return abs(3)`, and `g(n)` over
+    `g[T: AnyType](x: T)`, `g[T: RegisterPassable](x: T)`, or
+    `g[T: Copyable](x: T, y: Int)` are rejected with "only supports calls
+    to other '@always_inline("builtin")' functions", where the pin says
+    "does not support MLIR operation lit.ref.immut"; `g[T:
+    TrivialRegisterPassable](x: T)` takes the "only supports calls"
+    message at both.
+  - The lever: `Checker::passes_by_reference` (`checker/builtin_fold.rs`)
+    judges the collector only. Extend `declared_collector` to the
+    callee's declared parameter types and conventions (`MethodSig`, the
+    bound `FuncTy`), rejecting a `read` one that `passes_in_register`
+    refuses.
+  - That rule misjudges the six `Bool(__mlir_attr[...] : i1)` bodies of
+    `stdlib/std/builtin/float_literal.mojo` until R2047 lands: the call
+    resolves to `Bool.__init__[T: Boolable]`.
+  - Found while landing R1991 (2026-11-08).
+  - Depends on R2047.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2049 A builtin body's callee is judged by the name the call
+  spells, not by the overload the check resolves**
+
+  `Checker::body_operations` (`checker/builtin_fold.rs`) flags a call
+  before the check only when no overload of the spelled name is builtin
+  (`calls_ordinary_function`, `calls_ordinary_method`), and the
+  statement and operator rules judge the body's syntax before its body
+  check, where the pin's fold walks the checked ops in order.
+  - Probe: `return h(n, n)`, where `h(n: Int)` is builtin and `h(n: Int,
+    m: Int)` is not, runs and prints `6`, where the pin says "only
+    supports calls to other '@always_inline("builtin")' functions".
+  - Probe (after R2048): `var x = Int(b)` before a `while` is rejected
+    with "lit.loop", where the pin rejects the earlier `lit.ref.immut`.
+  - The lever: give `Checker::builtin_call_rejection` the resolved
+    callee's inline level (the target `declared_collector` finds), and
+    move the statement and operator rules into the same ordered walk.
+  - Found while landing R1991 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11306,6 +11331,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `True`, and `assets/ok/bool_storage_primitives.mojo` runs.
   - Found while landing R1840 (2026-11-06).
   - Depends on R1955.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2047 An `__mlir_attr` spelled at `: i1` reads as a `Bool`, not
+  an `i1`**
+
+  Upstream types `__mlir_attr[`#pop<float_literal_cmp<eq `, a, `,`, b,
+  `>> : i1`]` by its trailing `i1`; Mojito's `read_bracketed_attribute`
+  (`checker/indexing.rs`) types it by the parameter value
+  `bracket_operand` builds, the `Bool` comparison.
+  - Probe: `take(__mlir_attr[`#pop<float_literal_cmp<eq `, a.value, `,`,
+    a.value, `>> : i1`])` over `take(v: __mlir_type.i1)` and `comptime
+    a = 1.5` fails ("expected __mlir_type.i1, found Bool"), where the
+    pin prints `True`.
+  - So `Bool(...)` over such an attribute resolves to
+    `Bool.__init__[T: Boolable]`, not `__init__(value:
+    __mlir_type.i1)`, in the six comparison dunders of
+    `stdlib/std/builtin/float_literal.mojo`.
+  - Typing the read `i1` alone fails the MIR verifier ("argument 0 of
+    'Bool.__init__$ov$$$mlir$type$i1' has type Bool"): the value still
+    lowers as a `Bool` register. Build it as R1957's `i1`
+    `cast_to_builtin` of the comparison.
+  - Found while landing R1991 (2026-11-08).
+  - Depends on R1957.
   - Model: Opus, Not Planned.
 
 - [ ] **R1958 The MIR verifier does not type `literal.materialize`'s

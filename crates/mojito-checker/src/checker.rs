@@ -653,6 +653,10 @@ pub struct Checker {
     /// ([`Checker::fold_builtin_bodies`]), as the pin folds such a body to
     /// nothing.
     builtin_procedures: HashSet<String>,
+    /// The calls in builtin bodies whose spelled callee has no builtin
+    /// overload, which the body check rejects unless an argument passed by
+    /// reference is rejected first ([`Checker::builtin_call_rejection`]).
+    builtin_ordinary_calls: HashSet<SourceSpan>,
     /// Whether each name a call spells reaches a builtin callable whose
     /// folded body dropped a `comptime assert`
     /// ([`Checker::spells_asserting_builtin`]).
@@ -1103,6 +1107,7 @@ impl Checker {
             probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),
+            builtin_ordinary_calls: HashSet::new(),
             asserting_builtin_spellings: RefCell::new(HashMap::new()),
             folded_builtin_calls: RefCell::new(HashMap::new()),
             builtin_struct_fields: HashMap::new(),

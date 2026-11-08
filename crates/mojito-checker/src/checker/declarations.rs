@@ -2021,7 +2021,9 @@ impl Checker {
             generic: !m.type_params.is_empty(),
             ret_ty,
             body: &m.body,
-        })
+        })?;
+        self.builtin_call_rejection(&m.decorators, &m.body)
+            .map_or(Ok(()), Err)
     }
 
     /// Declare a method's receiver `self` at `self_ty`, rooting the loans
