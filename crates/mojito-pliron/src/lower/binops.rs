@@ -11,13 +11,9 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         op: InfixOp,
         dest: Reg,
-        a: Reg,
-        b: Reg,
-        resolved: Option<&str>,
+        (a, b): (Reg, Reg),
+        fastmath: FastmathFlagsAttr,
     ) -> Result<(), PlironError> {
-        if let Some(target) = resolved {
-            return Err(self.unsupported_reg(format!("nominal operator overload `{target}`"), dest));
-        }
         if self.is_literal_register(a) && self.is_literal_register(b) {
             return self.lower_literal_binop(ctx, op, dest, a, b);
         }
@@ -28,7 +24,14 @@ impl FnLowering<'_> {
             if let Some((dtype, width)) = self.func.reg_types.get(&operand.0).and_then(simd_dims)
                 && width > 1
             {
-                return self.lower_simd_binop(ctx, op, dest, a, b, dtype, width as usize);
+                return self.lower_simd_binop(
+                    ctx,
+                    op,
+                    dest,
+                    (a, b),
+                    (dtype, width as usize),
+                    fastmath,
+                );
             }
         }
         if self.is_string_constant(a) && self.is_string_constant(b) {
@@ -92,11 +95,11 @@ impl FnLowering<'_> {
                         .unsupported_reg(format!("operator `{other:?}` on Bool operands"), dest)),
                 }
             }
-            ScalarTy::Float64 => self.lower_float_binop(ctx, op, dest, lhs, rhs),
+            ScalarTy::Float64 => self.lower_float_binop(ctx, op, dest, (lhs, rhs), fastmath),
             ScalarTy::Int => self.lower_int_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::UInt => self.lower_uint_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
-                self.lower_narrow_float_binop(ctx, dtype, op, dest, lhs, rhs)
+                self.lower_narrow_float_binop(ctx, (dtype, op), dest, (lhs, rhs), fastmath)
             }
             ScalarTy::Sized(dtype) => self.lower_sized_int_binop(ctx, op, dest, lhs, rhs, dtype),
             ScalarTy::Ptr | ScalarTy::Dtype => Err(self.unsupported_reg(
@@ -343,28 +346,27 @@ impl FnLowering<'_> {
     pub(super) fn lower_narrow_float_binop(
         &mut self,
         ctx: &mut Context,
-        dtype: Dtype,
-        op: InfixOp,
+        (dtype, op): (Dtype, InfixOp),
         dest: Reg,
-        lhs: Value,
-        rhs: Value,
+        (lhs, rhs): (Value, Value),
+        fastmath: FastmathFlagsAttr,
     ) -> Result<(), PlironError> {
         let flags = FastmathFlagsAttr::default;
         let wide_lhs = self.widen_float_lane(ctx, lhs, dest);
         let wide_rhs = self.widen_float_lane(ctx, rhs, dest);
         let wide = match op {
             InfixOp::Add => {
-                let add = FAddOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                let add = FAddOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, fastmath);
                 self.append(ctx, add.get_operation(), Some(dest));
                 add.get_result(ctx)
             }
             InfixOp::Sub => {
-                let sub = FSubOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                let sub = FSubOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, fastmath);
                 self.append(ctx, sub.get_operation(), Some(dest));
                 sub.get_result(ctx)
             }
             InfixOp::Mul => {
-                let mul = FMulOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                let mul = FMulOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, fastmath);
                 self.append(ctx, mul.get_operation(), Some(dest));
                 mul.get_result(ctx)
             }
@@ -531,21 +533,21 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         op: InfixOp,
         dest: Reg,
-        lhs: Value,
-        rhs: Value,
+        (lhs, rhs): (Value, Value),
+        fastmath: FastmathFlagsAttr,
     ) -> Result<(), PlironError> {
         let flags = FastmathFlagsAttr::default;
         match op {
             InfixOp::Add => {
-                let add = FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let add = FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.define(ctx, dest, add.get_operation(), add.get_result(ctx))
             }
             InfixOp::Sub => {
-                let sub = FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let sub = FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.define(ctx, dest, sub.get_operation(), sub.get_result(ctx))
             }
             InfixOp::Mul => {
-                let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.define(ctx, dest, mul.get_operation(), mul.get_result(ctx))
             }
             InfixOp::Div => {

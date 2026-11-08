@@ -457,7 +457,12 @@ impl VmBackend {
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());
             }
-            MirInstr::Pop { dest, op, operands } if op.is_string_read() => {
+            MirInstr::Pop {
+                dest,
+                op,
+                operands,
+                fastmath: _,
+            } if op.is_string_read() => {
                 let Some(Value::Attribute(string)) =
                     operands.first().map(|operand| &regs[operand.0 as usize])
                 else {
@@ -488,7 +493,12 @@ impl VmBackend {
             }
             // A `!kgen.dtype` is its `Dtype`, and an `ui8` its `UInt8`
             // lane, so the conversions are the folds over the values.
-            MirInstr::Pop { dest, op, operands } if op.is_dtype_code() => {
+            MirInstr::Pop {
+                dest,
+                op,
+                operands,
+                fastmath: _,
+            } if op.is_dtype_code() => {
                 let operand = operands
                     .first()
                     .map(|operand| regs[operand.0 as usize].clone())
@@ -504,7 +514,12 @@ impl VmBackend {
                 .map_err(|error| RuntimeError::Unsupported(error.to_string()))?;
                 regs[dest.0 as usize] = crate::crossing::ct_to_vm(&folded)?;
             }
-            MirInstr::Pop { dest, op, operands } => {
+            MirInstr::Pop {
+                dest,
+                op,
+                operands,
+                fastmath: _,
+            } => {
                 let operands: Vec<Value> = operands
                     .iter()
                     .map(|operand| regs[operand.0 as usize].clone())
@@ -1801,6 +1816,7 @@ impl VmBackend {
                 value,
                 dtype,
                 width,
+                fastmath: _,
             } => {
                 let (dtype, _) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 if self.ctfe_fuel.is_some() {

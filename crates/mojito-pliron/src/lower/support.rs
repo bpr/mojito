@@ -311,6 +311,35 @@ pub fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
     }
 }
 
+/// The LLVM fast-math flags of a `pop` op's closed `fastmathFlags`
+/// attribute (`#pop.fmf<nnan | ninf>`), as upstream's LLVM lowering copies
+/// the property onto the instruction; none when the op has no attribute.
+pub fn fastmath_attr(fastmath: Option<&MirConst>) -> FastmathFlagsAttr {
+    use mojito_types::mlir::FastMathFlags as Flags;
+    use pliron_llvm::attributes::FastmathFlags as Llvm;
+    let set = fastmath
+        .and_then(|flag| match flag {
+            MirConst::Value(mojito_types::ct::CtValue::MlirAttr(attribute)) => {
+                Flags::parse(attribute)
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    let llvm = [
+        (Flags::NNAN, Llvm::NNAN),
+        (Flags::NINF, Llvm::NINF),
+        (Flags::NSZ, Llvm::NSZ),
+        (Flags::ARCP, Llvm::ARCP),
+        (Flags::CONTRACT, Llvm::CONTRACT),
+        (Flags::AFN, Llvm::AFN),
+        (Flags::REASSOC, Llvm::REASSOC),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| set.contains(*flag))
+    .fold(Llvm::empty(), |flags, (_, flag)| flags | flag);
+    FastmathFlagsAttr(llvm)
+}
+
 pub fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
     match op {
         InfixOp::Eq => FCmpPredicateAttr::OEQ,

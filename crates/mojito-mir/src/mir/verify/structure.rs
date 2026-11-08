@@ -1452,6 +1452,7 @@ mod tests {
             resolved: None,
             raises: Some(raises),
             refined_bound: None,
+            fastmath: None,
         }];
         instrs.extend(after);
         let mut function = function_with(instrs);

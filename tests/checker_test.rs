@@ -8960,7 +8960,11 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
         ),
         (
             "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.add`[fastmathFlags=__mlir_attr.`#pop.fmf<bogus>`](a._mlir_value, a._mlir_value)))\n",
-            "Invalid attribute `fastmathFlags`",
+            "failed to parse POP_FastmathFlagsAttr parameter 'value'",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.max`[fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value, a._mlir_value)))\n",
+            "attribute 'fastmathFlags' is not an inherent attribute of 'pop.max'",
         ),
         (
             "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.shuffle`[_type=SIMD[DType.int32, 2]._mlir_type](a._mlir_value, a._mlir_value)))\n",

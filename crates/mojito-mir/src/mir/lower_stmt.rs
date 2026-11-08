@@ -1363,6 +1363,7 @@ impl<'a> Flatten<'a> {
             resolved: None,
             raises: None,
             refined_bound: None,
+            fastmath: None,
         });
         self.emit_interior_invalidations(target, None);
         self.emit(MirInstr::WriteRef {
@@ -1393,6 +1394,7 @@ impl<'a> Flatten<'a> {
                 resolved: None,
                 raises: None,
                 refined_bound: None,
+                fastmath: None,
             });
             return CValue::Value(result);
         };
@@ -2614,6 +2616,7 @@ impl<'a> Flatten<'a> {
                         resolved: None,
                         raises: None,
                         refined_bound: None,
+                        fastmath: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     if self.runtime_aliases.contains(&var) && !self.pointer_valued_slot(var) {
@@ -2666,6 +2669,7 @@ impl<'a> Flatten<'a> {
                         resolved: None,
                         raises: None,
                         refined_bound: None,
+                        fastmath: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store {
@@ -2693,6 +2697,7 @@ impl<'a> Flatten<'a> {
                         resolved: None,
                         raises: None,
                         refined_bound: None,
+                        fastmath: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2725,6 +2730,7 @@ impl<'a> Flatten<'a> {
                         resolved: None,
                         raises: None,
                         refined_bound: None,
+                        fastmath: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2750,6 +2756,7 @@ impl<'a> Flatten<'a> {
                         resolved: None,
                         raises: None,
                         refined_bound: None,
+                        fastmath: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store { place: p, src: res });

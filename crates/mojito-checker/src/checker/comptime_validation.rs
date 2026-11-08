@@ -537,7 +537,9 @@ pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> 
 /// The value and type of the attribute `` __mlir_attr.`text` ``.
 ///
 /// An untyped attribute is upstream's `!kgen.deferred` constant
-/// ([`CtValue::MlirAttr`]). A typed one, whose type follows a colon outside
+/// ([`CtValue::MlirAttr`]); a `#pop.fmf<…>` one must spell a fast-math
+/// flag, as the pin's attribute parser rejects any other where it is
+/// written. A typed one, whose type follows a colon outside
 /// the attribute's brackets, is a constant of that type: a
 /// `` `#kgen.simd<…> : !kgen.scalar<dt>` `` (or `!kgen.simd<n, dt>`) lane
 /// constant of the storage type, held as its vector, and an
@@ -557,6 +559,16 @@ pub(super) fn mlir_attribute(text: &str) -> Result<(CtValue, Ty), TypeError> {
         (c == ':' && depth == 0).then_some(at)
     });
     let Some(colon) = colon else {
+        if text.starts_with(mojito_types::mlir::FASTMATH_ATTRIBUTE_PREFIX)
+            && !mojito_types::mlir::is_fastmath_attribute(text)
+        {
+            return Err(TypeError::BadCall {
+                func: "__mlir_attr".to_string(),
+                reason: "invalid MLIR attribute: failed to parse POP_FastmathFlagsAttr \
+                         parameter 'value' which is to be a `::M::KGEN::POP::FastmathFlags`"
+                    .to_string(),
+            });
+        }
         return Ok((
             CtValue::MlirAttr(text.to_string()),
             TyKind::KgenDeferred.into(),

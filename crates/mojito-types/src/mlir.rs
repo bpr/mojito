@@ -228,6 +228,16 @@ impl MlirOp {
         matches!(self, Self::PopDtypeToUi8 | Self::PopDtypeFromUi8)
     }
 
+    /// Whether the op takes a `fastmathFlags` attribute: upstream's
+    /// `pop.add`, `pop.sub`, `pop.mul`, `pop.fma`, and `pop.cast` hold it as
+    /// an inherent attribute, and every other op rejects it.
+    pub const fn takes_fastmath_flags(self) -> bool {
+        matches!(
+            self,
+            Self::PopAdd | Self::PopSub | Self::PopMul | Self::PopFma | Self::PopCast
+        )
+    }
+
     /// Whether the op names its result type with a `_type` attribute.
     pub const fn takes_result_type(self) -> bool {
         matches!(
@@ -625,21 +635,68 @@ impl PopOp {
     }
 }
 
-/// Whether `attribute` is a `#pop.fmf<flag>` fast-math attribute.
+/// A `#pop.fmf<flags>` fast-math attribute, upstream's
+/// `POP_FastmathFlagsAttr` over a `FastmathFlags` set.
 ///
-/// The flags permit, never require, a relaxed result, so exact arithmetic
-/// implements every one of them: the check reads a closed flag, spelled or
-/// computed (`flag._mlir_attr()`), and drops it before MIR.
+/// The `fastmathFlags` property of `pop.add`, `pop.sub`, `pop.mul`,
+/// `pop.fma`, and `pop.cast` holds it: one flag (`#pop.fmf<contract>`),
+/// `none`, `fast` (every flag), or several joined by `|`
+/// (`#pop.fmf<nnan | ninf>`).
+///
+/// A flag permits, never requires, a relaxed result, so the VM's exact
+/// arithmetic implements every set; a native backend writes it on the LLVM
+/// instruction the op lowers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct FastMathFlags(u8);
+
+impl FastMathFlags {
+    pub const NONE: Self = Self(0);
+    pub const NNAN: Self = Self(1);
+    pub const NINF: Self = Self(1 << 1);
+    pub const NSZ: Self = Self(1 << 2);
+    pub const ARCP: Self = Self(1 << 3);
+    pub const CONTRACT: Self = Self(1 << 4);
+    pub const AFN: Self = Self(1 << 5);
+    pub const REASSOC: Self = Self(1 << 6);
+    pub const FAST: Self = Self((1 << 7) - 1);
+
+    /// The set `attribute` spells (`#pop.fmf<nnan | ninf>`), or `None` when
+    /// it is not a `#pop.fmf<…>` attribute of admitted flags.
+    pub fn parse(attribute: &str) -> Option<Self> {
+        attribute
+            .strip_prefix(FASTMATH_ATTRIBUTE_PREFIX)?
+            .strip_suffix('>')?
+            .split('|')
+            .try_fold(Self::NONE, |set, name| {
+                let flag = match name.trim() {
+                    "none" => Self::NONE,
+                    "fast" => Self::FAST,
+                    "nnan" => Self::NNAN,
+                    "ninf" => Self::NINF,
+                    "nsz" => Self::NSZ,
+                    "arcp" => Self::ARCP,
+                    "contract" => Self::CONTRACT,
+                    "afn" => Self::AFN,
+                    "reassoc" => Self::REASSOC,
+                    _ => return None,
+                };
+                Some(Self(set.0 | flag.0))
+            })
+    }
+
+    /// Whether every flag of `other` is in the set.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+}
+
+/// The spelling every `#pop.fmf<flag>` attribute starts with.
+pub const FASTMATH_ATTRIBUTE_PREFIX: &str = "#pop.fmf<";
+
+/// Whether `attribute` is a `#pop.fmf<…>` fast-math attribute
+/// ([`FastMathFlags::parse`]).
 pub fn is_fastmath_attribute(attribute: &str) -> bool {
-    attribute
-        .strip_prefix("#pop.fmf<")
-        .and_then(|rest| rest.strip_suffix('>'))
-        .is_some_and(|flag| {
-            matches!(
-                flag,
-                "none" | "fast" | "nnan" | "ninf" | "nsz" | "arcp" | "contract" | "afn" | "reassoc"
-            )
-        })
+    FastMathFlags::parse(attribute).is_some()
 }
 
 /// One integer lane of `op` over lanes of `dtype`, each held sign- or
@@ -773,7 +830,34 @@ mod tests {
             ));
         }
         assert!(is_fastmath_attribute("#pop.fmf<fast>"));
-        assert!(is_fastmath_attribute("#pop.fmf<contract>"));
+        assert_eq!(
+            FastMathFlags::parse("#pop.fmf<contract>"),
+            Some(FastMathFlags::CONTRACT)
+        );
+        let set = FastMathFlags::parse("#pop.fmf<nnan | ninf>").expect("a joined set parses");
+        assert!(set.contains(FastMathFlags::NNAN) && set.contains(FastMathFlags::NINF));
+        assert!(!set.contains(FastMathFlags::NSZ));
+        assert_eq!(
+            FastMathFlags::parse("#pop.fmf<none>"),
+            Some(FastMathFlags::NONE)
+        );
+        for op in [
+            MlirOp::PopAdd,
+            MlirOp::PopSub,
+            MlirOp::PopMul,
+            MlirOp::PopFma,
+            MlirOp::PopCast,
+        ] {
+            assert!(op.takes_fastmath_flags(), "{}", op.name());
+        }
+        for op in [
+            MlirOp::PopDiv,
+            MlirOp::PopNeg,
+            MlirOp::PopMax,
+            MlirOp::IndexAdd,
+        ] {
+            assert!(!op.takes_fastmath_flags(), "{}", op.name());
+        }
     }
 
     #[test]
@@ -800,6 +884,8 @@ mod tests {
         );
         assert!(!is_fastmath_attribute("#pop.fmf<bogus>"));
         assert!(!is_fastmath_attribute("#pop.fmf<nnan, ninf>"));
+        assert!(!is_fastmath_attribute("#pop.fmf<nnan | bogus>"));
+        assert!(!is_fastmath_attribute("#pop.fmf<>"));
     }
 
     #[test]

@@ -297,13 +297,14 @@ impl Checker {
                 materialized: None,
                 literal_target: None,
             },
-            Err(_) => {
-                mojito_checked::checked::SemanticAdjustment::MlirOp(if op == ParamOp::StringSize {
+            Err(_) => mojito_checked::checked::SemanticAdjustment::MlirOp {
+                op: if op == ParamOp::StringSize {
                     mojito_types::mlir::MlirOp::PopStringSize
                 } else {
                     mojito_types::mlir::MlirOp::PopStringAddress
-                })
-            }
+                },
+                fastmath: None,
+            },
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
         Ok(if op == ParamOp::StringSize {

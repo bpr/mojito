@@ -1052,6 +1052,7 @@ fn instruction_families_reprint_byte_identically() {
                 error: Reg(67),
             }),
             refined_bound: None,
+            fastmath: None,
         },
         MirInstr::Call {
             dest: Reg(10),
@@ -1335,28 +1336,37 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Rem,
             operands: vec![Reg(1), Reg(2)],
+            fastmath: None,
         },
         MirInstr::Pop {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Fma,
             operands: vec![Reg(1), Reg(2), Reg(3)],
+            fastmath: Some(Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.fmf<contract>".into(),
+            ))),
         },
         MirInstr::IsRunInComptimeInterpreter { dest: Reg(35) },
         MirInstr::Pop {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Max,
             operands: vec![Reg(1), Reg(2)],
+            fastmath: None,
         },
         MirInstr::Pop {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Ult,
             operands: vec![Reg(1), Reg(2)],
+            fastmath: None,
         },
         MirInstr::SimdCast {
             dest: Reg(36),
             value: Reg(35),
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
             width: mojito_types::types::SimdWidth::Known(4),
+            fastmath: Some(Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.fmf<fast>".into(),
+            ))),
         },
         MirInstr::SimdShuffle {
             dest: Reg(37),

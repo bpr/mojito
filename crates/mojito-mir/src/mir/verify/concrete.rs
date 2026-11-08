@@ -330,6 +330,15 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
     for index in instruction_variant_indices(instruction) {
         require_known_alternative(head, index, errors);
     }
+    if let Some(flag) = instruction.fastmath()
+        && !matches!(flag, Const::Value(CtValue::MlirAttr(attribute))
+            if mojito_types::mlir::is_fastmath_attribute(attribute))
+    {
+        errors.push(format!(
+            "{head} keeps the fast-math flag `{flag:?}`, no closed `#pop.fmf<flag>` attribute, \
+             in elaborated MIR"
+        ));
+    }
     match instruction {
         MirInstr::Rebind { .. } => {
             errors.push(format!("{head} keeps a value rebind in elaborated MIR"));

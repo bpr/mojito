@@ -273,7 +273,12 @@ impl FnLowering<'_> {
             MirInstr::PointerConvert { dest, value } => {
                 self.lower_copy_value(ctx, *dest, *value, None)
             }
-            MirInstr::Pop { dest, op, operands } => self.lower_pop(ctx, *dest, *op, operands),
+            MirInstr::Pop {
+                dest,
+                op,
+                operands,
+                fastmath,
+            } => self.lower_pop(ctx, *dest, *op, operands, fastmath_attr(fastmath.as_ref())),
             // The compiled program never runs in the comptime interpreter.
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 self.lower_const(ctx, *dest, &MirConst::Bool(false))
@@ -297,8 +302,17 @@ impl FnLowering<'_> {
                 a,
                 b,
                 resolved,
+                fastmath,
                 ..
-            } => self.lower_binop(ctx, *op, *dest, *a, *b, resolved.as_deref()),
+            } => match resolved {
+                Some(target) => {
+                    Err(self
+                        .unsupported_reg(format!("nominal operator overload `{target}`"), *dest))
+                }
+                None => {
+                    self.lower_binop(ctx, *op, *dest, (*a, *b), fastmath_attr(fastmath.as_ref()))
+                }
+            },
             MirInstr::UseVar {
                 dest,
                 var,
@@ -813,11 +827,14 @@ impl FnLowering<'_> {
                 let (dtype, width) = self.concrete_simd_slots(*dest, dtype, width)?;
                 self.lower_make_simd(ctx, *dest, dtype, width, elems)
             }
+            // A `pop.cast`'s fast-math flags are checked and dropped, as
+            // upstream's LLVM lowering writes no flags on a cast.
             MirInstr::SimdCast {
                 dest,
                 value,
                 dtype,
                 width,
+                ..
             } => {
                 let (dtype, width) = self.concrete_simd_slots(*dest, dtype, width)?;
                 self.lower_simd_cast(ctx, *dest, *value, dtype, width)

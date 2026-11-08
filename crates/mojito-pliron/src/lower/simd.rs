@@ -555,17 +555,16 @@ impl FnLowering<'_> {
     }
 
     /// An elementwise binary operator over compute vectors: either side may
-    /// be a splatting scalar/literal; comparisons yield a Bool vector.
-    #[allow(clippy::too_many_arguments)]
+    /// be a splatting scalar/literal; comparisons yield a Bool vector. A
+    /// float `+`, `-`, or `*` carries the `pop` op's `fastmath` flags.
     pub(super) fn lower_simd_binop(
         &mut self,
         ctx: &mut Context,
         op: InfixOp,
         dest: Reg,
-        a: Reg,
-        b: Reg,
-        dtype: Dtype,
-        width: usize,
+        (a, b): (Reg, Reg),
+        (dtype, width): (Dtype, usize),
+        fastmath: FastmathFlagsAttr,
     ) -> Result<(), PlironError> {
         let lane_ty = ScalarTy::of_dtype(dtype);
         let lhs = self.simd_operand_vector(ctx, a, dtype, width, dest)?;
@@ -588,11 +587,12 @@ impl FnLowering<'_> {
             ScalarTy::Sized(Dtype::Float16) => {
                 let wide_lhs = self.simd_lanes_to_f64(ctx, lhs, lane_ty, width, dest)?;
                 let wide_rhs = self.simd_lanes_to_f64(ctx, rhs, lane_ty, width, dest)?;
-                let wide = self.simd_float_binop_vectors(ctx, op, wide_lhs, wide_rhs, dest)?;
+                let wide =
+                    self.simd_float_binop_vectors(ctx, op, (wide_lhs, wide_rhs), dest, fastmath)?;
                 self.simd_round_float_vector(ctx, dtype, wide, width, dest)
             }
             ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
-                self.simd_float_binop_vectors(ctx, op, lhs, rhs, dest)?
+                self.simd_float_binop_vectors(ctx, op, (lhs, rhs), dest, fastmath)?
             }
             ScalarTy::Bool => self.simd_bool_binop_vectors(ctx, op, lhs, rhs, dest)?,
             // `DType.int` lanes are 64-bit signed lanes (the VM wraps them
@@ -624,11 +624,22 @@ impl FnLowering<'_> {
             let lane_ty = ScalarTy::Sized(dtype);
             let wide_lhs = self.simd_lanes_to_f64(ctx, lhs, lane_ty, width, dest)?;
             let wide_rhs = self.simd_lanes_to_f64(ctx, rhs, lane_ty, width, dest)?;
-            let wide =
-                self.simd_float_binop_vectors(ctx, InfixOp::Div, wide_lhs, wide_rhs, dest)?;
+            let wide = self.simd_float_binop_vectors(
+                ctx,
+                InfixOp::Div,
+                (wide_lhs, wide_rhs),
+                dest,
+                FastmathFlagsAttr::default(),
+            )?;
             return Ok(self.simd_round_float_vector(ctx, dtype, wide, width, dest));
         }
-        self.simd_float_binop_vectors(ctx, InfixOp::Div, lhs, rhs, dest)
+        self.simd_float_binop_vectors(
+            ctx,
+            InfixOp::Div,
+            (lhs, rhs),
+            dest,
+            FastmathFlagsAttr::default(),
+        )
     }
 
     /// Upstream's `pop` lane op over operands of `dest`'s SIMD type, each
@@ -640,6 +651,7 @@ impl FnLowering<'_> {
         dest: Reg,
         op: PopOp,
         operands: &[Reg],
+        fastmath: FastmathFlagsAttr,
     ) -> Result<(), PlironError> {
         if op.is_compare() {
             return self.lower_unsigned_compare(ctx, dest, op, operands);
@@ -681,7 +693,7 @@ impl FnLowering<'_> {
             });
         }
         let value = if dtype.is_float() {
-            self.pop_float_value(ctx, op, dtype, shape, values, dest)?
+            self.pop_float_value(ctx, op, (dtype, shape), values, dest, fastmath)?
         } else if dtype == Dtype::Bool {
             self.pop_bool_value(ctx, op, &values, dest)?
         } else {
@@ -1361,15 +1373,16 @@ impl FnLowering<'_> {
     }
 
     /// A float `pop` op at the lane type; `Float16` lanes compute at f64
-    /// and round once, as the VM does.
+    /// and round once, as the VM does. `pop.fma`'s intrinsic call carries
+    /// the op's `fastmath` flags.
     fn pop_float_value(
         &mut self,
         ctx: &mut Context,
         op: PopOp,
-        dtype: Dtype,
-        shape: Option<usize>,
+        (dtype, shape): (Dtype, Option<usize>),
         values: Vec<Value>,
         dest: Reg,
+        fastmath: FastmathFlagsAttr,
     ) -> Result<Value, PlironError> {
         if dtype == Dtype::Float16 {
             let mut wide = Vec::with_capacity(values.len());
@@ -1381,7 +1394,8 @@ impl FnLowering<'_> {
                     None => self.widen_float_lane(ctx, value, dest),
                 });
             }
-            let result = self.pop_float_value(ctx, op, Dtype::Float64, shape, wide, dest)?;
+            let result =
+                self.pop_float_value(ctx, op, (Dtype::Float64, shape), wide, dest, fastmath)?;
             return Ok(match shape {
                 Some(width) => self.simd_round_float_vector(ctx, dtype, result, width, dest),
                 None => self.round_float_lane(ctx, dtype, result, dest),
@@ -1427,7 +1441,7 @@ impl FnLowering<'_> {
                 };
                 let name = format!("llvm.{intrinsic}.{}", lane_mangle(dtype, shape));
                 let float_ty = values[0].get_type(ctx);
-                self.float_intrinsic(ctx, &name, float_ty, values, dest)
+                self.flagged_float_intrinsic(ctx, (&name, float_ty), values, dest, fastmath)
             }
         })
     }
@@ -1728,37 +1742,38 @@ impl FnLowering<'_> {
         })
     }
 
-    /// Float lanes: IEEE `+ - * /` at the lane width with no fast-math
+    /// Float lanes: IEEE `+ - * /` at the lane width
     /// (`runtime::float_arith`; a `Float32` result computed at f32 equals
     /// the VM's f64 computation rounded once, and `Float16` lanes arrive
-    /// widened). A zero divisor flows through as inf/NaN lanes.
+    /// widened), `+ - *` with the `pop` op's `fastmath` flags and `/` with
+    /// none. A zero divisor flows through as inf/NaN lanes.
     fn simd_float_binop_vectors(
         &mut self,
         ctx: &mut Context,
         op: InfixOp,
-        lhs: Value,
-        rhs: Value,
+        (lhs, rhs): (Value, Value),
         dest: Reg,
+        fastmath: FastmathFlagsAttr,
     ) -> Result<Value, PlironError> {
-        let flags = FastmathFlagsAttr::default;
         Ok(match op {
             InfixOp::Add => {
-                let add = FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let add = FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.append(ctx, add.get_operation(), Some(dest));
                 add.get_result(ctx)
             }
             InfixOp::Sub => {
-                let sub = FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let sub = FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.append(ctx, sub.get_operation(), Some(dest));
                 sub.get_result(ctx)
             }
             InfixOp::Mul => {
-                let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, fastmath);
                 self.append(ctx, mul.get_operation(), Some(dest));
                 mul.get_result(ctx)
             }
             InfixOp::Div => {
-                let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                let div =
+                    FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, FastmathFlagsAttr::default());
                 self.append(ctx, div.get_operation(), Some(dest));
                 div.get_result(ctx)
             }

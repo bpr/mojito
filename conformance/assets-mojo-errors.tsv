@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1119
+# swept-count	1121
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -695,6 +695,8 @@ assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agr
 assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
 assets/type_error/mlir_deferred_runtime_call.mojo	compile-reject	agree	error: failed to convert call result type
 assets/type_error/mlir_dtype_to_ui8_storage_operand.mojo	compile-reject	agree	error: 'pop.dtype.to_ui8' op operand #0 must be 8-bit integer DType type, but got '!kgen.scalar<ui8>'
+assets/type_error/mlir_fastmath_bad_flag.mojo	compile-reject	agree	error: invalid MLIR attribute: failed to parse POP_FastmathFlagsAttr parameter 'value' which is to be a `::M::KGEN::POP::FastmathFlags`
+assets/type_error/mlir_fastmath_not_inherent.mojo	compile-reject	agree	error: attribute 'fastmathFlags' is not an inherent attribute of 'pop.div'
 assets/type_error/mlir_i1_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.i1' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_index_not_int.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
 assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'

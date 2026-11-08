@@ -1161,7 +1161,14 @@ pub enum SemanticAdjustment {
     /// An `__mlir_op` `pop` or `index` op over `!kgen.simd` storage or
     /// `index` values (`__mlir_op.`pop.add`(a, b)`). MIR lowers it to the
     /// instruction [`mojito_types::mlir::MlirOp::lowering`] names.
-    MlirOp(mojito_types::mlir::MlirOp),
+    /// `fastmath` is its `fastmathFlags` attribute, which only
+    /// [`mojito_types::mlir::MlirOp::takes_fastmath_flags`] ops carry: a
+    /// closed `#pop.fmf<flag>` attribute, or a template's parameter
+    /// expression its instance closes.
+    MlirOp {
+        op: mojito_types::mlir::MlirOp,
+        fastmath: Option<mojito_types::param_expr::ParamExpr>,
+    },
     /// The `comptime assert` of the builtin `SIMD` dunder or constructor
     /// this node applies (`__lt__`'s `Self.length == 1`, or the implicit
     /// `Bool` to `SIMD[DType.bool, n]` conversion's), judged per reached

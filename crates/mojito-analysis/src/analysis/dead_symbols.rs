@@ -16,6 +16,7 @@ use mojito_mir::mir::{
     SymbolTable, destroyed_structs, entry_roots, relocated_structs,
 };
 use mojito_symbol::symbol::{OV_SEP, split_method_symbol};
+use mojito_types::types::has_no_llvm_type;
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under upstream's flag spelling.
@@ -55,7 +56,9 @@ pub fn eliminate_dead_symbols(program: &mut MirProgram, exports: &[String]) {
 /// Every call there names its callee, so a constructor or an overload
 /// nothing names goes, as upstream removes any symbol nothing references.
 /// A live struct keeps its other methods and the constructors its member
-/// table names, which the backends run with no call naming them.
+/// table names, which the backends run with no call naming them, but not a
+/// method only the comptime interpreter runs, whose signature has no LLVM
+/// type.
 pub fn eliminate_dead_concrete_symbols(program: &mut MirProgram, exports: &[String]) {
     eliminate(program, exports, Resolution::Concrete);
 }
@@ -166,12 +169,13 @@ impl<'p> Symbols<'p> {
         let mut methods: HashMap<_, Vec<_>> = HashMap::new();
         let mut families: HashMap<_, Vec<_>> = HashMap::new();
         let mut nested: HashMap<_, Vec<_>> = HashMap::new();
-        for (name, _) in &program.functions {
+        for (name, function) in &program.functions {
             let name = name.as_str();
             if let Some((owner, method)) = split_method_symbol(name)
                 && structs.contains_key(owner)
                 && !members.contains(name)
-                && (resolution == Resolution::Generic || !is_constructor(method))
+                && (resolution == Resolution::Generic
+                    || !(is_constructor(method) || runs_only_at_compile_time(function)))
             {
                 methods.entry(owner).or_default().push(name);
             }
@@ -285,6 +289,19 @@ impl<'p> Symbols<'p> {
 /// overload or instance qualifier.
 fn is_constructor(method: &str) -> bool {
     method.split('$').next() == Some("__init__")
+}
+
+/// Whether `function`'s signature mentions a type with no LLVM type (a
+/// `!kgen.deferred` result, such as `FastMathFlag._mlir_attr`'s): only the
+/// comptime interpreter runs it, so its struct's liveness does not keep it,
+/// as upstream's elaborator emits no such instance into the compiled
+/// module.
+fn runs_only_at_compile_time(function: &MirFunction) -> bool {
+    function
+        .param_types
+        .iter()
+        .chain(function.ret_ty.iter())
+        .any(|ty| mojito_types::types::mentions(ty, &|ty| has_no_llvm_type(ty.kind())))
 }
 
 /// The overload family `name` belongs to: its spelling before the overload

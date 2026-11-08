@@ -96,7 +96,12 @@ pub(super) fn verify_instruction(
             on_true,
             on_false,
         } => verify_select(&cx, *dest, *condition, [*on_true, *on_false], errors),
-        MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
+        MirInstr::Pop {
+            dest,
+            op,
+            operands,
+            fastmath: _,
+        } => verify_pop(&cx, *dest, *op, operands, errors),
         MirInstr::MakeRefPack { dest, elems } => verify_ref_pack_create(&cx, *dest, elems, errors),
         MirInstr::LoadIndirect { dest, pack } => verify_load_indirect(&cx, *dest, *pack, errors),
         MirInstr::ArrayRepeat { .. }

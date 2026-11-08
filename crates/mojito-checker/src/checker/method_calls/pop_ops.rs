@@ -17,7 +17,9 @@ use mojito_types::mlir::{
 
 impl Checker {
     /// Type `__mlir_op.`name`[attributes](operands)` for an admitted `pop`
-    /// or `index` op, recording it as `SemanticAdjustment::MlirOp`. A `pop`
+    /// or `index` op, recording it as `SemanticAdjustment::MlirOp` with its
+    /// `fastmathFlags` attribute, which only the five ops
+    /// [`MlirOp::takes_fastmath_flags`] names take. A `pop`
     /// op takes `!kgen.simd` storage operands of one type
     /// ([`TyKind::KgenSimd`], never the `SIMD` value holding it), an `index`
     /// op `__mlir_type.index` ones. Arithmetic keeps the operand type,
@@ -48,6 +50,7 @@ impl Checker {
         }
         let mut predicate = None;
         let mut result_type = None;
+        let mut fastmath = None;
         for argument in param_args {
             let mojito_ast::ast::ParamArg::Named {
                 name: attribute,
@@ -63,9 +66,7 @@ impl Checker {
                     })?);
                 }
                 "_type" => result_type = Some(value.as_ref()),
-                "fastmathFlags" if !name.starts_with("index.") => {
-                    self.fastmath_flags(name, value)?;
-                }
+                "fastmathFlags" => fastmath = Some(value.as_ref()),
                 _ => {
                     return Err(invalid(format!(
                         "attribute '{attribute}' is not an inherent attribute of '{name}'"
@@ -86,6 +87,15 @@ impl Checker {
                 "'{attribute}' is not a predicate Mojito admits here"
             )),
         })?;
+        let fastmath = match fastmath {
+            Some(_) if !op.takes_fastmath_flags() => {
+                return Err(invalid(format!(
+                    "attribute 'fastmathFlags' is not an inherent attribute of '{name}'"
+                )));
+            }
+            Some(value) => Some(self.fastmath_flags(name, value)?),
+            None => None,
+        };
         if args.len() != op.arity() {
             return Err(invalid(format!(
                 "op takes {} operand(s), got {}",
@@ -127,7 +137,7 @@ impl Checker {
             pop_op_result(op, &operands, result_type).map_err(subset_error)?
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::MlirOp(op),
+            mojito_checked::checked::SemanticAdjustment::MlirOp { op, fastmath },
         ));
         self.record_symbolic_lane_rule(span, name, op, &operands)?;
         Ok(result)
@@ -322,13 +332,14 @@ impl Checker {
 
     /// Check the `fastmathFlags` attribute: a compile-time `!kgen.deferred`
     /// value, an untyped `#pop.fmf<flag>` attribute or a computation of one
-    /// (`flag._mlir_attr()`). A closed attribute must be a fast-math flag;
-    /// a computed one is taken by its type, as the pin takes it.
+    /// (`flag._mlir_attr()`), returned as its parameter expression. A
+    /// closed attribute must be a fast-math flag; a computed one is taken
+    /// by its type, as the pin takes it, and each instance closes it.
     fn fastmath_flags(
         &self,
         name: &str,
         value: &mojito_ast::ast::ParamArg,
-    ) -> Result<(), TypeError> {
+    ) -> Result<ParamExpr, TypeError> {
         let invalid = |reason: String| TypeError::BadCall {
             func: name.to_string(),
             reason,
@@ -351,7 +362,7 @@ impl Checker {
                     "Invalid attribute `fastmathFlags` in property conversion: {attribute}"
                 )))
             }
-            _ => Ok(()),
+            _ => Ok(built),
         }
     }
 }

@@ -2120,6 +2120,9 @@ impl<'a> Specializer<'a> {
                         Err(_) => {}
                     }
                 }
+                if let Some(fastmath) = instruction.fastmath_mut() {
+                    self.close_fastmath(template, fastmath, bindings, reached)?;
+                }
                 if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
                     self.close_llvm_intrinsic(
                         template,
@@ -2187,6 +2190,38 @@ impl<'a> Specializer<'a> {
     /// or a signature the intrinsic does not take, as LLVM translation
     /// rejects the reached call, on the result type it sees
     /// ([`Self::translated_type`]).
+    /// Close a `pop` op's `fastmathFlags` attribute in `template`'s
+    /// instance, as upstream's elaboration closes the property: an
+    /// application such as `flags(c)` runs at compile time. On a reached
+    /// instance a closed attribute must be a `#pop.fmf<flag>` one, the
+    /// pin's property conversion; an open one stays a parameter.
+    fn close_fastmath(
+        &mut self,
+        template: &str,
+        fastmath: &mut Const,
+        bindings: &Bindings,
+        reached: bool,
+    ) -> Result<(), MonoError> {
+        if let Const::Param(value) = fastmath {
+            let value = self.applied(template, value, bindings)?;
+            match symbolic::eval_reached_ct(&value, bindings) {
+                Ok(closed) => *fastmath = Const::Value(closed),
+                Err(error) if error.kind == MonoErrorKind::Instantiation => return Err(error),
+                Err(_) => {}
+            }
+        }
+        match fastmath {
+            Const::Value(closed) if reached && !is_fastmath_value(closed) => Err(MonoError {
+                kind: MonoErrorKind::Instantiation,
+                ..self.error(
+                    Some(template),
+                    format!("Invalid attribute `fastmathFlags` in property conversion: {closed}"),
+                )
+            }),
+            _ => Ok(()),
+        }
+    }
+
     fn close_llvm_intrinsic(
         &mut self,
         template: &str,
@@ -2889,6 +2924,7 @@ impl<'a> Specializer<'a> {
                         resolved: None,
                         raises: raises.take(),
                         refined_bound: None,
+                        fastmath: None,
                     };
                 }
                 match instruction {
@@ -4645,4 +4681,9 @@ fn runtime_pack(elements: &[CtValue], bindings: &Bindings) -> Option<Ty> {
         })
         .collect::<Option<Vec<_>>>()
         .map(|elements| TyKind::RuntimePack(elements).into())
+}
+
+/// Whether `value` is a `#pop.fmf<flag>` fast-math attribute.
+fn is_fastmath_value(value: &CtValue) -> bool {
+    matches!(value, CtValue::MlirAttr(attribute) if mojito_types::mlir::is_fastmath_attribute(attribute))
 }

@@ -428,6 +428,7 @@ impl<'a> Flatten<'a> {
                 resolved,
                 raises,
                 refined_bound,
+                fastmath: None,
             },
         });
         d

@@ -68,6 +68,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `pop` op's `fastmathFlags=` attribute reaches LLVM, as at the pin
+  (R1600): each instance closes a computed flag, and the native backend
+  writes it on the `fadd`, `fsub`, `fmul`, or `llvm.fma` call, while a
+  `pop.cast` keeps it flagless as upstream's lowering does. Only `pop.add`,
+  `pop.sub`, `pop.mul`, `pop.fma`, and `pop.cast` take the attribute now,
+  and a misspelled `#pop.fmf<…>` fails where it is written. A struct
+  method only the comptime interpreter runs no longer survives into the
+  compiled program. MIR text moves to schema 1.181 and the package format
+  to 205.
 - A `SIMD` width need not be a power of two, as at the pin:
   `SIMD[DType.float32, 3]` is a type, a parameter, and a construction on the
   VM and natively, since a call of an `@always_inline("builtin")` function

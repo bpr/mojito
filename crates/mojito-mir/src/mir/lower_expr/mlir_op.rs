@@ -17,12 +17,14 @@ use mojito_types::types::LaneMask;
 
 impl<'a> Flatten<'a> {
     /// The op the checker recorded on `call`, if it is a `pop` or `index`
-    /// `__mlir_op`.
-    pub(super) fn checked_mlir_op(call: Node<'a>) -> Option<MlirOp> {
+    /// `__mlir_op`, with its `fastmathFlags` attribute.
+    pub(super) fn checked_mlir_op(call: Node<'a>) -> Option<(MlirOp, Option<&'a ParamExpr>)> {
         call.adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::MlirOp(op) => Some(*op),
+                mojito_checked::checked::SemanticAdjustment::MlirOp { op, fastmath } => {
+                    Some((*op, fastmath.as_ref()))
+                }
                 _ => None,
             })
     }
@@ -218,11 +220,24 @@ impl<'a> Flatten<'a> {
     /// Lower the checked `op` over `args`: a built-in operator whose lanes
     /// compute the op (`binary`, `unary`), a `simd.make` splat,
     /// `simd.cast`, or `simd.bitcast` at the result type's slots, a `pop` instruction, or a
-    /// lane instruction. The destination is typed by the checked result.
-    pub(super) fn lower_mlir_op(&mut self, call: Node<'a>, op: MlirOp, args: &[Node<'a>]) -> Reg {
+    /// lane instruction. The destination is typed by the checked result,
+    /// and a `pop.add`, `pop.sub`, `pop.mul`, `pop.fma`, or `pop.cast`
+    /// carries its `fastmathFlags` attribute: a closed one as a value
+    /// constant, a template's as a parameter constant the elaborator
+    /// closes.
+    pub(super) fn lower_mlir_op(
+        &mut self,
+        call: Node<'a>,
+        (op, fastmath): (MlirOp, Option<&ParamExpr>),
+        args: &[Node<'a>],
+    ) -> Reg {
         let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
         let ty = call.ty().expect("a checked `__mlir_op` has a type");
-        self.emit_mlir_op(call.location(), op, operands, &ty)
+        let fastmath = fastmath.map(|flag| match flag.as_constant() {
+            Some(closed) => Const::Value(closed.clone()),
+            None => Const::Param(flag.clone()),
+        });
+        self.emit_mlir_op(call.location(), op, fastmath, operands, &ty)
     }
 
     /// Retype `value` as `ty` with upstream's `pop.cast_to_builtin` (an
@@ -235,11 +250,12 @@ impl<'a> Flatten<'a> {
     }
 
     /// Emit the instruction computing `op` over `operands` at `location`,
-    /// its destination of type `ty`.
+    /// its destination of type `ty`, with the op's `fastmath` flag.
     fn emit_mlir_op(
         &mut self,
         location: SourceSpan,
         op: MlirOp,
+        fastmath: Option<Const>,
         operands: Vec<Reg>,
         ty: &Ty,
     ) -> Reg {
@@ -257,6 +273,7 @@ impl<'a> Flatten<'a> {
                 resolved: None,
                 raises: None,
                 refined_bound: None,
+                fastmath,
             },
             (MlirLowering::Negate, [a]) => MirInstr::UnOp {
                 op: PrefixOp::Neg,
@@ -280,6 +297,7 @@ impl<'a> Flatten<'a> {
                     value: *value,
                     dtype,
                     width,
+                    fastmath,
                 }
             }
             (MlirLowering::Bitcast, [value]) => {
@@ -319,7 +337,12 @@ impl<'a> Flatten<'a> {
                 value: *value,
                 op,
             },
-            (MlirLowering::Pop(op), _) => MirInstr::Pop { dest, op, operands },
+            (MlirLowering::Pop(op), _) => MirInstr::Pop {
+                dest,
+                op,
+                operands,
+                fastmath,
+            },
             (MlirLowering::BuiltinCast, [value]) => MirInstr::BuiltinCast {
                 dest,
                 value: *value,

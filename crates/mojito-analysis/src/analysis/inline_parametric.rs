@@ -4770,7 +4770,8 @@ fn accessed_through(
 
 /// Fold each `Const::Param` of `blocks` the substitution closed into the
 /// constant its register reads it as, and an LLVM intrinsic call's closed
-/// name and side-effect flag into values.
+/// name and side-effect flag and a `pop` op's closed fast-math flag into
+/// values.
 fn fold_parameter_constants(
     blocks: &mut [MirBlock],
     reg_types: &std::collections::HashMap<u32, Ty>,
@@ -4786,18 +4787,19 @@ fn fold_parameter_constants(
             {
                 *k = parameter_constant(expr, reg_types.get(&dest.0));
             }
-            if let MirInstr::CallLlvmIntrinsic {
-                intrinsic,
-                has_side_effect,
-                ..
-            } = instruction
-            {
-                for k in [intrinsic, has_side_effect] {
-                    if let Const::Param(expr) = k
-                        && let Some(value) = expr.as_constant()
-                    {
-                        *k = Const::Value(value.clone());
-                    }
+            let constants: Vec<&mut Const> = match instruction {
+                MirInstr::CallLlvmIntrinsic {
+                    intrinsic,
+                    has_side_effect,
+                    ..
+                } => vec![intrinsic, has_side_effect],
+                other => other.fastmath_mut().into_iter().collect(),
+            };
+            for k in constants {
+                if let Const::Param(expr) = k
+                    && let Some(value) = expr.as_constant()
+                {
+                    *k = Const::Value(value.clone());
                 }
             }
         }

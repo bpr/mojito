@@ -652,6 +652,9 @@ impl RewriteTypes for SemanticAdjustment {
             Self::KgenStructExtract { index } => {
                 index.rewrite_types(rewrite);
             }
+            Self::MlirOp { op: _, fastmath } => {
+                fastmath.rewrite_types(rewrite);
+            }
             Self::PopArrayGet { index } => {
                 index.rewrite_types(rewrite);
             }
@@ -738,7 +741,6 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::SimdShuffle { mask: _ }
             | Self::MarkInitialized
             | Self::MarkDestroyed
-            | Self::MlirOp(_)
             | Self::PopSimdShuffle { mask: _ }
             | Self::PopArrayRepeat
             | Self::PopArrayGep

@@ -525,6 +525,7 @@ impl<'a> Flatten<'a> {
                 resolved: None,
                 raises: None,
                 refined_bound: None,
+                fastmath: None,
             });
             return Some(dest);
         }

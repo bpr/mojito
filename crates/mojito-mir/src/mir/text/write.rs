@@ -983,13 +983,21 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", target.name().into()),
             ],
         ),
-        MirInstr::Pop { dest, op, operands } => record(
+        MirInstr::Pop {
+            dest,
+            op,
+            operands,
+            fastmath,
+        } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("op", op.mnemonic().into()),
-                ("operands", regs(operands)),
-            ],
+            &with_fastmath(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("op", op.mnemonic().into()),
+                    ("operands", regs(operands)),
+                ],
+                fastmath.as_ref(),
+            ),
         ),
         MirInstr::CallLlvmIntrinsic {
             dest,
@@ -1067,20 +1075,24 @@ fn instruction_value(instruction: &MirInstr) -> String {
             resolved,
             raises,
             refined_bound,
+            fastmath,
         } => record(
             tag,
-            &with_refined_bound(
-                vec![
-                    ("op", infix(*op).into()),
-                    ("dest", reg_value(*dest)),
-                    ("a", reg_value(*a)),
-                    ("b", reg_value(*b)),
-                    ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                    ("raises", option(raises.as_ref().map(raises_value))),
-                ],
-                refined_bound
-                    .as_deref()
-                    .map(|bound| bound.traits.as_slice()),
+            &with_fastmath(
+                with_refined_bound(
+                    vec![
+                        ("op", infix(*op).into()),
+                        ("dest", reg_value(*dest)),
+                        ("a", reg_value(*a)),
+                        ("b", reg_value(*b)),
+                        ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                        ("raises", option(raises.as_ref().map(raises_value))),
+                    ],
+                    refined_bound
+                        .as_deref()
+                        .map(|bound| bound.traits.as_slice()),
+                ),
+                fastmath.as_ref(),
             ),
         ),
         MirInstr::Call {
@@ -1605,8 +1617,20 @@ fn instruction_value(instruction: &MirInstr) -> String {
             value,
             dtype,
             width,
-        }
-        | MirInstr::SimdBitcast {
+            fastmath,
+        } => record(
+            tag,
+            &with_fastmath(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("value", reg_value(*value)),
+                    ("dtype", simd_dtype_slot(dtype)),
+                    ("width", simd_width_slot(width)),
+                ],
+                fastmath.as_ref(),
+            ),
+        ),
+        MirInstr::SimdBitcast {
             dest,
             value,
             dtype,
@@ -1934,6 +1958,16 @@ fn with_refined_bound<'a>(
 ) -> Vec<(&'a str, String)> {
     fields
         .extend(bound.map(|bound| ("refined_bound", list(bound.iter().map(|name| symbol(name))))));
+    fields
+}
+
+/// An op's fields, then its `fastmath` flag constant, omitted while it
+/// has none.
+fn with_fastmath<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    fastmath: Option<&Const>,
+) -> Vec<(&'a str, String)> {
+    fields.extend(fastmath.map(|flag| ("fastmath", const_value(flag))));
     fields
 }
 

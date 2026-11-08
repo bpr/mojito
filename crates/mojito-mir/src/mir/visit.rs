@@ -197,9 +197,18 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_variant_index(output_index)?;
             visitor.visit_place(place)
         }
-        I::MakeSimd { dtype, width, .. }
-        | I::SimdCast { dtype, width, .. }
-        | I::SimdBitcast { dtype, width, .. } => visit_vector_slots(visitor, dtype, width),
+        I::SimdCast {
+            dtype,
+            width,
+            fastmath,
+            ..
+        } => {
+            visit_vector_slots(visitor, dtype, width)?;
+            visit_fastmath(visitor, fastmath.as_mut())
+        }
+        I::MakeSimd { dtype, width, .. } | I::SimdBitcast { dtype, width, .. } => {
+            visit_vector_slots(visitor, dtype, width)
+        }
         I::SimdShuffle { mask, .. } => visitor.visit_lane_mask(mask),
         I::EstablishLoans { loans, .. } => loans
             .iter_mut()
@@ -294,11 +303,22 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
             visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
         }
-        I::UnOp { raises, .. } | I::BinOp { raises, .. } => visit_opt_ty(
+        I::UnOp { raises, .. } => visit_opt_ty(
             visitor,
             raises.as_mut().map(|raises| &mut raises.ty),
             TySite::Contract,
         ),
+        I::BinOp {
+            raises, fastmath, ..
+        } => {
+            visit_opt_ty(
+                visitor,
+                raises.as_mut().map(|raises| &mut raises.ty),
+                TySite::Contract,
+            )?;
+            visit_fastmath(visitor, fastmath.as_mut())
+        }
+        I::Pop { fastmath, .. } => visit_fastmath(visitor, fastmath.as_mut()),
         I::Index {
             base_place,
             index_place,
@@ -405,7 +425,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::PointerConvert { .. }
         | I::ArrayGep { .. }
         | I::IsRunInComptimeInterpreter { .. }
-        | I::Pop { .. }
         | I::Select { .. }
         | I::SimdSelect { .. }
         | I::SimdExtract { .. }
@@ -462,6 +481,14 @@ fn visit_opt_ty<V: MutTypeVisitor + ?Sized>(
     site: TySite,
 ) -> Result<(), V::Error> {
     ty.map_or(Ok(()), |ty| visitor.visit_ty(ty, site))
+}
+
+/// An op's `fastmath` flag constant, when it has one.
+fn visit_fastmath<V: MutTypeVisitor + ?Sized>(
+    visitor: &mut V,
+    fastmath: Option<&mut Const>,
+) -> Result<(), V::Error> {
+    fastmath.map_or(Ok(()), |flag| visitor.visit_constant(flag))
 }
 
 fn visit_places<V: MutTypeVisitor + ?Sized>(

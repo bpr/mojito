@@ -452,6 +452,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 op: self.req(value, fields, "op", Self::pop_op)?,
                 operands: self.req(value, fields, "operands", |d, v| Some(d.regs(v)))?,
+                fastmath: self.fastmath(fields),
             }),
             "llvm.intrinsic" => Some(MirInstr::CallLlvmIntrinsic {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -495,6 +496,7 @@ impl Decoder {
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
                 raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 refined_bound: self.refined_bound(fields).map(MirRefinedBound::boxed),
+                fastmath: self.fastmath(fields),
             }),
             "call" => {
                 let func_name = self.req(value, fields, "func", Self::symbol);
@@ -882,6 +884,7 @@ impl Decoder {
                 value: self.req(value, fields, "value", Self::reg)?,
                 dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,
                 width: self.req(value, fields, "width", Self::simd_width_slot)?,
+                fastmath: self.fastmath(fields),
             }),
             "simd.bitcast" => Some(MirInstr::SimdBitcast {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -1185,6 +1188,14 @@ impl Decoder {
         self.field(fields, "refined_bound")
             .ok()
             .map(|value| self.strings(value))
+    }
+
+    /// The `fastmath` flag constant a `binary`, `pop`, or `simd.cast`
+    /// records (schema 1.181), absent when it records none.
+    fn fastmath(&mut self, fields: &[Field]) -> Option<Const> {
+        self.field(fields, "fastmath")
+            .ok()
+            .and_then(|value| self.constant(value))
     }
 
     fn lifecycle_symbol(&mut self, fields: &[Field], key: &str) -> Option<String> {

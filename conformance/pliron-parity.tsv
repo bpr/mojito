@@ -661,6 +661,7 @@ assets/ok/mlir_attr_param_list.mojo	main	exe-differential	sanitized
 assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_deferred_attribute.mojo	main	exe-differential	sanitized
 assets/ok/mlir_deferred_ctfe.mojo	main	exe-differential	sanitized
+assets/ok/mlir_fastmath_flags.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
 assets/ok/mlir_kgen_dtype_layer.mojo	main	exe-differential	sanitized

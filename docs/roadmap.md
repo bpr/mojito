@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2039**.
+Next free ID: **R2041**.
 
 ## Ordered Work
 
@@ -1170,6 +1170,28 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Done when a `--backend pliron` `.ll` of a `len(xs)` probe marks
     `List.__len__` as the pin does and the parity lane is unchanged.
   - Found while landing R939 (2026-10-15).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2039 Natively, scalar `Float32` and `Float16` arithmetic computes
+  at f64 and rounds, where upstream emits it at the lane width**
+
+  `lower_narrow_float_binop` (`lower/binops.rs`) widens a scalar `Float32`
+  or `Float16` `+`, `-`, `*`, or `/` to f64, operates, and truncates, while
+  the pin writes one `fadd float`; a `pop` op's fast-math flags land on the
+  f64 instruction.
+  - The result is the same: f64 holds more than twice either lane's
+    precision plus two bits, so a basic operation rounded twice equals one
+    rounded once. This is shape, not semantics.
+  - `simd_float_binop_vectors` (`lower/simd.rs`) already computes `Float32`
+    vectors at the lane width; `Float16` vectors widen too
+    (`lower_simd_binop`, `pop_float_value`).
+  - Probe: `pop.add` with `#pop.fmf<nnan>` over two `Float32` lowers to
+    `fpext`, `fadd nnan double`, `fptrunc`, where the pin writes
+    `fadd nnan float`.
+  - Probe: `Float16(1.5) + Float16(2.0)` lowers through `double`, where the
+    pin writes `fadd half`.
+  - Found while landing R1600 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5534,7 +5556,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `_ = pick(n > 5)` over a run-time `n`, where `pick(b: Bool)`
     branches between two attributes, which prints `ran` at the pin.
   - Probe: `var a = __mlir_attr.`#pop.fmf<none>`` in `main`, which prints
-    `ran` at the pin (R1600 names it too).
+    `ran` at the pin.
   - Probe: `print(take(__mlir_attr.`#pop.fmf<none>`))` over `def take(a:
     __mlir_type.`!kgen.deferred`) -> Int: return 7`, with and without
     `@no_inline`, which prints `7` at the pin. The prototype left a dead
@@ -11209,25 +11231,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
-  upstream evaluates them and carries them to LLVM**
+- [ ] **R2040 An absent `fastmathFlags` on `pop.add`, `pop.sub`, or
+  `pop.mul` writes no flags natively, where the pin's default is `contract`**
 
-  `fastmathFlags=` is typed as a compile-time `!kgen.deferred` value and
-  then dropped before MIR, so no flag reaches either backend.
-  - A computed flag such as `flag._mlir_attr()` now runs at compile time
-    (R1630), but the flag it yields is still dropped.
-  - `MirInstr::Pop` and the float `binary` ops carry no flags, and
-    Pliron passes `FastmathFlagsAttr::default()` everywhere
-    (`lower/simd.rs`).
-  - Probe: `var a = __mlir_attr.`#pop.fmf<none>`` in `main` is rejected
-    ("read at run time is not supported"), where the pin elides it. That
-    rejection is R1638's.
-  - Exact arithmetic implements every flag (`mlir::is_fastmath_attribute`),
-    so output never differs: this is shape, not semantics.
-  - Found while landing R1580 (2026-10-28).
-  - Depends on R1630, which runs a function returning a flag at compile
-    time.
-  - Model: Fable, Not Planned.
+  MIR's `fastmath: None` means no flags, and Pliron's `fastmath_attr`
+  (`lower/support.rs`) writes none; at the pin an absent attribute is the
+  op's default property value, `contract` for these three ops.
+  - Every float `+`, `-`, and `*` reaches one of them through `SIMD`'s
+    operator bodies, so the change touches every native float operation.
+  - `pop.fma`, `pop.cast`, and `fdiv` default to no flags at the pin, as
+    Mojito already writes.
+  - Lever: give `fastmath_attr` the op's default, `contract` for a float
+    `binary` add, sub, or mul whose flag is absent, keeping an explicit
+    `#pop.fmf<none>` flagless.
+  - Risk: at `--native-opt release` on an FMA-capable CPU, LLVM fuses a
+    contracted `fmul` and `fadd` into one `fma`, so a `Float64` `a * b + c`
+    may print differently from the VM's unfused arithmetic, as the pin's
+    own compiled code does. The heavy lane's release parity sweep finds
+    such rows; they follow the pin.
+  - `Float32` stays unfused until R2039, since its f64 widening puts a
+    `fptrunc` between the two operations.
+  - Probe: `a * b + c` over `Float32` gives `fmul contract` and
+    `fadd contract` at the pin, and plain `fmul`/`fadd` (at f64) natively.
+  - Probe: ``__mlir_op.`pop.sub`(a, b)`` over `Float32` gives
+    `fsub contract` at the pin.
+  - Found while landing R1600 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1768 An anonymous callable contract's own binders are named
   references, where upstream's are signature slots**

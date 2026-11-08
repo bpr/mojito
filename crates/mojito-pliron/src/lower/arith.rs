@@ -41,9 +41,31 @@ impl FnLowering<'_> {
         operands: Vec<Value>,
         dest: Reg,
     ) -> Value {
+        self.flagged_float_intrinsic(
+            ctx,
+            (intrinsic, float_ty),
+            operands,
+            dest,
+            FastmathFlagsAttr::default(),
+        )
+    }
+
+    /// [`Self::float_intrinsic`] whose call carries the fast-math flags
+    /// `fastmath`, as upstream writes a `pop.fma`'s on its `llvm.fma`.
+    pub(super) fn flagged_float_intrinsic(
+        &mut self,
+        ctx: &mut Context,
+        (intrinsic, float_ty): (&str, TypeHandle),
+        operands: Vec<Value>,
+        dest: Reg,
+        fastmath: FastmathFlagsAttr,
+    ) -> Value {
         let fn_ty = FuncType::get(ctx, float_ty, vec![float_ty; operands.len()], false);
         let call =
             CallIntrinsicOp::new(ctx, StringAttr::new(intrinsic.to_string()), fn_ty, operands);
+        if fastmath != FastmathFlagsAttr::default() {
+            call.set_attr_llvm_intrinsic_fastmath_flags(ctx, fastmath);
+        }
         self.append(ctx, call.get_operation(), Some(dest));
         call.get_result(ctx)
     }

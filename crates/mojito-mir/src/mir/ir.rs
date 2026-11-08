@@ -2118,6 +2118,12 @@ pub enum MirInstr {
         dest: Reg,
         op: PopOp,
         operands: Vec<Reg>,
+        /// Upstream's `fastmathFlags` attribute, which `pop.fma` takes:
+        /// `None` when the op has none. In a template it may be a parameter
+        /// constant; in concrete MIR it is a closed `#pop.fmf<flag>`
+        /// attribute (`mlir::FastMathFlags`), which a native backend writes
+        /// on the intrinsic call.
+        fastmath: Option<Const>,
     },
     /// `pop.call_llvm_intrinsic`: a call of the LLVM intrinsic `intrinsic`
     /// names (a `!kgen.string`) over `args`, with the `Bool` side-effect
@@ -2215,6 +2221,13 @@ pub enum MirInstr {
         /// As a `MethodCall`'s: the bound `resolved` was selected through
         /// when it differs from what the left operand's type spells.
         refined_bound: Option<Box<MirRefinedBound>>,
+        /// Upstream's `fastmathFlags` attribute on a `pop.add`, `pop.sub`,
+        /// or `pop.mul` this computes: `None` for every operator and for an
+        /// op without one. In a template it may be a parameter constant; in
+        /// concrete MIR it is a closed `#pop.fmf<flag>` attribute
+        /// (`mlir::FastMathFlags`), which a native backend writes on a float
+        /// instruction and integer lanes ignore.
+        fastmath: Option<Const>,
     },
     /// A free-function / constructor / builtin call. `args` are the flattened
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
@@ -2675,6 +2688,10 @@ pub enum MirInstr {
         value: Reg,
         dtype: mojito_types::types::SimdDtype,
         width: mojito_types::types::SimdWidth,
+        /// Upstream's `fastmathFlags` attribute on the `pop.cast`: `None`
+        /// when it has none. In concrete MIR it is a closed `#pop.fmf<flag>`
+        /// attribute, which LLVM lowering drops, as upstream's does.
+        fastmath: Option<Const>,
     },
     /// Bit reinterpretation, upstream's `pop.bitcast`: the operand's bits
     /// read as the result type, which has the same total bit width. Lanes
@@ -2983,6 +3000,27 @@ pub enum MirInstr {
 const _: () = assert!(std::mem::size_of::<MirInstr>() <= 320);
 
 impl MirInstr {
+    /// The `fastmathFlags` constant of the `pop.add`, `pop.sub`, `pop.mul`,
+    /// `pop.fma`, or `pop.cast` this instruction computes, if it has one.
+    pub const fn fastmath(&self) -> Option<&Const> {
+        match self {
+            Self::BinOp { fastmath, .. }
+            | Self::Pop { fastmath, .. }
+            | Self::SimdCast { fastmath, .. } => fastmath.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// [`Self::fastmath`], mutably.
+    pub const fn fastmath_mut(&mut self) -> Option<&mut Const> {
+        match self {
+            Self::BinOp { fastmath, .. }
+            | Self::Pop { fastmath, .. }
+            | Self::SimdCast { fastmath, .. } => fastmath.as_mut(),
+            _ => None,
+        }
+    }
+
     /// The place a `deinit`-receiver call consumes in place, as upstream's
     /// call consumes a `DeinitMem` operand (`memConsume`).
     pub fn consumed_receiver(&self) -> Option<&MirPlace> {
@@ -3470,6 +3508,7 @@ impl MirInstr {
                 value,
                 dtype: mojito_types::types::SimdDtype::Known(dtype),
                 width: mojito_types::types::SimdWidth::Known(1),
+                fastmath: _,
             } if dtype.is_integral() => {
                 let value = operand(*value)?;
                 if !matches!(value, CtValue::Int(_) | CtValue::UInt(_)) {
@@ -4618,6 +4657,7 @@ mod tests {
             resolved: None,
             raises: None,
             refined_bound: None,
+            fastmath: None,
         }
         .folded_constant(
             |reg| operands.get(reg.0 as usize).cloned(),
@@ -4749,6 +4789,7 @@ mod tests {
                 error: Reg(4),
             }),
             refined_bound: None,
+            fastmath: None,
         };
         assert!(raising.folded_constant(ones, &reg_types, &none).is_none());
         let dunder = MirInstr::BinOp {
@@ -4759,6 +4800,7 @@ mod tests {
             resolved: Some("Int.__add__".into()),
             raises: None,
             refined_bound: None,
+            fastmath: None,
         };
         assert!(dunder.folded_constant(ones, &reg_types, &none).is_none());
     }
@@ -5020,6 +5062,7 @@ mod tests {
                 resolved: None,
                 raises: None,
                 refined_bound: None,
+                fastmath: None,
             }
             .folded_constant(
                 |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
@@ -5143,6 +5186,7 @@ mod tests {
                 resolved: None,
                 raises: None,
                 refined_bound: None,
+                fastmath: None,
             }
             .folded_constant(|_| None, &reg_types, &MirDeclarations::default())
         };
@@ -5251,6 +5295,7 @@ mod tests {
             resolved: None,
             raises: None,
             refined_bound: None,
+            fastmath: None,
         }
         .folded_constant(
             |reg| [ones.clone(), literal(2)].get(reg.0 as usize).cloned(),
