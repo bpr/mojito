@@ -202,32 +202,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1989 An element read off a compile-time display binding is
-  copied out, where the pin loads it**
-
-  `comptime r = L[0]` over a body's `comptime L = [mk(3), mk(4)]`, with
-  `NC` only `Movable`, is rejected with "cannot copy non-Copyable type
-  'NC'", where the pin prints `3`.
-  - At the pin `L` is a parameter attribute that nothing destroys, and
-    `L[0]` is `load_from_mem` of its element.
-  - Mojito evaluates the read against an owned value of `L` that the body
-    (or the lifted thunk's prologue, for a module constant) later destroys,
-    so the element must be copied out
-    (`Checker::load_compile_time_result`, `checker/traits.rs`). Loading it
-    instead, as R1729 does for a temporary display, reads freed storage.
-  - The lever: bind a compile-time display binding as compile-time memory
-    no drop reaches, as a lifted binding's `bind_comptime_memory`
-    (`mir/lower_stmt.rs`) already is, then record
-    `SemanticAdjustment::CompileTimeLoad` on the read.
-  - Probe: the body form above: `3` at the pin.
-  - Probe: module `comptime ML = [mk(1), mk(2)]; comptime MR = ML[1];
-    print(MR.n)`: `2` at the pin, the same rejection in Mojito.
-  - Probe: over a `C` whose copy initializer adds 100, the body form
-    prints `103`, where the pin prints `3`.
-  - Found while fixing R1729's smoke failure (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1988 A local `comptime` field of a temporary copies or moves
   the field out, where the pin loads it**
 

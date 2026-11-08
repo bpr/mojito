@@ -293,6 +293,12 @@ to evolve under the `0.x` compatibility rules.
   reference result, as the pin's `load_from_mem` does, so a non-`Copyable`
   element is taken instead of rejected and a `Copyable` one no longer runs
   its copy initializer (R1729).
+- An element read off a `comptime` binding of an application
+  (`comptime r = L[0]` over `comptime L = [mk(3), mk(4)]`, a module
+  `comptime MR = ML[1]`, `comptime q = ML[i]` in a `comptime for`) is now
+  loaded as the pin's `load_from_mem` is, from a binding nothing destroys,
+  so a non-`Copyable` element is taken instead of rejected, a `Copyable`
+  one runs no copy initializer, and no destructor runs (R1989).
 - A `comptime assert` after a `comptime if` arm that returns is now
   judged at the instance, as at the pin, so `k[1]()` over `comptime if n
   == 1: return 1` then `comptime assert n == 5, "never"` fails with

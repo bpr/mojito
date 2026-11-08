@@ -303,6 +303,7 @@ assets/ok/ctfe_body_requests.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_collection_result_compile_time_reads.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_construction_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_dict_set_result.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_display_binding_element_load.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_display_tuple_subscript_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_list_field_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_list_result_materialize.mojo	main	exe-differential	sanitized

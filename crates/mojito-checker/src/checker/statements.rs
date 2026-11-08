@@ -2308,8 +2308,15 @@ impl Checker {
                     let ty = self.infer(value)?;
                     // A compile-time result is a value of its own, loaded
                     // out of a reference result as any compile-time
-                    // result is (`comptime q = QS[2]`).
-                    self.load_compile_time_result(value, &ty);
+                    // result is (`comptime q = QS[2]`). A module constant
+                    // every read spells as its parameter expression is
+                    // evaluated below the check, never read in a body.
+                    let evaluated_below = self
+                        .lifted_expressions
+                        .borrow()
+                        .contains_key(&value.source_span())
+                        || (at_module && self.module_constant_value(name).is_some());
+                    self.load_compile_time_result(value, &ty, evaluated_below);
                     // An `Int` annotation is the binding's type even where
                     // the declaration bound `Int`'s conversion of the
                     // literal rather than its fold (`comptime X: Int = 12`

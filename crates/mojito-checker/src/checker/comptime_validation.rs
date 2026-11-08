@@ -4115,7 +4115,11 @@ impl Checker {
                 .insert(name.to_string(), display);
             return Ok(true);
         }
-        let denoted = self.comptime_value_expression(value);
+        // A subscript of a binding of an application is the subscript's own
+        // application, its element loaded as upstream's `load_from_mem`.
+        let denoted = self
+            .comptime_value_expression(value)
+            .filter(|_| !self.subscripts_application(value));
         if let Some(expression) = denoted.clone() {
             // An annotation names the parameter expression's own type: no
             // conversion applies to one.
@@ -4354,10 +4358,13 @@ impl Checker {
                 annotation,
             ),
             // A local display keeps its display route
-            // (`evaluated_display_binding`); a constructor call is lifted.
+            // (`evaluated_display_binding`); a constructor call is lifted,
+            // and so is a subscript of a binding of an application
+            // (`L[0]`), upstream's `load_from_mem` of its element.
             ConstantScope::Local => (
-                matches!(value.kind, ExprKind::Call { .. })
-                    && super::lifts_comptime_value(value, self),
+                (matches!(value.kind, ExprKind::Call { .. })
+                    && super::lifts_comptime_value(value, self))
+                    || self.subscripts_application(value),
                 None,
             ),
         };
@@ -4405,14 +4412,14 @@ impl Checker {
             ));
         }
         let ty = mojito_types::types::default_literal(&ty?);
-        self.load_compile_time_result(value, &ty);
-        let Some(application) = self.named_application(value, &names_read(value), ty) else {
-            return Ok(None);
-        };
-        self.lifted_expressions
-            .borrow_mut()
-            .insert(value.source_span(), application.clone());
-        Ok(Some(application))
+        let application = self.named_application(value, &names_read(value), ty.clone());
+        if let Some(application) = &application {
+            self.lifted_expressions
+                .borrow_mut()
+                .insert(value.source_span(), application.clone());
+        }
+        self.load_compile_time_result(value, &ty, application.is_some());
+        Ok(application)
     }
 
     /// The attribute a closed module constant other than a collection
@@ -4467,6 +4474,21 @@ impl Checker {
             .pop()
             .is_some_and(|(_, raised)| raised);
         (checked, raised)
+    }
+
+    /// Whether `value` subscripts a `comptime` binding of an application,
+    /// local or module (`L[0]` over `comptime L = [mk(3), mk(4)]`).
+    fn subscripts_application(&self, value: &Expr) -> bool {
+        matches!(&value.kind, ExprKind::Index { object, .. }
+        if matches!(&object.kind, ExprKind::Identifier(name)
+            if self.local_comptime_application(name).is_some()
+                || (self.binding_scope(name) == Some(0)
+                    && self.module_constant_value(name).is_some_and(|expression| {
+                        matches!(
+                            expression.kind(),
+                            mojito_types::param_expr::ParamKind::Apply { .. }
+                        )
+                    }))))
     }
 
     /// Whether `value` applies a callable ([`super::applies_callable`]), as

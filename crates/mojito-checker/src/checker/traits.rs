@@ -3463,12 +3463,15 @@ impl Checker {
     /// builds (`[mk(1), mk(2)][0]`) is upstream's `load_from_mem` of the
     /// referent: its storage is loaded at any `Movable` type, running no
     /// copy or move initializer, and the temporary ends undestroyed
-    /// ([`SemanticAdjustment::CompileTimeLoad`]). A reference result into a
-    /// binding (`L[1]`), which a body still owns and destroys, and a field
-    /// chain of a `Copyable` value are copied out of their owner.
+    /// ([`SemanticAdjustment::CompileTimeLoad`]). So is one into a
+    /// compile-time binding (`L[1]`) of an initializer `evaluated_below` the
+    /// check, a lifted thunk or a parameter expression: the binding is a
+    /// parameter attribute, which a thunk anchors in compile-time memory
+    /// no drop reaches. A reference result into any other binding and a
+    /// field chain of a `Copyable` value are copied out of their owner.
     ///
     /// [`SemanticAdjustment::CompileTimeLoad`]: mojito_checked::checked::SemanticAdjustment::CompileTimeLoad
-    pub(super) fn load_compile_time_result(&self, value: &Expr, ty: &Ty) {
+    pub(super) fn load_compile_time_result(&self, value: &Expr, ty: &Ty, evaluated_below: bool) {
         let span = value.source_span();
         let reference_result = matches!(
             self.node_facts
@@ -3477,13 +3480,16 @@ impl Checker {
                 .and_then(|facts| facts.adjustment.as_deref()),
             Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. })
         );
-        let projected_from_temporary = match &value.kind {
+        let projected_from_attribute = match &value.kind {
             ExprKind::Index { object, .. } | ExprKind::MethodCall { object, .. } => {
                 !self.designates_place(object)
+                    || (evaluated_below
+                        && matches!(object.kind, ExprKind::Identifier(_))
+                        && self.is_parameter_read(object))
             }
             _ => false,
         };
-        if reference_result && projected_from_temporary {
+        if reference_result && projected_from_attribute {
             self.record_at(span).compile_time_load = true;
         } else if reference_result && self.is_copyable(ty) {
             self.copyable_reference_result_reads
