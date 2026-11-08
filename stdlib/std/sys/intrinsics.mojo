@@ -7,11 +7,11 @@
 # The body is upstream's, except that `args.get_loaded_kgen_pack()` is
 # served by the compiler, a `kgen.struct.load_indirect` of the
 # `VariadicPack`'s references, where upstream declares it (roadmap R1922).
-# `_RegisterPackType` and `assume` are upstream's, verbatim: the former's
-# `!kgen.struct` field is Mojito's compiler-private tuple storage of the
-# same elements.
-# Omitted: the gather, scatter, masked load and store, prefetch,
-# `expect`, `likely`, `unlikely`, and GPU intrinsics.
+# `_RegisterPackType`, `expect`, `likely`, `unlikely`, and `assume` are
+# upstream's, verbatim: the first's `!kgen.struct` field is Mojito's
+# compiler-private tuple storage of the same elements.
+# Omitted: the gather, scatter, masked load and store, prefetch, and GPU
+# intrinsics.
 """Defines intrinsics.
 
 You can import these APIs from the `sys` package. For example:
@@ -93,6 +93,79 @@ struct _RegisterPackType[*Ts: TrivialRegisterPassable](TrivialRegisterPassable):
         return __mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](
             self._mlir_value
         )
+
+
+# ===----------------------------------------------------------------------=== #
+# expect
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.nodebug)
+def expect[T: TrivialRegisterPassable, //, expected_val: T](val: T) -> T:
+    """Provides information about expected (the most probable) value of `val`,
+    which can be used by optimizers.
+
+    Parameters:
+        T: The type of the input value.
+        expected_val: The expected value of `val`.
+
+    Args:
+        val: The input value.
+
+    Returns:
+        The input value.
+
+    Notes:
+        Only works with integer/boolean types.
+    """
+    if __is_run_in_comptime_interpreter:
+        return val
+    return llvm_intrinsic["llvm.expect", T, has_side_effect=False](
+        val, expected_val
+    )
+
+
+# ===----------------------------------------------------------------------=== #
+# likely
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.nodebug)
+def likely(val: Bool) -> Bool:
+    """Provides information that the most probable value of `val` is going to be
+    `True`. This information can be used by optimizers.
+
+    Args:
+        val: The input value which is likely to be `True` most of the time.
+
+    Returns:
+        The input value.
+    """
+    return expect[True](val)
+
+
+# ===----------------------------------------------------------------------=== #
+# unlikely
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.nodebug)
+def unlikely(val: Bool) -> Bool:
+    """Provides information that the most probable value of `val` is going to be
+    `False`. This information can be used by optimizers.
+
+    Args:
+        val: The input value which is likely to be `False` most of the time.
+
+    Returns:
+        The input value.
+    """
+    return expect[False](val)
+
+
+# ===----------------------------------------------------------------------=== #
+# assume
+# ===----------------------------------------------------------------------=== #
 
 
 @inline(.nodebug)

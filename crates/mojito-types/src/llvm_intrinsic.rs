@@ -12,7 +12,9 @@
 //! [`LlvmIntrinsic::shuffle_sources`], [`step_lanes`], [`scalef_lane`],
 //! and [`LlvmIntrinsic::table_lookup`], and the native backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
-use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, kgen_simd_slots, storage_ty};
+use crate::types::{
+    SimdDtype, SimdWidth, Ty, TyKind, canonical_simd_ty, kgen_simd_slots, storage_ty,
+};
 use mojito_ast::ast::Dtype;
 
 /// One LLVM intrinsic in the table, named after its LLVM spelling.
@@ -27,6 +29,10 @@ pub enum LlvmIntrinsic {
     Fshr,
     Copysign,
     Sqrt,
+    FloatMath(FloatMath),
+    IntMath(IntMath),
+    Abs,
+    Expect,
     IsFpclass,
     Donothing,
     Assume,
@@ -64,6 +70,276 @@ pub enum VectorReduction {
     Fmin,
 }
 
+/// An elementwise float intrinsic of `math`'s family: LLVM's spelling is
+/// `llvm.` and the variant's lowercase name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum FloatMath {
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Sinh,
+    Cosh,
+    Tanh,
+    Exp,
+    Exp2,
+    Log,
+    Log2,
+    Log10,
+    Fabs,
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
+    Roundeven,
+    Rint,
+    Nearbyint,
+    Pow,
+    Atan2,
+    Minnum,
+    Maxnum,
+    Minimum,
+    Maximum,
+    Fma,
+    Fmuladd,
+}
+
+impl FloatMath {
+    /// Every float intrinsic of the family.
+    pub const ALL: [Self; 30] = [
+        Self::Sin,
+        Self::Cos,
+        Self::Tan,
+        Self::Asin,
+        Self::Acos,
+        Self::Atan,
+        Self::Sinh,
+        Self::Cosh,
+        Self::Tanh,
+        Self::Exp,
+        Self::Exp2,
+        Self::Log,
+        Self::Log2,
+        Self::Log10,
+        Self::Fabs,
+        Self::Floor,
+        Self::Ceil,
+        Self::Trunc,
+        Self::Round,
+        Self::Roundeven,
+        Self::Rint,
+        Self::Nearbyint,
+        Self::Pow,
+        Self::Atan2,
+        Self::Minnum,
+        Self::Maxnum,
+        Self::Minimum,
+        Self::Maximum,
+        Self::Fma,
+        Self::Fmuladd,
+    ];
+
+    /// The intrinsic's LLVM spelling.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Sin => "llvm.sin",
+            Self::Cos => "llvm.cos",
+            Self::Tan => "llvm.tan",
+            Self::Asin => "llvm.asin",
+            Self::Acos => "llvm.acos",
+            Self::Atan => "llvm.atan",
+            Self::Sinh => "llvm.sinh",
+            Self::Cosh => "llvm.cosh",
+            Self::Tanh => "llvm.tanh",
+            Self::Exp => "llvm.exp",
+            Self::Exp2 => "llvm.exp2",
+            Self::Log => "llvm.log",
+            Self::Log2 => "llvm.log2",
+            Self::Log10 => "llvm.log10",
+            Self::Fabs => "llvm.fabs",
+            Self::Floor => "llvm.floor",
+            Self::Ceil => "llvm.ceil",
+            Self::Trunc => "llvm.trunc",
+            Self::Round => "llvm.round",
+            Self::Roundeven => "llvm.roundeven",
+            Self::Rint => "llvm.rint",
+            Self::Nearbyint => "llvm.nearbyint",
+            Self::Pow => "llvm.pow",
+            Self::Atan2 => "llvm.atan2",
+            Self::Minnum => "llvm.minnum",
+            Self::Maxnum => "llvm.maxnum",
+            Self::Minimum => "llvm.minimum",
+            Self::Maximum => "llvm.maximum",
+            Self::Fma => "llvm.fma",
+            Self::Fmuladd => "llvm.fmuladd",
+        }
+    }
+
+    /// The number of lane operands the intrinsic takes.
+    pub const fn arity(self) -> usize {
+        match self {
+            Self::Pow
+            | Self::Atan2
+            | Self::Minnum
+            | Self::Maxnum
+            | Self::Minimum
+            | Self::Maximum => 2,
+            Self::Fma | Self::Fmuladd => 3,
+            _ => 1,
+        }
+    }
+
+    /// Whether LLVM's constant folder leaves the intrinsic alone, so the
+    /// pin's comptime interpreter cannot call it: `tan`, `asin`, `acos`,
+    /// `tanh`, and `atan2`.
+    pub const fn folds(self) -> bool {
+        !matches!(
+            self,
+            Self::Tan | Self::Asin | Self::Acos | Self::Tanh | Self::Atan2
+        )
+    }
+
+    /// One lane over `lanes`, computed at `f64` for a `float64` lane and at
+    /// `f32` otherwise, as LLVM promotes a `half` operation to `float`:
+    /// the transcendental functions call the C library's, as LLVM's
+    /// lowering does, `rint` and `nearbyint` round to nearest even (the
+    /// default rounding mode), `minnum`/`maxnum` pass over a NaN and
+    /// `minimum`/`maximum` give it, all four ordering `-0` below `+0` as
+    /// LLVM's constant folder does, and
+    /// `fmuladd` fuses as `fma` does.
+    fn lane(self, dtype: Dtype, lanes: &[f64]) -> Option<f64> {
+        macro_rules! compute {
+            ($float:ty) => {{
+                let lanes: Vec<$float> = lanes.iter().map(|lane| *lane as $float).collect();
+                let lane: $float = match (self, lanes.as_slice()) {
+                    (Self::Sin, [a]) => a.sin(),
+                    (Self::Cos, [a]) => a.cos(),
+                    (Self::Tan, [a]) => a.tan(),
+                    (Self::Asin, [a]) => a.asin(),
+                    (Self::Acos, [a]) => a.acos(),
+                    (Self::Atan, [a]) => a.atan(),
+                    (Self::Sinh, [a]) => a.sinh(),
+                    (Self::Cosh, [a]) => a.cosh(),
+                    (Self::Tanh, [a]) => a.tanh(),
+                    (Self::Exp, [a]) => a.exp(),
+                    (Self::Exp2, [a]) => a.exp2(),
+                    (Self::Log, [a]) => a.ln(),
+                    (Self::Log2, [a]) => a.log2(),
+                    (Self::Log10, [a]) => a.log10(),
+                    (Self::Fabs, [a]) => a.abs(),
+                    (Self::Floor, [a]) => a.floor(),
+                    (Self::Ceil, [a]) => a.ceil(),
+                    (Self::Trunc, [a]) => a.trunc(),
+                    (Self::Round, [a]) => a.round(),
+                    (Self::Roundeven | Self::Rint | Self::Nearbyint, [a]) => a.round_ties_even(),
+                    (Self::Pow, [a, b]) => a.powf(*b),
+                    (Self::Atan2, [a, b]) => a.atan2(*b),
+                    (Self::Minnum | Self::Maxnum, [a, b]) if a.is_nan() => *b,
+                    (Self::Minnum | Self::Maxnum, [a, b]) if b.is_nan() => *a,
+                    (Self::Minimum | Self::Maximum, [a, b]) if a.is_nan() || b.is_nan() => {
+                        <$float>::NAN
+                    }
+                    (Self::Minnum | Self::Minimum, [a, b]) => {
+                        if a.total_cmp(b).is_le() {
+                            *a
+                        } else {
+                            *b
+                        }
+                    }
+                    (Self::Maxnum | Self::Maximum, [a, b]) => {
+                        if a.total_cmp(b).is_ge() {
+                            *a
+                        } else {
+                            *b
+                        }
+                    }
+                    (Self::Fma | Self::Fmuladd, [a, b, c]) => a.mul_add(*b, *c),
+                    _ => return None,
+                };
+                f64::from(lane)
+            }};
+        }
+        let lane = if dtype == Dtype::Float64 {
+            compute!(f64)
+        } else {
+            compute!(f32)
+        };
+        Some(dtype.round_lane(lane))
+    }
+}
+
+/// An elementwise two-operand integer intrinsic: a saturating sum or
+/// difference, or a lane-wise maximum or minimum. The `u`/`s` prefix
+/// names how the lane bits are read, whatever the dtype's signedness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum IntMath {
+    UaddSat,
+    UsubSat,
+    SaddSat,
+    SsubSat,
+    Smax,
+    Smin,
+    Umax,
+    Umin,
+}
+
+impl IntMath {
+    /// Every integer intrinsic of the family.
+    pub const ALL: [Self; 8] = [
+        Self::UaddSat,
+        Self::UsubSat,
+        Self::SaddSat,
+        Self::SsubSat,
+        Self::Smax,
+        Self::Smin,
+        Self::Umax,
+        Self::Umin,
+    ];
+
+    /// The intrinsic's LLVM spelling.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::UaddSat => "llvm.uadd.sat",
+            Self::UsubSat => "llvm.usub.sat",
+            Self::SaddSat => "llvm.sadd.sat",
+            Self::SsubSat => "llvm.ssub.sat",
+            Self::Smax => "llvm.smax",
+            Self::Smin => "llvm.smin",
+            Self::Umax => "llvm.umax",
+            Self::Umin => "llvm.umin",
+        }
+    }
+
+    const fn signed(self) -> bool {
+        matches!(
+            self,
+            Self::SaddSat | Self::SsubSat | Self::Smax | Self::Smin
+        )
+    }
+
+    /// One lane of `a` and `b`, the lane bits read at `width` as
+    /// [`Self::signed`] says, a saturating result clamped to that range.
+    fn lane(self, width: u32, a: i128, b: i128) -> i128 {
+        let (min, max) = if self.signed() {
+            (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1)
+        } else {
+            (0, lane_mask(width) as i128)
+        };
+        let (a, b) = (
+            read_lane(a, width, self.signed()),
+            read_lane(b, width, self.signed()),
+        );
+        match self {
+            Self::UaddSat | Self::SaddSat => (a + b).clamp(min, max),
+            Self::UsubSat | Self::SsubSat => (a - b).clamp(min, max),
+            Self::Smax | Self::Umax => a.max(b),
+            Self::Smin | Self::Umin => a.min(b),
+        }
+    }
+}
+
 /// A type an overloaded intrinsic's name is mangled by: its result's or
 /// an operand's (`llvm.ctpop.v4i32`, `llvm.vector.reduce.smax.v4i32`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,44 +350,49 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 30] = [
-        Self::Ctlz,
-        Self::Cttz,
-        Self::Ctpop,
-        Self::Bitreverse,
-        Self::Bswap,
-        Self::Fshl,
-        Self::Fshr,
-        Self::Copysign,
-        Self::Sqrt,
-        Self::IsFpclass,
-        Self::Donothing,
-        Self::Assume,
-        Self::VectorReduce(VectorReduction::And),
-        Self::VectorReduce(VectorReduction::Or),
-        Self::VectorReduce(VectorReduction::Smax),
-        Self::VectorReduce(VectorReduction::Smin),
-        Self::VectorReduce(VectorReduction::Umax),
-        Self::VectorReduce(VectorReduction::Umin),
-        Self::VectorReduce(VectorReduction::Fmax),
-        Self::VectorReduce(VectorReduction::Fmin),
-        Self::VectorExtract,
-        Self::VectorInsert,
-        Self::VectorSplice(SpliceDirection::Left),
-        Self::VectorSplice(SpliceDirection::Right),
-        Self::VectorInterleave2,
-        Self::VectorDeinterleave2,
-        Self::Stepvector,
-        Self::X86Avx512MaskScalefPs512,
-        Self::X86Ssse3PshufB128,
-        Self::Aarch64NeonTbl1,
-    ];
+    pub fn all() -> impl Iterator<Item = Self> {
+        [
+            Self::Ctlz,
+            Self::Cttz,
+            Self::Ctpop,
+            Self::Bitreverse,
+            Self::Bswap,
+            Self::Fshl,
+            Self::Fshr,
+            Self::Copysign,
+            Self::Sqrt,
+            Self::Abs,
+            Self::Expect,
+            Self::IsFpclass,
+            Self::Donothing,
+            Self::Assume,
+            Self::VectorReduce(VectorReduction::And),
+            Self::VectorReduce(VectorReduction::Or),
+            Self::VectorReduce(VectorReduction::Smax),
+            Self::VectorReduce(VectorReduction::Smin),
+            Self::VectorReduce(VectorReduction::Umax),
+            Self::VectorReduce(VectorReduction::Umin),
+            Self::VectorReduce(VectorReduction::Fmax),
+            Self::VectorReduce(VectorReduction::Fmin),
+            Self::VectorExtract,
+            Self::VectorInsert,
+            Self::VectorSplice(SpliceDirection::Left),
+            Self::VectorSplice(SpliceDirection::Right),
+            Self::VectorInterleave2,
+            Self::VectorDeinterleave2,
+            Self::Stepvector,
+            Self::X86Avx512MaskScalefPs512,
+            Self::X86Ssse3PshufB128,
+            Self::Aarch64NeonTbl1,
+        ]
+        .into_iter()
+        .chain(FloatMath::ALL.map(Self::FloatMath))
+        .chain(IntMath::ALL.map(Self::IntMath))
+    }
 
     /// The intrinsic LLVM spells `name`, if it is in the table.
     pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|intrinsic| intrinsic.name() == name)
+        Self::all().find(|intrinsic| intrinsic.name() == name)
     }
 
     /// The intrinsic's LLVM spelling, before overload mangling.
@@ -126,6 +407,10 @@ impl LlvmIntrinsic {
             Self::Fshr => "llvm.fshr",
             Self::Copysign => "llvm.copysign",
             Self::Sqrt => "llvm.sqrt",
+            Self::FloatMath(math) => math.name(),
+            Self::IntMath(math) => math.name(),
+            Self::Abs => "llvm.abs",
+            Self::Expect => "llvm.expect",
             Self::IsFpclass => "llvm.is.fpclass",
             Self::Donothing => "llvm.donothing",
             Self::Assume => "llvm.assume",
@@ -152,8 +437,7 @@ impl LlvmIntrinsic {
 
     /// The names in the table, for a diagnostic.
     pub fn admitted_names() -> String {
-        Self::ALL
-            .iter()
+        Self::all()
             .map(|intrinsic| format!("'{}'", intrinsic.name()))
             .collect::<Vec<_>>()
             .join(", ")
@@ -163,6 +447,7 @@ impl LlvmIntrinsic {
     pub const fn arity(self) -> usize {
         match self {
             Self::Donothing | Self::Stepvector => 0,
+            Self::FloatMath(math) => math.arity(),
             Self::Ctpop
             | Self::Assume
             | Self::Bitreverse
@@ -173,6 +458,9 @@ impl LlvmIntrinsic {
             Self::Ctlz
             | Self::Cttz
             | Self::Copysign
+            | Self::IntMath(_)
+            | Self::Abs
+            | Self::Expect
             | Self::IsFpclass
             | Self::VectorExtract
             | Self::VectorInterleave2
@@ -332,10 +620,11 @@ impl LlvmIntrinsic {
         Some(sources)
     }
 
-    /// Whether operand `position` is the `i1` flag `ctlz` and `cttz` take
-    /// (whether a zero operand is poison), rather than a lane vector.
+    /// Whether operand `position` is the `i1` flag `ctlz`, `cttz`, and
+    /// `abs` take (whether a zero operand, or `abs`'s of the most negative
+    /// lane, is poison), rather than a lane vector.
     pub const fn is_flag(self, position: usize) -> bool {
-        matches!(self, Self::Ctlz | Self::Cttz) && position == 1
+        matches!(self, Self::Ctlz | Self::Cttz | Self::Abs) && position == 1
     }
 
     /// Why the intrinsic does not take `operands` and give `result`, as
@@ -358,14 +647,15 @@ impl LlvmIntrinsic {
     /// `!kgen.struct<…isParamPack>`, which is never unwrapped. A vector
     /// translates as its `!kgen.simd` storage, as upstream's
     /// `LowerKGENToLLVM` lowers the `SIMD` struct to its field, the builtin
-    /// `index` as the `Int` it casts from, and the builtin `i1` as the
-    /// `Bool` it casts from, both `i1` in LLVM. A literal struct's elements translate each, as
+    /// `index` as the `Int` it casts from, and the builtin `i1` and a
+    /// `Bool` as the `!kgen.scalar<bool>` `Bool` holds, all `i1` in LLVM. A literal struct's elements translate each, as
     /// `LowerKGENToLLVM` lowers a `!kgen.struct` element-wise.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         fn translated(ty: &Ty) -> Ty {
             match ty.kind() {
                 TyKind::Index => storage_ty(&Ty::int()),
-                TyKind::I1 => storage_ty(&Ty::bool()),
+                TyKind::I1 => storage_ty(&canonical_simd_ty(Dtype::Bool, 1)),
+                _ if ty.is_bool() => storage_ty(&canonical_simd_ty(Dtype::Bool, 1)),
                 TyKind::Tuple(elements) => {
                     TyKind::Tuple(elements.iter().map(translated).collect()).into()
                 }
@@ -412,7 +702,7 @@ impl LlvmIntrinsic {
                 return (!matches!(result.kind(), TyKind::None)
                     || operands
                         .iter()
-                        .any(|operand| *operand != storage_ty(&Ty::bool())))
+                        .any(|operand| lanes(operand) != Some((Dtype::Bool, 1))))
                 .then(mismatch)
                 .flatten();
             }
@@ -488,7 +778,7 @@ impl LlvmIntrinsic {
         } else if dtype == Dtype::Bool {
             matches!(
                 self,
-                Self::VectorReduce(VectorReduction::And | VectorReduction::Or)
+                Self::VectorReduce(VectorReduction::And | VectorReduction::Or) | Self::Expect
             )
         } else {
             !dtype.is_float()
@@ -592,7 +882,8 @@ impl LlvmIntrinsic {
 
     /// Why the comptime interpreter cannot call the intrinsic, or `None`
     /// when it can: it calls only what LLVM's constant folder folds, which
-    /// leaves out `llvm.donothing` and `llvm.assume`, the float reductions, `vector.insert`,
+    /// leaves out `llvm.donothing` and `llvm.assume`, `llvm.expect`, the
+    /// float intrinsics [`FloatMath::folds`] refuses, the float reductions, `vector.insert`,
     /// the splices, `llvm.stepvector`, and the target-specific `scalef`,
     /// `pshuf.b.128`, and `tbl1`, and it types no struct result, which leaves out
     /// `vector.deinterleave2`.
@@ -605,7 +896,12 @@ impl LlvmIntrinsic {
                 "cannot constant fold zero-result LLVM intrinsic: {}",
                 self.name()
             )),
-            Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
+            Self::FloatMath(math) if !math.folds() => Some(format!(
+                "LLVM could not constant fold intrinsic: {}",
+                self.name()
+            )),
+            Self::Expect
+            | Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
             | Self::VectorInsert
             | Self::VectorSplice(_)
             | Self::Stepvector
@@ -625,6 +921,7 @@ impl LlvmIntrinsic {
             self,
             Self::Copysign
                 | Self::Sqrt
+                | Self::FloatMath(_)
                 | Self::IsFpclass
                 | Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
                 | Self::X86Avx512MaskScalefPs512
@@ -658,9 +955,10 @@ impl LlvmIntrinsic {
 ///
 /// Each lane is held sign- or zero-extended and computed on its bits at the
 /// dtype's width; `None` is an intrinsic that is not elementwise over
-/// integers. `ctlz` and `cttz` of zero give the width, whatever the flag (a
-/// defined value refines LLVM's poison), and a funnel shift takes its
-/// amount modulo the width.
+/// integers. `ctlz` and `cttz` of zero give the width, and `abs` of the
+/// most negative lane gives it back, whatever the flag (a defined value
+/// refines LLVM's poison); a funnel shift takes its amount modulo the
+/// width, and `llvm.expect` gives its first operand.
 pub fn int_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[i128]) -> Option<i128> {
     let width = dtype.bit_width();
     let bits = |lane: i128| (lane as u128) & lane_mask(width);
@@ -670,6 +968,9 @@ pub fn int_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[i128]) -> Optio
         }
         (LlvmIntrinsic::Cttz, [a, ..]) => i128::from(bits(*a).trailing_zeros().min(width)),
         (LlvmIntrinsic::Ctpop, [a]) => i128::from(bits(*a).count_ones()),
+        (LlvmIntrinsic::Abs, [a, ..]) => read_lane(*a, width, true).abs(),
+        (LlvmIntrinsic::Expect, [a, _]) => *a,
+        (LlvmIntrinsic::IntMath(math), [a, b]) => math.lane(width, *a, *b),
         (LlvmIntrinsic::Bitreverse, [a]) => {
             (bits(*a).reverse_bits() >> (u128::BITS - width)) as i128
         }
@@ -696,6 +997,7 @@ pub fn float_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[f64]) -> Opti
     let lane = match (intrinsic, lanes) {
         (LlvmIntrinsic::Copysign, [magnitude, sign]) => magnitude.copysign(*sign),
         (LlvmIntrinsic::Sqrt, [a]) => a.sqrt(),
+        (LlvmIntrinsic::FloatMath(math), _) => return math.lane(dtype, lanes),
         _ => return None,
     };
     Some(dtype.round_lane(lane))
@@ -781,16 +1083,10 @@ pub fn reduce_ints(reduction: VectorReduction, dtype: Dtype, lanes: &[i128]) -> 
     };
     let width = dtype.bit_width();
     let signed = matches!(reduction, VectorReduction::Smax | VectorReduction::Smin);
-    let read = |lane: &i128| {
-        let unsigned = (*lane as u128 & lane_mask(width)) as i128;
-        let shift = 128 - width;
-        if signed {
-            (unsigned << shift) >> shift
-        } else {
-            unsigned
-        }
-    };
-    let lane = lanes.iter().map(read).reduce(pick)?;
+    let lane = lanes
+        .iter()
+        .map(|lane| read_lane(*lane, width, signed))
+        .reduce(pick)?;
     Some(crate::ct::wrap_lane(dtype, lane))
 }
 
@@ -806,6 +1102,17 @@ pub fn reduce_floats(reduction: VectorReduction, lanes: &[f64]) -> Option<f64> {
     lanes.iter().copied().reduce(pick)
 }
 
+/// A lane's bits at `width`, read signed or unsigned.
+const fn read_lane(lane: i128, width: u32, signed: bool) -> i128 {
+    let unsigned = (lane as u128 & lane_mask(width)) as i128;
+    let shift = 128 - width;
+    if signed {
+        (unsigned << shift) >> shift
+    } else {
+        unsigned
+    }
+}
+
 const fn lane_mask(width: u32) -> u128 {
     if width >= u128::BITS {
         u128::MAX
@@ -817,11 +1124,10 @@ const fn lane_mask(width: u32) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::canonical_simd_ty;
 
     #[test]
     fn upstream_spellings_parse() {
-        for intrinsic in LlvmIntrinsic::ALL {
+        for intrinsic in LlvmIntrinsic::all() {
             assert_eq!(LlvmIntrinsic::parse(intrinsic.name()), Some(intrinsic));
         }
         assert_eq!(LlvmIntrinsic::parse("llvm.no.such.thing"), None);
@@ -894,6 +1200,87 @@ mod tests {
         assert_eq!(
             float_lane(LlvmIntrinsic::Copysign, Dtype::Float64, &[2.0, -0.0]),
             Some(-2.0)
+        );
+    }
+
+    #[test]
+    fn math_lanes_follow_the_pin() {
+        let int = |math, dtype, a, b| int_lane(LlvmIntrinsic::IntMath(math), dtype, &[a, b]);
+        assert_eq!(int(IntMath::UsubSat, Dtype::UInt8, 3, 200), Some(0));
+        assert_eq!(int(IntMath::UaddSat, Dtype::UInt8, 200, 100), Some(255));
+        assert_eq!(int(IntMath::UaddSat, Dtype::Int8, 100, -100), Some(-1));
+        assert_eq!(int(IntMath::SaddSat, Dtype::Int8, -100, -100), Some(-128));
+        assert_eq!(int(IntMath::SsubSat, Dtype::Int8, 100, -100), Some(127));
+        assert_eq!(int(IntMath::Umax, Dtype::Int8, 100, -100), Some(-100));
+        assert_eq!(int(IntMath::Smin, Dtype::UInt8, 1, 200), Some(200));
+        assert_eq!(
+            int_lane(LlvmIntrinsic::Abs, Dtype::Int8, &[-128, 0]),
+            Some(-128)
+        );
+        assert_eq!(
+            int_lane(LlvmIntrinsic::Expect, Dtype::Int, &[5, 3]),
+            Some(5)
+        );
+        let float =
+            |math, dtype, lanes: &[f64]| float_lane(LlvmIntrinsic::FloatMath(math), dtype, lanes);
+        assert_eq!(float(FloatMath::Rint, Dtype::Float64, &[2.5]), Some(2.0));
+        assert_eq!(float(FloatMath::Round, Dtype::Float64, &[2.5]), Some(3.0));
+        assert_eq!(
+            float(FloatMath::Sin, Dtype::Float32, &[0.1]),
+            Some(f64::from(0.1f32.sin()))
+        );
+        assert_eq!(
+            float(FloatMath::Minnum, Dtype::Float64, &[f64::NAN, 1.0]),
+            Some(1.0)
+        );
+        assert!(
+            float(FloatMath::Minimum, Dtype::Float64, &[f64::NAN, 1.0]).is_some_and(f64::is_nan)
+        );
+        assert!(
+            float(FloatMath::Maxnum, Dtype::Float64, &[-0.0, 0.0])
+                .is_some_and(f64::is_sign_positive)
+        );
+        assert!(
+            float(FloatMath::Minimum, Dtype::Float64, &[0.0, -0.0])
+                .is_some_and(f64::is_sign_negative)
+        );
+        assert_eq!(
+            float(FloatMath::Fma, Dtype::Float64, &[0.5, 2.0, 3.0]),
+            Some(4.0)
+        );
+        assert!(
+            LlvmIntrinsic::FloatMath(FloatMath::Tan)
+                .compile_time_error()
+                .is_some()
+        );
+        assert!(LlvmIntrinsic::Expect.compile_time_error().is_some());
+        assert_eq!(
+            LlvmIntrinsic::FloatMath(FloatMath::Sin).compile_time_error(),
+            None
+        );
+        let simd = canonical_simd_ty;
+        let floats = simd(Dtype::Float32, 4);
+        assert_eq!(
+            LlvmIntrinsic::FloatMath(FloatMath::Fma)
+                .signature_error(&floats, &[floats.clone(), floats.clone(), floats.clone()]),
+            None
+        );
+        assert!(
+            LlvmIntrinsic::FloatMath(FloatMath::Sin)
+                .signature_error(&simd(Dtype::Int32, 4), &[simd(Dtype::Int32, 4)])
+                .is_some()
+        );
+        assert_eq!(
+            LlvmIntrinsic::Expect.signature_error(&Ty::bool(), &[Ty::bool(), Ty::bool()]),
+            None
+        );
+        assert!(
+            LlvmIntrinsic::IntMath(IntMath::Smax)
+                .signature_error(
+                    &simd(Dtype::Bool, 4),
+                    &[simd(Dtype::Bool, 4), simd(Dtype::Bool, 4)]
+                )
+                .is_some()
         );
     }
 

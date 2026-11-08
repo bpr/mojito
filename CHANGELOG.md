@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `llvm_intrinsic` calls the target-independent elementwise intrinsics the
+  pin's library reaches, on the VM and natively (R1521): `math`'s float
+  family (`llvm.sin`, `cos`, `asin`, `acos`, and kin through `fma` and
+  `fmuladd`), the saturating and min/max integer intrinsics
+  (`llvm.usub.sat`, …), `llvm.abs`, and `llvm.expect`, with
+  `std.sys.intrinsics`' `expect`, `likely`, and `unlikely` ported
+  verbatim. The comptime interpreter refuses `tan`, `asin`, `acos`, `tanh`,
+  `atan2`, and `expect`, as LLVM's constant folder does at the pin.
+  Pointer-operand intrinsics (R2035, R2037) and the remaining scalar ones
+  (R2036) stay outside.
+
 - Upstream's KGEN vector of addresses `!kgen.simd<size, address>`, the
   base-pointer type `gather` and `scatter` pass to `llvm.masked.gather` and
   `llvm.masked.scatter`, is a type: spelled through a `SIMDLength`'s

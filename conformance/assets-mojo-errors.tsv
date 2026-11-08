@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1118
+# swept-count	1119
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -625,6 +625,7 @@ assets/type_error/llvm_intrinsic_interleave_width.mojo	compile-reject	agree	erro
 assets/type_error/llvm_intrinsic_reduce_scalar.mojo	compile-reject	agree	error: call intrinsic signature i32 (i32) to overloaded intrinsic "llvm.vector.reduce.smax" : !kgen.string does not match any of the overloads: intrinsic argument 0 type (overload type 0) expected any integer vector, but got i32
 assets/type_error/llvm_intrinsic_scalef_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_stepvector_bool.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
+assets/type_error/llvm_intrinsic_tan_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_unknown_name.mojo	compile-reject	agree	error: could not find LLVM intrinsic: "llvm.no.such.thing" : !kgen.string
 assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/loop_immutable_binding_mutation.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination

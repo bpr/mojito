@@ -9121,8 +9121,8 @@ fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
             "unable to infer result type",
         ),
         (
-            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.sin\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x))\n",
-            "the LLVM intrinsic 'llvm.sin' is outside the subset",
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.x86.sse.stmxcsr\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x))\n",
+            "the LLVM intrinsic 'llvm.x86.sse.stmxcsr' is outside the subset",
         ),
         (
             "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, _type=Int64, hasSideEffects=False.__mlir_i1__()](x))\n",

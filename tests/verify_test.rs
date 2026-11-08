@@ -1034,7 +1034,7 @@ fn verifier_checks_llvm_intrinsic_calls() {
     concrete_finding(
         &with_call(&|call| {
             if let MirInstr::CallLlvmIntrinsic { intrinsic, .. } = call {
-                *intrinsic = Const::Value(CtValue::KgenString("llvm.sin".to_string()));
+                *intrinsic = Const::Value(CtValue::KgenString("llvm.x86.sse.stmxcsr".to_string()));
             }
         }),
         "which is no LLVM intrinsic Mojito computes",

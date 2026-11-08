@@ -698,7 +698,8 @@ impl FnLowering<'_> {
 
     /// `llvm.intrinsic` — a call of the LLVM intrinsic itself, its name
     /// mangled by the types [`LlvmIntrinsic::overloads`] names: a
-    /// multi-lane operand or result is a vector, a width-one one the lane.
+    /// multi-lane operand or result is a vector, a width-one one (or a
+    /// `Bool`, `llvm.expect`'s) the lane.
     /// The `ctlz`/`cttz` flag is the `immarg` constant `false`, whose
     /// defined result for a zero lane the VM computes; a shuffle's index
     /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
@@ -752,7 +753,7 @@ impl FnLowering<'_> {
             self.func
                 .reg_types
                 .get(&reg.0)
-                .and_then(simd_dims)
+                .and_then(|ty| simd_dims(ty).or_else(|| ty.is_bool().then_some((Dtype::Bool, 1))))
                 .map(shaped)
         };
         let non_simd = |lowering: &Self| {

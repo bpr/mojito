@@ -588,6 +588,7 @@ assets/ok/literal_rule_value_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_deinterleave.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/llvm_intrinsic_math.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_shuffles.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_instance_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_temporary_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape
@@ -1281,6 +1282,7 @@ assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_defines_undefined.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_info_layout_queries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_intrinsics_assume.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/sys_intrinsics_expect.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_bound_conversion.mojo	-	ineligible	no-scalar-entry-shape

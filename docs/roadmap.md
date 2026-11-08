@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2035**.
+Next free ID: **R2039**.
 
 ## Ordered Work
 
@@ -5557,6 +5557,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R2038 Calling a function value whose variadic type pack is unbound
+  stops with an internal error, where the pin rejects the call**
+
+  `var g = f[3]` over `def f[n: Int, *Ts: AnyType](*args: *Ts) -> Int`,
+  then `g(1, 2)`, stops with "MIR function 'main' variable slot 0 names
+  parameter `*Ts` of `f` that no enclosing declaration binds".
+  - The pin binds the unbound pack empty when it reads `f[3]` as a value,
+    then rejects the call: "invalid indirect call: expected 0 elements in
+    variadic pack, got 2 argument values".
+  - Mojito keeps the pack open in the value's type, and MIR's checked
+    handoff validation catches it.
+  - Probe: the same over `llvm_intrinsic["llvm.fma", T,
+    has_side_effect=False]` read as a value.
+  - Found while landing R1521 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1193 A member read on a struct applied to a forwarded pack names
   the struct's own pack**
 
@@ -11080,28 +11097,69 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1521 An LLVM intrinsic outside Mojito's table is rejected, where
+- [ ] **R2035 An LLVM intrinsic over a pointer operand is rejected, where
   the pin calls it**
 
-  A reached `llvm_intrinsic` call of any intrinsic the table does not list
-  fails elaboration ("the LLVM intrinsic '…' is outside the subset"), where
-  the pin calls any intrinsic LLVM knows.
-  - The VM computes each intrinsic itself (`runtime::llvm_intrinsic`), so
-    each one needs a lane rule in `mojito_types::llvm_intrinsic` before
-    either backend admits it.
-  - Probe: `llvm_intrinsic["llvm.sin", Float64, has_side_effect=False](x)`
-    and the rest of `math`'s `_llvm_unary_fn` family (`cos`, `asin`,
-    `acos`), `llvm.umulh`/`smulh`, `llvm.usub.sat`, and `llvm.is.fpclass`.
-  - Probe: `std.sys.intrinsics`' `assume`, `expect` (`likely`/`unlikely`),
-    `prefetch`, and the `llvm.memcpy`/`memmove` calls of `std.memory`.
-  - Probe: `std.sys.intrinsics`' `gather` and `scatter`, unported, whose
-    `llvm.masked.gather`/`scatter` take their base pointers as a
+  A reached `llvm.memcpy`, `llvm.memmove`, or `llvm.prefetch` call fails
+  its instance ("the LLVM intrinsic '…' is outside the subset"), where the
+  pin copies the bytes or prefetches.
+  - Cause: `LlvmIntrinsic::signature_error` (`mojito_types::llvm_intrinsic`)
+    types only `SIMD` lanes and a `Bool`, so no operand may be an
+    `UnsafePointer` (LLVM's `ptr`).
+  - The VM's `runtime::llvm_intrinsic` reads only lanes. A pointer operand
+    needs a rule over the VM's typed memory, as `pop.pointer.*` has.
+  - `FnLowering::lower_llvm_intrinsic` (`mojito-pliron`, `lower/simd.rs`)
+    lowers only lane operands too.
+  - Probe: `std.memory`'s `memcpy` at compile time calls
+    `llvm.memcpy(dest, src, n.__mlir_index__())`, and `memmove` calls
+    `llvm.memmove(dest, src, n, False)`, both over `Byte` pointers.
+  - Probe: `std.sys.intrinsics`' `prefetch`, unported with its
+    `PrefetchOptions`, calls `llvm.prefetch(addr, rw, locality, cache)`,
+    three `immarg` `Int32`s after the pointer.
+  - Found while landing R1521 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2037 The masked memory intrinsics are rejected, where the pin calls
+  them**
+
+  `llvm.masked.load`, `masked.store`, `masked.compressstore`,
+  `masked.gather`, and `masked.scatter` fail their instance, so
+  `std.sys.intrinsics`' `masked_load`, `masked_store`, `compressed_store`,
+  `gather`, and `scatter` stay unported.
+  - Each reads or writes lanes through pointers under a `bool` lane mask,
+    with a pass-through vector for the lanes a load leaves off.
+  - `gather` and `scatter` pass their base pointers as a
     `!kgen.simd<size, address>` vector of addresses
-    (`TyKind::KgenAddressSimd`, R1520), read through R221's
-    `unsafe_bitcast` of a `SIMD[.int, size]`.
+    (`TyKind::KgenAddressSimd`), loaded through R221's `unsafe_bitcast` of
+    a `SIMD[.int, size]`.
+  - Probe: upstream's `masked_load[4](ptr, mask, passthrough)` and
+    `gather(base, mask, passthrough)` over a `float32` buffer.
+  - Depends on R2035 (a pointer operand) and R221 (`unsafe_bitcast`, for
+    `gather` and `scatter`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R2036 The remaining target-independent LLVM intrinsics the pin
+  calls have no lane rule**
+
+  `llvm.exp10`, `ldexp`, `frexp`, `powi`, `scmp`, `ucmp`, the
+  `*.with.overflow` family, and `readcyclecounter`/`readsteadycounter`
+  fail their instance, where the pin calls them.
+  - Cause: the VM computes each intrinsic itself, so each needs a lane rule
+    in `mojito_types::llvm_intrinsic` before either backend admits it.
+  - `*.with.overflow` and `frexp` give LLVM's literal struct of a lane and
+    a flag or exponent, `{iN, i1}`, where `vector.deinterleave2`'s is two
+    equal vectors.
+  - `exp10` has no Rust `std` function, so its float lanes need the C
+    library's `exp10`, as LLVM's lowering calls it.
+  - The counters read the clock, so the VM computes a monotonic count.
+  - Probe: `llvm_intrinsic["llvm.readcyclecounter", UInt64]()`, and the
+    HIP plugin's `llvm.readsteadycounter` read.
+  - Probe: `llvm_intrinsic["llvm.sadd.with.overflow",
+    _RegisterPackType[Int64, Bool]](a, b)`.
   - Target- and GPU-specific intrinsics (`llvm.x86.*`, `llvm.nvvm.*`,
-    `llvm.amdgcn.*`) stay outside: the VM has no target to read.
-  - Found while landing R1394 (2026-10-27).
+    `llvm.amdgcn.*`) are not this entry's: the VM has no target to read.
+  - Found while landing R1521 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
