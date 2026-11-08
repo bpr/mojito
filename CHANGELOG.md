@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call of `SIMD`'s arithmetic dunders folds its builtin
+  `pop` body, as the pin does, so `T[v.__add__(w)]`, `T[v.__neg__()]`,
+  and `T[v.__sub__(w)]` are `T[v + w]`, `T[-v]`, and `T[v - w]` over
+  `Int`, `Int32`, `Float32`, and `SIMD` vectors, and an integer literal
+  beside a vector converts to it (R1993).
 - A run-time prefix operator over a compile-time `SIMD` vector folds its
   builtin dunder, as the pin folds a builtin call over parameter operands
   (R1992): `-b`, `+b`, and `~b` over a `comptime` `bool` mask print

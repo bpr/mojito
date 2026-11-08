@@ -1745,3 +1745,108 @@ fn closed_lane_compares_fold() {
         Some(false)
     );
 }
+
+/// The vector `Self(mlir_value=storage)` folds to: the struct value of
+/// the one `_mlir_value` field, spelled as `spelling`'s type.
+fn from_storage(context: &ParamContext, storage: &ParamExpr, spelling: &ParamExpr) -> ParamExpr {
+    context.struct_value(
+        &[(crate::ct::MLIR_VALUE_FIELD.to_string(), storage.clone())],
+        spelling,
+    )
+}
+
+/// A `pop` lane-arithmetic op over two vectors' storages, created as the
+/// vector, is the operator over the vectors, as the pin folds
+/// `SIMD.__add__`'s body: `v.__add__(w)` is `v + w`, `v.__neg__()` is
+/// `-v`, and a nested `v.__add__(w).__mul__(v)` is `(v + w) * v`.
+#[test]
+fn lane_arithmetic_over_storages_is_the_vector_operator() {
+    let context = ParamContext::new();
+    for width in [1, 4] {
+        let (v, x) = vector_param(&context, 0, "v", width);
+        let (w, y) = vector_param(&context, 1, "w", width);
+        for op in [ParamOp::Add, ParamOp::Mul, ParamOp::Sub, ParamOp::BitAnd] {
+            let storage = context.op(op, &[x.clone(), y.clone()]).expect("storages");
+            assert_eq!(
+                from_storage(&context, &storage, &v),
+                context.op(op, &[v.clone(), w.clone()]).expect("vectors"),
+            );
+        }
+        let negated = context.op(ParamOp::Neg, &[x.clone()]).expect("a storage");
+        assert_eq!(
+            from_storage(&context, &negated, &v),
+            context.neg(&v).expect("a vector")
+        );
+        let sum = from_storage(
+            &context,
+            &context.op(ParamOp::Add, &[x.clone(), y]).expect("storages"),
+            &v,
+        );
+        let sum_storage = context
+            .field(&sum, crate::ct::MLIR_VALUE_FIELD, x.meta().clone())
+            .expect("a vector's storage");
+        let product = context
+            .op(ParamOp::Mul, &[sum_storage, x])
+            .expect("storages");
+        assert_eq!(
+            from_storage(&context, &product, &v),
+            infix(
+                &context,
+                InfixOp::Mul,
+                &infix(&context, InfixOp::Add, &v, &w),
+                &v
+            )
+        );
+    }
+}
+
+/// Only the `pop` lane-arithmetic ops take a storage: `Pow` names no
+/// `pop` op, and `Bool`'s connectives take no vector storage.
+#[test]
+fn storage_takes_only_lane_arithmetic() {
+    let context = ParamContext::new();
+    let (_, x) = vector_param(&context, 0, "v", 1);
+    let (_, y) = vector_param(&context, 1, "w", 1);
+    assert!(!ParamOp::Pow.is_lane_arithmetic());
+    assert!(context.op(ParamOp::Pow, &[x.clone(), y.clone()]).is_err());
+    assert!(context.op(ParamOp::BoolAnd, &[x, y]).is_err());
+}
+
+/// An integer `Sub` is canonical in `op` as in `infix`: `v.__sub__(w)`
+/// over `Int` is the polynomial `v - w` is.
+#[test]
+fn integer_sub_is_the_infix_difference() {
+    let context = ParamContext::new();
+    let v = int_param(&context, "f", 0, "v");
+    let w = int_param(&context, "f", 1, "w");
+    assert_eq!(
+        context
+            .op(ParamOp::Sub, &[v.clone(), w.clone()])
+            .expect("two Ints"),
+        infix(&context, InfixOp::Sub, &v, &w)
+    );
+}
+
+/// An integer literal beside a `SIMD` operand converts to the vector, as
+/// the dunder's `rhs: Self` does: `v + 1` is `v.__add__(Int32(1))`, splat
+/// across a vector's lanes.
+#[test]
+fn integer_literal_beside_a_vector_converts() {
+    let context = ParamContext::new();
+    for width in [1, 4] {
+        let (v, _) = vector_param(&context, 0, "v", width);
+        let one = context
+            .typed_constant(
+                CtValue::Simd {
+                    dtype: Dtype::Int32,
+                    lanes: vec![CtLane::Int(1); usize::try_from(width).expect("a width")],
+                },
+                v.meta().as_value().expect("a value type"),
+            )
+            .expect("a vector constant");
+        assert_eq!(
+            infix(&context, InfixOp::Add, &v, &literal(&context, 1)),
+            infix(&context, InfixOp::Add, &v, &one)
+        );
+    }
+}

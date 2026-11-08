@@ -198,9 +198,9 @@ impl ParamContext {
         self.make(meta, ParamKind::IndexRef { depth, index })
     }
 
-    /// Build `left op right` from a source operator. Subtraction and the
-    /// swapped or negated comparisons lower to the primitive set here, so no
-    /// `Sub`, `Ne`, `Gt`, or `Ge` node exists.
+    /// Build `left op right` from a source operator. The swapped or negated
+    /// comparisons lower to the primitive set here, so no `Ne`, `Gt`, or
+    /// `Ge` node exists, and [`Self::op`] keeps an integer `Sub` out of it.
     pub fn infix(
         &self,
         op: InfixOp,
@@ -210,17 +210,7 @@ impl ParamContext {
         let pair = [left.clone(), right.clone()];
         match op {
             InfixOp::Add => self.op(ParamOp::Add, &pair),
-            InfixOp::Sub => {
-                let domain = Self::arithmetic_domain(ParamOp::Add, &pair)?;
-                match domain {
-                    Some(domain) => {
-                        let negated =
-                            self.op(ParamOp::Mul, &[self.integer(domain, -1), right.clone()])?;
-                        self.op(ParamOp::Add, &[left.clone(), negated])
-                    }
-                    None => self.op(ParamOp::Sub, &pair),
-                }
-            }
+            InfixOp::Sub => self.op(ParamOp::Sub, &pair),
             InfixOp::Mul => self.op(ParamOp::Mul, &pair),
             InfixOp::Div => self.op(ParamOp::Div, &pair),
             InfixOp::FloorDiv => self.op(ParamOp::FloorDiv, &pair),
@@ -411,8 +401,8 @@ impl ParamContext {
             ParamOp::SimdReduceAnd | ParamOp::SimdReduceOr => {
                 self.build_simd_reduce(op, &operands[0])
             }
+            ParamOp::Sub => self.build_difference(operands),
             ParamOp::Neg
-            | ParamOp::Sub
             | ParamOp::Div
             | ParamOp::FloorDiv
             | ParamOp::Mod
@@ -1170,7 +1160,11 @@ impl ParamContext {
     /// is that value (`SIMDLength(mlir_value=m._mlir_value)` is `m`), as the
     /// `struct.create` of a struct's own extracts canonicalizes to it, and a
     /// `SIMD` created from a constant storage is that constant, as
-    /// upstream's `StructCreateOp::fold` folds it.
+    /// upstream's `StructCreateOp::fold` folds it. A `SIMD` created from a
+    /// `pop` lane-arithmetic op ([`ParamOp::is_lane_arithmetic`]) over
+    /// storages is that operator over the vectors owning them, so the folded
+    /// `SIMD.__add__` body `Self(mlir_value=pop.add(a._mlir_value,
+    /// b._mlir_value))` is `a + b`.
     pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
         if let [(field, storage)] = fields
             && field == crate::ct::MLIR_VALUE_FIELD
@@ -1180,6 +1174,23 @@ impl ParamContext {
             && let Ok(created) = self.build_create(scalar, storage, Some(spelling))
         {
             return created;
+        }
+        if let [(field, storage)] = fields
+            && field == crate::ct::MLIR_VALUE_FIELD
+            && spelling
+                .meta()
+                .as_value()
+                .is_some_and(|ty| ty.kind().is_simd())
+            && let ParamKind::Op { op, operands } = storage.kind()
+            && op.is_lane_arithmetic()
+            && let Some(owners) = operands
+                .iter()
+                .map(|operand| self.storage_owner(operand))
+                .collect::<Option<Vec<_>>>()
+            && let Ok(vector) = self.op(*op, &owners)
+            && vector.meta() == spelling.meta()
+        {
+            return vector;
         }
         match (own_fields_base(fields), fields) {
             (Some(base), _) if base.meta() == spelling.meta() => base.clone(),
@@ -1904,6 +1915,20 @@ impl ParamContext {
         }
     }
 
+    /// `a - b`: over one integer domain the sum `a + (-1) * b`, so no
+    /// integer `Sub` node exists and `v.__sub__(w)` and `v - w` over an
+    /// `Int` are one polynomial; outside the integers an opaque node.
+    fn build_difference(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        let Some(domain) = Self::arithmetic_domain(ParamOp::Add, &operands)? else {
+            return self.build_opaque(ParamOp::Sub, operands);
+        };
+        let negated = self.op(
+            ParamOp::Mul,
+            &[self.integer(domain, -1), operands[1].clone()],
+        )?;
+        self.op(ParamOp::Add, &[operands[0].clone(), negated])
+    }
+
     /// A cast between `Int`'s `!kgen.scalar<index>` storage and `index`
     /// over the canonical polynomial: each coefficient is kept and each
     /// atom maps to its cast, a cast of the inverse cast being its operand,
@@ -2146,6 +2171,16 @@ impl ParamContext {
     /// retains it unevaluated and [`ParamExpr::require_constant`] reports it.
     fn build_opaque(&self, op: ParamOp, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
         let meta = op.result_meta(&operands)?;
+        // A literal beside a `SIMD` operand converts as the dunder's
+        // `rhs: Self` converts it.
+        let operands = if meta.as_value().is_some_and(|ty| ty.kind().is_simd()) {
+            operands
+                .into_iter()
+                .map(|operand| self.literal_at(operand, &meta))
+                .collect()
+        } else {
+            operands
+        };
         if let Some(constants) = operands
             .iter()
             .map(ParamExpr::as_constant)
@@ -4040,6 +4075,29 @@ impl ParamOp {
         matches!(self, Self::FloorDiv | Self::Mod | Self::Pow)
     }
 
+    /// Whether this is a lane-wise arithmetic `pop` op (`pop.add`,
+    /// `pop.neg`, `pop.and`, …), which also takes a `SIMD`'s
+    /// `!kgen.simd` storage and computes what the operator over the
+    /// vectors does. A comparison is not one: `pop.cmp` gives a lane mask
+    /// ([`Self::SimdCmpLt`]).
+    pub const fn is_lane_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::Add
+                | Self::Mul
+                | Self::Sub
+                | Self::Neg
+                | Self::Div
+                | Self::FloorDiv
+                | Self::Mod
+                | Self::Shl
+                | Self::Shr
+                | Self::BitAnd
+                | Self::BitOr
+                | Self::BitXor
+        )
+    }
+
     /// Whether evaluation can fail on well-typed operands.
     pub const fn is_partial(self) -> bool {
         matches!(
@@ -4180,7 +4238,9 @@ impl ParamOp {
             expected: first.to_string(),
             found: found.to_string(),
         };
-        if !matches!(first, MetaTy::Value(ty) if is_scalar_domain(ty)) {
+        let storage =
+            |ty: &Ty| self.is_lane_arithmetic() && matches!(ty.kind(), TyKind::KgenSimd { .. });
+        if !matches!(first, MetaTy::Value(ty) if is_scalar_domain(ty) || storage(ty)) {
             return Err(ParamError::TypeMismatch {
                 operation: self.name().to_string(),
                 expected: "a scalar compile-time value".to_string(),

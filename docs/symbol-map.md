@@ -2359,7 +2359,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `reduce_or(x.lt(y).ne(0))` as `Eq`/`Lt`/`Le` over the values whose
   storage they read (`storage_owner`), and over one lane either reduction
   of `x.eq(y)` as `Eq`, of any other `x.ne(y)` as `not Eq`, and of
-  anything else as `reduce_and`. A builtin method returning a `comptime`
+  anything else as `reduce_and`. `builtin_fold::mlir_op_operator` reads a `pop`
+  lane-arithmetic op over two storages as the infix operator, which
+  `ParamOp::result_meta` admits over a `!kgen.simd` storage for the ops
+  `ParamOp::is_lane_arithmetic` names, and `ParamContext::struct_value`
+  turns `SIMD(mlir_value=)` of one over storages into the operator over
+  the values owning them (`storage_owner`), so `SIMD`'s arithmetic
+  dunders fold to the infix nodes; `ParamContext::op` builds an integer
+  `Sub` as the sum `a + -1 * b` (`build_difference`), and `build_opaque`
+  converts a literal beside a `SIMD` operand (`literal_at`). A builtin method returning a `comptime`
   member type of `Self` (`Self._Mask`) is applicable, the member
   registered before signatures classify
   (`register_builtin_result_members`, run in `check_program` before

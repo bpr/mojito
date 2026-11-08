@@ -11196,26 +11196,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1993 A compile-time `SIMD` arithmetic dunder over a symbolic
-  vector keeps its application, where upstream folds its `pop` body**
-
-  `T[v.__add__(w)]` over `v, w: Int32` is "expected T[(v + w)], found
-  T[v + w]", where the pin runs it.
-  - `builtin_fold::mlir_op_operator` reads `pop.add(a, b)` over two
-    storages as the infix `a + b`, but `ParamContext`'s ring
-    (`arithmetic_domain`, `build_ring`) takes only the integer domains, so
-    a non-`Int` `!kgen.simd` storage sum builds nothing.
-  - So `SIMD.__add__`, `__sub__`, `__mul__`, `__neg__`, and the other
-    `Self(mlir_value=__mlir_op.`pop.…`(…))` bodies fold no template.
-  - Lever: an elementwise storage node per `pop` arithmetic op, as
-    `ParamOp::SimdCmpLt` is for `pop.cmp`, whose `struct.create` of a
-    field read is the source operator over the vectors.
-  - Probe: `__add__` and `__neg__` over `Int32` and over
-    `SIMD[DType.float32, 4]`, as type identities against the infix forms.
-  - Found while landing R1574 (2026-11-07).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1994 A compile-time operator over `SIMD` operands builds its
   `ParamOp` directly, where upstream folds the operator's dunder call**
 
@@ -11225,12 +11205,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Since R1574 the comparison dunders fold to the same nodes, so the
     comparison arm can route through `struct_operator_value` /
     `called_application` with no change in identity.
-  - The arithmetic operators follow once their dunders fold (R1993).
+  - Since R1993 the arithmetic dunders fold to the infix nodes too.
   - Done when `infix_value`'s `SIMD` operands go through the dunder call.
   - Probe: `assets/ok/always_inline_builtin_comparison_fold.mojo`,
+    `always_inline_builtin_arithmetic_fold.mojo`,
     `simd_comparison_dunders.mojo`, and `where n < 3` keep their output.
+  - Probe: `T[v // w]` against `T[v.__floordiv__(w)]` and `T[v % w]`
+    against `T[v.__mod__(w)]` over `Int32`, which the pin equates; the
+    infix builds `ParamOp::FloorDiv`/`Mod` where the dunder is a kept
+    application.
+  - Probe: `T[v * 2.0]` against `T[v.__mul__(2.0)]` and `B[v == 2.0]`
+    against `B[v.__eq__(2.0)]` over `SIMD[DType.float32, 2]`, which the
+    pin equates; `literal_at` folds the float literal where the dunder's
+    argument keeps the non-builtin `SIMD.__init__(FloatLiteral)`.
   - Found while landing R1574 (2026-11-07).
-  - Depends on R1993.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1790 A `_` in a binding's annotation is not solved by its
