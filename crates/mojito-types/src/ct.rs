@@ -368,11 +368,16 @@ pub fn lane_compare<T: PartialOrd + Copy>(
 }
 
 /// One `bool` lane of `op`, or `None` for an operator `bool` lanes do not
-/// define. `False` orders below `True`, as the `i1` unsigned predicates do.
+/// define.
+///
+/// `False` orders below `True`, as the `i1` unsigned predicates do, and
+/// `+`, `-`, and `*` are `i1`'s wrapping arithmetic, as the pin folds a
+/// builtin dunder over a mask.
 pub fn bool_lane_binop(op: mojito_ast::ast::InfixOp, a: bool, b: bool) -> Option<bool> {
     use mojito_ast::ast::InfixOp;
     match op {
-        InfixOp::BitAnd => Some(a & b),
+        InfixOp::BitAnd | InfixOp::Mul => Some(a & b),
+        InfixOp::Add | InfixOp::Sub => Some(a ^ b),
         InfixOp::BitOr => Some(a | b),
         InfixOp::BitXor => Some(a ^ b),
         _ => lane_compare(op, a, b),
@@ -2160,7 +2165,10 @@ mod tests {
         assert_eq!(lane_compare(InfixOp::Ne, f64::NAN, f64::NAN), Some(true));
         assert_eq!(lane_compare(InfixOp::Lt, f64::NAN, f64::NAN), Some(false));
         assert_eq!(bool_lane_binop(InfixOp::Lt, false, true), Some(true));
-        assert_eq!(bool_lane_binop(InfixOp::Add, false, true), None);
+        assert_eq!(bool_lane_binop(InfixOp::Add, true, true), Some(false));
+        assert_eq!(bool_lane_binop(InfixOp::Sub, false, true), Some(true));
+        assert_eq!(bool_lane_binop(InfixOp::Mul, true, false), Some(false));
+        assert_eq!(bool_lane_binop(InfixOp::Div, true, true), None);
     }
 
     #[test]

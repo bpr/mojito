@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2050**.
+Next free ID: **R2052**.
 
 ## Ordered Work
 
@@ -9209,28 +9209,48 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1992 A run-time prefix operator over a compile-time `SIMD`
-  vector is not folded, so it judges its builtin dunder's `comptime
-  assert`**
+- [ ] **R2050 A read of a function-local `comptime` application is
+  materialized, never folded, inside a builtin operator over it**
 
-  `var x = -b` over a `comptime b = SIMD[DType.bool, 4](True, False, True,
-  False)` prints `[False, True, False, True]` at the pin, which folds the
-  builtin `SIMD.__neg__` over its parameter operand and drops its numeric
-  assertion. Mojito fails `main`'s instance: "the SIMD type must be
-  numeric".
-  - `Checker::record_folded_simd_operator` folds a run-time infix
-    operator over parameter operands, as upstream's parser folds a builtin
-    call, but no prefix one.
-  - Folding the prefix node needs two levers: MIR's parameter-constant
-    read (`call_family` in `lower_expr/expr.rs`) takes no `Prefix` node,
-    and the elaborator evaluates no prefix parameter expression over a
-    vector, so `-b` keeps the constant "in elaborated MIR after
-    monomorphization" and `~b`, folded to `b ^ -1`, meets R1960.
-  - Probe: `print(~a)` and `print(-SIMD[DType.int8, 2](3))` over
-    `comptime a = SIMD[DType.int32, 4](1, 2, 3, 4)` must keep printing
-    `[-2, -3, -4, -5]` and `[-3, -3]` once prefix nodes fold.
-  - Found while landing R1527 (2026-11-07).
-  - Depends on R1960.
+  At the pin a local `comptime b = SIMD[DType.bool, 4](True, False, True,
+  False)` is an alias reference, so `-b` and `b + b` in `main` fold the
+  builtin dunder over it and drop its numeric `comptime assert`. Mojito
+  fails `main`'s instance: "the SIMD type must be numeric".
+  - `Checker::reads_run_time_binding` (`checker/builtin_fold.rs`) counts
+    a `local_comptime_application` read as a run-time one, so neither
+    `record_folded_builtin_call` nor `record_folded_simd_operation`
+    folds over it.
+  - That clause landed in 7736437a2 to fix a corpus fixture ("A run-time
+    call reading a local `comptime` application stays a call"). Find
+    that fixture first; the fold must keep it passing.
+  - A local `comptime c = -b` binds the `__neg__` application itself, so
+    each read of `c` materializes it as a run-time call that judges the
+    assertion.
+  - Probe: `var x = -b` prints `[False, True, False, True]`, and `print(b
+    + b)` prints `[False, False, False, False]`, over the local `b`.
+  - Probe: `comptime c = -b; print(c)` and `comptime d = b + b;
+    print(d)` in `main` print the same, over a module or a local `b`.
+  - Found while landing R1992 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2051 A run-time builtin call whose only instance check is a
+  `pop` op's operand verification is not folded**
+
+  `print(b * b)` over a module `comptime b = SIMD[DType.bool, 4](True,
+  False, True, False)` prints `[True, False, True, False]` at the pin,
+  which folds the builtin `SIMD.__mul__` and never verifies its `pop.mul`.
+  Mojito fails `main`'s instance: "'pop.mul' op operand #0 must be SIMD
+  type whose element type is integer or float dtype".
+  - `Checker::spells_asserting_builtin` folds a run-time call only when
+    its callee's `ApplicableFunction::assertions` is
+    `BuiltinAssertions::Dropped`, which counts `comptime assert`s, not
+    the `pop` operand constraints `checker/method_calls/pop_ops.rs`
+    records for the instance.
+  - Probe: `print(b * b)` as above. The lane fold (`bool_lane_binop`)
+    already computes `*` over `bool` lanes as `and`.
+  - Found while landing R1992 (2026-11-08).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1656 A construction that leaves a struct's origin parameter

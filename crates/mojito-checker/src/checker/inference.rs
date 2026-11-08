@@ -1272,7 +1272,11 @@ impl Checker {
                         Ok,
                     )
             }
-            ExprKind::Prefix(op, operand) => self.infer_prefix(expr.source_span(), *op, operand),
+            ExprKind::Prefix(op, operand) => {
+                let ty = self.infer_prefix(expr.source_span(), *op, operand)?;
+                self.record_folded_simd_prefix(expr, *op, operand);
+                Ok(ty)
+            }
             ExprKind::Infix(op, left, right) => {
                 let ty = self.infer_infix(Some(expr.source_span()), *op, left, right)?;
                 self.record_folded_simd_operator(expr, *op, left, right);

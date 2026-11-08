@@ -155,7 +155,8 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
     }
 }
 
-/// Fold unary `-` over one concrete value.
+/// Fold unary `-` over one concrete value. A `bool` lane negates to its
+/// inversion, as the pin folds `pop.neg` over a mask.
 pub fn fold_neg(value: &CtValue) -> Result<CtValue, ParamError> {
     match value {
         CtValue::Int(value) => Ok(CtValue::Int(value.wrapping_neg())),
@@ -165,9 +166,9 @@ pub fn fold_neg(value: &CtValue) -> Result<CtValue, ParamError> {
         CtValue::Simd { dtype, lanes } => map_lanes(*dtype, lanes, |lane| match lane {
             CtLane::Int(x) => Some(CtLane::Int(wrap_lane(*dtype, x.wrapping_neg()))),
             CtLane::Float(bits) => Some(CtLane::Float((-f64::from_bits(*bits)).to_bits())),
-            CtLane::Bool(_) => None,
+            CtLane::Bool(x) => Some(CtLane::Bool(!x)),
         })
-        .ok_or_else(|| unsupported("unary '-' expects numeric SIMD lanes")),
+        .ok_or_else(|| unsupported("unary '-' expects numeric or bool SIMD lanes")),
         _ => Err(unsupported("unary '-' expects a comptime numeric value")),
     }
 }
@@ -959,8 +960,8 @@ fn target_operands<'a>(
 mod tests {
     use super::{
         fold_comparison, fold_data_to_str, fold_get_env, fold_infix, fold_literal_attribute,
-        fold_literal_convert, fold_string_address, fold_string_size, fold_target_get_field,
-        fold_target_has_feature,
+        fold_literal_convert, fold_neg, fold_string_address, fold_string_size,
+        fold_target_get_field, fold_target_has_feature,
     };
     use crate::ct::{CtLane, CtValue, KgenTarget};
     use crate::param_expr::ParamOp;
@@ -1051,6 +1052,18 @@ mod tests {
         );
         assert!(fold_data_to_str(&view("ab", 1, 2), &CtValue::Tuple(Vec::new())).is_err());
         assert!(fold_data_to_str(&CtValue::Int(1), &CtValue::Tuple(Vec::new())).is_err());
+    }
+
+    #[test]
+    fn fold_neg_inverts_a_mask() {
+        let mask = |lanes: [bool; 2]| CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes: lanes.into_iter().map(CtLane::Bool).collect(),
+        };
+        assert_eq!(
+            fold_neg(&mask([true, false])).ok(),
+            Some(mask([false, true]))
+        );
     }
 
     #[test]

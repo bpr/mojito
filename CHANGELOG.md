@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A run-time prefix operator over a compile-time `SIMD` vector folds its
+  builtin dunder, as the pin folds a builtin call over parameter operands
+  (R1992): `-b`, `+b`, and `~b` over a `comptime` `bool` mask print
+  instead of failing the instance's numeric assertion, `-b` being the
+  mask's inversion, and `b + b` and `b - b` fold as `i1` arithmetic. A
+  read of a function-local `comptime` application (R2050) and a builtin
+  checked only by its `pop` op (`b * b`, R2051) remain.
+
 - An integer literal converts at a `bool` lane, as the pin's
   `#pop.int_literal_convert` does, to whether it is nonzero (R1960):
   `~` over a `Scalar[DType.bool]` or bool-vector mask inverts it in every

@@ -1017,7 +1017,22 @@ impl Checker {
             matches!(op, Eq | Ne | Lt | Gt | Le | Ge)
         };
         if folds {
-            self.record_folded_simd_operation(expr, &[left, right]);
+            self.record_folded_simd_operation(expr, &[left, right], false);
+        }
+    }
+
+    /// Record the value of `expr`, the run-time prefix operator `op operand`
+    /// over a `SIMD` vector, as the node's parameter value: upstream's
+    /// builtin dunder (`__neg__`, `__invert__`, `__pos__`) folded over its
+    /// parameter operand, whose `comptime assert` the fold drops, as
+    /// [`Self::record_folded_simd_operator`] folds an infix one. `+`'s fold
+    /// is its operand, which may be an application.
+    pub(super) fn record_folded_simd_prefix(&self, expr: &Expr, op: PrefixOp, operand: &Expr) {
+        if op != PrefixOp::Not
+            && self.crosses_to_runtime()
+            && self.spells_asserting_builtin(op.dunder())
+        {
+            self.record_folded_simd_operation(expr, &[operand], op == PrefixOp::Pos);
         }
     }
 
@@ -1123,8 +1138,14 @@ impl Checker {
     /// parameter operands ([`Self::record_folded_builtin_call`]), so `a <
     /// SIMD[DType.int32, 4](2)` over a `comptime` vector `a` is `True`
     /// rather than a failed one-lane assertion, while `SIMD[DType.int32,
-    /// 4](1, 2, 3, 4)`, no builtin, stays a call.
-    fn record_folded_simd_operation(&self, expr: &Expr, operands: &[&Expr]) {
+    /// 4](1, 2, 3, 4)`, no builtin, stays a call. A fold that is its
+    /// operand (`folds_to_operand`, `+a`) keeps that operand's application.
+    fn record_folded_simd_operation(
+        &self,
+        expr: &Expr,
+        operands: &[&Expr],
+        folds_to_operand: bool,
+    ) {
         let runtime = self.crosses_to_runtime();
         if runtime && self.reads_run_time_binding(expr) {
             return;
@@ -1149,7 +1170,7 @@ impl Checker {
         };
         if operands.iter().any(|operand| vector(operand))
             && let Ok(value) = self.compile_dependent_ct_expr(expr)
-            && !(runtime && matches!(value.kind(), ParamKind::Apply { .. }))
+            && (folds_to_operand || !(runtime && matches!(value.kind(), ParamKind::Apply { .. })))
         {
             self.record_member_value(expr.source_span(), value);
         }
