@@ -233,6 +233,7 @@ assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_untaken_arm_unevaluated.mojo	main	exe-differential	sanitized
 assets/ok/comptime_inline_simd_type_application.mojo	main	exe-differential	sanitized
 assets/ok/comptime_int_annotated_module_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_int_simd_length.mojo	main	exe-differential	sanitized
 assets/ok/comptime_int_truediv.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized

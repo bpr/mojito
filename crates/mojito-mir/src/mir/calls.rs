@@ -1535,10 +1535,12 @@ impl<'a> Flatten<'a> {
         }
         // A value binder of the enclosing declaration (`dt.is_integral()` in
         // a `DType`-keyed body), an enclosing `comptime for` variable under
-        // any shadow spelling, a module constant, or, in a lifted thunk, a
-        // local `comptime` binding of a parameter expression (`lane` of
-        // `comptime lane = dt`), is a value the elaborator folds, not a
-        // place: the receiver is read as such and no place is retained.
+        // any shadow spelling, a module constant, in a lifted thunk a local
+        // `comptime` binding of a parameter expression (`lane` of `comptime
+        // lane = dt`), or a slotless binding every read materializes
+        // (`comptime n: Int = w` over a `SIMDLength`), is a value the
+        // elaborator folds, not a place: the receiver is read as such and
+        // no place is retained.
         if let Some(name) = self.name_spelled(expression)
             && (expression.constant_param_value()
                 || self
@@ -1552,6 +1554,7 @@ impl<'a> Flatten<'a> {
                         .iter()
                         .any(|(binding, _)| *binding == owner)
                         || self.enclosing_binders.comptime_value(owner).is_some()
+                        || self.comptime_thunks.bound_value(owner).is_some()
                 }))
         {
             return (self.expr(expression), None);

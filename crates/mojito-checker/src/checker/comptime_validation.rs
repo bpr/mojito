@@ -3996,6 +3996,20 @@ impl Checker {
             if let (Some(annotation), Some(found)) = (annotation, expression.meta().as_value()) {
                 let expected = self
                     .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+                // A `SIMDLength` in an `Int` binding binds its lane count,
+                // as an `Int` parameter slot does, and every read
+                // materializes that count.
+                if let Some(lanes) = self.simd_length_lanes(found, &expected, &expression) {
+                    let lanes = lanes?;
+                    self.declare_immutable(name, expected)?;
+                    self.record_statement_binding(stmt, name);
+                    self.record_at(stmt.source_span()).comptime_value =
+                        Some(Box::new(lanes.clone()));
+                    if let Some(scope) = self.local_comptime_parameters.last_mut() {
+                        scope.insert(name.to_string(), (level, lanes));
+                    }
+                    return Ok(true);
+                }
                 // Any other annotation converts the value, as a runtime
                 // binding's does (`comptime x: Float64 = i`).
                 if &expected != found && !(expected.is_int() || expected.kind().is_bool()) {

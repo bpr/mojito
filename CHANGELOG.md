@@ -3859,6 +3859,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime` binding annotated `Int` over a `SIMDLength` value
+  (`comptime n: Int = w`) binds the lane count, as the pin does, instead of
+  reporting "type mismatch for comptime 'n': expected Int, found
+  SIMDLength"; a read of it as an operator's receiver (`n * 2`) is the
+  count, not an unwritten slot (R1687).
+
 - Eleven corpus fixtures that the 11-05 to 11-07 runs left failing compile
   and run as at the pin again:
   - `where dtype == DType.float32` is decided once `dtype` is closed, now

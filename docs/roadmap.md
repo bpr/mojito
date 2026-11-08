@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2020**.
+Next free ID: **R2021**.
 
 ## Ordered Work
 
@@ -2951,19 +2951,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1687 A `comptime` binding annotated `Int` rejects a `SIMDLength`
-  value**
+- [ ] **R2020 A module `comptime` constant annotated `Int` over a
+  `SIMDLength` constant reads as the `SIMDLength`**
 
-  `comptime n: Int = w` over `w: SIMDLength` in a `def` reports "type
-  mismatch for comptime 'n': expected Int, found SIMDLength", where the
-  pin prints `4` for `w = 4`.
-  - The annotated-binding arm of `bind_template_comptime`'s denoted
-    expression (`checker/comptime_validation.rs`) admits only an equal
-    type for an `Int` or `Bool` annotation.
-  - A parameter default, an explicit argument, and a `Self.n` bracket
-    argument convert through `Checker::simd_length_lanes`, which this site
-    should call too.
-  - Found while planning R1671 (2026-10-30).
+  `comptime W: SIMDLength = 4` then `comptime N: Int = W` fails at each
+  read of `N`, where the pin binds the lane count.
+  - `fold_module_constants` (`checker/constraints.rs`) folds both to the
+    literal `4`, dropping `W`'s `SIMDLength` annotation, so `N` checks as
+    an `Int`.
+  - A read of `N` still lowers its initializer `W`, a `SIMDLength`, not the
+    lane count the `Int` slot binds through `Checker::simd_length_lanes`,
+    as R1687's local binding now does.
+  - Probe: `print(N)` stops with "MIR function 'main' block 0: binding of
+    SIMDLength to a slot of type Int"; the pin prints `4`.
+  - Probe: `print(N * 2)` stops with "unsupported monomorphizing
+    `SIMD.__mul__`: expected `SIMD[dtype, length]`, found `SIMDLength`";
+    the pin prints `8`.
+  - Found while landing R1687 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
