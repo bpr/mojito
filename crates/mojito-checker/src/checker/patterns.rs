@@ -98,8 +98,9 @@ impl Checker {
         in_loop: bool,
     ) -> Result<(), TypeError> {
         if !self.reads_compile_time_alone(subject) {
-            return Err(TypeError::Unsupported(
-                ComptimeTest::MatchSubject.dynamic_value().to_string(),
+            return Err(self.dynamic_value_error(
+                subject,
+                ComptimeTest::MatchSubject.dynamic_value_position(),
             ));
         }
         let synth = Synth::for_statement(stmt, subject.source.clone());

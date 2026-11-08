@@ -119,9 +119,7 @@ impl Checker {
             )));
         }
         if !self.reads_compile_time_alone(iter) {
-            return Err(TypeError::Unsupported(
-                "cannot use a dynamic value in 'for' iterator expression".to_string(),
-            ));
+            return Err(self.dynamic_value_error(iter, "'for' iterator expression"));
         }
         // The receiver is the iterable under identities derived from the
         // call's, so the iterable's own occurrence can stand for the call.

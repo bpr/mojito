@@ -4675,10 +4675,16 @@ impl Checker {
     }
 
     /// The error a value argument `expr` that did not evaluate reports: a
-    /// run-time variable is no parameter value, as at the pin, and a name
-    /// nothing declares is unknown.
+    /// run-time value is no parameter value, as at the pin
+    /// ([`Self::dynamic_parameter_error`]), and a name nothing declares is
+    /// unknown.
     fn unevaluated_argument(&self, error: TypeError, expr: &Expr) -> TypeError {
         match (&error, &expr.kind) {
+            (TypeError::NotComptime(_), _)
+                if !self.outside_bodies() && !self.reads_compile_time_alone(expr) =>
+            {
+                self.dynamic_parameter_error(expr)
+            }
             (TypeError::NotComptime(_), ExprKind::Identifier(variable))
                 if self.lookup(variable).is_some() =>
             {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2021**.
+Next free ID: **R2022**.
 
 ## Ordered Work
 
@@ -6611,47 +6611,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1548 A local `comptime` initializer or a `materialize` operand
-  that reads a run-time local is accepted**
-
-  `var x = 3` then `comptime i = x + 1` prints `4`, where the pin rejects
-  it with "cannot use a dynamic value in comptime initializer".
-  - The checker's `StmtKind::Comptime` arm (`checker/statements.rs`)
-    binds an initializer that denotes no parameter expression as a
-    run-time immutable binding, without requiring it to read compile-time
-    bindings alone (`Checker::reads_compile_time_alone`).
-  - The arm already rejects an initializer reading
-    `__is_run_in_comptime_interpreter` (R1546); the general rule subsumes
-    that gate.
-  - Probe: `comptime i = x and True` prints `True`; the pin: "cannot use a
-    dynamic value in operator argument".
-  - Probe: `comptime i = (x, 1)` then `print(i[0])` prints `3`; the pin:
-    "cannot use a dynamic value in 'ref' argument".
-  - A call over the local (`comptime i = twice(x)`) is already rejected,
-    through `requested_binding`.
-  - Probe: `var x = True` then `materialize[x]()` prints `True`; the pin:
-    "cannot use a dynamic value in a parameter list". The `materialize`
-    check (`Checker::infer_template_materialize`) rejects only an operand
-    reading `__is_run_in_comptime_interpreter`.
-  - The arm's `calls_run_time_callee` gate (a call of a capturing nested
-    `def`, or of a `var` holding a function) is the narrow form of this
-    rule, which subsumes it too.
-  - Probe: a capturing nested `def mk() {imm x}` called as
-    `first[mk()]()` reports "not a compile-time Int constant: not an
-    associated comptime expression", as `first[twice(x)]()` over a
-    run-time `x` does; the pin: "cannot use a dynamic value in type
-    parameter".
-  - Probe: the same `mk` in `comptime if mk() > 2:` reports "cannot use a
-    dynamic value in 'comptime if' condition"; the pin: "cannot use a
-    dynamic value in operator argument".
-  - `reads_compile_time_alone` already skips a name under a `type_of`
-    operand, so gating on it keeps
-    `assets/ok/type_of_value_annotation.mojo`'s
-    `materialize[type_of(t) == String]()`.
-  - Found while landing R1546 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R99 A method call whose compile-time argument names the caller's
   value parameter fails MIR verification**
 
@@ -7600,6 +7559,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     element_trait=Writable, False, *Ts]) -> Int: var c = pack.copy();
     return len(c)`, called through a `*args: *Ts` forward.
   - Found while landing R1832 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2021 A dynamic-value rejection reads a builtin method that
+  returns its receiver as a call result**
+
+  `var b = True` then `comptime i = b.__bool__() or False` reports "cannot
+  use a dynamic value in comptime initializer", where the pin reports
+  "operator argument".
+  - `Checker::dynamic_value_consumer` carries every method call's result
+    on as one dynamic expression, which the enclosing context rejects.
+  - The pin folds `Bool.__bool__` (`@always_inline("builtin")`, returning
+    `self`) to its receiver, so the run-time name itself meets the `or`,
+    which rejects it as an operand.
+  - `x.__bool__() and True` over an `Int` `x` reports the initializer at
+    both, since `Int.__bool__` computes a new value.
+  - Only the diagnostic's wording differs: both reject the program.
+  - Found while landing R1548 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

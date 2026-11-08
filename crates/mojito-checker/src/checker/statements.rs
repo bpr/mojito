@@ -2152,12 +2152,8 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
-                if super::comptime_validation::reads_comptime_interpreter_query(value)
-                    || self.calls_run_time_callee(value)
-                {
-                    return Err(TypeError::Unsupported(
-                        "cannot use a dynamic value in comptime initializer".to_string(),
-                    ));
+                if !self.reads_compile_time_alone(value) {
+                    return Err(self.dynamic_value_error(value, "comptime initializer"));
                 }
                 // A lambda the value spells is declared before inference
                 // meets it, as in any statement's value.

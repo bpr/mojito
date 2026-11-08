@@ -95,11 +95,13 @@ pub(super) enum ComptimeTest {
 }
 
 impl ComptimeTest {
-    pub(super) const fn dynamic_value(self) -> &'static str {
+    /// The position the pin names when the test reads a run-time value
+    /// ([`Checker::dynamic_value_error`]).
+    pub(super) const fn dynamic_value_position(self) -> &'static str {
         match self {
-            Self::If => "cannot use a dynamic value in 'comptime if' condition",
-            Self::Assert => "cannot use a dynamic value in 'comptime assert' expression",
-            Self::MatchSubject => "cannot use a dynamic value in 'match' subject",
+            Self::If => "'comptime if' condition",
+            Self::Assert => "'comptime assert' expression",
+            Self::MatchSubject => "'match' subject",
         }
     }
 
@@ -1403,7 +1405,7 @@ impl Checker {
         if self.reads_compile_time_alone(cond) {
             return Ok(());
         }
-        Err(TypeError::Unsupported(test.dynamic_value().to_string()))
+        Err(self.dynamic_value_error(cond, test.dynamic_value_position()))
     }
 
     /// The conformances a `comptime if` condition proves of its operands for
@@ -1492,6 +1494,34 @@ impl Checker {
             && !self.calls_run_time_callee(expr)
     }
 
+    /// The pin's rejection of a compile-time expression `expr` that reads a
+    /// run-time value, worded for the position that consumes it.
+    ///
+    /// The pin's compile-time emitter carries a read of a run-time local
+    /// through an ordinary operator, call, or member (`x + 1`, `twice(x)`)
+    /// as one dynamic expression, which the enclosing context (`outer`,
+    /// e.g. "comptime initializer") rejects whole. A consumer that needs the
+    /// run-time value itself rejects it where it stands: an `and`/`or`/`not`
+    /// operand, a display element, a ternary's condition or branch, and any
+    /// position a capturing closure's call result reaches
+    /// ([`Self::dynamic_value_consumer`]).
+    pub(super) fn dynamic_value_error(&self, expr: &Expr, outer: &str) -> TypeError {
+        let position = self.dynamic_value_consumer(expr).unwrap_or(outer);
+        TypeError::Unsupported(format!("cannot use a dynamic value in {position}"))
+    }
+
+    /// The pin's rejection of a parameter argument `expr` that reads a
+    /// run-time value: a run-time variable itself is no parameter value
+    /// ([`TypeError::DynamicParameterValue`]), and any other expression is
+    /// rejected as a type parameter, or where a consumer inside it rejects
+    /// the value ([`Self::dynamic_value_error`]).
+    pub(super) fn dynamic_parameter_error(&self, expr: &Expr) -> TypeError {
+        if matches!(&expr.kind, ExprKind::Identifier(name) if self.lookup(name).is_some()) {
+            return TypeError::DynamicParameterValue;
+        }
+        self.dynamic_value_error(expr, "type parameter")
+    }
+
     /// Whether `expr` calls a local callee by name that is no compile-time
     /// value: a capturing nested `def`, or a run-time binding of a function
     /// value (`var f = mk`), whose compile-time call is the pin's
@@ -1506,6 +1536,90 @@ impl Checker {
     /// ([`Self::compile_time_callee`]) by name.
     fn calls_compile_time_callee(&self, expr: &Expr) -> bool {
         matches!(&expr.kind, ExprKind::Call { name, .. } if self.compile_time_callee(name))
+    }
+
+    /// The position inside `expr` that rejects a run-time value it reads,
+    /// as [`Self::dynamic_value_error`] words it, in the pin's evaluation
+    /// order: every operand is emitted, with its own consumers, before a
+    /// consumer binds the operands. `None` when no consumer inside `expr`
+    /// needs the run-time value itself.
+    fn dynamic_value_consumer(&self, expr: &Expr) -> Option<&'static str> {
+        use ConsumerWording as W;
+        fn call_args<'e>(
+            args: &'e [Expr],
+            kwargs: &'e [mojito_ast::ast::KwArg],
+        ) -> Vec<(&'e Expr, ConsumerWording)> {
+            args.iter()
+                .chain(kwargs.iter().map(|argument| &argument.value))
+                .map(|argument| (argument, ConsumerWording::CALL_ARGUMENT))
+                .collect()
+        }
+        let operands: Vec<(&Expr, ConsumerWording)> = match &expr.kind {
+            ExprKind::Call { name, .. } if name == "type_of" => Vec::new(),
+            ExprKind::Prefix(PrefixOp::Not, operand) => vec![(operand, W::TRUTH_OPERAND)],
+            ExprKind::Prefix(_, operand) => vec![(operand, W::OPERAND)],
+            ExprKind::Infix(op, left, right) => {
+                let wording = if matches!(op, InfixOp::And | InfixOp::Or) {
+                    W::TRUTH_OPERAND
+                } else {
+                    W::OPERAND
+                };
+                vec![(left, wording), (right, wording)]
+            }
+            ExprKind::Compare { first, rest } => std::iter::once(&**first)
+                .chain(rest.iter().map(|(_, operand)| operand))
+                .map(|operand| (operand, W::OPERAND))
+                .collect(),
+            ExprKind::Call { args, kwargs, .. } => call_args(args, kwargs),
+            ExprKind::Invoke { args, kwargs, .. } => call_args(args, kwargs),
+            ExprKind::MethodCall {
+                object,
+                args,
+                kwargs,
+                ..
+            } => std::iter::once((&**object, W::RECEIVER))
+                .chain(call_args(args, kwargs))
+                .collect(),
+            ExprKind::Member { object, .. } => vec![(object, W::RECEIVER)],
+            ExprKind::Index { object, index } => vec![(object, W::NONE), (index, W::NONE)],
+            ExprKind::TupleLit(elements) => elements
+                .iter()
+                .map(|element| (element, W::TUPLE_ELEMENT))
+                .collect(),
+            ExprKind::ListLit(elements) => elements
+                .iter()
+                .map(|element| (element, W::LIST_ELEMENT))
+                .collect(),
+            ExprKind::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => vec![
+                (cond, W::CONDITION),
+                (then_branch, W::BRANCH),
+                (else_branch, W::BRANCH),
+            ],
+            _ => Vec::new(),
+        };
+        operands
+            .iter()
+            .find_map(|(operand, _)| self.dynamic_value_consumer(operand))
+            .or_else(|| {
+                operands
+                    .iter()
+                    .find_map(|(operand, wording)| match &operand.kind {
+                        ExprKind::Identifier(name) if !self.reads_compile_time_binding(name) => {
+                            wording.name
+                        }
+                        ExprKind::Call { name, .. }
+                            if !(self.reads_compile_time_binding(name)
+                                || self.compile_time_callee(name)) =>
+                        {
+                            wording.call
+                        }
+                        _ => None,
+                    })
+            })
     }
 
     /// Whether the name `name` reads is a compile-time binding: a module
@@ -4262,9 +4376,7 @@ impl Checker {
             ));
         }
         if !self.reads_compile_time_alone(value) {
-            return Err(TypeError::Unsupported(
-                "cannot use a dynamic value in comptime initializer".to_string(),
-            ));
+            return Err(self.dynamic_value_error(value, "comptime initializer"));
         }
         // A raising operation anywhere in it (`{"a": 1}["a"]`) is the
         // pin's rejection too.
@@ -4892,8 +5004,8 @@ impl Checker {
     /// every operand it evaluates, so `X` is over a binder of a template
     /// body, and the call is the runtime value of that operand at its type.
     /// A whole field-name list (`materialize[names]()`) is the `Array` the
-    /// elaborator constructs per instance. An operand reading
-    /// `__is_run_in_comptime_interpreter` is the pin's rejection.
+    /// elaborator constructs per instance. An operand reading a run-time
+    /// value is the pin's rejection ([`Self::dynamic_parameter_error`]).
     pub(super) fn infer_template_materialize(
         &self,
         span: &SourceSpan,
@@ -4907,8 +5019,8 @@ impl Checker {
         if let Some(ty) = self.materialized_reflection_list(span, operand)? {
             return Ok(ty);
         }
-        if reads_comptime_interpreter_query(operand) {
-            return Err(TypeError::DynamicParameterValue);
+        if !self.reads_compile_time_alone(operand) {
+            return Err(self.dynamic_parameter_error(operand));
         }
         self.record_crossing_operand(operand);
         let _position = self.comptime_position();
@@ -6798,6 +6910,55 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
 }
 
 /// The names of the functions `expr` calls by name.
+/// How a consumer of a compile-time operand words its rejection of a
+/// run-time value the operand is ([`Checker::dynamic_value_consumer`]):
+/// `name` for a read of a run-time local, `call` for a capturing closure's
+/// call result. `None` carries the value on as one dynamic expression.
+#[derive(Clone, Copy)]
+struct ConsumerWording {
+    name: Option<&'static str>,
+    call: Option<&'static str>,
+}
+
+impl ConsumerWording {
+    const NONE: Self = Self {
+        name: None,
+        call: None,
+    };
+    const OPERAND: Self = Self {
+        name: None,
+        call: Some("operator argument"),
+    };
+    const TRUTH_OPERAND: Self = Self {
+        name: Some("operator argument"),
+        call: Some("operator argument"),
+    };
+    const CALL_ARGUMENT: Self = Self {
+        name: None,
+        call: Some("call argument"),
+    };
+    const RECEIVER: Self = Self {
+        name: None,
+        call: Some("attribute base value"),
+    };
+    const TUPLE_ELEMENT: Self = Self {
+        name: Some("'ref' argument"),
+        call: Some("tuple element"),
+    };
+    const LIST_ELEMENT: Self = Self {
+        name: Some("'ref' argument"),
+        call: Some("collection literal"),
+    };
+    const CONDITION: Self = Self {
+        name: Some("boolean condition"),
+        call: Some("boolean condition"),
+    };
+    const BRANCH: Self = Self {
+        name: Some("'if' expression value"),
+        call: Some("'if' expression value"),
+    };
+}
+
 fn callees_read(expr: &Expr) -> Vec<String> {
     struct Callees(Vec<String>);
     impl mojito_ast::visit::Visitor for Callees {

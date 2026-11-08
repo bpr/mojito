@@ -333,10 +333,14 @@ assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[Str
 assets/type_error/comptime_for_value_pack_not_implicitly_copyable.mojo	compile-reject	agree	error: cannot materialize comptime value of type '_ParameterListIter[*ParameterList()].Element' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_without_iter.mojo	compile-reject	agree	error: 'Count' does not implement the '__iter__' method
 assets/type_error/comptime_if_arm_conditional_destroy.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
+assets/type_error/comptime_if_capturing_call_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in operator argument
 assets/type_error/comptime_if_constructor_arm_leaves_field_uninitialized.mojo	compile-reject	agree	error: 'self.x' is uninitialized at the implicit return from this function
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/comptime_if_raising_operator.mojo	compile-reject	agree	error: cannot call raising function in 'comptime if' condition
 assets/type_error/comptime_if_type_parameter_compared_with_value.mojo	compile-reject	agree	error: 'Copyable' does not implement the '__eq__' method
+assets/type_error/comptime_initializer_dynamic_bool_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in operator argument
+assets/type_error/comptime_initializer_dynamic_local.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
+assets/type_error/comptime_initializer_dynamic_tuple_element.mojo	compile-reject	agree	error: cannot use a dynamic value in 'ref' argument
 assets/type_error/comptime_initializer_dynamic_value.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
 assets/type_error/comptime_initializer_raising_call.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_int_truediv_zero_divisor.mojo	compile-reject	agree	error: function instantiation failed
@@ -660,6 +664,7 @@ assets/type_error/match_struct_wrong_head.mojo	compile-reject	agree	error: canno
 assets/type_error/match_tuple_arity_mismatch.mojo	compile-reject	agree	error: cannot match value of 'Tuple[Int, Int]' of 2 elements against a pattern with 3 elements
 assets/type_error/match_tuple_pattern_non_tuple.mojo	compile-reject	agree	error: expected a tuple type to match against, got 'Int'
 assets/type_error/match_var_binding_not_copyable.mojo	compile-reject	agree	error: value of type 'Big' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/materialize_dynamic_local.mojo	compile-reject	agree	error: invalid call to 'materialize': cannot use a dynamic value in a parameter list
 assets/type_error/math_copysign_bool_dtype.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/math_exp_integral_dtype.mojo	compile-reject	agree	error: no matching function in call to 'exp'
 assets/type_error/math_ldexp_integral_dtype.mojo	compile-reject	agree	error: invalid call to 'ldexp': violated constraint
@@ -798,6 +803,7 @@ assets/type_error/pack_read_spread_into_tuple.mojo	compile-reject	agree	error: n
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
+assets/type_error/parameter_capturing_call_argument.mojo	compile-reject	agree	error: cannot use a dynamic value in type parameter
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/parameter_default_none_application_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_default_none_application_struct_read.mojo	compile-reject	agree	error: function instantiation failed

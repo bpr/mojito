@@ -19,6 +19,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time position that reads a run-time local is rejected as at
+  the pin: `var x = 3` then `comptime i = x + 1`, `comptime i = (x, 1)`,
+  or `materialize[x]()` no longer runs, and each dynamic-value rejection
+  names the consumer the pin names ("operator argument", "'ref' argument",
+  "type parameter", ...) rather than always the enclosing position (R1548).
 - A method call on a module `comptime` constant annotated `Int` is that
   `Int`'s member, as at the pin: `comptime X: Int = 12` then
   `X.__neg__()`, at module scope or in a body, prints `-12` instead of
