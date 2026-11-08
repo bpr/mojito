@@ -370,6 +370,11 @@ to evolve under the `0.x` compatibility rules.
   "constraint failed: never" instead of printing `1` (R1587). An `if` or
   `comptime if` with an `else` whose every arm leaves now ends its block,
   so the code after it is dead and its assertions are never judged.
+- The code after a `while True` with no `break` of its own, or after a
+  `try` whose body and every handler leave, is now dead and erased before
+  an instance judges its `comptime assert`s, as at the pin, so `k[1]()`
+  over `while True: return 1` then `comptime assert n == 5` prints `1`
+  instead of failing the constraint (R1987).
 - `conforms_to` and `reflect[...].name()` over a struct whose parameter is
   a constructed struct value (`conforms_to(W[K(4)], Intable)`,
   `reflect[W[P(3, True)]].name()`) or a `SIMDLength` now answer as at the

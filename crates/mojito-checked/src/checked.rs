@@ -4004,8 +4004,10 @@ impl CheckedTables {
     /// or `comptime if` with an `else` every arm of which ends that way.
     /// The rest is dead, and lowering erases it as `LowerSemanticCF`'s
     /// `eraseOpToEndOfBlock` erases the ops after a terminator, before an
-    /// instance judges its assertions. A loop or `try` never ends the
-    /// block, even when every path through it leaves.
+    /// instance judges its assertions. A `while True` with no `break` of
+    /// its own ends the block, as does a `with` whose body does and a
+    /// `try` whose `finally` does, or whose normal path (its body, or the
+    /// `else` after it) and every handler do; any other loop never does.
     pub fn live_statements<'a>(&self, body: &'a [CheckedStmtId]) -> &'a [CheckedStmtId] {
         body.iter()
             .position(|id| self.ends_block(*id))
@@ -4246,7 +4248,35 @@ impl CheckedTables {
                 | CheckedStmtOp::Continue
                 | CheckedStmtOp::Raise(_) => true,
                 CheckedStmtOp::ComptimeAssert { fails, .. } => *fails,
-                CheckedStmtOp::Scope(body) => self.body_ends_block(body),
+                CheckedStmtOp::Scope(body) | CheckedStmtOp::With { body, .. } => {
+                    self.body_ends_block(body)
+                }
+                CheckedStmtOp::While {
+                    cond: CheckedCondition::Expr(cond),
+                    body,
+                    ..
+                } => {
+                    self.expression(*cond)
+                        .is_some_and(|node| matches!(node.op, CheckedOp::Bool(true)))
+                        && !self.body_breaks_loop(body)
+                }
+                CheckedStmtOp::Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => {
+                    finalbody
+                        .as_deref()
+                        .is_some_and(|finalbody| self.body_ends_block(finalbody))
+                        || ((self.body_ends_block(body)
+                            || orelse
+                                .as_deref()
+                                .is_some_and(|orelse| self.body_ends_block(orelse)))
+                            && except
+                                .as_ref()
+                                .is_none_or(|(_, handler)| self.body_ends_block(handler)))
+                }
                 CheckedStmtOp::If { branches, orelse }
                 | CheckedStmtOp::ComptimeIf { branches, orelse } => {
                     orelse.as_deref().is_some_and(|orelse| {
@@ -4263,6 +4293,26 @@ impl CheckedTables {
         self.live_statements(body)
             .last()
             .is_some_and(|last| self.ends_block(*last))
+    }
+
+    /// Whether a live `break` in `body` leaves the loop `body` belongs to:
+    /// one not nested in an inner run-time loop's body, which owns it.
+    fn body_breaks_loop(&self, body: &[CheckedStmtId]) -> bool {
+        self.live_statements(body).iter().any(|id| {
+            self.statement(*id)
+                .is_some_and(|statement| match &statement.op {
+                    CheckedStmtOp::Break => true,
+                    CheckedStmtOp::While { orelse, .. } | CheckedStmtOp::For { orelse, .. } => {
+                        orelse
+                            .as_deref()
+                            .is_some_and(|orelse| self.body_breaks_loop(orelse))
+                    }
+                    op => op
+                        .bodies()
+                        .into_iter()
+                        .any(|body| self.body_breaks_loop(body)),
+                })
+        })
     }
 }
 
