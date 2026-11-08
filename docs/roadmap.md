@@ -9224,19 +9224,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R1960.
   - Model: Opus, Not Planned.
 
-- [ ] **R1565 A method's compile-time parameter may reuse its struct's
-  parameter name**
-
-  `struct H[d: DType]` with `def f[d: Int]()` checks and runs, where the pin
-  rejects the method with "invalid redefinition of 'd'".
-  - The method binder shadows the struct's inside the method, where the
-    pin's scope holds both and refuses the second.
-  - Reject the method binder at its declaration, as the pin does, and add
-    an `assets/type_error` fixture with its `# expect:`.
-  - Found while landing R1550 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1656 A construction that leaves a struct's origin parameter
   uninferred is accepted**
 

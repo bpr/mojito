@@ -191,6 +191,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Var => {
                     self.expect(&Token::Var, "Expected 'var'")?;
                     let fname = self.expect_identifier("Expected a field name")?;
+                    reject_parameter_redefinition(&type_params, &fname, self.last_span)?;
                     self.expect(&Token::Colon, "Fields require a type annotation")?;
                     let ty = self.parse_type()?;
                     if matches!(self.peek_token()?, Some(Token::Assign)) {
@@ -216,15 +217,27 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let at = self.peek_start();
                     return Err(assert_outside_function().at((at, at)));
                 }
-                Token::Comptime => associated.push(self.parse_struct_comptime()?),
-                Token::Def => methods.push(self.parse_member_method(Vec::new(), is_enum)?),
+                Token::Comptime => {
+                    let at = self.peek_start();
+                    let member = self.parse_struct_comptime()?;
+                    reject_parameter_redefinition(&type_params, &member.name, (at, at))?;
+                    associated.push(member);
+                }
+                Token::Def => {
+                    let at = self.peek_start();
+                    let method = self.parse_member_method(Vec::new(), is_enum)?;
+                    reject_method_redefinitions(&type_params, &method, at)?;
+                    methods.push(method);
+                }
                 // Decorators before a method (`@staticmethod`, …).
                 Token::At => {
                     let at = self.peek_start();
                     let decos = self.parse_decorators()?;
                     match self.peek_token()? {
                         Some(Token::Def) => {
-                            methods.push(self.parse_member_method(decos, is_enum)?);
+                            let method = self.parse_member_method(decos, is_enum)?;
+                            reject_method_redefinitions(&type_params, &method, at)?;
+                            methods.push(method);
                         }
                         Some(Token::Case) if is_enum => {
                             return Err(ParseError::Message(
@@ -1083,6 +1096,59 @@ struct Receiver {
 /// argument, so its position only scopes the arguments its annotation reads.
 /// A receiver declared after other arguments must be `out self`, as at
 /// the pin.
+/// Rejects `name`, declared in a struct's body or in one of its methods'
+/// signature scopes, when it repeats one of the struct's parameters: the
+/// struct's parameters live in its body scope and in every method's
+/// parameter scope, as upstream's, so a second declaration there is
+/// upstream's "invalid redefinition".
+fn reject_parameter_redefinition(
+    type_params: &[mojito_ast::ast::TypeParam],
+    name: &str,
+    span: Span,
+) -> Result<(), ParseError> {
+    if type_params
+        .iter()
+        .any(|param| param.name.trim_start_matches('*') == name)
+    {
+        return Err(ParseError::Message(format!("invalid redefinition of '{name}'")).at(span));
+    }
+    Ok(())
+}
+
+/// Rejects a method whose name, compile-time or run-time parameter, or
+/// top-level body declaration repeats one of its struct's parameters. A
+/// nested block or nested `def` opens its own scope, where shadowing is
+/// allowed.
+fn reject_method_redefinitions(
+    type_params: &[mojito_ast::ast::TypeParam],
+    method: &Method,
+    start: usize,
+) -> Result<(), ParseError> {
+    reject_parameter_redefinition(type_params, &method.name, (start, start))?;
+    let signature = method
+        .type_params
+        .iter()
+        .map(|param| param.name.trim_start_matches('*'))
+        .chain(method.params.iter().map(|param| param.name.as_str()));
+    for name in signature {
+        reject_parameter_redefinition(type_params, name, (start, start))?;
+    }
+    for statement in &method.body {
+        let declared = match &statement.kind {
+            StmtKind::VarDecl { name, .. }
+            | StmtKind::RefDecl { name, .. }
+            | StmtKind::Comptime { name, .. }
+            | StmtKind::Def { name, .. } => vec![name.as_str()],
+            StmtKind::Destructure { target, .. } => target.declared_names(),
+            _ => Vec::new(),
+        };
+        for name in declared {
+            reject_parameter_redefinition(type_params, name, statement.span)?;
+        }
+    }
+    Ok(())
+}
+
 fn split_initializer_receiver(
     mut list: ParamList,
 ) -> Result<(Option<Receiver>, ParamList), ParseError> {

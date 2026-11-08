@@ -19,6 +19,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct parameter's name may not be declared again in the struct body
+  or at a method's top level, as at the pin: `struct H[d: DType]` with
+  `def f[d: Int]()`, a run-time parameter or top-level `var d`, or a field
+  `var d: Int` is rejected with "invalid redefinition of 'd'" instead of
+  shadowing it (R1565).
 - An `@implicit` constructor converts a numeric literal only when its
   parameter is the literal's own type or the `Int`/`Float64` it
   materializes to, as at the pin: `var y: F = 2` over a constructor taking

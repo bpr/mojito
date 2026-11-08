@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1104
+# swept-count	1114
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -144,6 +144,8 @@ assets/parse_error/generator_type_missing_result.mojo	compile-reject	agree	error
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises' or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
 assets/parse_error/match_mapping_pattern.mojo	compile-reject	agree	error: expression is not a valid match pattern; use '==' to compare against its value
+assets/parse_error/method_local_redefines_struct_parameter.mojo	compile-reject	agree	error: invalid redefinition of 'n'
+assets/parse_error/method_parameter_redefines_struct_parameter.mojo	compile-reject	agree	error: invalid redefinition of 'd'
 assets/parse_error/missing_colon.mojo	compile-reject	agree	error: expected ':' in function definition
 assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	error: '@__parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'
 assets/parse_error/parameter_closure_decorator.mojo	compile-reject	agree	error: '@parameter' closures are no longer supported; remove the decorator and declare the captures in a capture list like '{var}' or '{mut x}'

@@ -5259,3 +5259,35 @@ fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
         "enum E:\n    case a\n\n    def f(self):\n        ...\n        pass\n\n    @unavailable(\"use 'a'\")\n    def g(self):\n        ...\n",
     );
 }
+
+#[test]
+fn struct_parameter_redefinition_is_rejected_in_its_scopes() {
+    let header = "struct H[d: Int, *p: Int]:\n    def __init__(out self):\n        pass\n";
+    for member in [
+        "    var d: Int\n",
+        "    comptime d = 1\n",
+        "    def d(self):\n        pass\n",
+        "    def f[d: Int](self):\n        pass\n",
+        "    def f[*, p: Int](self):\n        pass\n",
+        "    def f(self, d: Int):\n        pass\n",
+        "    @staticmethod\n    def f(d: Int):\n        pass\n",
+        "    def f(self):\n        var d = 2\n",
+        "    def f(self):\n        comptime d = 2\n",
+        "    def f(self):\n        ref d = self\n",
+        "    def f(self):\n        def d():\n            pass\n",
+        "    def f(self):\n        var (z, d) = (1, 2)\n",
+    ] {
+        let error = mojito::parse(&format!("{header}{member}"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("invalid redefinition of '"),
+            "{member:?}: {error}"
+        );
+    }
+    // A nested block or nested `def` opens its own scope, and a struct's
+    // associated members are not in its methods' parameter scope.
+    parse(&format!(
+        "{header}    comptime e = 1\n\n    def f[e: Int](self):\n        if True:\n            var d = 2\n        for d in range(2):\n            pass\n        def g[d: Int]():\n            pass\n"
+    ));
+}
