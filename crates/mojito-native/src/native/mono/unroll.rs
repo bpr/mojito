@@ -142,6 +142,15 @@ impl Specializer<'_> {
                 index += count;
             }
         }
+        for binder in &decided.dead_binders {
+            tables.retired.extend(
+                tables
+                    .var_tys
+                    .iter()
+                    .filter(|(_, ty)| mojito_types::types::names_binder(ty, binder))
+                    .map(|(slot, _)| *slot),
+            );
+        }
         decided.apply(blocks, tables.reg_types, tables.spans);
         Ok(())
     }

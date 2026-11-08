@@ -41,7 +41,7 @@ and 11-04 (*Measure*), so the size steps still matter.
    ```
 
 2. **Finish gap D′** (size). Only the verifier rule's unnamed `drop.reg`
-   half is left: R1932, behind R359 (Planned) and R341. The compiler's
+   half is left: R1932, behind R359 (Planned) and R2025. The compiler's
    tuple storage, upstream's trivially destructible `!kgen.struct`, still
    destroys its elements through one.
 
@@ -272,9 +272,9 @@ may raise instance counts: a library `SIMD` is real generic code.
 | Origins are dropped from `ParamDecl` | R761 → R762 → R763 | R1300, R1299, R1213, R674, R133, R353, R104, R242, R726 |
 | Loans come from call shape, not type-carried origins | R87 | R88, R93, R122, R126, R304, R355, R1323, R94, R89, R1878 |
 | Overload identity is a partial mangled string | R934 → R935 | R1172, R105, R64, R1294, R570, R1111 |
-| Relocations name no `__moveinit__` | R1047, R341 | R731, R738, R732, R739, R740, R32, R1048 |
+| Relocations name no `__moveinit__` | R1047, R2027, R2025 | R731, R738, R732, R739, R740, R32, R1048 |
 | One-shot parameter inference | R52 | R53, R537, R726, R61 |
-| `Tuple` is `__RuntimeTuple` storage | R341, R359 | R343, R1121, R208, R1122, R207 |
+| `Tuple` is `__RuntimeTuple` storage | R2025, R359 | R343, R1121, R208, R1122, R207 |
 
 The landed 10-25 blocks left one or two entries each, none with a core
 to wait on:

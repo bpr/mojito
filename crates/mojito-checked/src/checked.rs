@@ -1313,6 +1313,11 @@ pub enum SemanticAdjustment {
         element: Ty,
         copy: bool,
     },
+    /// `pointer.unsafe_write_move_from(src)`: take `src`'s pointee and move
+    /// it, with one move initializer, into the pointee at offset 0.
+    PointerWriteMoveFrom {
+        element: Ty,
+    },
     /// How each of a subscript's arguments is built. `None` denotes an
     /// ordinary index; `Some` denotes a slice literal and the parameter it
     /// binds ([`CheckedSliceLiteral`]).

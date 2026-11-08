@@ -679,6 +679,9 @@ impl RewriteTypes for SemanticAdjustment {
             Self::PointerWrite { element, copy: _ } => {
                 element.rewrite_types(rewrite);
             }
+            Self::PointerWriteMoveFrom { element } => {
+                element.rewrite_types(rewrite);
+            }
             Self::SliceDescriptors {
                 descriptors,
                 set_value_keyword: _,

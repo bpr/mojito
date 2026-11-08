@@ -566,32 +566,56 @@ impl<'a> Flatten<'a> {
             } else {
                 self.expr(*value_expr)
             };
-            if let Some(target) = self.pointer_deref_place(object) {
-                self.emit(MirInstr::Store { place: target, src });
-            } else if object.is_origin_bearing_pointer() {
-                let reference = self.expr(object);
-                self.emit(MirInstr::WriteRef {
-                    reference,
-                    value: src,
-                });
-            } else {
-                let pointer = self.expr(object);
-                let pointer_ty = object.ty();
-                let var = self.fresh_var();
-                if let Some(ty) = pointer_ty.clone() {
-                    self.var_types.insert(var, ty);
+            self.write_pointee(call, object, element, src);
+            let dest = self.fresh_typed(call.location(), None, Ty::none());
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::None,
+            });
+            return Some(dest);
+        }
+        // `dst.unsafe_write_move_from(src)`: upstream's
+        // `__get_address_as_owned_value(src)` is the constructor-free take;
+        // the owned value is then moved out of its binding, which names the
+        // element's move initializer, into the receiver's slot.
+        let move_from = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::PointerWriteMoveFrom { element } => {
+                    Some(element.clone())
                 }
-                self.emit(MirInstr::DefVar {
-                    var,
-                    src: pointer,
-                    binding_ty: pointer_ty.clone(),
-                    in_place: false,
-                });
-                let index = self.constant(call, Const::Int(0));
-                let mut place = MirPlace::root(var, pointer_ty);
-                place.project(Proj::Index(index), element);
-                self.emit(MirInstr::Store { place, src });
-            }
+                _ => None,
+            });
+        if let Some(element) = move_from {
+            let source = *args
+                .first()
+                .expect("checked unsafe_write_move_from has one source");
+            let pointer = self.expr(source);
+            let index = self.constant(call, Const::Int(0));
+            let taken = self.fresh_typed(call.location(), None, element.clone());
+            self.emit(MirInstr::PointerStorageTake {
+                dest: taken,
+                pointer,
+                index,
+                element: element.clone(),
+            });
+            let var = self.fresh_var();
+            self.var_types.insert(var, element.clone());
+            self.emit(MirInstr::DefVar {
+                var,
+                src: taken,
+                binding_ty: Some(element.clone()),
+                in_place: false,
+            });
+            let src = self.fresh_typed(call.location(), Some(var), element.clone());
+            self.emit(MirInstr::UseVar {
+                dest: src,
+                var,
+                mode: UseMode::Move,
+                constructor: None,
+            });
+            self.write_pointee(call, object, element, src);
             let dest = self.fresh_typed(call.location(), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest,
@@ -600,6 +624,39 @@ impl<'a> Flatten<'a> {
             return Some(dest);
         }
         None
+    }
+
+    /// Write `src` into the pointee at offset 0 of pointer `object`, an
+    /// `element`: through its statically known place, through the runtime
+    /// handle of an origin-bearing pointer, or through a synthetic binding
+    /// of a heap pointer, so chained receivers stay expressible.
+    fn write_pointee(&mut self, call: Node<'a>, object: Node<'a>, element: Ty, src: Reg) {
+        if let Some(target) = self.pointer_deref_place(object) {
+            self.emit(MirInstr::Store { place: target, src });
+        } else if object.is_origin_bearing_pointer() {
+            let reference = self.expr(object);
+            self.emit(MirInstr::WriteRef {
+                reference,
+                value: src,
+            });
+        } else {
+            let pointer = self.expr(object);
+            let pointer_ty = object.ty();
+            let var = self.fresh_var();
+            if let Some(ty) = pointer_ty.clone() {
+                self.var_types.insert(var, ty);
+            }
+            self.emit(MirInstr::DefVar {
+                var,
+                src: pointer,
+                binding_ty: pointer_ty.clone(),
+                in_place: false,
+            });
+            let index = self.constant(call, Const::Int(0));
+            let mut place = MirPlace::root(var, pointer_ty);
+            place.project(Proj::Index(index), element);
+            self.emit(MirInstr::Store { place, src });
+        }
     }
 
     /// The ordinary method call on a value receiver, including an explicit

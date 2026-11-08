@@ -360,8 +360,10 @@ impl VmBackend {
     }
 
     /// The value of a never-stored slot of `ty` that `mem-2-reg` reads as
-    /// `uninitmem`, upstream's `undef`: a struct with no fields is whole
-    /// with nothing stored, so it is that struct, a `!pop.array` is its
+    /// `uninitmem`, upstream's `undef`: a struct whose fields hold no
+    /// element at any depth (none, or only empty Tuple storage, as an empty
+    /// `Tuple`'s) is whole with nothing stored, so it is that struct, a
+    /// `!pop.array` is its
     /// elements' placeholders, which stores through `pop.array.gep` fill
     /// one by one, and a vector or its `!kgen.simd` storage is one of the
     /// vector's type, whose lanes `pop.simd.insertelement` writes one by
@@ -373,7 +375,7 @@ impl VmBackend {
             .is_some_and(|ty| matches!(ty.kind(), TyKind::PopArray { .. }) || ty.kind().is_simd());
         ty.and_then(|ty| Self::uninitialized_value(prog, ty))
             .filter(|value| {
-                elements || matches!(value, Value::Struct { fields, .. } if fields.is_empty())
+                elements || (matches!(value, Value::Struct { .. }) && is_empty_value(value))
             })
             .unwrap_or(Value::UninitStorage(None))
     }
@@ -773,6 +775,16 @@ fn uninitialized_field(ty: &Ty) -> Value {
                 .unwrap_or_default()
         ]),
         _ => Value::None,
+    }
+}
+
+/// Whether `value`, an uninitialized skeleton, holds no element at any
+/// depth: a struct or Tuple storage whose every part is one such.
+fn is_empty_value(value: &Value) -> bool {
+    match value {
+        Value::Struct { fields, .. } => fields.iter().all(|(_, field)| is_empty_value(field)),
+        Value::Tuple(items) => items.iter().all(is_empty_value),
+        _ => false,
     }
 }
 

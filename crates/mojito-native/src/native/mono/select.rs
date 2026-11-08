@@ -88,11 +88,13 @@ impl Specializer<'_> {
 
 /// What deciding `comptime if`s and folding unrolled loops leaves for the
 /// function's tables: each taken arm's or folded loop's result and the
-/// value its `comptime.yield` or break carries, and every register the
-/// dropped code defined.
+/// value its `comptime.yield` or break carries, every register the
+/// dropped code defined, and the binder of every `comptime for` the
+/// dropped code held, whose slots no instance holds.
 #[derive(Default)]
 pub(super) struct Decided {
     pub(super) replaced: HashMap<u32, Reg>,
+    pub(super) dead_binders: Vec<mojito_types::param_expr::ParamRef>,
     dead: Vec<Reg>,
 }
 
@@ -149,6 +151,7 @@ pub(super) fn splice_comptime_arm(
     let arm = regions.swap_remove(chosen);
     for region in &regions {
         defined_registers(region, &mut decided.dead);
+        dead_loop_binders(region, &mut decided.dead_binders);
     }
     let [arm] =
         <[MirBlock; 1]>::try_from(arm).map_err(|_| "a `comptime if` arm is not one block")?;
@@ -166,9 +169,21 @@ pub(super) fn splice_comptime_arm(
                 term: std::mem::replace(&mut block.term, term),
             };
             defined_registers(std::slice::from_ref(&tail), &mut decided.dead);
+            dead_loop_binders(std::slice::from_ref(&tail), &mut decided.dead_binders);
             decided.dead.extend(results);
             block.instrs.extend(arm.instrs);
             Ok(Some(tail))
+        }
+    }
+}
+
+/// Push the binder of every `comptime for` in the dropped `blocks`, at any
+/// depth: upstream never elaborates the dropped code, so a slot typed over
+/// one of those loop indices is no slot of the instance.
+fn dead_loop_binders(blocks: &[MirBlock], binders: &mut Vec<mojito_types::param_expr::ParamRef>) {
+    for instruction in mojito_mir::mir::nested_instructions(blocks) {
+        if let MirInstr::ComptimeFor { binder, .. } = instruction {
+            binders.push(binder.clone());
         }
     }
 }

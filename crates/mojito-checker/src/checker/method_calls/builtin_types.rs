@@ -277,33 +277,11 @@ impl Checker {
                 ));
                 Ok(Ty::none())
             }
+            "unsafe_write_move_from" => {
+                self.infer_pointer_write_move_from(span, object, elem, origin, args)
+            }
             "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
-                // Upstream requires only a mutable pointer. An origin-bearing
-                // pointee still belongs to its checked storage, which would
-                // destroy it again, so a tracked origin is accepted only for a
-                // trivially destructible element, or in the bundled modules
-                // that end the storage's value themselves
-                // (`lit.ownership.mark_destroyed`).
-                let untracked = matches!(
-                    origin,
-                    mojito_types::origin::PointerOrigin::Untracked { mutable: true }
-                )
-                    || super::super::overload_support::is_bundled_private_storage_source(
-                        span.source.as_deref(),
-                    );
-                if origin.statically_mutable() == Some(false) {
-                    return Err(TypeError::Unsupported(format!(
-                        "{method}() requires a Pointer with a mutable origin"
-                    )));
-                }
-                if !untracked
-                    && !self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem)
-                {
-                    return Err(TypeError::Unsupported(format!(
-                        "{method}() through an origin-bearing Pointer requires a trivially \
-                         destructible element; '{elem}' is owned by its checked storage"
-                    )));
-                }
+                self.check_pointer_take_source(span, method, elem, origin)?;
                 no_arguments(method, args)?;
                 if method == "unsafe_deinit_pointee" && !self.is_deinitable(elem) {
                     return Err(TypeError::TraitNotSatisfied {
@@ -661,6 +639,58 @@ impl Checker {
         Ok(ret)
     }
 
+    /// Type `object.unsafe_write_move_from(args)` on a `Pointer[elem]` of
+    /// `origin`: upstream's `__get_address_as_uninit_lvalue(self) =
+    /// __get_address_as_owned_value(src)`, the source pointee taken and
+    /// moved, with one move initializer, into the receiver's slot.
+    fn infer_pointer_write_move_from(
+        &self,
+        span: &SourceSpan,
+        object: &Expr,
+        elem: &Ty,
+        origin: &mojito_types::origin::PointerOrigin,
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        self.check_pointer_write(object, origin)?;
+        let [source] = args else {
+            return Err(TypeError::ArityMismatch {
+                name: "unsafe_write_move_from".to_string(),
+                expected: 1,
+                got: args.len(),
+            });
+        };
+        let receiver = Ty::new(TyKind::Pointer {
+            element: elem.clone(),
+            origin: origin.clone(),
+        });
+        let found = self.infer_with_expected(source, &receiver, true)?;
+        let TyKind::Pointer {
+            element: source_elem,
+            origin: source_origin,
+        } = found.kind()
+        else {
+            return Err(pointer_move_source_mismatch(elem, &found));
+        };
+        if source_elem != elem {
+            return Err(pointer_move_source_mismatch(elem, &found));
+        }
+        self.check_pointer_take_source(span, "unsafe_write_move_from", elem, source_origin)?;
+        if !self.is_movable(elem) {
+            return Err(TypeError::TraitNotSatisfied {
+                param: "T".to_string(),
+                ty: elem.to_string(),
+                trait_name: "Movable".to_string(),
+                reason: self.trait_failure_reason(elem, "Movable"),
+            });
+        }
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::PointerWriteMoveFrom {
+                element: elem.clone(),
+            },
+        ));
+        Ok(Ty::none())
+    }
+
     /// Record `pointer.unsafe_origin_cast[...]()` (or a cast-shaped rebind)
     /// at `span`, rebinding to `origin`.
     fn record_pointer_origin_cast(
@@ -675,6 +705,40 @@ impl Checker {
                 materialized: None,
             },
         );
+    }
+
+    /// Admit `method` taking the pointee `elem` out through a pointer of
+    /// `origin`. Upstream requires only a mutable pointer. An origin-bearing
+    /// pointee still belongs to its checked storage, which would destroy it
+    /// again, so a tracked origin is accepted only for a trivially
+    /// destructible element, or in the bundled modules that end the
+    /// storage's value themselves (`lit.ownership.mark_destroyed`).
+    fn check_pointer_take_source(
+        &self,
+        span: &SourceSpan,
+        method: &str,
+        elem: &Ty,
+        origin: &mojito_types::origin::PointerOrigin,
+    ) -> Result<(), TypeError> {
+        let untracked = matches!(
+            origin,
+            mojito_types::origin::PointerOrigin::Untracked { mutable: true }
+        ) || super::super::overload_support::is_bundled_private_storage_source(
+            span.source.as_deref(),
+        );
+        if origin.statically_mutable() == Some(false) {
+            return Err(TypeError::Unsupported(format!(
+                "{method}() requires a Pointer with a mutable origin"
+            )));
+        }
+        if !untracked && !self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem)
+        {
+            return Err(TypeError::Unsupported(format!(
+                "{method}() through an origin-bearing Pointer requires a trivially \
+                 destructible element; '{elem}' is owned by its checked storage"
+            )));
+        }
+        Ok(())
     }
 
     /// Require the pointee `elem` a `Pointer.write` overwrites to have no
@@ -700,4 +764,14 @@ fn no_arguments(method: &str, args: &[Expr]) -> Result<(), TypeError> {
         expected: 0,
         got: args.len(),
     })
+}
+
+/// The mismatch for a `Pointer.unsafe_write_move_from` source of type
+/// `found` where a pointer to `elem` is required.
+fn pointer_move_source_mismatch(elem: &Ty, found: &Ty) -> TypeError {
+    TypeError::TypeMismatch {
+        expected: format!("Pointer[{elem}, _]"),
+        found: found.to_string(),
+        context: "source of 'Pointer.unsafe_write_move_from'".to_string(),
+    }
 }

@@ -993,6 +993,7 @@ assets/ok/pointer_tuple_field_write.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_clone_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/pointer_write_move_from.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_read_in_place.mojo	main	exe-differential	sanitized
@@ -1499,6 +1500,7 @@ assets/ok/tuple_consume_elements_len.mojo	main	exe-differential	sanitized
 assets/ok/tuple_consume_elements_print.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_index_int_comptime_expression.mojo	main	exe-differential	sanitized
+assets/ok/tuple_move_runs_element_moves.mojo	main	exe-differential	sanitized
 assets/ok/tuple_nested_type_arguments.mojo	main	exe-differential	sanitized
 assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized
 assets/ok/tuple_one_element.mojo	main	exe-differential	sanitized

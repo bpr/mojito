@@ -140,6 +140,14 @@ impl Specializer<'_> {
                 TyArg::Val(_) | TyArg::Origin(_) => Some(false),
             },
             Eq(left, right) | Ne(left, right) => {
+                // A proposition compared with a `Bool` (a struct's declared
+                // `__move_ctor_is_trivial = Self.Ts.all[IsTriviallyMovable]()`
+                // hook) is decided as the constraint it states.
+                if let Some((proposition, expected)) = bool_proposition(left, right) {
+                    return self
+                        .constraint_holds(&proposition, bindings, visiting)
+                        .map(|holds| (holds == expected) == matches!(constraint, Eq(..)));
+                }
                 let equal = match (
                     operand_value(left, bindings)?,
                     operand_value(right, bindings)?,
@@ -443,6 +451,29 @@ fn some(verdicts: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
 fn clause_message(clause: &GenericConstraint) -> Option<String> {
     match clause {
         GenericConstraint::WithMessage(_, message) => Some(message.clone()),
+        _ => None,
+    }
+}
+
+/// The constraint a proposition node on one side of `left == right` states
+/// ([`super::specializer::proposition_constraint`]), with the `Bool` on the
+/// other side; `None` for any other comparison.
+fn bool_proposition(
+    left: &ConstraintOperand,
+    right: &ConstraintOperand,
+) -> Option<(GenericConstraint, bool)> {
+    let proposition = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Value(CtValue::Expr(expression))
+        | ConstraintOperand::Expr(expression) => {
+            super::specializer::proposition_constraint(expression)
+        }
+        _ => None,
+    };
+    match (left, right) {
+        (operand, ConstraintOperand::Value(CtValue::Bool(expected)))
+        | (ConstraintOperand::Value(CtValue::Bool(expected)), operand) => {
+            Some((proposition(operand)?, *expected))
+        }
         _ => None,
     }
 }

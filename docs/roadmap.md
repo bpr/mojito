@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2024**.
+Next free ID: **R2028**.
 
 ## Ordered Work
 
@@ -1441,6 +1441,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2027 `Pointer.unsafe_take_pointee()` and `unsafe_write` of a
+  call result run no move initializer, where the pin runs one each**
+
+  `pointer.take` and the `ref.write`/`store` an `unsafe_write` lowers to
+  carry no `constructor`, so the value is relocated, where upstream's
+  `__get_address_as_owned_value` and its `init_pointee_move` each move it.
+  - Probe: over an `M` whose move initializer adds 1 and prints,
+    `pb.unsafe_write(pa.unsafe_take_pointee())` prints nothing where the
+    pin prints `move 12 / move 13`, and `var x = pb.unsafe_take_pointee()`
+    prints nothing where the pin prints `move 14`.
+  - `unsafe_write(x^)` and `unsafe_write_move_from` already run one, as
+    at the pin.
+  - So `Tuple.reverse`, `concat`, and `consume_elements` run no element
+    move initializer.
+  - Same family as R1047: name the constructor on the instruction and
+    run it in both backends.
+  - Found while landing R341 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1048 Returning a named `out` result runs its move initializer,
   which the pin does not**
 
@@ -1462,10 +1482,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   pin prints `t 2002`.
   - `(b^, 3)` matches the pin at `t 1002`.
   - Tuple's initializer stores its pack whole without element move
-    initializers (R341), and a display element is not a forwarded
+    initializers (R2025), and a display element is not a forwarded
     argument.
   - Found while landing R730 (2026-10-13).
-  - Depends on R341.
+  - Depends on R2025.
   - Model: Opus, Not Planned.
 
 - [ ] **R732 A `@fieldwise_init` construction stores its `var` arguments
@@ -4760,6 +4780,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "..."`), and it is reported when a value is abandoned for parameters
     that fail the condition. Respell the bundled library's
     `@explicit_destroy` uses the same way once this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2026 A user pack struct's explicit copy initializer rejects
+  `P[Int, String](copy=p)`**
+
+  Over `struct P[*Ts: Movable]` declaring `__init__(out self, *, copy:
+  Self)` that runs `self = Self(copy.n + 1)`, `P[Int, String](copy=p)` is
+  rejected with "type mismatch for argument 'copy' to 'P.__init__':
+  expected P[*Ts], found P[(Int, String)]", where the pin prints `4`.
+  - The `copy` parameter's `Self` stays at the template's binders where
+    the call binds the bracket's list; a struct that binds its pack
+    element-wise (`Tuple`) is not affected.
+  - Probe: the struct above with `var n: Int`, `def __init__(out self, n:
+    Int)`, then `var p = P[Int, String](4)` and the copy.
+  - Found while landing R341 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11198,26 +11234,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2016 A struct that binds its pack element-wise has a
-  non-canonical `Self` type inside its own template**
-
-  `Tuple`, `TString`, and `Variant` spell a bound pack element by element
-  and drop the pack's zero-sized `TypeList` argument
-  (`types::canonical_pack_arguments`), but their template's own `Self`
-  (`self_struct_arguments` in `checker.rs`) keeps it beside the pack.
-  - So `Tuple[*Self.Ts]` resolves to one argument where `self`'s type has
-    two, and the two do not coerce ("expected Tuple[*Ts], found
-    Tuple[*Ts]").
-  - The synthesized `Self(copy=self)` reaches it; the checker's
-    `infer_copy_construction` binds a source equal to the instance up to
-    canonical pack spelling as the instance, to work around it.
-  - Lever: build an element-wise struct's `Self` arguments canonically,
-    then delete that workaround.
-  - Probe: inside `Tuple`, `var t: Tuple[*Self.Ts] = self.copy()`.
-  - Found while landing R1832 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1833 `struct_field_types` answers no fields for a struct
   applied to its own binders, where upstream's `Self` inside a struct's
   methods is the parametric struct with its declared fields**
@@ -11481,8 +11497,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     each element with `Pointer(to=self[i]).unsafe_take_pointee()` and then
     must end the storage with `lit.ownership.mark_destroyed`, which upstream
     does not need.
-  - Upstream writes the moves as `unsafe_write_move_from` over a rebound
-    pointer, which Mojito does not have.
+  - `Tuple`'s move initializer ends `move.storage` with
+    `lit.ownership.mark_destroyed` for the same reason, and its trivial
+    copy and move fast paths spell `self._mlir_value = copy._mlir_value` as
+    `self.storage = copy.storage.copy()` and `move.storage^`.
   - `unsafe_take_pointee()` through an origin-bearing pointer to an element
     with a destructor is admitted only in the bundled storage modules
     (`checker/method_calls/builtin_types.rs`), because user code cannot end
@@ -11491,7 +11509,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `kgen.struct.load_indirect`, is moved into a register and
     `drop.reg`'d after `pop.call_llvm_intrinsic` reads it, where
     upstream's loaded `!kgen.struct` is never destroyed (R1932).
-  - Depends on R341.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R360 `TString` owns a `Tuple` of its parts, where the pin's borrows
@@ -11512,25 +11530,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R341 `Tuple`'s pack, copy, and move initializers store the private
-  storage whole where upstream marks `self` initialized and writes each
-  element through a pointer**
+- [ ] **R2025 `Tuple`'s pack initializer stores `__RuntimeTuple(*args^)`
+  where upstream consumes its owned pack with `consume_elements`**
 
-  Problem: Mojito's `Tuple.__init__(out self, var *args)` builds
-  `self.storage = __RuntimeTuple(*args^)`, and its copy and move
-  initializers are synthesized over the whole storage. Upstream marks
-  `self._mlir_value` initialized and writes per element:
-  `args^.consume_elements[init_elt]()` with
-  `Pointer(to=self[idx]).unsafe_write(elt^)`, `unsafe_write(copy=copy[i])`,
-  and `unsafe_write_move_from(Pointer(to=move[i]))`.
-  - The default initializer took upstream's shape on 2026-10-05: the
-    `lit.ownership.mark_initialized` statement and
-    `Pointer(to=self[i]).unsafe_write({})`.
-  - Mojito has no `unsafe_write_move_from`.
-  - Upstream's `init_elt` is a capture-list closure over the receiver,
-    passed to `consume_elements` as a run-time argument.
-  - Depends on nothing.
+  Upstream marks `self._mlir_value` initialized, declares
+  `def init_elt[idx: Int](var elt: Self.Ts[idx]) {mut self}` running
+  `Pointer(to=self[idx]).unsafe_write(elt^)`, and calls
+  `args^.consume_elements(init_elt)`.
+  - With that body the bundled library does not package: "no symbolic
+    rule for an unbound pack or reflected type: method 'consume_elements'
+    of an unbound pack".
+  - `var *args: *Ts` is still the tuple of its values (R1927), and the
+    bundled `VariadicPack` declares no `consume_elements` (R1924).
+  - Do not add a symbolic `consume_elements` rule for the tuple collector.
+  - Split from R341 (2026-11-08), whose copy, move, default, and
+    `init_with` initializers landed.
+  - Depends on R1927.
   - Model: Fable, Planned.
+
+- [ ] **R2024 `Tuple(init_with=)` writes each element with `unsafe_write`
+  where upstream constructs it in place through
+  `__get_address_as_uninit_lvalue`**
+
+  Upstream assigns `__get_address_as_uninit_lvalue(Pointer(to=self[i])._mlir_value) = init_with[i]()`,
+  so an element need not be `Movable`; Mojito's
+  `Pointer(to=self[i]).unsafe_write(init_with[i]())` needs `Movable`.
+  - `__get_address_as_uninit_lvalue(p) = v` is not a builtin.
+  - Lever: type it beside R1924's two builtins (`checker/operators.rs`).
+  - Blocks R1121.
+  - Split from R341 (2026-11-08).
+  - Depends on R1924.
+  - Model: Opus, Not Planned.
 
 - [ ] **R36 `Layout` carries its alignment as a runtime field**
 
@@ -12292,18 +12322,20 @@ residue found inside a task moves to the task that owns its fix.
     the fixtures were respelled to `Tuple(*args^)`, and Mojito keeps
     accepting both.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
-  - Depends on nothing.
+  - Depends on R2024.
   - Model: Fable, Not Planned.
 
-- [ ] **R1122 `Tuple(init_with=...)` constructs each element in place**
+- [ ] **R1122 `Tuple[Int, Int](init_with=mk)` rejects a generic `def`
+  whose result type is not written dependently**
 
-  Problem: `T(init_with=lambda [i: Int]() -> T.Ts[i]: Pinned(i * 10))` is
-  rejected, where the pin builds each element from a closure parameterized
-  on the element index, which is how a tuple of non-movable elements is
-  made at all.
-  - The handler is a callable parameter with its own binder and a
-    dependent result type, `F: def[idx: Int]() -> Self.Ts[idx]`.
-  - Depends on R1121.
+  `def mk[i: Int]() -> Int` passed as `init_with` is rejected ("declared
+  callable contract 'def[i: Int]() thin -> Int' is incompatible"), where
+  the pin prints `0 10`.
+  - The `init_with` initializer itself exists, with upstream's
+    `F: def[idx: Int]() -> Self.Ts[idx]` bound; the callable contract
+    check does not close `Self.Ts[idx]` at each index before comparing.
+  - Non-movable elements wait on R1121.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1123 `Tuple.first_of[T]()` returns the first element of type `T`**
@@ -12571,7 +12603,9 @@ residue found inside a task moves to the task that owns its fix.
     upstream reads `type_of(result).__len__()` and
     `type_of(other).__len__()`.
   - Pinned by `assets/ok/tuple_reverse_concat.mojo`.
-  - Depends on R341 (the storage model and `unsafe_write_move_from`), R1509
+  - `Pointer.unsafe_write_move_from` exists; the storage model still
+    double-destroys an element moved out through a pointer (R359).
+  - Depends on R359, R1509
     (a `type_of(...)` receiver), R495 (its symbolic spelling), R340 (`Self.__len__()` in a header), and
     R344.
   - Model: Fable, Planned.

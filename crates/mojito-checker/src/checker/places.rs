@@ -416,7 +416,7 @@ impl Checker {
 
     /// What `source`'s field projections reach: a named binding, or a
     /// temporary (a call result, a by-value subscript, an element of the
-    /// private `Tuple` storage, which is a tracked owned slot until R341).
+    /// private `Tuple` storage, which is a tracked owned slot until R359).
     /// Any other subscript yields a reference, which reaches no tracked
     /// root.
     fn transfer_root<'e>(&self, source: &'e Expr) -> Result<TransferRoot<'e>, TypeError> {

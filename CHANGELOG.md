@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer.unsafe_write_move_from(src)` takes `src`'s pointee and moves it
+  into the receiver's slot with one move initializer, as at the pin.
+- `Tuple` declares upstream's `init_with` initializer, its copy and move
+  initializers, and the `__del__is_trivial`, `__copy_ctor_is_trivial`, and
+  `__move_ctor_is_trivial` witnesses. A tuple move now runs each element's
+  move initializer, as the pin does, and the default initializer builds
+  through `init_with` (R341). The pack initializer's consuming shape
+  remains (R2025).
 - `scripts/focused` is a test tier between `scripts/smoke` and the
   overnight gate: it runs the fixtures and named tests in
   `tests/focused/list.txt` — compile-time strings and parameters, origins
@@ -19,6 +27,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Inside an element-wise pack struct (`Tuple`, `Variant`, `TString`),
+  `Self` is the canonical instance, so `self = Self(...)` checks and the
+  synthesized copy's workaround is gone (R2016).
+- A `comptime if` arm the elaborator drops takes the slots of its
+  `comptime for` loops with it; a compile-time application binds a pack
+  bound to a list over the caller's binders; a declared triviality hook
+  that states a pack query (`Self.Ts.all[IsTriviallyMovable]()`) is decided
+  as that query; the VM reads an empty
+  `Tuple`'s never-stored slot as the tuple; and the slot-end verifier
+  holds a slot only an erased `mark_initialized` began, such as an inlined
+  named `out` result.
 - A struct's `__hash__` and a hasher's `_update_with_simd` are no longer
   reached from a value's type: the dead `Variant`-storage `__hash__` shape
   the elaborator and Pliron's reachability walk special-cased is gone, so

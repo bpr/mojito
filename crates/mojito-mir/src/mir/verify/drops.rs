@@ -35,8 +35,12 @@
 //! naming it join. A `break`, `continue`, or `match` exit resolves to its
 //! region op through [`RegionFrame`] and [`region_exit`], and a labelled
 //! `raise` to its `try`'s body frame. A function enters holding its
-//! parameters, a `var.declare` empties a slot, and anything else that names
-//! a slot fills it, and fills the part its place names: a read of an empty
+//! parameters and every slot no `var.def` or `var.declare` begins that an
+//! instruction other than a slot end names: one only an
+//! `ownership.mark_initialized` began, which `lower-lit` erased before the
+//! walk, such as a named `out` result inlined into a caller. A
+//! `var.declare` empties a slot, and anything else that names a slot fills
+//! it, and fills the part its place names: a read of an empty
 //! slot or an ended part is the checker's error, and over-filling hides a
 //! finding, never invents one.
 
@@ -69,9 +73,12 @@ pub(super) fn verify_slot_ends(
         return;
     }
     let mut walk = Walk::new(name, function, owned);
+    let marked = marker_begun_slots(&function.blocks);
     let entry = Held {
         slots: (0..function.n_vars)
-            .map(|v| v < function.n_params)
+            .map(|v| {
+                v < function.n_params || VarId::try_from(v).is_ok_and(|slot| marked.contains(&slot))
+            })
             .collect(),
         ended: BTreeSet::new(),
         ended_regs: BTreeSet::new(),
@@ -807,6 +814,38 @@ fn ends_slots(blocks: &[MirBlock]) -> bool {
                     .any(|region| ends_slots(region))
         })
     })
+}
+
+/// The slots of `blocks`, at any depth, that no `var.def` or `var.declare`
+/// begins but some instruction other than a slot end names: slots only an
+/// erased `ownership.mark_initialized` began, written through their places.
+fn marker_begun_slots(blocks: &[MirBlock]) -> HashSet<VarId> {
+    fn walk(blocks: &[MirBlock], begun: &mut HashSet<VarId>, named: &mut HashSet<VarId>) {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            match instruction {
+                MirInstr::DefVar { var, .. } | MirInstr::DeclareVar { var } => {
+                    begun.insert(*var);
+                }
+                MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. } => {}
+                _ => {
+                    named.extend(
+                        instruction_places(instruction)
+                            .iter()
+                            .map(|place| place.root),
+                    );
+                    named.extend(instruction_slots(instruction));
+                }
+            }
+            for region in instruction_regions(instruction) {
+                walk(region, begun, named);
+            }
+        }
+    }
+    let mut begun = HashSet::new();
+    let mut named = HashSet::new();
+    walk(blocks, &mut begun, &mut named);
+    named.retain(|slot| !begun.contains(slot));
+    named
 }
 
 /// The place each reference register of `blocks`, at any depth, was made

@@ -1,7 +1,9 @@
 # Public heterogeneous tuple, an ordinary variadic struct generator: this one
 # template serves every element list.  `__RuntimeTuple` is a compiler-private
 # pack aggregate: users see this nominal struct, while the private field gives
-# the compiler exact per-index storage and move tracking.
+# the compiler exact per-index storage and move tracking. The default and copy
+# initializers build through `init_with`, and the copy and move initializers
+# take upstream's `__copy_ctor_is_trivial`/`__move_ctor_is_trivial` fast paths.
 
 from std.reflection.type_info import _unqualified_type_name
 from std.range import range
@@ -26,19 +28,30 @@ struct Tuple[*Ts: Movable](
     Writable where conforms_to(Ts.values, Writable),
 ):
     comptime element_types = Self.Ts
+
+    comptime __del__is_trivial = Self.Ts.all[IsTriviallyDeinitable]()
+    comptime __copy_ctor_is_trivial = Self.Ts.all[IsTriviallyCopyable]()
+    comptime __move_ctor_is_trivial = Self.Ts.all[IsTriviallyMovable]()
+
     var storage: __RuntimeTuple[*Self.Ts]
 
     @inline(.nodebug)
     def __init__(out self, var *args: *Self.Ts):
         self.storage = __RuntimeTuple(*args^)
 
+    # Upstream assigns `__get_address_as_uninit_lvalue(...) = init_with[i]()`,
+    # constructing each element in place; Mojito writes it (R2024).
     @inline(.nodebug)
-    def __init__(out self) where conforms_to(Self.Ts.values, Defaultable):
+    def __init__[F: def[idx: Int]() -> Self.Ts[idx]](out self, *, init_with: F):
         __mlir_op.`lit.ownership.mark_initialized`(
             __get_mvalue_as_litref(self.storage)
         )
-        comptime for i in range(len(Self.Ts)):
-            Pointer(to=self[i]).unsafe_write({})
+        comptime for i in range(Self.__len__()):
+            Pointer(to=self[i]).unsafe_write(init_with[i]())
+
+    @inline(.nodebug)
+    def __init__(out self) where conforms_to(Self.Ts.values, Defaultable):
+        self = Self(init_with=lambda [i: Int]() -> Self.Ts[i]: Self.Ts[i]())
 
     # Current Mojo's compile-time-index hook.
     @inline(.nodebug)
@@ -208,3 +221,37 @@ struct Tuple[*Ts: Movable](
         F: def[idx: Int](var elt: Self.Ts[idx])
     ](deinit self, deinit_func: F, /):
         self^.consume_elements(deinit_func)
+
+    # Upstream's copy initializer. `self.storage = copy.storage.copy()`
+    # stands for upstream's `self._mlir_value = copy._mlir_value`: the
+    # private storage is no register value (R359).
+    @inline(.nodebug)
+    def __init__(
+        out self, *, copy: Self
+    ) where Self.Ts.all_conforms_to[Copyable]():
+        comptime if Self.__copy_ctor_is_trivial:
+            self.storage = copy.storage.copy()
+        else:
+            self = Self(
+                init_with=lambda [i: Int]() -> Self.Ts[i]: copy[i].copy()
+            )
+
+    # Upstream's move initializer. `self.storage = move.storage^` stands for
+    # upstream's `self._mlir_value = move._mlir_value`. The private storage
+    # would destroy the moved elements again, so `move`'s storage is marked
+    # destroyed (R359).
+    @inline(.nodebug)
+    def __init__(
+        out self, *, deinit move: Self
+    ) where Self.Ts.all_conforms_to[Movable]():
+        comptime if Self.__move_ctor_is_trivial:
+            self.storage = move.storage^
+        else:
+            __mlir_op.`lit.ownership.mark_initialized`(
+                __get_mvalue_as_litref(self.storage)
+            )
+            comptime for i in range(Self.__len__()):
+                Pointer(to=self[i]).unsafe_write_move_from(Pointer(to=move[i]))
+            __mlir_op.`lit.ownership.mark_destroyed`(
+                __get_mvalue_as_litref(move.storage)
+            )

@@ -695,7 +695,7 @@ impl Checker {
             ))
         })?;
         let decls = info.decls.clone();
-        let self_ty = Ty::new(TyKind::Struct(name.to_string(), info.self_arguments()));
+        let self_ty = Self::struct_instance_type(name, info.self_arguments());
         let saved = SavedStructScope {
             type_params: std::mem::replace(
                 &mut self.enclosing_type_params,

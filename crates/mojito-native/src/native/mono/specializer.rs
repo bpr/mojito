@@ -1619,14 +1619,20 @@ impl<'a> Specializer<'a> {
                         // A pack bound to its element list by a caller the
                         // thunk's body was inlined into is applied to that
                         // list, as its runtime pack.
-                        ParamKind::Constant(CtValue::Tuple(elements)) if *variadic => elements
-                            .iter()
-                            .map(|element| match element {
-                                CtValue::Type(ty) => substitute_ty(ty, bindings).ok(),
+                        ParamKind::Constant(CtValue::Tuple(elements)) if *variadic => {
+                            runtime_pack(elements, bindings)
+                        }
+                        // One bound to a list over the caller's own binders
+                        // (`[T, Bool]`, a tabulation) is applied to the list
+                        // the caller's instance closes it to.
+                        ParamKind::ListTabulate { .. } | ParamKind::ListConcat { .. }
+                            if *variadic =>
+                        {
+                            match eval_ct(arg, bindings) {
+                                Ok(CtValue::Tuple(elements)) => runtime_pack(&elements, bindings),
                                 _ => None,
-                            })
-                            .collect::<Option<Vec<_>>>()
-                            .map(|elements| TyKind::RuntimePack(elements).into()),
+                            }
+                        }
                         _ => None,
                     };
                     let Some(ty) = ty else {
@@ -4180,6 +4186,42 @@ impl<'a> Specializer<'a> {
     }
 }
 
+/// The constraint a proposition node of a parameter value states, which
+/// the oracle deciding a `where` clause answers: a pack query, or an
+/// `IsTrivially*` over a type. `None` for any other node, or an operand
+/// no constraint operand spells.
+pub(super) fn proposition_constraint(value: &ParamExpr) -> Option<GenericConstraint> {
+    match value.kind() {
+        ParamKind::PackQuery { pack, query } => {
+            let operand = pack_operand(pack);
+            Some(match query {
+                PackQuery::Conforms(trait_name) => GenericConstraint::ConformsPack {
+                    operand,
+                    trait_name: trait_name.clone(),
+                },
+                PackQuery::Predicate { predicate, all } => GenericConstraint::PackPredicate {
+                    operand,
+                    predicate: predicate.clone(),
+                    all: *all,
+                },
+                PackQuery::Contains(element) => GenericConstraint::PackContains {
+                    operand,
+                    element: type_operand(element)?,
+                },
+                PackQuery::Length | PackQuery::IndexOf(_) => return None,
+            })
+        }
+        ParamKind::Trivial { lifecycle, subject } => Some(GenericConstraint::Trivial(
+            *lifecycle,
+            match subject.kind() {
+                ParamKind::DeclRef(binder) => ConstraintOperand::Param(binder.clone()),
+                _ => type_operand(subject)?,
+            },
+        )),
+        _ => None,
+    }
+}
+
 /// Whether `declaration` collects a variadic parameter whose element count a
 /// call site keys (`var *values: T`), rather than a runtime pack or a tuple.
 fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
@@ -4346,42 +4388,6 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
 }
 
 /// Every expression operand of a constraint, in reading order.
-/// The constraint a proposition node of a parameter value states, which
-/// the oracle deciding a `where` clause answers: a pack query, or an
-/// `IsTrivially*` over a type. `None` for any other node, or an operand
-/// no constraint operand spells.
-fn proposition_constraint(value: &ParamExpr) -> Option<GenericConstraint> {
-    match value.kind() {
-        ParamKind::PackQuery { pack, query } => {
-            let operand = pack_operand(pack);
-            Some(match query {
-                PackQuery::Conforms(trait_name) => GenericConstraint::ConformsPack {
-                    operand,
-                    trait_name: trait_name.clone(),
-                },
-                PackQuery::Predicate { predicate, all } => GenericConstraint::PackPredicate {
-                    operand,
-                    predicate: predicate.clone(),
-                    all: *all,
-                },
-                PackQuery::Contains(element) => GenericConstraint::PackContains {
-                    operand,
-                    element: type_operand(element)?,
-                },
-                PackQuery::Length | PackQuery::IndexOf(_) => return None,
-            })
-        }
-        ParamKind::Trivial { lifecycle, subject } => Some(GenericConstraint::Trivial(
-            *lifecycle,
-            match subject.kind() {
-                ParamKind::DeclRef(binder) => ConstraintOperand::Param(binder.clone()),
-                _ => type_operand(subject)?,
-            },
-        )),
-        _ => None,
-    }
-}
-
 /// A pack query's pack as a constraint operand: its binder, the list a
 /// substitution bound it to, or an expression computing the list.
 fn pack_operand(pack: &ParamExpr) -> ConstraintOperand {
@@ -4596,4 +4602,17 @@ fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
 /// numeric literal's operator stays the compiler's (R1969).
 fn declared_operator_receiver(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_numeric_literal()
+}
+
+/// The runtime pack of the type list `elements`, each substituted under
+/// `bindings`; `None` when one is no type or stays open.
+fn runtime_pack(elements: &[CtValue], bindings: &Bindings) -> Option<Ty> {
+    elements
+        .iter()
+        .map(|element| match element {
+            CtValue::Type(ty) => substitute_ty(ty, bindings).ok(),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|elements| TyKind::RuntimePack(elements).into())
 }

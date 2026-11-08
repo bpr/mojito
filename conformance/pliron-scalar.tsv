@@ -993,6 +993,7 @@ assets/ok/pointer_tuple_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_write_move_from.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
@@ -1499,6 +1500,7 @@ assets/ok/tuple_consume_elements_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_print.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_index_int_comptime_expression.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_move_runs_element_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_nested_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape
