@@ -28,15 +28,18 @@ material-failure conditions triggered:
 The Stage 0 pin record below is historical. The lane now pins Pliron to the
 crates.io release `0.20.0` (`pliron`/`pliron-llvm`, whose LLVM layer requires
 `llvm-sys 231`; a git revision is for testing an unreleased fix only, and
-returns to a release before the task ends) against LLVM 23.1.0 installed from
-the official release archive at `/opt/llvm-23` and discovered through
-`LLVM_SYS_231_PREFIX` (every lane script exports that default and prepends its
-`bin/` to `PATH`, so `clang-23`/`opt-23`/`llvm-dwarfdump-23` resolve). The
+returns to a release before the task ends) against LLVM 23.1.0, either the distro
+package at `/usr/lib/llvm-23` or the official release archive at
+`/opt/llvm-23`. `scripts/llvm-prefix` picks the first of
+`LLVM_SYS_231_PREFIX`, `/usr/lib/llvm-23`, and `/opt/llvm-23` that holds
+`bin/llvm-config`, skipping a configured prefix that does not exist; every
+lane script exports what it finds and prepends its `bin/` to `PATH`, so
+`clang-23`/`opt-23`/`llvm-dwarfdump-23` resolve. The
 current CI recipe is:
 
 ```sh
 rustup toolchain install 1.96.1
-export LLVM_SYS_231_PREFIX=/opt/llvm-23     # LLVM-23.1.0-Linux-X64 archive
+export LLVM_SYS_231_PREFIX="$(scripts/llvm-prefix)"
 export PATH="$LLVM_SYS_231_PREFIX/bin:$PATH"
 scripts/check-pliron-spike                  # spike: fmt + nextest + clippy
 scripts/check-pliron                        # backend lane

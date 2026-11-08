@@ -55,10 +55,17 @@ def build(steps: list[list[str]], env: dict[str, str], tool: str) -> bool:
 def native_env() -> dict[str, str]:
     """The environment `scripts/check-pliron` builds and runs under."""
     env = dict(os.environ)
-    prefix = env.setdefault("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
+    prefix = llvm_prefix()
+    env["LLVM_SYS_231_PREFIX"] = prefix
     env["PATH"] = f"{prefix}/bin:{env.get('PATH', '')}"
     env.setdefault("MOJITO_RUNTIME_LIB", str(ROOT / "target" / "debug" / "libmojito_runtime.a"))
     return env
+
+
+def llvm_prefix() -> str:
+    """The LLVM 23 install `scripts/llvm-prefix` finds, or the configured one when none is."""
+    found = subprocess.run([str(ROOT / "scripts" / "llvm-prefix")], capture_output=True, text=True)
+    return found.stdout.strip() or os.environ.get("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
 
 
 def first_difference(expected: str, actual: str) -> str:

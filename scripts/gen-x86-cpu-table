@@ -5,7 +5,7 @@ Usage: scripts/gen-x86-cpu-table [--mojo MOJO] [--llc LLC] [--out FILE]
 
 MOJO is the pinned `mojo` binary (`docs/mojo-nightly.md`); it defaults to the
 pinned pixi environment. LLC is the pinned toolchain's `llc` (LLVM 23.1); it
-defaults to `$LLVM_SYS_231_PREFIX/bin/llc`, then `/usr/lib/llvm-23/bin/llc`.
+defaults to `bin/llc` under the install `scripts/llvm-prefix` finds.
 
 The script reads the pin's x86-64 CPU names (`mojo build
 --print-supported-cpus`) and, for each one, the feature list the pin resolves
@@ -147,7 +147,9 @@ def repr_str(s: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--mojo", default=DEFAULT_MOJO)
-    prefix = os.environ.get("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
+    found = subprocess.run([os.path.join(os.path.dirname(__file__), "llvm-prefix")],
+                           capture_output=True, text=True)
+    prefix = found.stdout.strip() or os.environ.get("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
     parser.add_argument("--llc", default=os.path.join(prefix, "bin", "llc"))
     parser.add_argument("--out", default=DEFAULT_OUT)
     args = parser.parse_args()

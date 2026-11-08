@@ -148,7 +148,8 @@ development target tree (built by `cargo build -p mojito-runtime`) — the
 full contract is [`docs/native-abi.md`](native-abi.md):
 
 ```sh
-cargo build --features backend-pliron   # needs LLVM 23.1 at LLVM_SYS_231_PREFIX (see docs/notes/pliron-stage0.md)
+export LLVM_SYS_231_PREFIX="$(scripts/llvm-prefix)"   # LLVM 23.1 (see docs/notes/pliron-stage0.md)
+cargo build --features backend-pliron
 cargo build -p mojito-runtime           # the linked native runtime archive
 target/debug/mojito compile pure.mojo --backend pliron --emit exe -o pure
 ```

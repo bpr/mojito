@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Print the LLVM 23 install the Pliron lane builds against: the first of
+# `$LLVM_SYS_231_PREFIX`, the distro package (`/usr/lib/llvm-23`), and the
+# release archive (`/opt/llvm-23`) that holds `bin/llvm-config`. A configured
+# prefix that does not exist is skipped, so a setting inherited from another
+# machine falls through to this one's install. Exits 1 when none is found.
+#
+#   export LLVM_SYS_231_PREFIX="$(scripts/llvm-prefix)"
+set -euo pipefail
+
+for prefix in "${LLVM_SYS_231_PREFIX:-}" /usr/lib/llvm-23 /opt/llvm-23; do
+    if [[ -n "$prefix" && -x "$prefix/bin/llvm-config" ]]; then
+        echo "$prefix"
+        exit 0
+    fi
+done
+echo "llvm-prefix: no LLVM 23 found at \$LLVM_SYS_231_PREFIX" \
+    "(${LLVM_SYS_231_PREFIX:-unset}), /usr/lib/llvm-23, or /opt/llvm-23" >&2
+exit 1

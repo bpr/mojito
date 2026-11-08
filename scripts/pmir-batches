@@ -169,9 +169,9 @@ def git(*arguments: str) -> None:
 
 def use_working_llvm() -> None:
     """Point the native build at an LLVM that exists, when the session's does not."""
-    configured = os.environ.get("LLVM_SYS_231_PREFIX")
-    if (not configured or not Path(configured).is_dir()) and Path("/usr/lib/llvm-23").is_dir():
-        os.environ["LLVM_SYS_231_PREFIX"] = "/usr/lib/llvm-23"
+    found = subprocess.run([str(ROOT / "scripts/llvm-prefix")], capture_output=True, text=True)
+    if found.returncode == 0:
+        os.environ["LLVM_SYS_231_PREFIX"] = found.stdout.strip()
 
 
 class Summary:

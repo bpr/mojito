@@ -475,26 +475,25 @@ fn llvm_function<'a>(ir: &'a str, name: &str) -> &'a str {
     &ir[start..end]
 }
 
-/// The pinned toolchain's `llvm-objdump`, if installed: beside the LLVM
-/// prefix the backend links against, else a versioned or bare name on
+/// The pinned toolchain's `llvm-objdump`, if installed: beside an LLVM
+/// prefix `scripts/llvm-prefix` searches, else a versioned or bare name on
 /// `PATH`.
 fn llvm_objdump() -> Option<std::path::PathBuf> {
-    let prefix = std::env::var_os("LLVM_SYS_231_PREFIX").map_or_else(
-        || std::path::PathBuf::from("/usr/lib/llvm-23"),
-        std::path::PathBuf::from,
-    );
-    [
-        prefix.join("bin/llvm-objdump"),
-        std::path::PathBuf::from("llvm-objdump-23"),
-        std::path::PathBuf::from("llvm-objdump"),
-    ]
-    .into_iter()
-    .find(|candidate| {
-        std::process::Command::new(candidate)
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success())
-    })
+    std::env::var_os("LLVM_SYS_231_PREFIX")
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .chain(["/usr/lib/llvm-23", "/opt/llvm-23"].map(std::path::PathBuf::from))
+        .map(|prefix| prefix.join("bin/llvm-objdump"))
+        .chain([
+            std::path::PathBuf::from("llvm-objdump-23"),
+            std::path::PathBuf::from("llvm-objdump"),
+        ])
+        .find(|candidate| {
+            std::process::Command::new(candidate)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
 }
 
 #[test]
