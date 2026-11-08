@@ -5974,13 +5974,17 @@ current Mojo:
   read, a chain middle (`chain_middle`), and a discarded statement
   (`discard_result`) use it as a call result. A `ref` getter, a
   pointer subscript, and a storage read stay places.
-- A field read off a temporary returned through memory (`print(B(1).x)`,
-  `var n = B(9).name`, `(a + b).v`) projects its call-result slot
-  (`load_temporary_field`), as `p.x` does off a named local: the load
-  retains the slot through the instruction consuming the field, and a
-  consuming context's `CopyPlaceValue` copies an owning field out before the
-  slot dies. A reference-typed field and a base held in a register keep the
-  register `GetField`.
+- A field read off an expression temporary (`print(B(1).x)`,
+  `var n = B(9).name`, `(a + b).v`, `show(R(5).x)`, `W(R(1)).r.x`)
+  projects its storage (`load_temporary_field`), as `p.x` does off a named
+  local: its call-result slot, or for a value held in a register a hidden
+  `$mat_r` slot (`temporary_root_place`), as upstream materializes every
+  expression temporary. The load is a place read like any other, so the
+  temporary lives as the instruction consuming the field takes it — past a
+  call that lends the field, and not into one whose register-passable
+  `read` parameter loads it at call setup — and a consuming context's
+  `CopyPlaceValue` copies an owning field out before the slot dies. A
+  reference-typed field keeps the register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention), and
   how long depends on how that instruction receives the register, as the

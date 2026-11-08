@@ -104,6 +104,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field read out of an expression temporary projects the temporary's
+  storage, as at the pin, so the temporary dies as the call takes the
+  field: `show(R(5).x)` over a register-passable `read` parameter
+  destroys `R(5)` before `show` runs, and `print(R(5).x)`,
+  `print((R(3) if c else R(4)).x)`, and `show(W(R(10)).r.x)` now order
+  their destructors as the pin does. Pinned by a new fixture (R1977).
 - A subscript getter's and `__contains__`'s register-passable `read self`
   receiver is passed by value, as a method call's is, so `a.p[2]`,
   `a.p[1, 2]`, `a.p[0:2]`, and `1 in a.p` over a `TrivialRegisterPassable`

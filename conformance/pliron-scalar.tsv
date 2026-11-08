@@ -1444,6 +1444,7 @@ assets/ok/template_value_shaped_operations.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/template_view_over_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_where_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_argument_field_deinit.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/temporary_field_read_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ternary.mojo	-	ineligible	no-scalar-entry-shape

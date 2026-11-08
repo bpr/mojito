@@ -1756,48 +1756,38 @@ impl<'a> Flatten<'a> {
         self.outside_call_setup(lower)
     }
 
-    /// Read a field (`B(1).x`) off a temporary returned through memory by
-    /// projecting its call-result slot, exactly as `p.x` reads off a named
-    /// local. The load keeps the slot alive through the instructions that
-    /// consume it (`print(B(1).x)` destroys the temporary after `print`), so
-    /// drop elaboration runs the temporary's destructor where the pinned
-    /// Mojo does; a consuming context's checked `CopyPlaceValue` copies an
-    /// owning field out before the slot dies, as it does for a named
-    /// local's. A temporary held in a register is read by a `GetField`.
-    /// `None`, leaving the base to the caller, when the base is not a fresh
-    /// temporary, is a reference result, or a materialized borrow source, or
-    /// when the field is a reference.
+    /// Read a field (`B(1).x`) off an expression temporary by projecting its
+    /// storage, exactly as `p.x` reads off a named local: its call-result
+    /// slot, or a hidden `$mat_r` slot for a register value, as upstream
+    /// materializes every expression temporary. The load is the
+    /// temporary's last use, so drop elaboration runs its destructor where
+    /// the pinned Mojo does: after a call that lends the field
+    /// (`print(B(1).x)`), and before one whose register-passable `read`
+    /// parameter loads it at call setup (`show(R(5).x)`). A consuming
+    /// context's checked `CopyPlaceValue` copies an owning field out before
+    /// the slot dies, as it does for a named local's.
+    /// A chain (`W(R(1)).r.x`) projects the temporary's storage through
+    /// each field ([`Self::temporary_field_place`]). `None`, leaving the
+    /// base to the caller, when the chain's root is not a fresh temporary,
+    /// is a reference result, or a materialized borrow source, or when the
+    /// field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
         expression: Node<'a>,
         object: Node<'a>,
         field: &str,
     ) -> Option<Reg> {
-        if !object.is_fresh_temporary()
-            || object.reference_result().is_some()
-            || mojito_checked::checked::materialized_borrow_owner(object.adjustments()).is_some()
-        {
-            return None;
-        }
         let field_ty = expression.ty()?;
         if matches!(field_ty.kind(), TyKind::Ref(_)) {
             return None;
         }
-        let slot = match self.expr_c(object) {
-            CValue::Value(base) => {
-                let loaded = self.fresh(expression.location(), None);
-                self.emit(MirInstr::GetField {
-                    dest: loaded,
-                    base,
-                    field: field.to_owned(),
-                });
-                return Some(loaded);
-            }
-            CValue::Slot(slot) => slot,
+        let mut place = if object.is_fresh_temporary() {
+            self.temporary_root_place(object)?
+        } else {
+            self.temporary_field_place(object)?
         };
-        let mut place = MirPlace::root(slot, self.var_types.get(&slot).cloned());
         place.project(Proj::Field(field.to_string()), field_ty.clone());
-        let loaded = self.fresh_typed(expression.location(), Some(slot), field_ty);
+        let loaded = self.fresh_typed(expression.location(), Some(place.root), field_ty);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place,
@@ -1825,22 +1815,29 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let mut place = if object.is_fresh_temporary() {
-            if object.reference_result().is_some()
-                || mojito_checked::checked::materialized_borrow_owner(object.adjustments())
-                    .is_some()
-            {
-                return None;
-            }
-            let slot = match self.expr_c(object) {
-                CValue::Slot(slot) => slot,
-                CValue::Value(value) => self.temporary_storage(object, value, false, "$mat_r"),
-            };
-            MirPlace::root(slot, self.var_types.get(&slot).cloned())
+            self.temporary_root_place(object)?
         } else {
             self.temporary_field_place(object)?
         };
         e.project_member(&mut place, field);
         Some(place)
+    }
+
+    /// The storage of `object`, a fresh expression temporary, lowered into
+    /// it: its call-result slot, or a hidden `$mat_r` slot for a register
+    /// value. `None`, emitting nothing, for a reference result or a
+    /// materialized borrow source.
+    fn temporary_root_place(&mut self, object: Node<'a>) -> Option<MirPlace> {
+        if object.reference_result().is_some()
+            || mojito_checked::checked::materialized_borrow_owner(object.adjustments()).is_some()
+        {
+            return None;
+        }
+        let slot = match self.expr_c(object) {
+            CValue::Slot(slot) => slot,
+            CValue::Value(value) => self.temporary_storage(object, value, false, "$mat_r"),
+        };
+        Some(MirPlace::root(slot, self.var_types.get(&slot).cloned()))
     }
 
     /// The place of a compile-time binding's read the checker materialized

@@ -1300,29 +1300,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1977 A field read out of a struct temporary does not tie the
-  temporary's life to how the call takes the field**
-
-  At the pin a field of an expression temporary is a projection of it: a
-  register-passable `read` parameter loads the field at call setup, so the
-  temporary dies before the call, and a by-address parameter lends the
-  field, so it dies after. Mojito's `field.get` of the owned register gets
-  neither rule.
-  - Probe: `show(R(5).x)` over `def show(i: Int)` and a `RegisterPassable`
-    `R` printing in its destructor prints `show 5`, `del 5`; the pin
-    prints `del 5` first.
-  - Probe: `print(R(5).x)` prints `del 5` before `5`; the pin prints it
-    after, as `print`'s variadic pack lends the field.
-  - Probe: `print((R(3) if c else R(4)).x)` misorders the same way.
-  - `gen(R(6).x)` over a generic `read` parameter already matches.
-  - R1570's call-setup load reads `single_hop` provenance, which only a
-    scalar read of a variable's place records (`RegisterLoanStep::new` in
-    `register_loans.rs`); a `field.get` of an owned register records none,
-    and a `lit.ref.pack` of its result does not retain the register.
-  - Found while landing R1603 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R473 A discard `_ = e` binds its value into a slot, so a place is
   copied or moved into it**
 

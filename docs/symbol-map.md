@@ -1486,7 +1486,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   memory-only `ReadTemporaryArgument`), so `address_call_operands` passes
   its address. `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
-  over a register result), `load_temporary_field`, `temporary_field_place`
+  over a register result), `load_temporary_field` (a field read, a chain
+  included, over the slot `temporary_root_place` lowers the temporary
+  into), `temporary_field_place`
   (a transfer's field chain over a temporary, `mk().s^`, which
   `Flatten::transfer` moves out of the slot, so the move analysis sees the
   hole), and `discard_result`

@@ -1444,6 +1444,7 @@ assets/ok/template_value_shaped_operations.mojo	main	exe-differential	sanitized
 assets/ok/template_view_over_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_where_instances.mojo	main	exe-differential	sanitized
 assets/ok/temporary_argument_field_deinit.mojo	main	exe-differential	sanitized
+assets/ok/temporary_field_read_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_view.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
