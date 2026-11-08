@@ -787,6 +787,39 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
     assert!(context.list_get(&pack, &literal(&context, -1)).is_err());
 }
 
+/// A `SIMDLength` index reads as its lane count: a closed length selects
+/// its element, and a length still a parameter gives the element at its
+/// lane count, as upstream's `__getitem_param__[idx: SIMDLength]` reads
+/// `idx._mlir_value`.
+#[test]
+fn simd_length_index_reads_as_its_lane_count() {
+    let context = ParamContext::new();
+    let types = context
+        .constant(CtValue::Tuple(vec![
+            CtValue::Type(Ty::int()),
+            CtValue::Type(Ty::bool()),
+        ]))
+        .expect("constant");
+    let one = context
+        .constant(crate::types::simd_length_value(1))
+        .expect("length");
+    let element = context.list_get(&types, &one).expect("element builds");
+    assert_eq!(DependentType::resolve(element), Ty::bool());
+
+    let pack = context.register(ParamId::new("S", 0), "Ts", MetaTy::type_list());
+    let length = context.register(
+        ParamId::new("S.get", 0),
+        "idx",
+        MetaTy::value(crate::types::simd_length_ty()),
+    );
+    let element = context.list_get(&pack, &length).expect("element builds");
+    let image = crate::types::simd_length_image(&context, &length).expect("image");
+    assert_eq!(
+        element,
+        context.list_get(&pack, &image).expect("element builds")
+    );
+}
+
 /// An application is a node by structure, never a constant, and prints as
 /// Mojo spells it: `f(3)`.
 #[test]

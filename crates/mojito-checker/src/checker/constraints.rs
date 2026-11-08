@@ -3141,6 +3141,7 @@ impl Checker {
                 };
                 Some(receiver.and_then(|receiver| {
                     let list = self.receiver_list(receiver)?;
+                    let _lifting = self.lifting_position();
                     let index =
                         self.build_ct(index, recording)
                             .map_err(|_| TypeError::TypeMismatch {

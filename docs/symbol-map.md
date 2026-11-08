@@ -853,11 +853,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_member_value`, so `Ts.length` in any position), and
   `type_pack_element` applies its `__getitem_param__` through
   `associated_type_from_base`, which `pack_element_type` and
-  `eval_associated_ct`'s `Self.Ts[i]` arm call. The member's template is
-  the dependent element (`ParamContext::list_get`,
-  `DependentType::pack_element` in `mojito-types`), lowered from the
-  bundled `Self.values[idx]` (`ty_from_anno`'s bundled `IndexedProjection`
-  arm). A subscript of a construction in type position
+  `eval_associated_ct`'s `Self.Ts[i]` arm call. The member is a value
+  template, upstream's bracketed `#kgen.param_list.get` over a
+  `SIMDLength` index (`mlir_bracket_attribute`), which
+  `resolve_parameterized_member` reads as a type through
+  `type_valued_member` (an `Int` argument converted by
+  `simd_length_of_lanes`); its value is the dependent element
+  (`ParamContext::list_get`, which reads a `SIMDLength` index at its
+  lane count, and `DependentType::pack_element` in `mojito-types`). A subscript of a construction in type position
   (`TypeList[Ts.values]()[i]`) is `Type::Value` (`mojito-ast`, built by
   `parse_type`'s construction arm in `parser/types.rs`) under an
   `IndexedProjection`, which `resolve_ty_from_anno_at_depth`'s value-base

@@ -19,6 +19,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `TypeList.__getitem_param__` takes a `SIMDLength` index through
+  upstream's `#kgen.param_list.get` body, as at the pin: `L[SIMDLength(0)]`
+  indexes a `TypeList` value, `comptime E = Ts.__getitem_param__[1]` and
+  `comptime if Ts.__getitem_param__[0] == Int:` read the member, and a
+  parameterized member whose value is a type (a user `get[idx:
+  SIMDLength]` over `#kgen.param_list.get`, `TypeList._get_type_at_index`)
+  is read as a type in an annotation instead of being rejected (R1540,
+  R1637).
 - A struct parameter's name may not be declared again in the struct body
   or at a method's top level, as at the pin: `struct H[d: DType]` with
   `def f[d: Int]()`, a run-time parameter or top-level `var d`, or a field

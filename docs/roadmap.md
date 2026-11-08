@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2022**.
+Next free ID: **R2024**.
 
 ## Ordered Work
 
@@ -4539,6 +4539,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2022 A local `comptime` value does not shadow a module type of
+  its name in a type annotation**
+
+  Over a module `struct L[n: Int]`, `comptime L = TypeList.of[Trait=AnyType,
+  Int, Bool]()` in `main` and `var b: L[1] = True` fail with "expected
+  L[1], found Bool", where the pin reads the local and prints `True`.
+  - A name resolves through the innermost scope at the pin, so the local
+    binding hides the module struct in every position.
+  - `Checker::ty_from_anno`'s `SourceType::Named` arm
+    (`checker/type_resolution.rs`) asks `applied_type_at_depth` first and
+    reads the name as a compile-time value (`value_headed_type`) only
+    when no type has that name, so a module type wins over a local value.
+  - Found while landing R1540 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1960 An integer literal does not convert to a `bool` lane, so
   `~` over a mask fails, where the pin's `#pop.int_literal_convert`
   takes any lane**
@@ -5385,11 +5401,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The rejections differ by site: "function types as compile-time
     values", "Undefined variable 'W'", "unsupported dependent parameter
     expression", and "'Self' is not a compile-time type".
-  - Probe: a type pack's member spelled out, `comptime E =
-    Ts.__getitem_param__[1]` ("Undefined variable 'Ts'"), and `comptime G
-    = TypeList[Ts.values].__getitem_param__[1]`, `comptime if
-    Ts.__getitem_param__[0] == Int:`, and a struct member `comptime First =
-    Self.Ts.__getitem_param__[0]`.
+  - Probe: a struct member spelling a type pack's member out, `comptime
+    First = Self.Ts.__getitem_param__[0]`, read as `var x: S[Int,
+    Bool].First`, fails with "not an associated comptime expression".
   - Probe: the subscript spelling in a local `comptime`, `comptime T =
     TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
     'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
@@ -5401,31 +5415,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1637 A parameterized `comptime` member whose body is a value is
-  not read as a type in a type annotation**
-
-  `def take[*Ts: AnyType](x: TypeList[Ts.values]._get_type_at_index[...])`
-  is rejected ("'TypeList[AnyType, Ts]._get_type_at_index' is a
-  compile-time value member: expected a type, found a value"), where the
-  pin reads the member's type-valued attribute as the parameter's type
-  and `take[Int](5)` prints `took`.
-  - `Checker::resolve_parameterized_member` (`checker/type_resolution.rs`)
-    takes only a `MemberTemplate::Type`, a body the checker spells as a
-    type (`assoc_body_source_type`); a bracketed `__mlir_attr` body is a
-    value template even when its value is a type.
-  - The same member as a type argument (`List[…_get_type_at_index[…]]`,
-    `name[…]()`) or in a `comptime assert` already reads through
-    `build_ct`.
-  - Probe: `var v: L[Ts.values].get[1]` over a user struct's `comptime
-    get[idx: SIMDLength] = __mlir_attr[`#kgen.param_list.get<:`, …]`
-    fails with "type mismatch for associated type parameter 'idx':
-    expected a type, found a value".
-  - Lever: an annotation over a value template builds the application
-    through `build_ct` and takes its type when its meta is `Type`.
-  - Found while landing R1536 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1716 A spread of a `ParameterList` value binds only a literal
   construction**
@@ -5520,6 +5509,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2023 A type annotation does not read a member through a local
+  compile-time value**
+
+  `var a: w.E = True` over `comptime w = W[3]()`, where `W` declares
+  `comptime E = Bool`, fails with "expected a type, found a value", where
+  the pin prints `True`.
+  - The pin types the annotation's base as an expression and reads the
+    member on its type, as a member read through a construction
+    (`W[3]().E`) already does here.
+  - `Checker::member_base` (`checker/type_resolution.rs`) takes a
+    `SourceType::Value` construction or a type, and resolves a bare
+    `SourceType::Named` base as a type, so a local compile-time value's
+    name is no base.
+  - Probe: a parameterized member through a `TypeList` value, `var m:
+    L.__getitem_param__[SIMDLength(0)] = 3` over `comptime L =
+    TypeList.of[Trait=AnyType, Int, Bool]()`, fails with "unknown type
+    'L'", where the pin prints `3`.
+  - Found while landing R1540 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1473 A member read through a construction that takes arguments is
   rejected**
@@ -10690,32 +10700,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1540 A parameter list is indexed by an `Int`, where upstream's
-  `__getitem_param__` takes a `SIMDLength`**
-
-  `ParamContext::list_get` (`mojito-types/param_expr.rs`) takes only an
-  `Int` index, where upstream's `TypeList.__getitem_param__[idx:
-  SIMDLength]` indexes `Self.values` by a `SIMDLength`.
-  - Probe: respelling `stdlib/std/builtin/variadics.mojo`'s
-    `comptime __getitem_param__[idx: Int] = Self.values[idx]` as
-    upstream's `idx: SIMDLength` fails to package the library with
-    "parameter list element expects an Int parameter list index, found
-    SIMDLength".
-  - Lever: a `SIMDLength` index reads as its lane count
-    (`types::simd_length_image`), as the SIMD width slot reads one; then
-    respell `TypeList.__getitem_param__` as upstream's bracketed
-    `#kgen.param_list.get` body over `idx._mlir_value` and drop its
-    comment.
-  - Probe: that body already runs over a user struct (`comptime
-    get[idx: SIMDLength] = __mlir_attr[…, idx._mlir_value, …]`, read as
-    `l.get[1]`); respelling the bundled member with it fails packaging
-    with "not a compile-time Int constant: unsupported associated
-    comptime member access".
-  - `ParameterList.__getitem_param__` (R800) takes the same index.
-  - Found while landing R1539 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R800 A compile-time subscript of a value pack is a checker rule, not
   `ParameterList.__getitem_param__`**
 
@@ -10730,14 +10714,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ParameterList` binder, a compile-time struct value whose
     `__getitem_param__` the bundled port lacks (`comptime First[*vs: Int]
     = vs[0]`, `assets/ok/generic_alias_type_pack.mojo`).
-  - Add `comptime __getitem_param__[idx: Int]: Self.type =
-    Self.values[idx]` to `ParameterList` in
-    `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
-    its own; once R1540 lands, both are upstream's bracketed
-    `#kgen.param_list.get` body.
-  - Upstream's index parameter is `idx: SIMDLength`, which a parameter
-    list does not take as an index yet (R1540), so the port spells it
-    `Int`, as `TypeList`'s does, and says so in the module header.
+  - Add upstream's `comptime __getitem_param__[idx: SIMDLength]:
+    Self.type` to `ParameterList` in `stdlib/std/builtin/variadics.mojo`,
+    the bracketed `#kgen.param_list.get` body over `idx._mlir_value` that
+    `TypeList`'s already is.
   - Probe: `comptime e = vs.__getitem_param__[1]` in `def go[*vs: Int]()`
     reports "type 'ParameterList[Int, vs]' has no field
     '__getitem_param__'", where the pin prints `5`.

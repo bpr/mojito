@@ -552,8 +552,17 @@ impl ParamContext {
     /// `param_list.get`: element `index` of a parameter list. A constant list
     /// of types is a finite [`Self::select`], so a bound pack and a checked
     /// type sequence share one normal form; a list that is still a parameter
-    /// keeps the residual node.
+    /// keeps the residual node. A `SIMDLength` index reads as its lane
+    /// count ([`crate::types::simd_length_image`]), as upstream's
+    /// `__getitem_param__[idx: SIMDLength]` reads `idx._mlir_value`.
     pub fn list_get(&self, list: &ParamExpr, index: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        if index
+            .meta()
+            .as_value()
+            .is_some_and(crate::types::is_simd_length)
+        {
+            return self.list_get(list, &crate::types::simd_length_image(self, index)?);
+        }
         let list = self.intern(list);
         if let Some(CtValue::Tuple(values)) = list.as_constant()
             && let Some(elements) = values

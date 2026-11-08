@@ -8,9 +8,7 @@
 # A pack's `Ts.length` and `Ts[i]` read `TypeList`'s `length` and
 # `__getitem_param__`. `TypeList`'s `_mlir_type`, `_raw_length`, `length`,
 # and `_get_type_at_index`, and `ParameterList`'s `_mlir_type` and `length`,
-# are upstream's `#kgen.param_list` bodies. `TypeList.__getitem_param__`
-# takes an `Int` and subscripts the raw list, where upstream's takes a
-# `SIMDLength` into `#kgen.param_list.get` (R1540).
+# are upstream's `#kgen.param_list` bodies, as is `TypeList.__getitem_param__`.
 # Omitted: the `@implicit` upcast constructor (`#kgen.upcast`,
 # `#kgen.is_refined_type`), and the list vocabulary (`tabulate`, `splat`,
 # `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`, `map`,
@@ -110,9 +108,16 @@ struct TypeList[
     comptime length = Int(mlir_value=Self._raw_length)
     """The number of types in the list."""
 
-    # Upstream's index type is `SIMDLength`, which a parameter list does not
-    # take as an index yet (R1540).
-    comptime __getitem_param__[idx: Int] = Self.values[idx]
+    comptime __getitem_param__[idx: SIMDLength] = __mlir_attr[
+        `#kgen.param_list.get<:`,
+        Self._mlir_type,
+        ` `,
+        +Self.values,
+        `, `,
+        idx._mlir_value,
+        `> : `,
+        +Self.Trait,
+    ]
     """Gets a type at the given index.
 
     Parameters:

@@ -748,23 +748,6 @@ impl Checker {
             {
                 self.pack_element_type(&pack, index)?
             }
-            // `Self.values[idx]` over the struct's own raw type list, in the
-            // bundled `variadics.mojo` alone: the stand-in for upstream's
-            // `#kgen.param_list.get` that `TypeList.__getitem_param__` spells.
-            SourceType::IndexedProjection { base, index }
-                if let SourceType::SelfParam(name) = base.as_ref()
-                    && super::overload_support::is_bundled_variadics_source(
-                        index.source_span().source.as_deref(),
-                    )
-                    && let Some(raw) = self.self_raw_list(name)
-                    && raw.meta() == &mojito_types::param_expr::MetaTy::type_list() =>
-            {
-                let index = self.compile_dependent_ct_expr(index)?;
-                self.param_context
-                    .list_get(&raw, &index)
-                    .map(mojito_types::types::DependentType::resolve)
-                    .map_err(super::param_error)?
-            }
             SourceType::IndexedProjection { base, index } => {
                 // A parameterized associated-type application such as
                 // `Self.IteratorType[origin_of(self)]` is spelled like a dependent
@@ -873,6 +856,17 @@ impl Checker {
                 got: args.len(),
             });
         }
+        // A struct member's checked declarations tell a value parameter
+        // whose type the syntax cannot (`idx: SIMDLength`).
+        let declared = self
+            .nominal_struct(base_ty)
+            .and_then(|(struct_name, _)| self.structs.get(struct_name))
+            .and_then(|info| info.parameterized_associated.get(name))
+            .map(|member| match &member.template {
+                MemberTemplate::Type { decls, .. } | MemberTemplate::Value { decls, .. } => {
+                    decls.clone()
+                }
+            });
         // Carry the application arguments in the checked type. The base here is
         // still abstract (`Self` or a bounded parameter). An `origin_of(self)`
         // argument in a trait method's abstract signature has no bound `self`
@@ -882,7 +876,16 @@ impl Checker {
         let arguments = explicit
             .iter()
             .zip(args)
-            .map(|(param, arg)| self.lower_assoc_application_arg(param, arg))
+            .map(|(param, arg)| match (arg, &declared) {
+                (mojito_ast::ast::ParamArg::Value(value), Some(decls))
+                    if decls.iter().any(|decl| {
+                        decl.name() == param.name && matches!(decl, ParamDecl::Value { .. })
+                    }) =>
+                {
+                    self.eval_associated_ct(value).map(TyArg::Val)
+                }
+                _ => self.lower_assoc_application_arg(param, arg),
+            })
             .collect::<Result<Vec<_>, _>>()?;
         // A concrete struct base instantiates the member here and now (a conformer
         // spelling `Self.IteratorType[origin_of(self)]` as its own return type):
@@ -2670,19 +2673,32 @@ impl Checker {
         struct_targs: &[TyArg],
         args: &[TyArg],
     ) -> Result<Ty, TypeError> {
-        let MemberTemplate::Type { decls, template } = &member.template else {
-            return Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: format!("'{base}.{name}' is a compile-time value member"),
-            });
-        };
         // The arguments are the explicit parameters' (an abstract trait
         // signature's application), or every parameter's when a bracket list
         // bound them all ([`Self::member_application`]).
         let every = args.len() == member.params.len();
         let supplies = |param: &mojito_ast::ast::TypeParam| every || !param.infer_only;
         let explicit = member.params.iter().filter(|p| !p.infer_only).count();
+        let (decls, template) = match &member.template {
+            MemberTemplate::Type { decls, template } => (decls, template),
+            MemberTemplate::Value { .. } if every || args.len() == explicit => {
+                return self.type_valued_member(
+                    base,
+                    name,
+                    member,
+                    struct_decls,
+                    struct_targs,
+                    args,
+                );
+            }
+            MemberTemplate::Value { .. } => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "a type".to_string(),
+                    found: "a value".to_string(),
+                    context: format!("'{base}.{name}' is a compile-time value member"),
+                });
+            }
+        };
         if !every && args.len() != explicit {
             return Ok(TyKind::Assoc {
                 base: base.clone(),
@@ -2794,6 +2810,91 @@ impl Checker {
             origins,
         };
         Ok(self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)))
+    }
+
+    /// A struct's parameterized value member whose value is a type, read in
+    /// a type position (`TypeList.__getitem_param__[idx: SIMDLength]`, the
+    /// `#kgen.param_list.get` upstream's body spells): its body at the
+    /// struct's arguments and the application's, an integer at a
+    /// `SIMDLength` parameter converted as upstream's implicit
+    /// `SIMDLength.__init__(Int)` converts it.
+    fn type_valued_member(
+        &self,
+        base: &Ty,
+        name: &str,
+        member: &ParameterizedMember,
+        struct_decls: &[ParamDecl],
+        struct_targs: &[TyArg],
+        args: &[TyArg],
+    ) -> Result<Ty, TypeError> {
+        let MemberTemplate::Value { decls, body } = &member.template else {
+            return Err(TypeError::InvariantViolation(format!(
+                "'{base}.{name}' is not a compile-time value member"
+            )));
+        };
+        let every = args.len() == member.params.len();
+        let supplied: Vec<(&ParamDecl, &TyArg)> = member
+            .params
+            .iter()
+            .filter(|param| every || !param.infer_only)
+            .zip(args)
+            .filter_map(|(param, arg)| {
+                decls
+                    .iter()
+                    .find(|decl| decl.name() == param.name)
+                    .map(|decl| (decl, arg))
+            })
+            .collect();
+        self.validate_member_availability(
+            &format!("{base}.{name}"),
+            &member.availability,
+            struct_decls,
+            struct_targs,
+            decls,
+            supplied.iter().map(|(decl, arg)| (decl.name(), *arg)),
+        )?;
+        let context = &self.param_context;
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        self.bind_declared(&mut bindings, struct_decls, struct_targs)?;
+        for (decl, arg) in supplied {
+            match (decl, arg) {
+                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
+                    bindings.bind_type(id.clone(), ty.clone());
+                }
+                (ParamDecl::Value { id, ty, .. }, TyArg::Val(value)) => {
+                    let value = context.constant(value.clone()).map_err(param_error)?;
+                    let value = if is_simd_length(ty) && value.meta().is_integer() {
+                        self.simd_length_of_lanes(&value).ok_or_else(|| {
+                            TypeError::InvariantViolation(format!(
+                                "'{value}' does not convert to a SIMDLength"
+                            ))
+                        })?
+                    } else {
+                        value
+                    };
+                    bindings.bind(id.clone(), value);
+                }
+                _ => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "a type".to_string(),
+                        found: "a value".to_string(),
+                        context: format!("'{base}.{name}' is a compile-time value member"),
+                    });
+                }
+            }
+        }
+        let value = context
+            .replace(body, &bindings)
+            .and_then(|replaced| context.fold(&replaced))
+            .map_err(param_error)?;
+        if *value.meta() != mojito_types::param_expr::MetaTy::Type {
+            return Err(TypeError::TypeMismatch {
+                expected: "a type".to_string(),
+                found: "a value".to_string(),
+                context: format!("'{base}.{name}' is a compile-time value member"),
+            });
+        }
+        Ok(self.resolve_assoc_ty(&mojito_types::types::DependentType::resolve(value)))
     }
 
     /// `ty` with its member reads on concrete subjects closed, as a binder
