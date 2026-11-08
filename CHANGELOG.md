@@ -19,6 +19,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method call on a module `comptime` constant annotated `Int` is that
+  `Int`'s member, as at the pin: `comptime X: Int = 12` then
+  `X.__neg__()`, at module scope or in a body, prints `-12` instead of
+  failing with "type 'IntLiteral[12]' has no method" (R1572).
 - A compile-time `and`/`or` over a symbolic parameter of any type folds as
   at the pin: the left operand is tested through its `__bool__`
   application per instance, operands that coerce to one type yield it, and

@@ -2307,7 +2307,15 @@ impl Checker {
                     // out of a reference result as any compile-time
                     // result is (`comptime q = QS[2]`).
                     self.load_compile_time_result(value, &ty);
-                    let declared = self.comptime_binding_ty(&ty, name)?;
+                    // An `Int` annotation is the binding's type even where
+                    // the declaration bound `Int`'s conversion of the
+                    // literal rather than its fold (`comptime X: Int = 12`
+                    // is `Int(12)`, whose reads dispatch to `Int`'s members).
+                    let declared = if int_annotated {
+                        Ty::int()
+                    } else {
+                        self.comptime_binding_ty(&ty, name)?
+                    };
                     // A float literal stays a `FloatLiteral` that each read
                     // materializes; an unfolded integer literal is read as
                     // its `Int` storage type, so it crosses here.

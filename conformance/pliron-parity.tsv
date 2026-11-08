@@ -249,6 +249,7 @@ assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_pow_applies_dunder.mojo	main	exe-differential	sanitized
+assets/ok/comptime_scalar_constant_method_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_self_member_applied.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_simd_initializer_applications.mojo	main	exe-differential	sanitized

@@ -2782,6 +2782,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`checker/operators.rs`): `-N` and `~N` become the declared dunders.
   - Probe: `print(-4, ~4, (7).__ceildiv__(2), (2.5).__neg__())` prints `-4
     -5 4 -2.5` at the pin.
+  - Probe: `comptime X = 12`, then `print(X.__neg__())`, prints `-12` at
+    the pin; the unannotated constant is the `IntLiteral[12]`, so the call
+    reaches the unported `IntLiteral.__neg__`.
   - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5020,22 +5023,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type 'List[T]'".
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R1572 A method call on a module `comptime` constant of a builtin
-  scalar type is rejected**
-
-  `comptime X: Int = 12`, then `print(X.__str__())` or `print(X.__neg__())`,
-  fails with "type 'Int' has no method", where the pin runs both.
-  - The same call on a parameter (`n.__neg__()` in `def f[n: Int]()`), on a
-    construction (`Int(12).__neg__()`), or on a run-time `Int` runs, so the
-    receiver's resolution as a module constant, not the member, misses
-    `SIMD`'s declaration.
-  - Probe: `comptime W = X.__neg__()` and `comptime Y = X.__and__(5)` print
-    `-12` and `4` at the pin, at module scope and in a body.
-  - Found while landing R1552 (2026-10-28), which retired R684's run-time
-    shape.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R770 A struct parameter expression as a method's bracket argument
   lowers as a run-time read of `self`**
