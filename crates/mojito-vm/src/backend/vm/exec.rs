@@ -940,8 +940,16 @@ impl VmBackend {
                         return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
                     }
                 };
-                let capture_count = captures.len();
-                let mut positional = captures;
+                let index = prog
+                    .index_of(&function)
+                    .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
+                // An initializer's `out self` enters as its receiver storage,
+                // bound as a closure's is, and leaves as the call's result.
+                let receiver = Self::initializer_receiver(prog, index);
+                let initializes = receiver.is_some();
+                let mut positional = receiver.into_iter().collect::<Vec<_>>();
+                positional.extend(captures);
+                let capture_count = positional.len();
                 positional.extend(
                     args.iter()
                         .map(|register| regs[register.0 as usize].clone()),
@@ -952,9 +960,6 @@ impl VmBackend {
                     .collect();
                 let keyword_names: Vec<String> =
                     kwargs.iter().map(|(name, _)| name.clone()).collect();
-                let index = prog
-                    .index_of(&function)
-                    .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
                 let (bound, slots) = match prog.sigs.get(&function) {
                     Some(signature) => self.bind_for_closure_call(
                         prog,
@@ -1023,7 +1028,7 @@ impl VmBackend {
                     };
                     reference_inputs.push((parameter, handle));
                 }
-                let (result, _, _) = self.call_synchronously_with_references(
+                let (result, frame_vars, _) = self.call_synchronously_with_references(
                     prog,
                     SynchronousCall {
                         function_index: index,
@@ -1037,7 +1042,11 @@ impl VmBackend {
                         variables: vars,
                     },
                 )?;
-                regs[dest.0 as usize] = result;
+                regs[dest.0 as usize] = if initializes {
+                    frame_vars.into_iter().next().unwrap_or(Value::None)
+                } else {
+                    result
+                };
             }
             MirInstr::MethodCall {
                 dest,

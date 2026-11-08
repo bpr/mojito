@@ -3174,13 +3174,20 @@ impl<'a> Specializer<'a> {
                                 } else {
                                     instantiated_args.clone()
                                 };
+                                // An initializer read as a value returns
+                                // the struct its `out self` initializes, so
+                                // the call is that construction.
+                                let receiver =
+                                    (mojito_symbol::symbol::is_initializer_symbol(&target)
+                                        && function.reg_types.contains_key(&dest.0))
+                                    .then_some(*dest);
                                 // A generic `def` nested in this body binds
                                 // this instance's binders beside its own.
                                 let (target, bindings, arguments) = self.infer_call(
                                     owner,
                                     function,
                                     &target,
-                                    None,
+                                    receiver,
                                     *dest,
                                     (args, *spread),
                                     kwargs,

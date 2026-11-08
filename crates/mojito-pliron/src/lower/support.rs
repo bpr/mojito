@@ -8,12 +8,14 @@ use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 /// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
 /// load the capture arguments out of the environment record, forward
 /// the out-pointer and every user argument unchanged, call the lifted
-/// target directly, and return its result.
+/// target directly, and return its result. An initializer's `out self`
+/// receiver is the thunk's out-pointer, or storage the thunk reads its
+/// scalar result back from ([`ThunkReceiver`]).
 pub fn emit_thunk_body(
     ctx: &mut Context,
     func: FuncOp,
     target: &FnSignature,
-    captures: usize,
+    (captures, receiver): (usize, ThunkReceiver),
     has_out: bool,
 ) {
     let entry = func.get_or_create_entry_block(ctx);
@@ -26,8 +28,9 @@ pub fn emit_thunk_body(
         value
     };
     let mut operands = Vec::new();
-    if has_out {
-        operands.push(argument(ctx, &mut next_argument));
+    let out = has_out.then(|| argument(ctx, &mut next_argument));
+    if receiver != ThunkReceiver::OutPointer {
+        operands.extend(out);
     }
     let env = argument(ctx, &mut next_argument);
     // Each slot stores a captured place's address, which the lifted body
@@ -45,11 +48,27 @@ pub fn emit_thunk_body(
         load.get_operation().insert_at_back(entry, ctx);
         operands.push(load.get_result(ctx));
     }
+    let storage = match receiver {
+        ThunkReceiver::Forwarded => None,
+        ThunkReceiver::OutPointer => out,
+        // Every native scalar fits one 8-byte slot.
+        ThunkReceiver::Scalar(_) => {
+            let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
+            let attr = IntegerAttr::new(i64_int, APInt::from_u64(8, bw(64)));
+            let count = ConstantOp::new(ctx, Box::new(attr));
+            count.get_operation().insert_at_back(entry, ctx);
+            let alloca = AllocaOp::new(ctx, i8_ty, count.get_result(ctx), 0);
+            alloca.set_alignment(ctx, 8);
+            alloca.get_operation().insert_at_back(entry, ctx);
+            Some(alloca.get_result(ctx))
+        }
+    };
+    operands.extend(storage);
     let mut remaining = target
         .params
         .iter()
         .enumerate()
-        .skip(captures)
+        .skip(captures + usize::from(receiver != ThunkReceiver::Forwarded))
         .filter(|(index, param)| {
             !matches!(param, LowerTy::ZeroSized)
                 || target.ref_params.get(*index).copied().unwrap_or(false)
@@ -71,9 +90,47 @@ pub fn emit_thunk_body(
         operands,
     );
     call.get_operation().insert_at_back(entry, ctx);
-    let result = target.returns_value.then(|| call.get_result(ctx));
+    let result = match (receiver, storage) {
+        (ThunkReceiver::Scalar(scalar), Some(storage)) => {
+            let handle = scalar.handle(ctx);
+            let load = LoadOp::new(ctx, storage, handle);
+            load.get_operation().insert_at_back(entry, ctx);
+            Some(load.get_result(ctx))
+        }
+        _ => target.returns_value.then(|| call.get_result(ctx)),
+    };
     let ret = ReturnOp::new(ctx, result);
     ret.get_operation().insert_at_back(entry, ctx);
+}
+
+/// What an `invoke` thunk passes as its target's first parameter: the
+/// first forwarded argument, or, for a function value of an initializer,
+/// the `out self` receiver its result is, as upstream's `__init__` returns
+/// the struct it initializes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ThunkReceiver {
+    /// Not an initializer: every parameter forwards unchanged.
+    Forwarded,
+    /// An aggregate receiver: the thunk's sret out-pointer.
+    OutPointer,
+    /// A receiver held as a scalar: storage the thunk returns the value of.
+    Scalar(ScalarTy),
+}
+
+impl ThunkReceiver {
+    /// The receiver a function value of `target`, closing over `captures`
+    /// places, passes. A zero-sized receiver passes nothing, so it
+    /// forwards.
+    pub fn of(target: &FnSignature, captures: usize) -> Self {
+        if !target.out_receiver || captures > 0 {
+            return Self::Forwarded;
+        }
+        match target.params.first() {
+            Some(LowerTy::Aggregate { .. }) => Self::OutPointer,
+            Some(LowerTy::Scalar(scalar)) => Self::Scalar(*scalar),
+            _ => Self::Forwarded,
+        }
+    }
 }
 
 /// The LLVM-dialect type of one runtime-contract primitive. LLVM integers

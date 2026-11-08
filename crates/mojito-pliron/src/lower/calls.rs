@@ -791,17 +791,38 @@ impl FnLowering<'_> {
                 dest,
             )
         };
+        if target.out_receiver && target.outcome.is_some() && captures == 0 {
+            return Err(self.unsupported_reg(
+                format!("a function value of the raising initializer `{name}` (roadmap R2032)"),
+                dest,
+            ));
+        }
+        // An initializer's `out self` is the value's result: its sret slot,
+        // its scalar result, or nothing when it is zero-sized.
+        let receiver = usize::from(target.out_receiver && captures == 0);
+        let agrees = match (receiver, target.params.first()) {
+            (0, _) => true,
+            (_, Some(LowerTy::Aggregate { .. })) => abi.sret.is_some(),
+            (_, Some(LowerTy::Scalar(_))) => abi.sret.is_none() && abi.returns_value,
+            (_, Some(LowerTy::ZeroSized)) => abi.sret.is_none() && !abi.returns_value,
+            (_, None) => false,
+        };
+        if !agrees {
+            return Err(disagree(self));
+        }
+        let target_sret = target.sret.is_some()
+            || matches!(target.params.first(), Some(LowerTy::Aggregate { .. })) && receiver == 1;
         if abi.outcome.is_some() != target.outcome.is_some()
             || abi.returns_reference != (target.result_form == ResultForm::Reference)
             || abi.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
                 != target.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
-            || abi.sret.is_some() != target.sret.is_some()
-            || abi.params.len() + captures != target.params.len()
+            || abi.sret.is_some() != target_sret
+            || abi.params.len() + captures + receiver != target.params.len()
         {
             return Err(disagree(self));
         }
         for (index, param) in abi.params.iter().enumerate() {
-            let target_index = captures + index;
+            let target_index = captures + receiver + index;
             let target_param = &target.params[target_index];
             let contract_ref = abi.ref_params.get(index).copied().unwrap_or(false);
             let target_ref = target

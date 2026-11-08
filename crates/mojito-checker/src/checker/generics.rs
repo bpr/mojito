@@ -1831,20 +1831,31 @@ impl Checker {
                 }));
             }
         };
-        let Some(signatures) = self
+        let synthesized;
+        let signatures = match self
             .structs
             .get(owner)
             .and_then(|info| info.methods.get(method))
-        else {
-            return Ok(None);
+        {
+            Some(signatures) => signatures,
+            None => match self.fieldwise_initializer_sig(owner, method) {
+                Some(signature) => {
+                    synthesized = vec![signature];
+                    &synthesized
+                }
+                None => return Ok(None),
+            },
         };
+        // An initializer's `out self` is its result, as upstream's
+        // `__init__` is a function returning the struct it initializes.
+        let result = TyKind::Struct(owner.to_string(), Vec::new()).into();
         let statics = signatures
             .iter()
-            .filter(|sig| !sig.has_self)
+            .filter(|sig| !sig.has_self || is_initializer_sig(sig))
             .collect::<Vec<_>>();
         let mut types = statics
             .iter()
-            .map(|sig| static_method_value_ty(sig))
+            .map(|sig| static_method_value_ty(sig, &result))
             .collect::<Vec<_>>();
         // A method sharing its name with another lowers to its overload's
         // symbol, as the static call through the struct names it.
@@ -1919,8 +1930,11 @@ struct CallableValueCandidates {
 
 /// The value type of the static `sig`: a thin function, since a static
 /// captures nothing, generic over the method's own parameters.
-fn static_method_value_ty(sig: &MethodSig) -> Ty {
-    let func = method_func_ty(sig, mojito_types::origin::CallableEnvironment::Thin);
+fn static_method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
+    let mut func = method_func_ty(sig, mojito_types::origin::CallableEnvironment::Thin);
+    if is_initializer_sig(sig) {
+        func.ret = sig.refined_self.clone().unwrap_or_else(|| owner.clone());
+    }
     if sig.decls.is_empty() {
         return TyKind::Func(Box::new(func)).into();
     }
@@ -1929,6 +1943,11 @@ fn static_method_value_ty(sig: &MethodSig) -> Ty {
         func,
     }))
     .into()
+}
+
+/// Whether `sig` is an initializer, whose `out self` receiver is its result.
+fn is_initializer_sig(sig: &MethodSig) -> bool {
+    sig.has_self && sig.self_convention == Some(mojito_ast::ast::ArgConvention::Out)
 }
 
 /// Whether a struct symbol names the bundled `Span` view (bare or

@@ -99,6 +99,10 @@ pub struct FnSignature {
     /// its final state writes back to the caller's receiver place, exactly
     /// like a `mut` receiver.
     pub deinit_receiver: bool,
+    /// Whether parameter 0 is an initializer's `out self`, the caller's
+    /// result storage: upstream's `__init__` returns the struct it
+    /// initializes, so a function value of it returns through that slot.
+    pub out_receiver: bool,
     /// Whether the result is the value itself or a reference to it.
     pub result_form: ResultForm,
 }

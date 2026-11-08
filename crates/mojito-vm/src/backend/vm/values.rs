@@ -295,6 +295,21 @@ impl VmBackend {
         self.construct_entered(prog, skeleton, constructor, user_args)
     }
 
+    /// The `out self` storage the initializer at `index` enters with when a
+    /// call through a function value runs it, as upstream's `__init__` is a
+    /// function returning the struct it initializes. `None` for any other
+    /// function.
+    pub(super) fn initializer_receiver(prog: &Prog, index: usize) -> Option<Value> {
+        let (name, function) = &prog.mir.functions[index];
+        match prog.constructed(name, &function.param_types)? {
+            Constructed::Struct(constructed) => Some(Value::Struct {
+                name: constructed.to_string(),
+                fields: uninitialized_fields(&prog.structs.get(constructed)?.fields),
+            }),
+            Constructed::Value(skeleton) => Some(skeleton),
+        }
+    }
+
     /// Run the initializer `constructor` over its `out self` receiver
     /// entering as `skeleton` and `user_args` bound in declared order, for
     /// the initialized receiver (frame slot 0).

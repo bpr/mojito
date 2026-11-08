@@ -264,6 +264,11 @@ impl VmBackend {
             let index = prog
                 .index_of(&function_name)
                 .ok_or_else(|| RuntimeError::NotCallable(function_name.clone()))?;
+            // An initializer's result is its receiver, which the synchronous
+            // path reads back.
+            if Self::initializer_receiver(prog, index).is_some() {
+                return Ok(None);
+            }
             let capture_count = captured.len();
             let mut positional = captured;
             positional.extend(

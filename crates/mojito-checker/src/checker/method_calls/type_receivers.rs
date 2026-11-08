@@ -185,22 +185,25 @@ impl Checker {
         let Some((owner, parametric)) = self.static_method_owner(object, method) else {
             return Ok(None);
         };
-        if self.structs.get(&owner).is_some_and(|info| {
-            info.methods.get(method).is_some_and(|sigs| {
-                sigs.iter()
-                    .any(|sig| sig.has_self && takes_no_receiver(sig))
-            })
-        }) {
-            return Err(TypeError::Unsupported(format!(
-                "reading the initializer '{owner}.{method}' as a value is not supported yet: \
-                 its `out self` lowers as a parameter, not the function's result (roadmap R1796)"
-            )));
-        }
         if parametric {
             return Err(TypeError::Unsupported(format!(
                 "reading the static method '{owner}.{method}' of a parametric struct as a \
                  value is not supported yet (roadmap R1794)"
             )));
+        }
+        // A movable struct's `__init__` overload set holds the move
+        // initializer upstream synthesizes beside its declared ones, so
+        // only an expected type or a bracket's operands select one.
+        if mojito_symbol::symbol::is_initializer_member(method)
+            && arguments.is_empty()
+            && expected.is_none_or(|expected| expected.callable().is_none())
+            && self.conforms_to(&TyKind::Struct(owner.clone(), Vec::new()).into(), "Movable")
+        {
+            return Err(TypeError::BadCall {
+                func: format!("{owner}.{method}"),
+                reason: "an overloaded function value requires a contextual callable type"
+                    .to_string(),
+            });
         }
         if record {
             self.record_static_receiver(object, &owner, &[]);
@@ -289,11 +292,42 @@ impl Checker {
             return None;
         };
         let info = self.structs.get(&owner)?;
-        info.methods
-            .get(method)?
-            .iter()
-            .any(takes_no_receiver)
-            .then_some((owner, !info.decls.is_empty()))
+        let parametric = !info.decls.is_empty();
+        match info.methods.get(method) {
+            Some(signatures) => signatures.iter().any(takes_no_receiver),
+            None => self.fieldwise_initializer_sig(&owner, method).is_some(),
+        }
+        .then_some((owner, parametric))
+    }
+
+    /// The signature of the `__init__` a `@fieldwise_init` struct
+    /// synthesizes, as upstream declares one taking each field in order,
+    /// when `method` names it and the struct declares no initializer of
+    /// its own. `None` for a struct holding a `ref` field, whose
+    /// parameter's origin binding this signature does not carry.
+    pub(in crate::checker) fn fieldwise_initializer_sig(
+        &self,
+        owner: &str,
+        method: &str,
+    ) -> Option<MethodSig> {
+        let info = self.structs.get(owner)?;
+        if method != "__init__"
+            || !info.fieldwise_init
+            || info.methods.contains_key(method)
+            || info
+                .fields
+                .iter()
+                .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
+        {
+            return None;
+        }
+        let params = info.fields.iter().map(|(_, ty)| ty.clone()).collect();
+        Some(MethodSig {
+            names: info.fields.iter().map(|(name, _)| name.clone()).collect(),
+            conventions: self.fieldwise_conventions(&info.fields),
+            self_convention: Some(mojito_ast::ast::ArgConvention::Out),
+            ..MethodSig::intrinsic(params, Ty::none())
+        })
     }
 
     /// Type a call through `object`, a receiver bound to the type `instance`

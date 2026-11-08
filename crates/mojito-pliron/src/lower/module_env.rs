@@ -296,13 +296,17 @@ impl ModuleShared {
             .try_into()
             .expect("thunk names are identifier-safe");
         let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let has_out = target.sret.is_some() || target.outcome.is_some();
+        let receiver = ThunkReceiver::of(target, captures);
+        let has_out = target.sret.is_some()
+            || target.outcome.is_some()
+            || receiver == ThunkReceiver::OutPointer;
         let mut param_handles: Vec<TypeHandle> = Vec::new();
         if has_out {
             param_handles.push(ptr_ty);
         }
         param_handles.push(ptr_ty);
-        for (index, param) in target.params.iter().enumerate().skip(captures) {
+        let forwarded = captures + usize::from(receiver != ThunkReceiver::Forwarded);
+        for (index, param) in target.params.iter().enumerate().skip(forwarded) {
             let by_reference = target.ref_params.get(index).copied().unwrap_or(false);
             match param {
                 _ if by_reference => param_handles.push(ptr_ty),
@@ -311,11 +315,14 @@ impl ModuleShared {
                 LowerTy::ZeroSized => {}
             }
         }
-        let result = target.func_ty.deref(ctx).result_type();
+        let result = match receiver {
+            ThunkReceiver::Scalar(scalar) => scalar.handle(ctx),
+            _ => target.func_ty.deref(ctx).result_type(),
+        };
         let thunk_ty = FuncType::get(ctx, result, param_handles, false);
         let func = FuncOp::new(ctx, name.clone(), thunk_ty);
         self.module.append_operation(ctx, func.get_operation(), 0);
-        emit_thunk_body(ctx, func, target, captures, has_out);
+        emit_thunk_body(ctx, func, target, (captures, receiver), has_out);
         self.thunks.insert(key, name.clone());
         name
     }
@@ -476,6 +483,7 @@ pub fn declare_function(
                 .collect(),
             ref_params,
             deinit_receiver: func.deinit_params.first().copied().unwrap_or(false),
+            out_receiver,
             result_form: if func.returns_reference {
                 ResultForm::Reference
             } else {

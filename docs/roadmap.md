@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2032**.
+Next free ID: **R2033**.
 
 ## Ordered Work
 
@@ -1266,6 +1266,27 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing. Every later change that needs an ABI bump joins this
     entry instead of waiting on it.
   - Model: Fable, Planned.
+
+- [ ] **R2032 Natively, a raising initializer read as a function value
+  is unsupported**
+
+  Problem: `var e: def(Int) thin raises -> E = E.__init__` then
+  `print(e(2).a)`, over `__init__(out self, k: Int) raises`, prints `2` on
+  the VM and at the pin, while the native backend reports "a function value
+  of the raising initializer `E.__init__`".
+  - An initializer's `out self` is the value's result, so the `invoke`
+    thunk (`ensure_thunk`, `emit_thunk_body` in
+    `mojito-pliron/src/lower/support.rs`) passes its out-pointer as the
+    receiver (`ThunkReceiver`).
+  - A raising initializer returns a tagged outcome whose ok payload is
+    `None`, while the function type's outcome carries the struct inline.
+  - Lever: give the thunk its own target outcome, point the receiver at
+    the contract outcome's ok slot, and copy the tag and error across.
+  - The rejection is in `check_contract_target`
+    (`mojito-pliron/src/lower/calls.rs`).
+  - Found while landing R1796 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R435 Natively, `Error` over a local `comptime` string is
   unsupported**
@@ -3959,27 +3980,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1796 An initializer read through its struct is not a function
-  value**
-
-  Problem: `var f = Q.__init__[7]` then `print(f().a)`, over
-  `__init__[k: Int](out self)`, is rejected with "reading the initializer
-  'Q.__init__' as a value is not supported yet", where the pin prints `7`.
-  - Upstream's `out self` is the initializer's result, so the value is a
-    `def() -> Q`.
-  - Mojito lowers `out self` as a receiver parameter slot, which only a
-    direct construction fills (the VM's `construct_via_init`).
-  - A call through a function value (`CallIndirect`) has no such slot, on
-    either backend.
-  - A free function's named `out` result already lowers as its result
-    (`var f = mk` then `f(3)` runs), which is the model.
-  - The checker's rejection is in `infer_static_method_value`
-    (`checker/method_calls/type_receivers.rs`).
-  - Probe: `var g = Q.__init__` then `print(g(3).a)` over `__init__(out
-    self, k: Int)`, expected `3`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1794 A static of a parametric struct read as a value is not a
   function value**
 
@@ -3998,6 +3998,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `var f = Self.st` inside a method of `P`, and `var f = P.st`
     where `P`'s parameters default, give the same error.
   - Probe: `var g = P[Int].gst[3]` over `def gst[k: Int](x: Int)`.
+  - Probe: `var f: def(Int) thin -> P[Int] = P[Int].__init__` over
+    `__init__(out self, k: Int)` gives the same error, where a
+    non-parametric struct's initializer reads as a function value
+    returning the struct (R1796).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

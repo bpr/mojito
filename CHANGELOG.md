@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An initializer read through its struct is a function value returning the
+  struct it initializes, as upstream's `__init__` is: `Q.__init__` under an
+  expected `def(...)` type, `R.__init__[7]`, `Self.__init__`, and a
+  `@fieldwise_init` struct's synthesized initializer run on the VM and
+  natively (R1796). Read with no expected type and no bracket, it is
+  rejected as overloaded, as at the pin, since the struct's synthesized move
+  initializer is always another candidate. A raising initializer's value
+  runs on the VM only (R2032).
 - `Pointer.unsafe_write_move_from(src)` takes `src`'s pointee and moves it
   into the receiver's slot with one move initializer, as at the pin.
 - `Tuple` declares upstream's `init_with` initializer, its copy and move
