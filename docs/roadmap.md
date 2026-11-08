@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2030**.
+Next free ID: **R2032**.
 
 ## Ordered Work
 
@@ -985,27 +985,43 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R1575 Each infix operator over a `SIMD` checks and inlines its
-  dunder chain per site, where upstream's parser folds a builtin call**
+- [ ] **R2030 The elaborator's cost grows with a template's
+  `inlined_cf_scope` wrapper regions and superlinearly with its length**
 
-  Since R1553, `assets/ok/simd_compare_all_dtypes.mojo` takes 360 ms where
-  it took 223 ms, and the corpus sweep's CPU time rose by about a fifth.
-  - `check_program.bodies` grows from 15 to 34 ms there: each comparison
-    resolves `__lt__` as an overloaded method call, its operand conversion
-    included.
-  - `inline-parametric` grows from 53 to 115 ms: each instance splices
-    `__lt__`, then `lt`, then `__bool__`, all `@always_inline("builtin")`.
-  - Upstream's `foldInlineBuiltinFunction` folds a builtin callee's body at
-    the call once per instance.
-  - Lever: memoize the dunder selection per operand types in the checker,
-    and the spliced builtin body per instance in `inline-parametric`.
-  - Measure with `--timings` on that fixture and on `b_cmp`-style loops;
-    R1551's `+` and R1552's `&` pay the same cost.
-  - Since R1610 `a == b` over `Bool`s splices `__eq__`, `__ne__`,
-    `__xor__`, and `__invert__`: probe a `Bool`-comparison loop too.
-  - Found while landing R1553 (2026-10-28).
+  Upstream also erases an inlined body's wrapper only after elaboration,
+  in `AutomaticInline`'s SimplifyCF, so the elaborator must handle those
+  regions cheaply rather than have them removed early.
+  - Probe: removing only the builtin callees' wrappers before elaboration
+    cut `prepare.elaborate` from 246 to 161 ms on 400 scalar `a < b` sites
+    (template blocks 458 to 231, concrete instructions unchanged).
+  - Probe: a bare `print` of an `Int` falls from 129 to 116 ms the same way.
+  - That removal is not the fix: it breaks `assets/ok/simd_round_members.mojo`,
+    since `native::mono::select::tail_asserts` relies on the wrapper to skip
+    an inlined callee's assert in a dead tail.
+  - Probe: 800 calls of a `@no_inline` function take 274 ms of `elaborate`
+    self time against 115 ms at 100, with nothing inlined.
+  - Lever: add sub-spans under `elaborate`, then find the per-region or
+    per-instruction work in `native::mono` that scales with nesting depth or
+    block length.
+  - Generator: `N` lines of `if a < b: n += 1` (or `if f(a, b): n += 1`
+    with `f` `@no_inline`) in a `main` over `var a = 3`, `var b = 7`.
+  - Found while landing R1575 (2026-11-08).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2031 `drops.elaborate` is quadratic in a block's length**
+
+  Drop elaboration's time grows with the square of the instructions in one
+  block, whether or not anything is inlined.
+  - Probe: 800 calls of a `@no_inline` function take 67 ms, against 2 ms
+    at 100.
+  - Probe: 800 scalar `a < b` sites take 128 ms, against 4 ms at 100.
+  - Generator: as R2030's.
+  - Lever: find the per-instruction scan in `analysis::drops` that walks
+    the whole block, and make it incremental.
+  - Found while landing R1575 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Native Backend
 

@@ -16,6 +16,10 @@
 //! over concrete bodies, and binds the mutability parameter a returned
 //! reference is spelled at to the call's.
 //!
+//! One run instantiates a callee once per owner type and compile-time and
+//! existential arguments: a later call binding it alike, with no callable
+//! binder bound, splices a copy of that instance.
+//!
 //! A callee this pass inlines is a function, a method, a subscript's
 //! accessor, which calls it on the subscripted base, an initializer, or a
 //! nested `def`, which a call through a closure the caller makes calls,
@@ -204,6 +208,7 @@ use mojito_types::types::{
     scalar_simd_dtype, simd_storage,
 };
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
@@ -331,6 +336,7 @@ pub fn inline_calls(
         dropped_operands: false,
         loop_binders: Vec::new(),
         owned,
+        instances: RefCell::new(HashMap::new()),
     };
     let changed = inliner.block_list(&mut blocks);
     let dropped_operands = inliner.dropped_operands;
@@ -386,6 +392,21 @@ struct Inliner<'f, 'c> {
     /// included: what a `read` argument with no place lends
     /// ([`Binding::Lent`]).
     owned: HashSet<u32>,
+    /// Each callee body this run instantiated with no callable binding,
+    /// by callee and binding: a later call binding it alike splices a copy.
+    instances: RefCell<HashMap<InstanceKey, MirFunction>>,
+}
+
+/// What a callee body instantiated with no callable binding is a function
+/// of: the callee, whether its `RemoveUnusedParams` generator was the body,
+/// its owner's type, and the call's compile-time and existential arguments.
+#[derive(PartialEq, Eq, Hash)]
+struct InstanceKey {
+    callee: String,
+    reduced: bool,
+    owner: Option<Ty>,
+    compile_time: Vec<TyArg>,
+    existentials: Vec<(ParamRef, Ty)>,
 }
 
 /// Where an inlined call stands: its index in the caller's block, the
@@ -1302,6 +1323,7 @@ impl<'c> Inliner<'_, 'c> {
             body: callee,
             closures,
         } = self.instantiated_callee(
+            &target,
             (block, index),
             (param_arg_regs, &compile_time, capture_accesses),
             &existentials,
@@ -1347,6 +1369,7 @@ impl<'c> Inliner<'_, 'c> {
     /// captures nor a bound closure's.
     fn instantiated_callee(
         &self,
+        target: &str,
         (block, index): (&MirBlock, usize),
         (param_arg_regs, compile_time, capture_accesses): (
             &[MirParamArg],
@@ -1365,21 +1388,45 @@ impl<'c> Inliner<'_, 'c> {
             .iter()
             .map(|argument| self.callable_argument(block, index, argument.value?))
             .collect();
-        let arguments = Arguments {
-            compile_time,
-            callables: &callables,
-            existentials,
-        };
-        let instantiated = match reduced {
-            Some(body) => {
-                let Instantiated { body, closures } =
-                    instantiated(body, declaration, owner, &arguments, self.declarations)?;
-                Instantiated {
-                    body: Cow::Owned(body.into_owned()),
-                    closures,
+        let key = callables.iter().all(Option::is_none).then(|| InstanceKey {
+            callee: target.to_string(),
+            reduced: reduced.is_some(),
+            owner: owner.map(|owner| owner.ty.clone()),
+            compile_time: compile_time.to_vec(),
+            existentials: existentials.to_vec(),
+        });
+        let memoized = key
+            .as_ref()
+            .and_then(|key| self.instances.borrow().get(key).cloned());
+        let instantiated = match (memoized, reduced) {
+            (Some(body), _) => Instantiated {
+                body: Cow::Owned(body),
+                closures: Vec::new(),
+            },
+            (None, reduced) => {
+                let arguments = Arguments {
+                    compile_time,
+                    callables: &callables,
+                    existentials,
+                };
+                let instantiated = match reduced {
+                    Some(body) => {
+                        let Instantiated { body, closures } =
+                            instantiated(body, declaration, owner, &arguments, self.declarations)?;
+                        Instantiated {
+                            body: Cow::Owned(body.into_owned()),
+                            closures,
+                        }
+                    }
+                    None => instantiated(full, declaration, owner, &arguments, self.declarations)?,
+                };
+                if let (Some(key), Cow::Owned(body)) = (key, &instantiated.body)
+                    && instantiated.closures.is_empty()
+                {
+                    self.instances.borrow_mut().insert(key, body.clone());
                 }
+                instantiated
             }
-            None => instantiated(full, declaration, owner, &arguments, self.declarations)?,
         };
         // A nested body's direct call, or a call of a closure's method on
         // its storage, carries the body's own accesses to the captured

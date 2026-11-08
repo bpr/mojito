@@ -27,6 +27,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` instantiates a callee once per owner type and
+  compile-time arguments within a caller and splices copies of that
+  instance at later calls, rather than re-instantiating it per site: 400
+  scalar comparisons spend 20 ms in the pass instead of 56 (R1575).
 - The MIR verifier rejects an unnamed `drop.reg` of a memory-only register
   too, as upstream's `CheckLifetimes` destroys a memory-only value only
   through its storage. `not x` over a `Boolable` type parameter now reads

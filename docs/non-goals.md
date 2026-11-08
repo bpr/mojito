@@ -223,6 +223,19 @@ of `min(-0.0, +0.0)`.
 - Fixtures avoid mixed-sign zeros in min/max reductions.
 - Revisit only if upstream pins a rule.
 
+### Memoizing an infix operator's dunder selection per operand types
+
+The checker resolves `a < b` through the same overloaded method selection as
+an explicit `a.__lt__(b)`, and both cost the same.
+
+- Measured 2026-11-08 on a release build: 40 sites of either take 3.2 ms of
+  `check_program.bodies`, about 0.015 ms per site more than a plain function
+  call, so a memo would save under 1 ms on `simd_compare_all_dtypes.mojo`.
+- A memo keyed on operand types would need invalidation across scopes and
+  conversions for no measurable gain (R1575).
+- Reopen if an operator site's `check_program.bodies` cost exceeds twice a
+  plain call's on a release build.
+
 ### `Pointer(to=<temporary>)` is unsupported
 
 `View(Pointer(to=make_list()), 0)` reports `Pointer(to=...) requires a place
