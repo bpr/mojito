@@ -1480,7 +1480,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   memory-only `ReadTemporaryArgument`), so `address_call_operands` passes
   its address. `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
-  over a register result), `load_temporary_field`, and `discard_result`
+  over a register result), `load_temporary_field`, `temporary_field_place`
+  (a transfer's field chain over a temporary, `mk().s^`, which
+  `Flatten::transfer` moves out of the slot, so the move analysis sees the
+  hole), and `discard_result`
   consume it, and `mir.rs`'s `copy_consuming_receiver` binds an implicitly
   copied `deinit self` receiver's copy to one (`consumed_copy`), whose
   place the call consumes; `Flatten::transfer`

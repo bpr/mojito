@@ -5877,6 +5877,9 @@ current Mojo:
   (`read_c`, a whole `LoadPlace`), an owned one takes it (`take_c`, a
   `UseVar Forward` its call setup moves to the call), a `ref self` receiver
   binds its place, a field read projects it (`load_temporary_field`), a
+  field transfer (`mk().s^`) moves out of its projection
+  (`temporary_field_place`), leaving a hole the slot's destruction reports
+  as upstream's `(expression temporary)`, a
   condition reads it for `Bool(x)` (`condition_value`, which reads a named
   place `Checker::expect_bool` marked `BorrowReadArgument` where it lies,
   as an explicit `Bool(x)` argument is read), and a discarded

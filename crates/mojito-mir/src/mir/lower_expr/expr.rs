@@ -259,6 +259,10 @@ impl<'a> Flatten<'a> {
             let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
+        } else if let Some(place) = self.temporary_field_place(inner) {
+            let d = self.fresh(e.location(), Some(place.root));
+            self.emit(MirInstr::MovePlace { dest: d, place });
+            d
         } else {
             self.expr(inner)
         }

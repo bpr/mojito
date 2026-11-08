@@ -91,8 +91,15 @@ pub(super) fn place_path(place: &MirPlace) -> Vec<Key> {
 }
 
 /// A human-readable place name (`p`, `p.a`, `p.items[…]`) for diagnostics.
+/// A slot holding an expression's temporary (a call result, a materialized
+/// register value) is named as upstream names it, `(expression temporary)`.
 pub(super) fn place_display(root: &str, path: &[Key]) -> String {
-    let mut s = root.to_string();
+    let mut s = if root.starts_with(mojito_mir::mir::CALL_RESULT_SLOT) || root.starts_with("$mat_r")
+    {
+        "(expression temporary)".to_string()
+    } else {
+        root.to_string()
+    };
     for k in path {
         match k {
             Key::Field(f) => {

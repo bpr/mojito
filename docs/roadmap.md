@@ -1936,26 +1936,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1501 A field moved out of an expression temporary leaves a hole no
-  pass sees**
-
-  `mk().s^` over `def mk() -> Q` reaches the call's temporary through a
-  field projection, which upstream's `emitTransfer` admits; its
-  `CheckLifetimes` then rejects the hole the temporary is destroyed with
-  ("field '(expression temporary).s' destroyed out of the middle of a
-  value").
-  - Mojito admits the transfer too (`transfer_verdict`, `TransferRoot::
-    Temporary`), but the temporary is no slot the move analysis
-    (`analysis/moves.rs`) tracks, so the VM traps ("use after Pointer
-    deallocation").
-  - A named local reports the hole already (`var t = q.s^`).
-  - The lever is materializing the temporary in a slot, as upstream's
-    expression temporary is, so `FieldDestroyedOutOfTheMiddle` reaches it.
-  - Probe: `var t = mk().s^` over `@fieldwise_init struct Q(Movable): var
-    s: String`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R32 Owned iteration of a variadic pack moves elements the pin copies**
 
   Problem: `for var value in values^` over `var *values: Self.T` moves each

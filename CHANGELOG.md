@@ -4012,6 +4012,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field moved out of an expression temporary (`mk().s^`) is rejected as
+  at the pin, with `field '(expression temporary).s' destroyed out of the
+  middle of a value`, instead of trapping at run time with a use after
+  deallocation (R1501): the transfer moves out of the temporary's
+  storage, so the move analysis sees the hole it is destroyed with.
+
 - A call of a struct's `comptime` type member that applies a function by
   keyword (`CompilationTarget.current()`, whose member is
   `CompilationTarget[_mlir_value=_current_target()]`) spells the member's

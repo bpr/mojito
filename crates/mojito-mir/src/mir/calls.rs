@@ -1734,6 +1734,44 @@ impl<'a> Flatten<'a> {
         Some(loaded)
     }
 
+    /// The place of field chain `e` (`mk().s`, `mk().a.b`) over an owned
+    /// expression temporary, with the temporary lowered into storage: its
+    /// call-result slot, or a hidden `$mat_r` slot for a register value,
+    /// as upstream materializes every expression temporary. A transfer out
+    /// of the place leaves a hole in that storage, which the move analysis
+    /// sees when the temporary is destroyed. `None`, emitting nothing, when
+    /// the chain's root is no owned temporary.
+    pub(super) fn temporary_field_place(&mut self, e: Node<'a>) -> Option<MirPlace> {
+        let (CheckedOp::Member { field, .. }, Some(object)) = (e.op(), e.member_object()) else {
+            return None;
+        };
+        if e.is_dtype_constant()
+            || e.simd_length().is_some()
+            || e.recorded_value().is_some()
+            || e.is_pointer_convert()
+            || e.ty().is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+        {
+            return None;
+        }
+        let mut place = if object.is_fresh_temporary() {
+            if object.reference_result().is_some()
+                || mojito_checked::checked::materialized_borrow_owner(object.adjustments())
+                    .is_some()
+            {
+                return None;
+            }
+            let slot = match self.expr_c(object) {
+                CValue::Slot(slot) => slot,
+                CValue::Value(value) => self.temporary_storage(object, value, false, "$mat_r"),
+            };
+            MirPlace::root(slot, self.var_types.get(&slot).cloned())
+        } else {
+            self.temporary_field_place(object)?
+        };
+        e.project_member(&mut place, field);
+        Some(place)
+    }
+
     /// The place of a compile-time binding's read the checker materialized
     /// (a tuple or struct value parameter holding a `String`): its hidden
     /// `$mat_r` slot, which the read stores a copy of the binding into.
