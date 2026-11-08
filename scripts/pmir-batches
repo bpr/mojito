@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Run the remaining `pmir` batches unattended, checking each before the next.
+
+The batches are the `scripts/claude_loop.py` commands in
+`docs/notes/representation-consolidation.md`, in file order: each command is
+one batch, its `--task`/`--only` IDs the batch's entries. An ID no longer on
+the roadmap has landed and is dropped; a batch with none left is skipped.
+
+Each batch runs:
+  1. `scripts/claude_loop.py --model opus --plan-fable-on-opus --task ID ... -n 0`.
+     A task the loop could not finish is noted and the run goes on (the
+     loop already committed its work and skips what waits on it). A usage
+     limit, an outage, or a failing environment stops the run.
+  2. `scripts/focused`. Any failure stops the run.
+  3. `scripts/instantiation-report --check`. A lost or failing fixture, or a
+     growth over `--max-growth` percent, stops the run. Drift confined to
+     `pointer_tuple_field_write.mojo` (R1069) passes. Any other growth or
+     shrink is locked in: the fresh report becomes the baseline and is
+     committed.
+
+Every step's output goes to `target/pmir-batches/<stamp>/`, with a
+`summary.md` of the run. On a stop the script prints what failed and the
+command that resumes at that batch.
+
+Usage:
+  scripts/pmir-batches                 # run every batch with open entries
+  scripts/pmir-batches --dry-run       # list the batches and their open entries
+  scripts/pmir-batches --start 3       # resume at batch 3 (numbers from --dry-run)
+  scripts/pmir-batches --max-growth 2  # tolerate up to 2% instruction growth
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+NOTE = ROOT / "docs/notes/representation-consolidation.md"
+BASELINE = ROOT / "benchmarks/instantiation.tsv"
+FRESH = ROOT / "target/instantiation.tsv"
+NOISY_FIXTURE = "assets/ok/pointer_tuple_field_write.mojo"
+LOOP_STOPS = ("a usage limit stopped", "network outage", "sessions in a row failed")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--dry-run", action="store_true", help="list the batches and exit")
+    p.add_argument("--start", type=int, default=1, metavar="N", help="first batch to run")
+    p.add_argument("--max-growth", type=float, default=1.0, metavar="PCT",
+                   help="largest instruction growth locked in without stopping (default 1.0)")
+    args = p.parse_args()
+    os.chdir(ROOT)
+    use_working_llvm()
+
+    batches = [(number, open_ids(ids)) for number, ids in enumerate(note_batches(), 1)]
+    if args.dry_run:
+        for number, ids in batches:
+            print(f"batch {number}: {' '.join(ids) if ids else '(all landed)'}")
+        return 0
+
+    log_dir = ROOT / "target/pmir-batches" / dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    summary = Summary(log_dir / "summary.md")
+    unfinished: list[str] = []
+    for number, _ in batches:
+        if number < args.start:
+            continue
+        # Re-read the roadmap: an earlier batch may have landed or split entries.
+        ids = open_ids(note_batches()[number - 1])
+        if not ids:
+            summary.line(f"batch {number}: nothing open, skipped")
+            continue
+        summary.line(f"batch {number}: {' '.join(ids)}")
+
+        loop = [sys.executable, "scripts/claude_loop.py", "--model", "opus",
+                "--plan-fable-on-opus", *[a for i in ids for a in ("--task", i)], "-n", "0"]
+        status, output = run(loop, log_dir / f"batch{number}-loop.log")
+        if any(stop in output for stop in LOOP_STOPS):
+            return summary.stop(number, "claude_loop stopped (usage limit, outage, or environment); "
+                                f"see {log_dir}/batch{number}-loop.log", args)
+        if status != 0:
+            left = [i for i in ids if i in open_ids(ids)]
+            unfinished += left
+            summary.line(f"  claude_loop left unfinished: {' '.join(left) or '(see log)'}; continuing")
+
+        status, _ = run(["scripts/focused"], log_dir / f"batch{number}-focused.log")
+        if status != 0:
+            return summary.stop(number, "scripts/focused failed; the report is "
+                                "target/focused/last.log", args)
+        summary.line("  focused: passed")
+
+        _, output = run(["scripts/instantiation-report", "--check"],
+                        log_dir / f"batch{number}-ratchet.log")
+        verdict = ratchet_verdict(output, args.max_growth)
+        if verdict.startswith("stop"):
+            return summary.stop(number, f"instantiation ratchet: {verdict[5:]}; see "
+                                f"{log_dir}/batch{number}-ratchet.log", args)
+        if verdict == "refresh":
+            BASELINE.write_bytes(FRESH.read_bytes())
+            git("add", str(BASELINE.relative_to(ROOT)))
+            git("commit", "-q", "-m", f"Refresh the instantiation baseline after pmir batch {number} "
+                f"({' '.join(ids)})")
+            summary.line("  ratchet: baseline refreshed and committed")
+        else:
+            summary.line("  ratchet: passed")
+
+    if unfinished:
+        summary.line(f"done; unfinished entries to look at: {' '.join(unfinished)} "
+                     "(target/claude-loop/*-unfinished.txt has the details)")
+        return 1
+    summary.line("done; every batch passed")
+    return 0
+
+
+def note_batches() -> list[list[str]]:
+    """The entry IDs of each `scripts/claude_loop.py` command in the note."""
+    text = NOTE.read_text().replace("\\\n", " ")
+    commands = re.findall(r"^\s*scripts/claude_loop\.py\b.*$", text, re.MULTILINE)
+    return [re.findall(r"--(?:task|only)\s+(R\d+)", command) for command in commands]
+
+
+def open_ids(ids: list[str]) -> list[str]:
+    """The IDs of `ids` still on the roadmap, in order, without repeats."""
+    listed = subprocess.run([sys.executable, "scripts/roadmap.py", "list"],
+                            capture_output=True, text=True, check=True).stdout
+    on_roadmap = set(re.findall(r"^\s*(R\d+)\b", listed, re.MULTILINE))
+    return list(dict.fromkeys(i for i in ids if i in on_roadmap))
+
+
+def ratchet_verdict(output: str, max_growth: float) -> str:
+    """`pass`, `refresh`, or `stop <why>` for an instantiation `--check` report."""
+    if "FAIL lost" in output or re.search(r"^failed:", output, re.MULTILINE):
+        return "stop a fixture stopped elaborating"
+    if "FAIL" not in output:
+        return "pass"
+    moved = re.findall(r"^\s+[+-]\d+\s+(\S+)$", output, re.MULTILINE)
+    if moved and all(path == NOISY_FIXTURE for path in moved):
+        return "pass"
+    growth = re.search(r"FAIL growth: grew by \d+ instructions \(\+([\d.]+)%\)", output)
+    if growth and float(growth.group(1)) > max_growth:
+        return f"stop instructions grew {growth.group(1)}%, over --max-growth {max_growth}"
+    if growth or "FAIL stale" in output:
+        return "refresh"
+    return "stop an unrecognized ratchet failure"
+
+
+def run(command: list[str], log: Path) -> tuple[int, str]:
+    """Run `command`, echoing and logging its output."""
+    print(f"==> {' '.join(command)}", flush=True)
+    lines = []
+    with log.open("w") as sink, subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ) as process:
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sink.write(line)
+            lines.append(line)
+    return process.returncode, "".join(lines)
+
+
+def git(*arguments: str) -> None:
+    subprocess.run(["git", *arguments], check=True)
+
+
+def use_working_llvm() -> None:
+    """Point the native build at an LLVM that exists, when the session's does not."""
+    configured = os.environ.get("LLVM_SYS_231_PREFIX")
+    if (not configured or not Path(configured).is_dir()) and Path("/usr/lib/llvm-23").is_dir():
+        os.environ["LLVM_SYS_231_PREFIX"] = "/usr/lib/llvm-23"
+
+
+class Summary:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def line(self, text: str) -> None:
+        print(f"pmir-batches: {text}", flush=True)
+        with self.path.open("a") as sink:
+            sink.write(f"- {text}\n")
+
+    def stop(self, number: int, why: str, args: argparse.Namespace) -> int:
+        self.line(f"STOPPED at batch {number}: {why}")
+        resume = f"scripts/pmir-batches --start {number}"
+        if args.max_growth != 1.0:
+            resume += f" --max-growth {args.max_growth}"
+        self.line(f"after fixing it, resume with: {resume}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
