@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2041**.
+Next free ID: **R2042**.
 
 ## Ordered Work
 
@@ -4713,25 +4713,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1805 A module binding of a parameter's name captures
-  `origin_of(param)` at a call, so `reversed(xs)` fails beside a user
-  `def value()`**
-
-  `for x in reversed(xs)` over a `List` fails with "cannot implicitly
-  convert '_ListReversedIter[T, origin_of(self)]' value to
-  '_ListReversedIter[T, origin_of(value)]'" when the program declares a
-  module function named `value`, the name of `reversed`'s parameter.
-  - The callee signature's `origin_of(value)` is substituted at the call
-    by name, and the caller's module binding wins over the callee's
-    parameter.
-  - The same collision fails `assets/ok/comptime_match_patterns.mojo`
-    with the library linked from source (`MOJITO_STD_PACKAGE=0`).
-  - Type and value parameters already shadow module bindings
-    (`a_declarations_own_parameters_shadow_module_bindings` in
-    `tests/checker_test.rs`); origins are the missing case.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1806 A library struct's conditional conformance reads a user
   module constant named like its parameter**
 
@@ -8418,6 +8399,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R2041 A struct method's `origin_of(self)` result is not bound to
+  its receiver, so a returned view of the wrong argument converts**
+
+  `def make(ref value: Box, ref other: Box) -> View[origin_of(value)]:
+  return other.view()`, over `def view(ref self) -> View[origin_of(self)]`,
+  runs here, where the pin rejects it with "cannot implicitly convert
+  'View[origin_of(other)]' value to 'View[origin_of(value)]'".
+  - The method call's result type keeps `Origin::SelfParam` in its tail:
+    `record_call_result_origins` (`checker/origins/actuals.rs`) records no
+    view-return slot for the call, so `bind_call_result_tail` leaves it.
+  - The same return through a free function (`mk(other)` over `def
+    mk(ref b: Box) -> View[origin_of(b)]`) is rejected as at the pin.
+  - Probe: the program above, which should fail to check.
+  - Found while landing R1805 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1153 An owned-interior origin converts to its base origin**
 
   Problem: a value over `origin_of(xs)._get_owned_interior["element"]`
@@ -9751,6 +9749,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     destroys %r6 of memory-only type String").
   - `tests/focused/list.txt` leaves out the thirteen fixtures whose
     `pre_elaboration` trial fails this way; restore them when this lands.
+  - Probe: with the library linked from source (`MOJITO_STD_PACKAGE=0`),
+    `run` of any program, even `print(1)`, fails verification of the
+    `$c0` and `$c1` bodies, so a source-linked check
+    (`assets/ok/comptime_match_patterns.mojo`) reaches no execution.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

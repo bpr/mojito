@@ -685,12 +685,27 @@ impl Checker {
         Ok(())
     }
 
+    /// The storage owner `name` designates. A name bound below the module
+    /// scope shadows the module binding of that name, even where the local
+    /// binding owns no storage — a signature's parameter, which the
+    /// signature's later annotations read (`-> P[origin_of(value)]` beside a
+    /// module `def value()`) — so such a name never reaches the module
+    /// binding's owner.
     pub(super) fn lookup_owner(&self, name: &str) -> Option<mojito_types::origin::OwnerId> {
         self.owner_scopes
             .iter()
+            .skip(1)
             .rev()
             .find_map(|scope| scope.get(name).copied())
-            .or_else(|| self.installed_binding(name).map(|(owner, _)| owner))
+            .or_else(|| {
+                if self.is_local_binding(name) {
+                    return None;
+                }
+                self.owner_scopes
+                    .first()
+                    .and_then(|module| module.get(name).copied())
+                    .or_else(|| self.installed_binding(name).map(|(owner, _)| owner))
+            })
     }
 
     /// The source name of an owner in scope (the inverse of

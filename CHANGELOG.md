@@ -4006,6 +4006,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A signature's `origin_of(param)` names its own parameter beside a module
+  binding of that name, so `for x in reversed(xs)` and a user
+  `-> View[origin_of(value)]` no longer fail beside a `def value()` (R1805).
+  `Checker::lookup_owner` stops at a local binding before the module
+  binding's owner.
+
 - A `comptime` binding annotated `Int` over a `SIMDLength` value
   (`comptime n: Int = w`) binds the lane count, as the pin does, instead of
   reporting "type mismatch for comptime 'n': expected Int, found

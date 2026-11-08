@@ -1318,6 +1318,20 @@ fn a_declarations_own_parameters_shadow_module_bindings() {
     ok_std(
         "@unavailable(\"use g instead\")\ndef f(x: Int) -> Int:\n    ...\n\ndef apply[f: def(Int) thin -> Int](x: Int) -> Int:\n    return f(x)\n\ndef g(x: Int) -> Int:\n    return x + 1\n\ndef main():\n    print(apply[g](1))\n",
     );
+    // A runtime parameter over a module function of its name, in its
+    // signature's `origin_of`: a user `make` and the library's `reversed`.
+    ok_std(
+        "struct View[o: Origin](Copyable, Movable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\nstruct Box(Copyable, Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def view(ref self) -> View[origin_of(self)]:\n        return View[origin_of(self)](self.x)\n\ndef make(ref value: Box) -> View[origin_of(value)]:\n    return value.view()\n\ndef value() -> Int:\n    return 3\n\ndef main():\n    var b = Box(4)\n    print(make(b).n, value())\n    for x in reversed([1, 2]):\n        print(x)\n",
+    );
+    // The parameter still names its own place: a view of another argument
+    // does not convert to it.
+    let error = err_std(
+        "struct View[o: Origin](Copyable, Movable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\nstruct Box(Copyable, Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\ndef mk(ref b: Box) -> View[origin_of(b)]:\n    return View[origin_of(b)](b.x)\n\ndef make(ref value: Box, ref other: Box) -> View[origin_of(value)]:\n    return mk(other)\n\ndef value() -> Int:\n    return 3\n\ndef main():\n    var b = Box(4)\n    var c = Box(5)\n    print(make(b, c).n, value())\n",
+    );
+    assert!(
+        matches!(&error, TypeError::OriginIdentityMismatch { .. }),
+        "got {error:?}"
+    );
 }
 
 #[test]
