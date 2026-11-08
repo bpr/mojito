@@ -104,6 +104,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A store through the reference a `__getitem__` returns is rejected
+  when the origin's mutability is unknown in the generic body, as at the
+  pin: `p[][0] = 9` over a `Pointer[Box, o]` parameter or a
+  `Pointer[Box, Self.o]` field with an `Origin[mut=m]` binder now reports
+  "expression must be mutable in assignment" instead of running (R1986).
 - A field read out of an expression temporary projects the temporary's
   storage, as at the pin, so the temporary dies as the call takes the
   field: `show(R(5).x)` over a register-passable `read` parameter

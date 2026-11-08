@@ -851,6 +851,7 @@ assets/type_error/pointer_field_store_unbound_origin.mojo	compile-reject	agree	e
 assets/type_error/pointer_field_symbolic_deref_store.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_symbolic_generic_body_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_symbolic_in_place_immutable_source.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/pointer_field_symbolic_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_immutable_conversion_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_kgen_pointer_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_kgen_pointer_no_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -859,6 +860,7 @@ assets/type_error/pointer_lit_ref_not_its_referent.mojo	compile-reject	agree	err
 assets/type_error/pointer_lit_ref_origin_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	error: invalid call to 'unsafe_origin_cast': value passed to 'target_origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_origin_cast_no_upgrade.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_param_symbolic_origin_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_param_symbolic_origin_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'MutPointer[Int, q.origin]'

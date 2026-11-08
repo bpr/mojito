@@ -119,10 +119,13 @@ impl Checker {
     }
 
     /// Whether a write through a reference of `mutability` may stand. A
-    /// parametric one (`Origin[mut=m]`) names an origin parameter of the
-    /// enclosing struct: the write is recorded as the method's requirement
-    /// on it, judged per instantiation at each call site
-    /// (`judge_parametric_origin_writes`).
+    /// parametric one (`Origin[mut=m]`) over an origin parameter of the
+    /// enclosing struct is recorded as the method's requirement on it,
+    /// judged per instantiation at each call site
+    /// (`judge_parametric_origin_writes`). Over the function's own binder
+    /// the mutability is unknown in the generic body, which upstream judges
+    /// there and rejects, as `check_pointer_write` does for a direct
+    /// `Pointer` store.
     pub(in crate::checker) fn require_writable_reference(
         &self,
         mutability: mojito_types::origin::Mutability,
@@ -131,8 +134,10 @@ impl Checker {
             mojito_types::origin::Mutability::Mutable => true,
             mojito_types::origin::Mutability::Immutable => false,
             mojito_types::origin::Mutability::Param(id) => {
-                if (id.0 as usize) < self.enclosing_struct_type_params.get()
-                    && let Some(frame) = self.parametric_write_frames.borrow_mut().last_mut()
+                if (id.0 as usize) >= self.enclosing_struct_type_params.get() {
+                    return false;
+                }
+                if let Some(frame) = self.parametric_write_frames.borrow_mut().last_mut()
                     && !frame.contains(&id)
                 {
                     frame.push(id);

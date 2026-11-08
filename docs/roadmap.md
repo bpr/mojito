@@ -1646,27 +1646,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1986 A store through a `ref` result whose origin mutability is a
-  function's own parameter is accepted**
-
-  `def poke[m: Bool, //, o: Origin[mut=m]](p: Pointer[Box, o]): p[][0] =
-  9`, over a `Box` whose `__getitem__(ref self, i: Int) -> ref[self.v]
-  Int`, runs and prints `9`, where the pin rejects it: "expression must be
-  mutable in assignment".
-  - Cause: `require_writable_reference`
-    (`checker/method_calls/receiver_effects.rs`) treats every
-    `Mutability::Param` as writable. It records the write for a judgment at
-    each instantiation only when the parameter is the enclosing struct's,
-    so a function's own origin parameter is never judged.
-  - Upstream judges the binder inside the generic body and rejects there,
-    as `check_pointer_write` already does for a direct `Pointer` store
-    ("write through a Pointer whose origin mutability is not known here").
-  - Probe: the same body over `List[Int]` once R1985 drops
-    `List.__setitem__` (`assets/type_error/pointer_param_symbolic_origin_write.mojo`).
-  - Found while landing R1564 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1216 A store through a pointer read by its handle does not
   destroy the value it replaces**
 
@@ -12984,14 +12963,9 @@ residue found inside a task moves to the task that owns its fix.
     `Int`-only `__setitem__` (`stdlib/std/collections/list.mojo`), which
     every subscript store selects.
   - Dropping it, as upstream, runs `l[Int32(0)] = 7` and every `Int` store
-    through the getter's reference, but two gaps then show.
+    through the getter's reference, but one gap then shows.
   - The replaced element is never destroyed (R1216):
     `assets/ok/subscript_write_back_lifecycle.mojo` loses its `del` lines.
-  - A store through `p[][0]` over a `Pointer` of parametric mutability is
-    accepted (R1986): six `assets/type_error/*pointer*write*` fixtures
-    then report "immutable reference returned by '__getitem__'" instead,
-    and `pointer_param_symbolic_origin_write.mojo` and
-    `pointer_field_symbolic_generic_body_write.mojo` run.
   - When it lands, drop the `List.__setitem__` row from
     `seeded_transfer_effects` (`checker/overload_support.rs`) and the
     sentence on it in `docs/features.md`'s argument-exclusivity row.
