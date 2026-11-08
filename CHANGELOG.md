@@ -4006,6 +4006,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A library struct's conditional conformance reads its own parameter beside a
+  user module constant of that name: `MaybeUninit[T]`'s `Copyable where …`
+  no longer reads a program's `comptime T = (twice(1), "a")` when the
+  library is linked from source (R1806), since a declaration's parameter
+  shadows a module binding (`Checker::shadows_module_binding`).
+
 - A signature's `origin_of(param)` names its own parameter beside a module
   binding of that name, so `for x in reversed(xs)` and a user
   `-> View[origin_of(value)]` no longer fail beside a `def value()` (R1805).

@@ -4713,20 +4713,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1806 A library struct's conditional conformance reads a user
-  module constant named like its parameter**
-
-  `MaybeUninit[T]`'s `Copyable where …` condition, checked for a program
-  that declares `comptime T = (twice(1), "a")`, reads the module tuple
-  rather than the library's own `T`, so
-  `assets/ok/ctfe_module_display_constant_requests.mojo` fails with "type
-  'MaybeUninit[T]' … does not conform to trait 'Copyable'" when the library
-  is linked from source (`MOJITO_STD_PACKAGE=0`).
-  - The condition is evaluated outside the parameter scope that now
-    shadows module bindings (`Checker::shadows_module_binding`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1807 Three fixtures fail to check with the library linked from
   source, which the compiled package checks**
 
@@ -9753,6 +9739,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `run` of any program, even `print(1)`, fails verification of the
     `$c0` and `$c1` bodies, so a source-linked check
     (`assets/ok/comptime_match_patterns.mojo`) reaches no execution.
+  - Probe: with this rule relaxed, the source-linked run of
+    `assets/ok/ctfe_module_display_constant_requests.mojo` matches the
+    package run, so that fixture needs nothing more once this lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
