@@ -1922,7 +1922,8 @@ impl Checker {
                     0,
                 )
                 .ok()?;
-                coerces(from, &parameter).then_some((sig, parameter, own_arguments))
+                (coerces(from, &parameter) && literal_admits_parameter(from, &parameter))
+                    .then_some((sig, parameter, own_arguments))
             })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
@@ -2860,6 +2861,19 @@ fn run_explicit_destroy(
                 .collect(),
         },
     )
+}
+
+/// Whether an `@implicit` constructor's `parameter` takes a `from` value in
+/// one conversion. A numeric literal reaches only a parameter of its own
+/// literal kind or the type it materializes to (`Int`, `Float64`): upstream
+/// converts the literal to that default type before the call, and a further
+/// conversion (`IntLiteral` to `Float64` or `UInt8`) would be a second one.
+fn literal_admits_parameter(from: &Ty, parameter: &Ty) -> bool {
+    let (from_kind, parameter_kind) = (from.kind(), parameter.kind());
+    !from_kind.is_numeric_literal()
+        || (from_kind.is_int_literal() && parameter_kind.is_int_literal())
+        || (from_kind.is_float_literal() && parameter_kind.is_float_literal())
+        || *parameter == mojito_types::types::default_literal(from)
 }
 
 /// Whether a struct parameter is an origin slot (`o: Origin[mut=m]`, an

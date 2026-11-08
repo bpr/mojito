@@ -1,6 +1,7 @@
-# expect: ambiguous implicit conversion
-# A literal both converting constructors accept, and neither takes at its
-# default `Int`: no candidate is exact, so the conversion is ambiguous.
+# expect: expected Number, found IntLiteral[1]
+# A literal reaches an `@implicit` constructor only at its own literal type
+# or at the `Int` it materializes to: `Int8` and `Int16` would each be a
+# second conversion, so neither constructor converts the argument.
 struct Number:
     var value: Int
 

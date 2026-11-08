@@ -7886,32 +7886,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1537 An `@implicit` constructor's parameter admits a literal by
-  coercion, not at the literal's default type**
-
-  `var y: F = 2`, where `F`'s only `@implicit __init__(out self, value:
-  Float64, /)` stores `value + 0.5`, prints `2.5`, where the pin rejects it:
-  "cannot implicitly convert 'IntLiteral[2]' value to 'F'".
-  - Cause: `Checker::implicit_conversion_constructor` (`checker.rs`) keeps
-    a constructor whose parameter the source `coerces` to, so a literal
-    reaches any scalar it materializes as. The pin converts a literal only
-    at its default type (`Int`, `Float64`, `String`) before an `@implicit`
-    constructor.
-  - Probe: `f[C]()` over `def f[w: F]()` with `comptime C = 2` prints
-    `2.5`; the pin rejects it ("value has type 'IntLiteral[2]'"). The
-    parameter conversion inherits the rule (R1533).
-  - Probe: `f[3]()` into an `@implicit __init__(value: UInt8)` is rejected
-    as unsupported, where the pin rejects it as a type mismatch.
-  - Probe: the other way round, `var s: S = "abc"` over `@implicit
-    __init__(out self, value: String, /)` storing `value.byte_length()` is
-    rejected ("expected S, found StringLiteral"), where the pin prints `3`:
-    `StringLiteral` does not coerce to `String`. `f["abc"]()` over `def
-    f[w: S]()` (pin `3`) fails the same way ("type mismatch for value
-    parameter 'w': expected S, found StringLiteral").
-  - Found while landing R1533 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1498 A module outside the bundled library is rooted at its file
   stem, not its dotted name**
 

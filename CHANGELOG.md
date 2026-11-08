@@ -19,6 +19,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `@implicit` constructor converts a numeric literal only when its
+  parameter is the literal's own type or the `Int`/`Float64` it
+  materializes to, as at the pin: `var y: F = 2` over a constructor taking
+  `Float64`, `var o: Optional[UInt8] = 3`, and `f[3]()` over `def f[w:
+  U]()` with `U`'s constructor taking `UInt8` are rejected instead of
+  running (R1537).
 - A compile-time position that reads a run-time local is rejected as at
   the pin: `var x = 3` then `comptime i = x + 1`, `comptime i = (x, 1)`,
   or `materialize[x]()` no longer runs, and each dynamic-value rejection

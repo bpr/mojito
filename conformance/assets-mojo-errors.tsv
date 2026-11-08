@@ -225,7 +225,6 @@ assets/type_error/always_inline_builtin_vector_ne_reduction_mismatch.mojo	compil
 assets/type_error/always_inline_builtin_while_loop.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support MLIR operation lit.loop
 assets/type_error/always_inline_lifted_parameter_assert.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/always_inline_operand_rejected.mojo	compile-reject	agree	error: '@always_inline' operand must be "nodebug" or "builtin"
-assets/type_error/ambiguous_implicit_conversion.mojo	compile-reject	agree	error: invalid call to 'consume': value passed to 'value' cannot be converted from 'IntLiteral[1]' to 'Number'
 assets/type_error/and_or_operand_needs_boolable.mojo	compile-reject	agree	error: 'NoTruth' does not implement the '__bool__' method
 assets/type_error/anytype_no_len.mojo	compile-reject	agree	error: no matching function in call to 'len'
 assets/type_error/application_struct_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, mylen(Foo(n))]' value to 'SIMD[.int8, n]'
@@ -513,6 +512,9 @@ assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	erro
 assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/immutable_mutation.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/implicit_conversion_literal_argument_past_default.mojo	compile-reject	agree	error: invalid call to 'consume': value passed to 'value' cannot be converted from 'IntLiteral[1]' to 'Number'
+assets/type_error/implicit_conversion_literal_parameter_past_default.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'w' has 'U' type, but value has type 'IntLiteral[3]'
+assets/type_error/implicit_conversion_literal_var_past_default.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'F'
 assets/type_error/implicit_conversion_own_parameter_bound.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 's' cannot be converted from 'Opaque' to 'Shown'
 assets/type_error/implicit_conversion_raising_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/implicit_copy_append_element.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
