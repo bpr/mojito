@@ -1906,8 +1906,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   or `Checker.module_values` (`Checker::module_constant_entry`, which reads `comptime_applied`,
   `comptimes`, `module_values`, then `comptime_literals`, and
   `Checker::module_constant_value`); a local
-  binding of an application is read the same way
-  (`Checker::local_comptime_application`). A closed local binding is
+  binding of an application, or of a field chain of one, is read the same
+  way (`Checker::local_comptime_application`). A closed local binding is
   bound to its parameter expression, a constant one through
   `Checker::closed_constant_expression`; `conforms_to(T, Tr)` is a `Bool`
   parameter value (`Checker::conformance_query`, closed for a closed

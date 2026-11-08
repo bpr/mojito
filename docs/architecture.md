@@ -1672,8 +1672,10 @@ with the one parameter-expression builder — ahead of every declaration
 (`Checker::fold_module_constants`), or in its declaration pass when the
 initializer reads a declaration — and records a body's read as a
 `SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), as
-is a read of a local `comptime` binding of an application
-(`Checker::local_comptime_application`), which MIR lowers as
+is a read of a local `comptime` binding of an application, or of a field
+chain of one (`comptime s = H(mk(3)).c`, upstream's `load_from_mem` of the
+evaluated temporary, which runs no copy or move initializer and no
+destructor) (`Checker::local_comptime_application`), which MIR lowers as
 `Const::Param` and `native::mono` folds or demands
 (`docs/notes/ctfe-request-path.md` §Today, decision D3). A local
 binding's statement op holds its application

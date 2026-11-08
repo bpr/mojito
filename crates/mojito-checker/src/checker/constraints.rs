@@ -1449,10 +1449,13 @@ impl Checker {
         self.ct_param(value)
     }
 
-    /// The application a local `comptime NAME = f(…)` binding denotes, which
-    /// each of its reads materializes as upstream's alias reference does: the
-    /// binding has no storage of its own. `None` for any other binding, and
-    /// for a name an inner binding shadows.
+    /// The application a local `comptime NAME = f(…)` binding denotes, or a
+    /// field chain of one (`comptime s = H(mk(3)).c`), which each of its
+    /// reads materializes as upstream's alias reference does: the binding
+    /// has no storage of its own, and a field is upstream's `load_from_mem`
+    /// of the evaluated application, running no copy or move initializer.
+    /// `None` for any other binding, and for a name an inner binding
+    /// shadows.
     pub(super) fn local_comptime_application(&self, name: &str) -> Option<ParamExpr> {
         let scope = self.binding_scope(name)?;
         if scope == 0 || self.function_bases.is_empty() {
@@ -1462,12 +1465,7 @@ impl Checker {
             .get(scope)?
             .get(name)
             .map(|(_, expression)| expression)
-            .filter(|expression| {
-                matches!(
-                    expression.kind(),
-                    mojito_types::param_expr::ParamKind::Apply { .. }
-                )
-            })
+            .filter(|expression| applies_through_fields(expression))
             .cloned()
     }
 
@@ -7046,4 +7044,14 @@ fn target_field_read(shape: &str) -> Option<&str> {
         "!kgen.string"
     };
     (ty == expected && mojito_types::ct::KgenTarget::reads_field(field)).then_some(field)
+}
+
+/// Whether `expression` is an application (`f(1)`) or a field chain of one
+/// (`H(mk(3)).c.n`).
+fn applies_through_fields(expression: &ParamExpr) -> bool {
+    match expression.kind() {
+        mojito_types::param_expr::ParamKind::Apply { .. } => true,
+        mojito_types::param_expr::ParamKind::Field { base, .. } => applies_through_fields(base),
+        _ => false,
+    }
 }

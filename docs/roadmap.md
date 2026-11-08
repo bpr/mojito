@@ -202,32 +202,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1988 A local `comptime` field of a temporary copies or moves
-  the field out, where the pin loads it**
-
-  `comptime s = HC(mk(3)).c` in a body, over a `C` whose copy initializer
-  adds 100, prints `103`, where the pin prints `3`.
-  - At the pin the initializer is a parameter expression, and the field is
-    `load_from_mem` of the temporary's storage: no copy or move
-    initializer runs, and the temporary ends undestroyed.
-  - Mojito lowers a local `comptime` binding that is no display as an
-    ordinary run-time binding (`lower_comptime_binding`,
-    `mir/lower_stmt.rs`). The field is a `GetField` off a register
-    temporary (`load_temporary_field`, `mir/calls.rs`), copied under
-    `CopyPlaceValue` (`Checker::load_compile_time_result`) or moved out.
-  - The lever: record `SemanticAdjustment::CompileTimeLoad` on the field
-    chain as R1729 does on a reference result, and end the temporary with
-    `MarkDestroyed`, which needs it in a slot (R1501).
-  - The module-scope form (`comptime MS = HC(mk(7)).c`) already prints `7`.
-  - Probe: the same `C`, `comptime s = HC(mk(3)).c; print(s.n)`: `3` at
-    the pin, `103` in Mojito.
-  - Probe: an `M` whose move initializer adds 1000, `comptime s =
-    H(mk(3)).m; print(materialize[s]().n)`: `1003` at the pin, `2003` in
-    Mojito.
-  - Found while landing R1729 (2026-11-07).
-  - Depends on R1501.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1727 A `@fieldwise_init` struct that declares another `__init__`
   has no compile-time fieldwise construction**
 
@@ -10586,7 +10560,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `comptime m = N + 1`, a folded `comptime n = 5`, `comptime m = f(1) + g(2)`, and an evaluated value (`comptime t = (L[0], L[1])`) each store one slot at the declaration, where Mojo's alias materializes every read.
   - The difference cannot be observed for these types (`Int`, `Bool`, trivially destroyed values), so this is structure only.
-  - A binding of an application already has no slot: `Checker::local_comptime_application` makes each read a `ParamValue`, and `CheckedStmtOp::Comptime::denotes` tells MIR.
+  - A binding of an application, or of a field chain of one, already has no slot: `Checker::local_comptime_application` makes each read a `ParamValue`, and `CheckedStmtOp::Comptime::denotes` tells MIR.
   - The fix widens that rule to every parameter expression the binding denotes, and gives `bind_evaluated` values a per-read evaluation.
   - A binding inside a lifted thunk (`EnclosingBinders::lifted`) also keeps a dead slot today; drop it in the same change.
   - Found while landing R523 (2026-10-13).

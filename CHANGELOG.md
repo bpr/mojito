@@ -299,6 +299,10 @@ to evolve under the `0.x` compatibility rules.
   loaded as the pin's `load_from_mem` is, from a binding nothing destroys,
   so a non-`Copyable` element is taken instead of rejected, a `Copyable`
   one runs no copy initializer, and no destructor runs (R1989).
+- A local `comptime` binding of a field of a temporary (`comptime s =
+  HC(mk(3)).c`) is now the field of the evaluated application at each read,
+  as the pin's `load_from_mem` is, so neither the field's copy nor its move
+  initializer runs and the temporary is not destroyed (R1988).
 - A `comptime assert` after a `comptime if` arm that returns is now
   judged at the instance, as at the pin, so `k[1]()` over `comptime if n
   == 1: return 1` then `comptime assert n == 5, "never"` fails with
