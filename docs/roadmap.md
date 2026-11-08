@@ -1278,26 +1278,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1976 A subscript getter or `__contains__` keeps its
-  register-passable `read self` receiver's place, so the owner outlives the
-  call, where upstream passes it by value**
-
-  `a.p[2]` and `1 in a.p`, with `p` a `TrivialRegisterPassable` field of a
-  `W` that prints in its destructor, print the dunder before `del` here,
-  where the pin prints `del` first.
-  - These receivers are lowered outside `lower_receiver_value`
-    (`mir/calls.rs`), which since R1570 drops the place of a receiver the
-    checker judges `RegisterPassableRead`.
-  - The subscript lowerings keep `base_place`/`object_place`, and the
-    `in` lowering (`contains_call`, `mir/lower_expr/expr.rs`) keeps its
-    receiver's place.
-  - Check that the checker's `read_place_receiver` fact reaches these
-    receivers too, then apply the same rule.
-  - Probe: `var r = a.p[2]` prints `del 3`, `getitem`, `3` at the pin.
-  - Probe: `var r = 1 in a.p` prints `del 2`, `contains`, `True` at the pin.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1682 A local read through an untracked pointer after its last use
   reads `None` on the VM**
 

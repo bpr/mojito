@@ -276,7 +276,7 @@ impl<'a> Flatten<'a> {
         container: Node<'a>,
     ) -> Reg {
         let (argument, arg_place) = self.lower_call_argument(value);
-        let (recv, recv_place) = self.lower_method_receiver(node, container);
+        let (recv, recv_place) = self.lower_receiver_value(node, container, false);
         let contains = self.fresh_typed(node.location(), None, Ty::bool());
         // A generic `__contains__[T]` binds its own parameters from the
         // call's solved arguments, as a spelled method call's does.

@@ -363,7 +363,9 @@ impl<'a> Flatten<'a> {
             return d;
         }
         let (base, base_place) = if has_call {
-            self.lower_setup_receiver_with(e, object, |this| this.lower_method_receiver(e, object))
+            self.lower_setup_receiver_with(e, object, |this| {
+                this.lower_receiver_value(e, object, false)
+            })
         } else {
             (self.expr(object), self.simple_place(object))
         };
@@ -405,7 +407,7 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let has_call = e.call_contract().is_some();
         let (obj, object_place) = if has_call {
-            self.lower_method_receiver(e, object)
+            self.lower_receiver_value(e, object, false)
         } else {
             (self.expr(object), self.simple_place(object))
         };
@@ -526,7 +528,9 @@ impl<'a> Flatten<'a> {
         }
         let has_call = e.call_contract().is_some();
         let (object_reg, object_place) = if has_call {
-            self.lower_setup_receiver_with(e, object, |this| this.lower_method_receiver(e, object))
+            self.lower_setup_receiver_with(e, object, |this| {
+                this.lower_receiver_value(e, object, false)
+            })
         } else {
             (self.expr(object), self.simple_place(object))
         };

@@ -1628,6 +1628,77 @@ impl<'a> Flatten<'a> {
         }
     }
 
+    /// Method call `call`'s receiver value and retained place, copying a
+    /// consuming receiver when `copied`; a subscript's accessor and an
+    /// `in`'s `__contains__` lower their receiver here too, so a
+    /// register-passable `read self` one is passed by value as any method
+    /// call's is. A copied named receiver is read
+    /// as an owned argument is, by its slot's copying use, as upstream
+    /// copies argument 0 from the name's memory. A copied receiver's place
+    /// is its copy's call-result slot, which the call consumes
+    /// ([`Self::copy_consuming_receiver`]), never the copied original's.
+    pub(super) fn lower_receiver_value(
+        &mut self,
+        call: Node<'a>,
+        receiver: Node<'a>,
+        copied: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        if copied
+            && matches!(receiver.checked.op, CheckedOp::Identifier(_))
+            && !receiver.is_fresh_temporary()
+        {
+            let value = self.expr(receiver);
+            // A copying slot read, or a compile-time parameter's value,
+            // is already a fresh owned value the call may consume.
+            let read_copied = matches!(
+                self.f.blocks[self.cur].instrs.last(),
+                Some(
+                    MirInstr::UseVar { dest, mode: UseMode::Copy, .. }
+                        | MirInstr::Const { dest, .. }
+                ) if *dest == value
+            );
+            if read_copied {
+                let ty = self.f.reg_types.get(&value.0).cloned();
+                return match ty {
+                    Some(ty) if ty.kind().is_non_simd_struct() => {
+                        self.consumed_copy(receiver, value, ty)
+                    }
+                    _ => (value, None),
+                };
+            }
+            return self.copy_consuming_receiver(receiver, value, None);
+        }
+        let (value, place) = self.lower_method_receiver(call, receiver);
+        if copied {
+            return self.copy_consuming_receiver(receiver, value, place.as_ref());
+        }
+        // A register-passable receiver the method reads is passed by
+        // value, as upstream passes a `read self` whose type is not
+        // memory-only: it retains no place, so its owner may die at the
+        // read, before the call runs. A call whose result borrows the
+        // receiver keeps it. The register then carries the receiver's
+        // type, which the call's binding reads its struct's binders from.
+        if place.is_some()
+            && !call.lends_read_arguments()
+            && call.call_contract().is_some_and(|contract| {
+                matches!(
+                    contract.receiver_convention,
+                    None | Some(mojito_ast::ast::ArgConvention::Imm)
+                )
+            })
+            && receiver.register_passable_read()
+        {
+            if let Some(ty) = receiver.ty() {
+                self.f
+                    .reg_types
+                    .entry(value.0)
+                    .or_insert_with(|| ty.clone());
+            }
+            return (value, None);
+        }
+        (value, place)
+    }
+
     /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
     /// does, copying a consuming receiver when `copied`, and open the call's
     /// setup frame ([`Self::open_call_setup`]). A receiver the method reads
@@ -2464,76 +2535,6 @@ impl<'a> Flatten<'a> {
             place: place.clone(),
         });
         (loaded, Some(place))
-    }
-}
-
-impl<'a> Flatten<'a> {
-    /// Method call `call`'s receiver value and retained place, copying a
-    /// consuming receiver when `copied`: a copied named receiver is read
-    /// as an owned argument is, by its slot's copying use, as upstream
-    /// copies argument 0 from the name's memory. A copied receiver's place
-    /// is its copy's call-result slot, which the call consumes
-    /// ([`Self::copy_consuming_receiver`]), never the copied original's.
-    fn lower_receiver_value(
-        &mut self,
-        call: Node<'a>,
-        receiver: Node<'a>,
-        copied: bool,
-    ) -> (Reg, Option<MirPlace>) {
-        if copied
-            && matches!(receiver.checked.op, CheckedOp::Identifier(_))
-            && !receiver.is_fresh_temporary()
-        {
-            let value = self.expr(receiver);
-            // A copying slot read, or a compile-time parameter's value,
-            // is already a fresh owned value the call may consume.
-            let read_copied = matches!(
-                self.f.blocks[self.cur].instrs.last(),
-                Some(
-                    MirInstr::UseVar { dest, mode: UseMode::Copy, .. }
-                        | MirInstr::Const { dest, .. }
-                ) if *dest == value
-            );
-            if read_copied {
-                let ty = self.f.reg_types.get(&value.0).cloned();
-                return match ty {
-                    Some(ty) if ty.kind().is_non_simd_struct() => {
-                        self.consumed_copy(receiver, value, ty)
-                    }
-                    _ => (value, None),
-                };
-            }
-            return self.copy_consuming_receiver(receiver, value, None);
-        }
-        let (value, place) = self.lower_method_receiver(call, receiver);
-        if copied {
-            return self.copy_consuming_receiver(receiver, value, place.as_ref());
-        }
-        // A register-passable receiver the method reads is passed by
-        // value, as upstream passes a `read self` whose type is not
-        // memory-only: it retains no place, so its owner may die at the
-        // read, before the call runs. A call whose result borrows the
-        // receiver keeps it. The register then carries the receiver's
-        // type, which the call's binding reads its struct's binders from.
-        if place.is_some()
-            && !call.lends_read_arguments()
-            && call.call_contract().is_some_and(|contract| {
-                matches!(
-                    contract.receiver_convention,
-                    None | Some(mojito_ast::ast::ArgConvention::Imm)
-                )
-            })
-            && receiver.register_passable_read()
-        {
-            if let Some(ty) = receiver.ty() {
-                self.f
-                    .reg_types
-                    .entry(value.0)
-                    .or_insert_with(|| ty.clone());
-            }
-            return (value, None);
-        }
-        (value, place)
     }
 }
 

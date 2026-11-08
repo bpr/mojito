@@ -104,6 +104,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A subscript getter's and `__contains__`'s register-passable `read self`
+  receiver is passed by value, as a method call's is, so `a.p[2]`,
+  `a.p[1, 2]`, `a.p[0:2]`, and `1 in a.p` over a `TrivialRegisterPassable`
+  field let an owner whose last use it is die before the dunder runs, as
+  at the pin (R1976).
 - An `@always_inline("builtin")` body's calls are judged after its body
   check, over the callees the check resolved, in evaluation order (R1991):
   an argument a positional collector takes (`print(n)`, `total(n)` over
