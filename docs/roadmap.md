@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2034**.
+Next free ID: **R2035**.
 
 ## Ordered Work
 
@@ -1256,6 +1256,9 @@ change that needs a new `MJRT_ABI_VERSION`.
     lays it out as LLVM's vector type: `align_of[SIMD[DType.float32,
     4]]()` is `4` against the pin's `16`, and `size_of` of a struct `{UInt8,
     SIMD[DType.float32, 4]}` is `20` against `32`.
+  - Probe: `size_of[SIMD[DType.float32, 3]]()` is `12`, where the pin
+    prints `16`: LLVM pads a `<3 x float>` to its 16-byte alignment, the
+    next power of two of its 12-byte store size.
   - The fix aligns a multi-lane `SIMD` as its LLVM vector, which moves
     every struct layout holding one.
   - A later task that needs an ABI bump joins this entry rather than
@@ -6242,7 +6245,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Source validation reports it, on the conversion it tries after the two
     types differ.
   - The capitalized spelling `L[0]` reports "SIMD width must be a positive
-    power of two, got a type" instead.
+    integer, got a type" instead.
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
   - Depends on nothing.
@@ -7480,21 +7483,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1634 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1734 A `SIMD` width that is not a power of two is rejected, where
-  the pin admits it**
-
-  `def f(x: SIMD[DType.float32, 3]) -> Int` called as
-  `f(SIMD[DType.float32, 3](1.0))` stops with "SIMD width must be a
-  positive power of two, got 3", where the pin prints `1`.
-  - The checker's `SIMD` width rule rejects the type itself, wherever it is
-    spelled.
-  - Probe: `size_of[SIMD[DType.float32, 3]]()` stops with "no overload
-    matches the supplied arguments", where the pin prints `16` (LLVM's
-    `<3 x float>` allocation size, which R18's vector layout gives).
-  - Found while landing R1634 (2026-10-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1754 A compile-time `List + List` over two `comptime` values is
   rejected**
@@ -9415,6 +9403,31 @@ retained on purpose and re-probed rather than fixed; they are listed in
     writer that writes `|` before each piece gives `|boom|Error|(|'boom'|)`,
     where the pin gives `|boom|Error|(|'|b|o|o|m|'|)`.
   - Found while landing R1938 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2034 A non-power-of-two `SIMD` vector the pin's code generation
+  rejects runs**
+
+  The pin admits `SIMD[DType.int32, 3]` as a type and folds a construction
+  of one, but its LLVM lowering rejects every `!kgen.simd` value of a
+  non-power-of-two length that survives its optimizer: "SIMD vector length
+  must be a power of two between 1 and 2^15".
+  - Mojito's stand-in is the MIR verifier's width rule
+    (`verify_simd_instruction`, `mir/verify/instr.rs`), which checks only
+    `simd.make`, `simd.cast`, and `simd.bitcast`, so a vector built by the
+    element list initializer or carried through arithmetic, a call, a
+    field, or a `List` runs on both backends.
+  - The rule must not reach a value the pin folds or deletes first:
+    `takes_three(SIMD[DType.float32, 3](1.0))` over an unused parameter,
+    and `SIMD[DType.int32, 3](7)[2]`, print at the pin
+    (`assets/ok/simd_non_power_of_two_width.mojo`).
+  - Probe: `conformance/probes/simd_non_power_of_two_vector_survives.mojo`
+    (`print(w + w)` over a three-lane `w`) prints `[2, 4, 6]`.
+  - Probe: `print(w)`, `w.reduce_add()`, `w[1] = 9`, a function returning
+    `SIMD[DType.int32, 3]`, a struct field of that type, and
+    `List[SIMD[DType.int32, 3]]` all run, where the pin rejects each.
+  - Found while landing R1734 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

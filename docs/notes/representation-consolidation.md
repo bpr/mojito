@@ -49,8 +49,8 @@ and 11-04 (*Measure*), so the size steps still matter.
    - Parameter binding and conversion: R1540, R1565, R1571,
      R1572, and R1548 (R1687, `SIMDLength` into an `Int`
      binding, and R1541, operator-pattern unification, landed 11-07).
-   - `SIMD` storage and intrinsics: R1520, R1521, R1600, R1575, and
-     R1734 (non-power-of-two widths).
+   - `SIMD` storage and intrinsics: R1520, R1521, R1600, and R1575
+     (R1734, non-power-of-two widths, landed 11-08).
    - Function values (10-31): landed 11-08 (R1796, an initializer, R1794,
      a parametric struct's static, and R1795, an instance method).
    - The 11-01 gate fix: R1805 and R1806 (a module binding named like a
@@ -62,8 +62,7 @@ and 11-04 (*Measure*), so the size steps still matter.
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus \
      --task R1540 --task R1565 --task R1571 --task R1572 --task R1548 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1520 --task R1521 --task R1600 --task R1575 \
-     --task R1734 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1520 --task R1521 --task R1600 --task R1575 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1805 --only R1806 --only R1807 --only R1808 -n 0
    ```
 

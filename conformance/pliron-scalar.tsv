@@ -1149,6 +1149,7 @@ assets/ok/simd_mlir_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mlir_value_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mod_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_modf_floor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_non_power_of_two_width.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_nullary_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_parameter_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_pow_dunders.mojo	-	ineligible	no-scalar-entry-shape

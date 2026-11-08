@@ -2481,9 +2481,14 @@ fn rejects_a_raising_call_in_a_type_parameter() {
 }
 
 #[test]
-fn rejects_non_power_of_two_width() {
-    let e = err("var v: SIMD[DType.int32, 3] = SIMD[DType.int32, 3](1, 2, 3)\n");
+fn rejects_non_positive_width() {
+    let e = err("def f(x: SIMD[DType.int32, 0]) -> Int:\n    return 1\n");
     assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {e:?}");
+}
+
+#[test]
+fn accepts_non_power_of_two_width() {
+    ok("def f(x: SIMD[DType.int32, 3]) -> Int:\n    return 1\n");
 }
 
 #[test]

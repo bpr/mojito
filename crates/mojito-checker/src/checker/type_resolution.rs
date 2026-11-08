@@ -1241,7 +1241,7 @@ impl Checker {
                 let width = self.mlir_index_operand(length)?;
                 let dtype = mojito_types::types::mlir_value_operand(dtype)
                     .ok_or_else(|| mlir_operand_mismatch("!kgen.dtype", "DType"))?;
-                let vector = simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)?;
+                let vector = simd_of(self.dtype_from_arg(&dtype)?, positive_width(width)?)?;
                 Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
@@ -4708,8 +4708,8 @@ impl Checker {
     /// Evaluate a SIMD width argument to the `SIMDLength` its slot holds:
     /// a length as it is, and an `Int` converted by upstream's implicit
     /// `SIMDLength.__init__(Int)`, so `SIMD[dt, n]` holds `SIMDLength(n)`
-    /// as at the pin. A known lane count must be a power of two; a symbolic
-    /// one is its instantiation's to check.
+    /// as at the pin. A known lane count must be positive; a symbolic one
+    /// is its instantiation's to check.
     pub(super) fn simd_width(
         &self,
         arg: &mojito_ast::ast::ParamArg,
@@ -4727,11 +4727,11 @@ impl Checker {
                 let width = mojito_types::param_expr::fold::integer_value(&count)
                     .and_then(|width| width.to_i64())
                     .ok_or_else(|| TypeError::BadSimdWidth(count.to_string()))?;
-                return Ok((power_of_two_width(SimdWidth::Known(width))?, attribute));
+                return Ok((positive_width(SimdWidth::Known(width))?, attribute));
             }
         };
         let width = SimdWidth::of_length(&self.param_context, length).map_err(param_error)?;
-        Ok((power_of_two_width(width)?, attribute))
+        Ok((positive_width(width)?, attribute))
     }
 
     /// The `SIMDLength` parameter a width slot holds: its length, or the
@@ -5155,13 +5155,13 @@ fn mlir_operand_mismatch(expected: &str, holder: &str) -> TypeError {
     }
 }
 
-/// `width` as a SIMD length, which must be a power of two; a symbolic one
-/// is its instantiation's to check.
-fn power_of_two_width(width: SimdWidth) -> Result<SimdWidth, TypeError> {
+/// `width` as a SIMD length, which must be positive; a symbolic one is its
+/// instantiation's to check. A length need not be a power of two: the pin
+/// admits `SIMD[DType.float32, 3]` and rejects only a value of it its code
+/// generation meets, which the MIR verifier stands in for.
+fn positive_width(width: SimdWidth) -> Result<SimdWidth, TypeError> {
     match width {
-        SimdWidth::Known(w) if w < 1 || (w & (w - 1)) != 0 => {
-            Err(TypeError::BadSimdWidth(w.to_string()))
-        }
+        SimdWidth::Known(w) if w < 1 => Err(TypeError::BadSimdWidth(w.to_string())),
         width => Ok(width),
     }
 }

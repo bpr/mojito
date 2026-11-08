@@ -107,8 +107,11 @@ impl LayoutCx<'_> {
             let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                 return Err(LayoutError::Symbolic(ty.to_string()));
             };
+            let lanes = u64::try_from(width).map_err(|_| {
+                LayoutError::Unsupported(format!("'{ty}' has a negative SIMD width"))
+            })?;
             let lane = lane_layout(dtype);
-            return Ok(Layout::new(lane.size * width as u64, lane.align));
+            return Ok(Layout::new(lane.size * lanes, lane.align));
         }
         match ty.kind() {
             TyKind::Index => Ok(Layout::new(8, 8)),

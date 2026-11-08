@@ -50,6 +50,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `SIMD` width need not be a power of two, as at the pin:
+  `SIMD[DType.float32, 3]` is a type, a parameter, and a construction on the
+  VM and natively, since a call of an `@always_inline("builtin")` function
+  with no result over compile-time arguments (`_simd_construction_checks`)
+  now folds to `None` without judging its `comptime assert` (R1734). A
+  three-lane vector reaching `simd.make`, `simd.cast`, or `simd.bitcast` is
+  still rejected by the MIR verifier, and one the pin's code generation
+  rejects elsewhere is filed as R2034.
 - `inline-parametric` instantiates a callee once per owner type and
   compile-time arguments within a caller and splices copies of that
   instance at later calls, rather than re-instantiating it per site: 400

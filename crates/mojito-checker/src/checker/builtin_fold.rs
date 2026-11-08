@@ -807,8 +807,24 @@ impl Checker {
     }
 
     /// [`Self::folded_builtin_body`] over `body`, its bindings bound at
-    /// `level`.
+    /// `level`. A body with no result value folds to `None` once each of
+    /// its statements does, as the pin folds `_simd_construction_checks`:
+    /// a call of it over compile-time arguments is a constant, and its
+    /// `comptime assert` is never judged.
     fn folded_statements(&mut self, body: &[Stmt], level: usize, result: &Ty) -> Option<ParamExpr> {
+        if matches!(result.kind(), TyKind::None)
+            && !matches!(
+                body.last().map(|last| &last.kind),
+                Some(StmtKind::Return(Some(_)))
+            )
+        {
+            for statement in body {
+                if !matches!(statement.kind, StmtKind::Return(None)) {
+                    self.folded_leading_statement(statement, level)?;
+                }
+            }
+            return self.param_context.constant(CtValue::None).ok();
+        }
         let (last, leading) = body.split_last()?;
         for statement in leading {
             self.folded_leading_statement(statement, level)?;

@@ -1,7 +1,8 @@
-# expect: simd width must be power of 2
-# A generic width binds per call during checked elaboration, where the
-# `SIMDLength` initializer's `_simd_construction_checks` rejects it — not at
-# a late VM operation.
+# expect: SIMD width 3 is not a positive power of two
+# A generic width binds per call. `_simd_construction_checks` folds away, as
+# at the pin, but the instance's three-lane splat survives to the MIR
+# verifier, Mojito's stand-in for the pin's LLVM lowering, which rejects a
+# non-power-of-two vector length.
 def splat[w: SIMDLength](value: Int) -> SIMD[DType.int32, w]:
     return SIMD[DType.int32, w](value)
 

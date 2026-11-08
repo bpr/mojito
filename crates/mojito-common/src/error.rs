@@ -485,7 +485,7 @@ pub enum TypeError {
     DynamicDefault(String),
     /// A `SIMD` element-type argument was not a recognized `DType.<name>`.
     BadDtype(String),
-    /// A SIMD width was not a positive power of two.
+    /// A SIMD width was not a positive integer.
     BadSimdWidth(String),
     /// A subscript `v[i]` was applied to a non-SIMD value.
     NotIndexable(String),
@@ -1073,7 +1073,7 @@ impl fmt::Display for TypeError {
             }
             Self::BadDtype(what) => write!(f, "not a valid SIMD element type: {what}"),
             Self::BadSimdWidth(w) => {
-                write!(f, "SIMD width must be a positive power of two, got {w}")
+                write!(f, "SIMD width must be a positive integer, got {w}")
             }
             Self::NotIndexable(ty) => {
                 write!(f, "type '{ty}' cannot be indexed here")
