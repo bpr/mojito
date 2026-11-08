@@ -3229,9 +3229,18 @@ impl<'a> Specializer<'a> {
                                 };
                                 // An initializer read as a value returns
                                 // the struct its `out self` initializes, so
-                                // the call is that construction.
+                                // the call is that construction. A `def`
+                                // nested in an initializer is spelled under
+                                // it but declares no receiver.
                                 let receiver =
                                     (mojito_symbol::symbol::is_initializer_symbol(&target)
+                                        && self.declarations.get(target.as_str()).is_some_and(
+                                            |declaration| {
+                                                declaration.has_receiver
+                                                    && declaration.receiver_convention
+                                                        == Some(mojito_ast::ast::ArgConvention::Out)
+                                            },
+                                        )
                                         && function.reg_types.contains_key(&dest.0))
                                     .then_some(*dest);
                                 // A generic `def` nested in this body binds
