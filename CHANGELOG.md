@@ -19,6 +19,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value-parameter pattern that is an operator expression now unifies
+  with an actual of the same operator node by node, as at the pin:
+  `g[w: Int](x: B[w * 2])` called with `B[n * 2]()` binds `w = n`, and so
+  does a SIMD width `w * 2` against `n * 2`, instead of reporting "cannot
+  infer type parameter 'w'" (R1541). A closed actual (`B[4]`) still
+  solves nothing, since the pin never inverts an operation.
+
 - `Compiler::check_source` checks a program against the bundled library's
   cached package and lowers nothing, as upstream checks a module against an
   imported package; it shares `compile_importing`'s front half

@@ -3746,31 +3746,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1541 A compound value-parameter pattern solves no binder**
-
-  Problem: `g[w: Int](x: B[w * 2])` called as `g(B[n * 2]())` in `def
-  f[n: Int]()` is rejected with "cannot infer type parameter 'w' of 'g'
-  from the arguments", where the pin unifies the two expressions node by
-  node, binds `w` to `n`, and prints `2`.
-  - Cause: `solve_value_args` and `solve_applied_args`
-    (`checker/generics.rs`) bind only a bare binder or the arguments of two
-    applications of one function. Any other pattern (`w * 2`, `w + 1`) is
-    left for the substituted signature to compare, so its binder stays
-    unsolved.
-  - Lever: unify a canonical `ParamKind::Op` pattern against an actual of
-    the same operator and arity operand by operand, binding a binder
-    operand and requiring every other operand equal.
-  - Probe: `B[w + 1]` against `B[n + 1]` solves `w = n` at the pin.
-  - Probe: `show[w: Int](x: SIMD[DType.int32, w * 2])` against
-    `SIMD[DType.int32, n * 2]` solves `w = n` and prints `2 [1, 1, 1, 1]`
-    at the pin. Its slot holds `SIMDLength(w * 2)`, so the rule applies to
-    the construction's argument.
-  - Probe: the pin rejects `B[w * 2]` against a closed `B[4]`: it unifies
-    structure and never inverts an operation.
-  - Found while landing R382 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 
   Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports

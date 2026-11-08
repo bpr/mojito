@@ -778,14 +778,29 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
 /// same through the instance), as the pin unifies a call in the parameter
 /// domain argument by argument. A struct value a builtin `__init__` folds
 /// to is matched by the construction it folded from, as the pin infers
-/// through the call and not through the fields. First solution wins; any
-/// other pair of expressions contributes nothing.
+/// through the call and not through the fields. Two canonical operator
+/// nodes unify the same way, node by node (`w * 2` against `n * 2` solves
+/// `w = n`); the solver never inverts an operation, so `w * 2` against `4`
+/// solves nothing. First solution wins; any other pair of expressions
+/// contributes nothing.
 fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap<String, CtValue>) {
     let construction = |expr: &ParamExpr| match expr.kind() {
         ParamKind::StructValue { spelling, .. } => spelling.0.clone(),
         _ => expr.clone(),
     };
     let (pattern, actual) = (construction(pattern), construction(actual));
+    if matches!(
+        (pattern.kind(), actual.kind()),
+        (ParamKind::Op { .. }, ParamKind::Op { .. })
+    ) {
+        let mut solved = HashMap::new();
+        if unify_operator_pattern(&pattern, &actual, &mut solved) {
+            for (name, value) in solved {
+                out.entry(name).or_insert(value);
+            }
+        }
+        return;
+    }
     let (
         ParamKind::Apply { function, args, .. },
         ParamKind::Apply {
@@ -816,6 +831,48 @@ fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap
             ) => solve_value_args(pattern, actual, out),
             _ => solve_applied_args(arg, actual, out),
         }
+    }
+}
+
+/// Unify a canonical operator pattern with an actual node by node: the same
+/// operator and arity, a binder operand binding its actual (consistently,
+/// when it occurs twice), a nested operator unifying recursively, and every
+/// other operand equal to its actual. A mismatch anywhere fails the whole
+/// pattern, which then binds nothing.
+fn unify_operator_pattern(
+    pattern: &ParamExpr,
+    actual: &ParamExpr,
+    solved: &mut HashMap<String, CtValue>,
+) -> bool {
+    if let Some(reference) = pattern.as_decl_ref() {
+        let value = actual
+            .as_constant()
+            .cloned()
+            .unwrap_or_else(|| CtValue::Expr(actual.clone()));
+        return match solved.entry(reference.name.to_string()) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(value);
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(slot) => *slot.get() == value,
+        };
+    }
+    match (pattern.kind(), actual.kind()) {
+        (
+            ParamKind::Op { op, operands },
+            ParamKind::Op {
+                op: actual_op,
+                operands: actuals,
+            },
+        ) => {
+            op == actual_op
+                && operands.len() == actuals.len()
+                && operands
+                    .iter()
+                    .zip(actuals)
+                    .all(|(operand, actual)| unify_operator_pattern(operand, actual, solved))
+        }
+        _ => pattern == actual,
     }
 }
 
