@@ -1198,6 +1198,37 @@ fn store_to_mem_folds_closed_and_closes_on_replacement() {
     ));
 }
 
+/// `load_from_mem` reads a frozen reference's referent and cancels a
+/// `store_to_mem`; over an application typed by a reference it stays a
+/// node typed by the referent, which an answered application closes.
+#[test]
+fn load_from_mem_reads_a_reference() {
+    let context = ParamContext::new();
+    let two = literal(&context, 2);
+    let frozen = context.store_to_mem(&two).expect("a reference builds");
+    let read = context.load_from_mem(&frozen).expect("a read builds");
+    assert_eq!(read.as_constant(), two.as_constant());
+    let n = int_param(&context, "f", 0, "n");
+    let stored = context.store_to_mem(&n).expect("a reference builds");
+    assert_eq!(context.load_from_mem(&stored).expect("a read builds"), n);
+    let reference = TyKind::Ref(crate::origin::RefTy {
+        referent: Ty::int(),
+        origin: crate::origin::Origin::Static,
+        mutability: crate::origin::Mutability::Immutable,
+    });
+    let application = context.apply("get", &[n], MetaTy::value(reference.into()));
+    let read = context.load_from_mem(&application).expect("a read builds");
+    assert_eq!(read.meta(), &MetaTy::value(Ty::int()));
+    assert_eq!(read.to_string(), "(load_from_mem get(n))");
+    assert!(context.load_from_mem(&two).is_err());
+    let answered = context
+        .answer_applications(&read, &mut |_, _| {
+            Ok(Some(CtValue::StoreToMem(Box::new(CtValue::Int(5)))))
+        })
+        .expect("the application answers");
+    assert_eq!(answered.as_constant(), Some(&CtValue::Int(5)));
+}
+
 /// A reflection query the elaborator's oracle answers closes what sits
 /// above it; one the oracle leaves stays a node, and an answer the closed
 /// subject lacks is the instantiation's error.

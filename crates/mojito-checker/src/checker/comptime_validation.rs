@@ -182,8 +182,11 @@ pub(in crate::checker) struct ApplicableFunction {
     keyword_only: Option<usize>,
     /// The declared result: a scalar, `None`, a `DType`, a named struct, one
     /// of its own type parameters, or `Self`, which a call resolves at the instance
-    /// it constructs or is called on.
+    /// it constructs or is called on. For a reference result it is the
+    /// referent ([`Self::returns`]).
     result: SourceType,
+    /// How it returns its result.
+    returns: ResultConvention,
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
     raises: bool,
@@ -2609,6 +2612,8 @@ impl Checker {
         // ([`Self::infer_initializer_call`]).
         let mut explicit_initializer = None;
         let slice_spelling: Vec<Expr>;
+        let index_spelling: Vec<ParamArg>;
+        let index_args: Vec<Expr>;
         let no_kwargs: Vec<mojito_ast::ast::KwArg> = Vec::new();
         let (name, instance, receiver, param_args, args, kwargs) = match &expr.kind {
             // A slice subscript (`c[:2]`) is `c.__getitem__` of its slice
@@ -2623,6 +2628,43 @@ impl Checker {
                     receiver,
                     [].as_slice(),
                     &slice_spelling,
+                    &no_kwargs,
+                )
+            }
+            // A subscript (`l[0]`, `(2, 1)[0]`) is its getter's application
+            // over the receiver, as upstream's `SubscriptNode` is: a
+            // `__getitem_param__[index]()` or a `__getitem__(index)`.
+            ExprKind::Index { object, index } => {
+                let getter = self
+                    .run_time_type(object)
+                    .and_then(|ty| self.subscript_getter(&ty))?;
+                let method = match getter {
+                    super::indexing::SubscriptGetter::Param => "__getitem_param__",
+                    super::indexing::SubscriptGetter::Call => "__getitem__",
+                };
+                let (name, instance, receiver) = self.applied_receiver(object, method)?;
+                // The pin's `Array` constant subscript is `__getitem_param__`,
+                // which the bundled `Array` lacks.
+                if instance
+                    .kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(owner, _)| template_name(owner) == "Array")
+                {
+                    return None;
+                }
+                let index = (**index).clone();
+                (index_spelling, index_args) = match getter {
+                    super::indexing::SubscriptGetter::Param => {
+                        (vec![ParamArg::Value(index)], Vec::new())
+                    }
+                    super::indexing::SubscriptGetter::Call => (Vec::new(), vec![index]),
+                };
+                (
+                    name,
+                    Some(instance),
+                    receiver,
+                    index_spelling.as_slice(),
+                    &index_args,
                     &no_kwargs,
                 )
             }
@@ -3108,6 +3150,21 @@ impl Checker {
             applied.push(self.param_context.type_shape(instance.clone()?));
         }
         applied.extend(arguments.iter().cloned());
+        // A reference result is applied at an immutable reference into
+        // compile-time memory, the call its `load_from_mem`.
+        if function.returns == ResultConvention::Reference {
+            let reference = TyKind::Ref(mojito_types::origin::RefTy {
+                referent: result,
+                origin: mojito_types::origin::Origin::Static,
+                mutability: mojito_types::origin::Mutability::Immutable,
+            });
+            let application = self.param_context.apply(
+                function.symbol(),
+                &applied,
+                mojito_types::param_expr::MetaTy::value(reference.into()),
+            );
+            return self.param_context.load_from_mem(&application).ok();
+        }
         let application = self.param_context.apply(
             function.symbol(),
             &applied,
@@ -3550,8 +3607,27 @@ impl Checker {
         arguments.extend(applied_params);
         arguments.extend(applied_run);
         arguments.extend(after);
+        // An element of its struct's pack (`Self.Ts[index]`) closes at the
+        // instance, as a run-time method call's result does.
+        let close = |ty: Ty| match owner.and_then(mojito_types::types::nominal_parts) {
+            Some((name, instance_args))
+                if let Some(info) = self.structs.get(template_name(name)) =>
+            {
+                self.close_pack_elements(
+                    ty,
+                    &[
+                        (&decls, &bound.arguments),
+                        (
+                            &info.decls,
+                            &positional_pack_arguments(&info.decls, &instance_args),
+                        ),
+                    ],
+                )
+            }
+            _ => self.close_pack_elements(ty, &[(&decls, &bound.arguments)]),
+        };
         let result = match &signature.result {
-            Some(result) => Some(resolve(&at_owner(result))?),
+            Some(result) => Some(close(resolve(&at_owner(result))?)),
             None => None,
         };
         Some((arguments, result, conversions))
@@ -6339,6 +6415,17 @@ enum SelfSlot {
     },
 }
 
+/// How an [`ApplicableFunction`] returns its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ResultConvention {
+    /// By value.
+    Value,
+    /// By reference (`-> ref[...] Self.T`): a call is the application at
+    /// the reference, read where a value stands (`load_from_mem`), as the
+    /// pin applies `l[0]`.
+    Reference,
+}
+
 /// The type of an [`ApplicableParameter`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SlotType {
@@ -6493,6 +6580,19 @@ impl ApplicableShape<'_> {
             ),
             result: match self.ret {
                 SourceType::None | SourceType::SelfType | SourceType::Named(..) => self.ret.clone(),
+                // A reference result is its referent's application, which
+                // the call reads ([`ResultConvention::Reference`]).
+                SourceType::Ref { referent, .. }
+                    if matches!(
+                        **referent,
+                        SourceType::SelfType
+                            | SourceType::Named(..)
+                            | SourceType::SelfParam(_)
+                            | SourceType::IndexedProjection { .. }
+                    ) =>
+                {
+                    (**referent).clone()
+                }
                 // A `comptime` member type of `Self` (`SIMD.eq`'s
                 // `Self._Mask`) a builtin body returns, registered before
                 // the body folds ([`Checker::register_builtin_result_members`]).
@@ -6511,6 +6611,11 @@ impl ApplicableShape<'_> {
                     ret.clone()
                 }
                 _ => return None,
+            },
+            returns: if matches!(self.ret, SourceType::Ref { .. }) {
+                ResultConvention::Reference
+            } else {
+                ResultConvention::Value
             },
             raises: self.raises,
             refined_self: None,

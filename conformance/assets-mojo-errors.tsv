@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1122
+# swept-count	1125
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -314,6 +314,7 @@ assets/type_error/comptime_assert_tstring_message.mojo	compile-reject	agree	erro
 assets/type_error/comptime_call_of_capturing_nested_def.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
 assets/type_error/comptime_call_of_function_value_local.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
 assets/type_error/comptime_call_raising.mojo	compile-reject	agree	error: cannot call raising function in type parameter
+assets/type_error/comptime_call_result_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem mk()[0])]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_call_signature_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(Int(2))]' value to 'SIMD[.int32, 4]'
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_conditional_float_literals_float64.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'Float32'
@@ -324,6 +325,7 @@ assets/type_error/comptime_display_binding_runtime_read.mojo	compile-reject	agre
 assets/type_error/comptime_display_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (load_from_mem vals.__getitem_param__[Int(1)]())]' value to 'SIMD[.int32, ((load_from_mem vals.__getitem_param__[Int(0)]()) * Int(2))]'
 assets/type_error/comptime_display_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Array[__literal_size__=Int(2)](Int(2), Int(1), __list_literal__=NoneType(None)).__getitem_param__[Int(0)]())]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_dtype_binding_scope.mojo	compile-reject	agree	error: use of unknown declaration 'lane'
+assets/type_error/comptime_explicit_getitem_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Array[__literal_size__=Int(2)](Int(2), Int(1), __list_literal__=NoneType(None))[Int(0)])]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_field_names_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[StringSpan[ImmStaticOrigin], Int(len(#kgen.struct_field_types<:trait<@std::@traits::@anytype::@AnyType> T>))]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_display_not_copyable.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_for_non_copyable_iterator.mojo	compile-reject	agree	error: 'paramfor_has_next' parameter 'IteratorType' has 'Iterator & Copyable' type, but value has type 'AnyStruct[Once]'
@@ -368,6 +370,7 @@ assets/type_error/comptime_slice_element_mismatch.mojo	compile-reject	agree	erro
 assets/type_error/comptime_struct_field_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'G[Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
 assets/type_error/comptime_template_binding_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
+assets/type_error/comptime_tuple_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Tuple(Int(2), Int(1)).__getitem_param__[Int(0)]())]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_type_ordering_rejected.mojo	compile-reject	agree	error: 'Movable' does not implement the '__lt__' method
 assets/type_error/comptime_type_pack_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'TypeList[Ts.values]' value to 'Int'
 assets/type_error/comptime_unread_constant_is_checked.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["x"]' to 'Int'

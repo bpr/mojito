@@ -2596,6 +2596,12 @@ explicitly. Each pointer freezes independently, so allocation aliasing is
 not preserved (R522). A `CtValue::StoreToMem` is a frozen reference into
 compile-time memory, upstream's `#lit.store_to_mem`: the value it reads,
 which thaw stores in fresh compile-time memory. It has no run-time form.
+A compile-time call of a callable returning a reference (a subscript
+`l[0]` spelled as its getter's application, `t.__getitem_param__[0]()`)
+is that application read by the parameter domain's `load_from_mem`
+(`ParamOp::LoadFromMem`); the elaborator freezes the reference the call
+returns, into compile-time memory or the heap, as a `CtValue::StoreToMem`,
+over which the op folds to the referent.
 
 A `Const::Value` carries these values across the verified MIR waist. The
 VM's typed `thaw` and Pliron's `store_parameter_value` allocate fresh storage

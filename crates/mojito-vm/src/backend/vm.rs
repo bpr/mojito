@@ -702,15 +702,20 @@ impl VmBackend {
                     .collect::<Result<Vec<_>, _>>()
                     .map(CtValue::List)
             }
+            // A reference into compile-time memory or the heap, which a
+            // compile-time call's reference result designates (`l[0]`), is
+            // the frozen reference to its referent: the elaborator's heap
+            // is compile-time memory, as the pin's interpreter's is.
             Value::Ref {
-                frame: COMPTIME_MEMORY_FRAME,
+                frame: frame @ (COMPTIME_MEMORY_FRAME | POINTER_ROOT_FRAME),
                 ..
             } => {
-                let referent = self.read_reference(
-                    &value,
-                    FrameId(COMPTIME_MEMORY_FRAME),
-                    &self.comptime_memory,
-                )?;
+                let roots = if frame == COMPTIME_MEMORY_FRAME {
+                    &self.comptime_memory
+                } else {
+                    &self.pointer_roots
+                };
+                let referent = self.read_reference(&value, FrameId(frame), roots)?;
                 let referent_ty = match ty.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(&reference.referent),
                     Some(TyKind::Pointer { element, .. }) => Some(element),

@@ -260,6 +260,7 @@ assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_value_field_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_values.mojo	main	exe-differential	sanitized
+assets/ok/comptime_subscript_application_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
 assets/ok/comptime_value_bracket_arguments.mojo	main	exe-differential	sanitized

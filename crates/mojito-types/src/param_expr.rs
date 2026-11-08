@@ -396,6 +396,7 @@ impl ParamContext {
             ParamOp::GetEnv => self.build_get_env(operands),
             ParamOp::DtypeToUi8 => self.build_dtype_code(operands),
             ParamOp::StoreToMem => self.build_store_to_mem(operands),
+            ParamOp::LoadFromMem => self.build_load_from_mem(operands),
             ParamOp::IntLiteralConvert | ParamOp::FloatLiteralConvert => {
                 self.build_literal_convert(op, operands)
             }
@@ -1249,6 +1250,14 @@ impl ParamContext {
     /// the frozen reference once it is constant.
     pub fn store_to_mem(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.op(ParamOp::StoreToMem, std::slice::from_ref(operand))
+    }
+
+    /// The value the reference `reference` designates, read at compile
+    /// time ([`ParamOp::LoadFromMem`]): a compile-time call's reference
+    /// result read where a value stands, as upstream's `load_from_mem`
+    /// reads `l[0]`'s.
+    pub fn load_from_mem(&self, reference: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.op(ParamOp::LoadFromMem, std::slice::from_ref(reference))
     }
 
     /// The value a [`Self::store_to_mem`] reference holds, and any other
@@ -2296,6 +2305,40 @@ impl ParamContext {
             MetaTy::value(reference.into()),
             ParamKind::Op {
                 op: ParamOp::StoreToMem,
+                operands,
+            },
+        ))
+    }
+
+    /// `load_from_mem` over a reference: the value a frozen reference
+    /// holds, the operand of a `store_to_mem` it reads back, and
+    /// otherwise the node, typed by the reference's referent.
+    fn build_load_from_mem(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        if let Some(CtValue::StoreToMem(referent)) = operands[0].as_constant() {
+            self.count_fold();
+            return self.constant((**referent).clone());
+        }
+        if let ParamKind::Op {
+            op: ParamOp::StoreToMem,
+            operands: stored,
+        } = operands[0].kind()
+        {
+            return Ok(stored[0].clone());
+        }
+        let referent = match operands[0].meta().as_value().map(Ty::kind) {
+            Some(TyKind::Ref(reference)) => reference.referent.clone(),
+            _ => {
+                return Err(ParamError::TypeMismatch {
+                    operation: ParamOp::LoadFromMem.name().to_string(),
+                    expected: "a compile-time reference".to_string(),
+                    found: operands[0].meta().to_string(),
+                });
+            }
+        };
+        Ok(self.make(
+            MetaTy::value(referent),
+            ParamKind::Op {
+                op: ParamOp::LoadFromMem,
                 operands,
             },
         ))
@@ -3851,6 +3894,11 @@ pub enum ParamOp {
     /// Over a constant it is the frozen reference
     /// ([`CtValue::StoreToMem`]).
     StoreToMem,
+    /// KGEN's `load_from_mem`: the value its operand, a reference into
+    /// compile-time memory, designates, which reads a compile-time call's
+    /// reference result where a value stands (`load_from_mem l[0]`). Over
+    /// a frozen reference it is the referent.
+    LoadFromMem,
     /// `#pop.int_literal_convert<v> : T`: a `!pop.int_literal`, the second
     /// operand, converted into every lane of the `!kgen.simd` storage type
     /// the first operand names, a type shape as [`ParamOp::SimdSplat`]'s is
@@ -3942,6 +3990,7 @@ impl ParamOp {
             Self::GetEnv => "get_env",
             Self::DtypeToUi8 => "dtype_to_ui8",
             Self::StoreToMem => "store_to_mem",
+            Self::LoadFromMem => "load_from_mem",
             Self::IntLiteralConvert => "int_literal_convert",
             Self::FloatLiteralConvert => "float_literal_convert",
             Self::IntToFloatLiteral => "int_to_float_literal",
@@ -3999,7 +4048,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 46] = [
+    const ALL: [Self; 47] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -4033,6 +4082,7 @@ impl ParamOp {
         Self::GetEnv,
         Self::DtypeToUi8,
         Self::StoreToMem,
+        Self::LoadFromMem,
         Self::IntLiteralConvert,
         Self::FloatLiteralConvert,
         Self::IntToFloatLiteral,
@@ -4057,6 +4107,7 @@ impl ParamOp {
             | Self::StringAddress
             | Self::DtypeToUi8
             | Self::StoreToMem
+            | Self::LoadFromMem
             | Self::IntToFloatLiteral
             | Self::FloatToIntLiteral
             | Self::FloatLiteralIsNan
@@ -4104,6 +4155,7 @@ impl ParamOp {
             | Self::GetEnv
             | Self::DtypeToUi8
             | Self::StoreToMem
+            | Self::LoadFromMem
             | Self::IntLiteralConvert
             | Self::FloatLiteralConvert
             | Self::IntToFloatLiteral
@@ -5445,6 +5497,7 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
         (ParamOp::GetEnv, [CtValue::Type(ty), name]) => fold::fold_get_env(ty, name),
         (ParamOp::DtypeToUi8, [dtype]) => fold::fold_dtype_to_ui8(dtype),
         (ParamOp::StoreToMem, [referent]) => Ok(CtValue::StoreToMem(Box::new((*referent).clone()))),
+        (ParamOp::LoadFromMem, [CtValue::StoreToMem(referent)]) => Ok((**referent).clone()),
         (
             ParamOp::IntLiteralConvert | ParamOp::FloatLiteralConvert,
             [CtValue::Type(ty), literal],
@@ -5590,6 +5643,7 @@ const fn precedence(op: ParamOp) -> u8 {
         | ParamOp::GetEnv
         | ParamOp::DtypeToUi8
         | ParamOp::StoreToMem
+        | ParamOp::LoadFromMem
         | ParamOp::IntLiteralConvert
         | ParamOp::FloatLiteralConvert
         | ParamOp::IntToFloatLiteral
@@ -5640,6 +5694,7 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::GetEnv => "get_env",
         ParamOp::DtypeToUi8 => "pop.dtype.to_ui8",
         ParamOp::StoreToMem => "store_to_mem",
+        ParamOp::LoadFromMem => "load_from_mem",
         ParamOp::IntLiteralConvert => "pop.int_literal_convert",
         ParamOp::FloatLiteralConvert => "pop.float_literal_convert",
         ParamOp::IntToFloatLiteral => "pop.int_to_float_literal",
@@ -5658,8 +5713,10 @@ const fn source_operator(op: ParamOp) -> &'static str {
 
 /// Write the application of an operator method over its operands, as the
 /// pin shows it: `__add__` over `a` and `b` as `(a + b)`, its reflected
-/// `__radd__` over `self` and `lhs` as `(lhs + self)`, and `__neg__` over
-/// `a` as `-a`. `false`, writing nothing, for any other application.
+/// `__radd__` over `self` and `lhs` as `(lhs + self)`, `__neg__` over `a`
+/// as `-a`, a subscript getter `__getitem__` over `l` and `i` as `l[i]`,
+/// and `__getitem_param__` at `i` over `t` as `t.__getitem_param__[i]()`.
+/// `false`, writing nothing, for any other application.
 fn write_operator_application(
     f: &mut fmt::Formatter<'_>,
     function: &str,
@@ -5672,6 +5729,24 @@ fn write_operator_application(
     else {
         return Ok(false);
     };
+    let postfix = precedence(ParamOp::CastToBuiltin);
+    match (method, values) {
+        ("__getitem__", [receiver, indices @ ..]) if !indices.is_empty() => {
+            write_expr(f, receiver, postfix)?;
+            write!(f, "[")?;
+            write_operands(f, indices)?;
+            write!(f, "]")?;
+            return Ok(true);
+        }
+        ("__getitem_param__", [indices @ .., receiver]) if !indices.is_empty() => {
+            write_expr(f, receiver, postfix)?;
+            write!(f, ".__getitem_param__[")?;
+            write_operands(f, indices)?;
+            write!(f, "]()")?;
+            return Ok(true);
+        }
+        _ => {}
+    }
     match (InfixOp::of_dunder(method), values) {
         (Some((op, reflected)), [first, second]) => {
             let (left, right) = if reflected {
@@ -5738,6 +5813,11 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                 // A reference shows as its referent, as the pin spells the
                 // call that passes it (`bc(String("ab"))`).
                 (ParamOp::StoreToMem, [operand]) => write_expr(f, operand, parent)?,
+                (ParamOp::LoadFromMem, [operand]) => {
+                    write!(f, "(load_from_mem ")?;
+                    write_expr(f, operand, 0)?;
+                    write!(f, ")")?;
+                }
                 // An `index` sum or product of casts shows the cast pulled
                 // outward, as the pin does: `(k + 1).__mlir_index__()`.
                 (ParamOp::Add | ParamOp::Mul, _) if let Some(pulled) = pulled_cast(expr) => {

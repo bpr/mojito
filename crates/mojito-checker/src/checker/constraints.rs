@@ -2926,18 +2926,22 @@ impl Checker {
             return read;
         }
         // A compile-time struct value's subscript is its `__getitem_param__`
-        // application, as upstream's `SubscriptNode` over a value is.
+        // member's application, as upstream's `SubscriptNode` over a value
+        // is, or its getter method's ([`Self::positioned_application`]).
         if let ExprKind::Index { object, index } = &expr.kind
             && let Some(value_ty) = self.compile_time_struct_value(object)
         {
             let value_ty = value_ty?;
+            if let Some(ty) = self.parameterized_assoc_application(
+                &value_ty,
+                "__getitem_param__",
+                &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+            )? {
+                return Ok(self.param_context.type_shape(ty));
+            }
+            // A getter method's subscript is its application.
             return self
-                .parameterized_assoc_application(
-                    &value_ty,
-                    "__getitem_param__",
-                    &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
-                )?
-                .map(|ty| self.param_context.type_shape(ty))
+                .positioned_application(expr)
                 .ok_or_else(|| TypeError::NotIndexable(value_ty.to_string()));
         }
         if let Some(value) = self.eval_reflection_expr(expr)? {

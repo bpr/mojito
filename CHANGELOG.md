@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A subscript or a reference-returning getter call in a signature, a type
+  argument, or a struct `comptime` member is the getter's compile-time
+  application read through upstream's `load_from_mem` (R1990):
+  `SIMD[DType.int8, mk()[0]]`, `(2, 1)[0]`, and
+  `[2, 1].__getitem__(0)` spelled on both sides of a call convert as the
+  identity, as at the pin, and a mismatch names `(load_from_mem mk()[0])`.
+  An `Array` display's constant subscript waits on its
+  `__getitem_param__` (R2043).
+
 - `llvm_intrinsic` calls the target-independent elementwise intrinsics the
   pin's library reaches, on the VM and natively (R1521): `math`'s float
   family (`llvm.sin`, `cos`, `asin`, `acos`, and kin through `fma` and

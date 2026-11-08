@@ -24,6 +24,17 @@ pub(super) enum SubscriptLValue {
     },
 }
 
+/// The getter a subscript of a struct value reads through, as upstream's
+/// `SubscriptNode` selects it: one run-time typing and one compile-time
+/// application share it ([`Checker::subscript_getter`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SubscriptGetter {
+    /// `__getitem_param__[index]()`, the index a compile-time argument.
+    Param,
+    /// `__getitem__(index)`.
+    Call,
+}
+
 /// The source operands a nominal subscript's getter and setter share: its
 /// positional and keyword index expressions. Slice literals are rebuilt per
 /// accessor and are not listed.
@@ -44,6 +55,24 @@ pub(super) fn subscript_argument_sources(place: &Expr) -> Vec<SourceSpan> {
 }
 
 impl Checker {
+    /// The getter a subscript of a value of type `obj_ty` reads through: a
+    /// struct's `__getitem_param__` when it declares one, else its
+    /// `__getitem__`. `None` for any other type.
+    pub(super) fn subscript_getter(&self, obj_ty: &Ty) -> Option<SubscriptGetter> {
+        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|info| info.methods.contains_key("__getitem_param__"))
+        {
+            return Some(SubscriptGetter::Param);
+        }
+        self.nominal_struct(obj_ty)
+            .and_then(|(name, _)| self.structs.get(name))
+            .is_some_and(|info| info.methods.contains_key("__getitem__"))
+            .then_some(SubscriptGetter::Call)
+    }
+
     /// Validate an assignment **place** and return the type stored there. A place
     /// is a chain of field (`.x`) and index (`[i]`) accesses over a root that
     /// must be a mutable location: any variable, or `self` in a `mut self`
@@ -1309,12 +1338,7 @@ impl Checker {
         // structs. Pass the source index as a checked value parameter and no
         // runtime argument; ordinary generic-method specialization then leaves
         // an exact callable target for HIR/MIR.
-        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
-            && self
-                .structs
-                .get(name)
-                .is_some_and(|info| info.methods.contains_key("__getitem_param__"))
-        {
+        if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Param) {
             let parameter_arguments = [mojito_ast::ast::ParamArg::Value(index.clone())];
             let result = self.infer_method_call(
                 &span,
@@ -1419,11 +1443,7 @@ impl Checker {
                 .declared_receiver_member(&obj_ty, "__getitem__")
                 .is_some()
         {
-            if self
-                .nominal_struct(&obj_ty)
-                .and_then(|(name, _)| self.structs.get(name))
-                .is_some_and(|info| info.methods.contains_key("__getitem__"))
-            {
+            if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Call) {
                 let result = self.infer_struct_getitem_call(
                     span,
                     object,

@@ -19,7 +19,8 @@ Each batch runs:
      committed.
 
 Every step's output goes to `target/pmir-batches/<stamp>/`, with a
-`summary.md` of the run. On a stop the script prints what failed and the
+`summary.md` of the run. The terminal shows the running step on one line,
+updated in place with its latest output, and a line per finished step. On a stop the script prints what failed and the
 command that resumes at that batch.
 
 Usage:
@@ -35,8 +36,11 @@ import argparse
 import datetime as dt
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -150,17 +154,47 @@ def ratchet_verdict(output: str, max_growth: float) -> str:
 
 
 def run(command: list[str], log: Path) -> tuple[int, str]:
-    """Run `command`, echoing and logging its output."""
-    print(f"==> {' '.join(command)}", flush=True)
-    lines = []
+    """Run `command`, logging its output and showing its latest line in place."""
+    label = Path(command[1] if command[0] == sys.executable else command[0]).name
+    began = time.monotonic()
+    chunks: list[str] = []
+    latest = [""]
+
+    def pump(process: subprocess.Popen, sink) -> None:
+        for chunk in iter(lambda: process.stdout.read1(4096), b""):
+            text = chunk.decode(errors="replace")
+            sink.write(text)
+            sink.flush()
+            chunks.append(text)
+            lines = [line for line in re.split(r"[\r\n]", text) if line.strip()]
+            if lines:
+                latest[0] = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", lines[-1]).strip()
+
     with log.open("w") as sink, subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     ) as process:
-        for line in process.stdout:
-            sys.stdout.write(line)
-            sink.write(line)
-            lines.append(line)
-    return process.returncode, "".join(lines)
+        reader = threading.Thread(target=pump, args=(process, sink), daemon=True)
+        reader.start()
+        while reader.is_alive():
+            show_progress(time.monotonic() - began, label, latest[0])
+            reader.join(timeout=1)
+        process.wait()
+    verdict = "ok" if process.returncode == 0 else f"exit {process.returncode}"
+    if sys.stdout.isatty():
+        print("\r\033[K", end="")
+    print(f"[{time.monotonic() - began:6.0f}s] {label}: {verdict} (log: {log})", flush=True)
+    return process.returncode, "".join(chunks)
+
+
+def show_progress(seconds: float, label: str, latest: str) -> None:
+    """Rewrite the terminal's last line with the running step's state."""
+    if not sys.stdout.isatty():
+        return
+    line = f"[{seconds:6.0f}s] {label}  {latest}"
+    width = shutil.get_terminal_size().columns - 1
+    if len(line) > width:
+        line = line[: max(width - 3, 0)] + "..."
+    print(f"\r\033[K{line}", end="", flush=True)
 
 
 def git(*arguments: str) -> None:

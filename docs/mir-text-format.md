@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.181
+mojito-mir 1.182
 ```
 
-The writer emits 1.181. The reader accepts 1.0 through 1.181; *Schema 1.0*
+The writer emits 1.182. The reader accepts 1.0 through 1.182; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,14 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.182 adds the parameter-expression operator `load_from_mem`
+(R1990), upstream's `load_from_mem`: the value its operand, a reference
+into compile-time memory, designates. A compile-time call of a callable
+returning a reference (`l[0]`, `t.__getitem_param__[0]()`) is its
+`apply` at the reference, read by the operator. Over a frozen reference
+(`ct_store_to_mem`) it folds to the referent, so concrete MIR holds no
+node. The package format moves to `mojito-package 206`.
+
 Schema 1.181 adds the optional field `fastmath` to `binary`, `pop`, and
 `simd.cast` (R1600): upstream's `fastmathFlags` attribute on the
 `pop.add`, `pop.sub`, `pop.mul`, `pop.fma`, or `pop.cast` the instruction
@@ -1842,7 +1850,7 @@ running its `spelling`, so concrete MIR holds none.
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
 `bool_xor`, `cond`, `dtype_to_ui8` (schema 1.146), `store_to_mem`
-(schema 1.147), or `simd_cmp_eq`, `simd_cmp_ne`, `simd_cmp_lt`,
+(schema 1.147), `load_from_mem` (schema 1.182), or `simd_cmp_eq`, `simd_cmp_ne`, `simd_cmp_lt`,
 `simd_cmp_le`, `simd_reduce_and`, `simd_reduce_or` (schema 1.176). `meta` is `meta_value(type)`, `meta_type`,
 `meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or

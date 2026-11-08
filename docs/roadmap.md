@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2043**.
+Next free ID: **R2044**.
 
 ## Ordered Work
 
@@ -6056,36 +6056,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Float64` and a `String`.
   - Model: Fable, Not Planned.
 
-- [ ] **R1990 A subscript in a signature or type argument is no
-  application, as the parameter domain has no `load_from_mem` of a
-  reference result**
+- [ ] **R2043 An `Array` display's constant subscript in a signature is no
+  application, as the bundled `Array` has no `__getitem_param__`**
 
   `def f(x: SIMD[DType.int8, [2, 1][0]]) -> Int: return len(x)` called
   with `SIMD[DType.int8, [2, 1][0]](1, 2)` is rejected with "not an
   associated comptime expression", where the pin prints `2`.
-  - At the pin the width is `load_from_mem` of the display's
-    `__getitem_param__[0]()` application, the same unfolded expression on
-    both sides, so the conversion is the identity.
-  - `build_ct` (`checker/constraints.rs`) has no arm for a subscript or a
-    reference-returning method application whose receiver is a display or
-    a call result. In a body such an expression is lifted whole
-    (`$comptime$<owner>$c<k>`), which a signature has no owner for.
-  - The lever: build the subscript as its getter's application over the
-    receiver's `store_to_mem`, wrapped in a parameter-domain
-    `load_from_mem` the elaborator evaluates as R1729's
-    `SemanticAdjustment::CompileTimeLoad` does. A display's subscript is
-    its `__getitem_param__` once R511 routes a constant index there.
+  - At the pin a constant subscript of an `Array` is
+    `load_from_mem` of its `__getitem_param__[idx]()` application.
+  - A subscript in a compile-time position is its getter's application
+    (`selected_application_at`, `checker/comptime_validation.rs`), but
+    the getter is declined for an `Array` receiver: spelling it
+    `__getitem__` would accept a signature `[2, 1][0]` called with
+    `[2, 1].__getitem__(0)`, which the pin rejects as two applications.
+  - The fix: once R511 gives `Array` its `__getitem_param__` and routes a
+    constant subscript there (`Checker::subscript_getter`,
+    `checker/indexing.rs`), drop the guard.
   - Probe: the program above: `2` at the pin.
-  - Probe: `def f(x: SIMD[DType.int8, [2, 1][0]]) -> SIMD[DType.int8, 2]`
-    (`assets/type_error/comptime_display_subscript_in_signature.mojo`) is
-    rejected by both, but the pin's message names the unfolded
-    `load_from_mem`.
-  - Probe: `SIMD[DType.int8, mk()[0]]` over `def mk() -> List[Int]` in a
-    signature: the pin names `(load_from_mem mk()[0])`.
-  - Probe: `SIMD[DType.int8, [2, 1].__getitem__(0)]` on both sides of the
-    same call: `2` at the pin.
-  - Found while landing R1530 (2026-11-07).
-  - Depends on nothing.
+  - Probe: `assets/type_error/comptime_display_subscript_in_signature.mojo`
+    should expect the pin's `.__getitem_param__[0]()` mismatch message.
+  - Probe: a signature `[2, 1][0]` called with `[2, 1].__getitem__(0)`:
+    rejected at the pin ("cannot be converted from ...[Int(0)] to
+    ....__getitem_param__[Int(0)]()"); pin it as a type_error fixture.
+  - Probe: `struct S[n: Int]: comptime w = [Self.n, 1][0]` with
+    `print(S[2].w)`: `2` at the pin.
+  - Found while landing R1990 (2026-11-08).
+  - Depends on R511.
   - Model: Fable, Not Planned.
 
 - [ ] **R387 A function applied in a parameter argument cannot print**
@@ -8939,6 +8935,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     a VM pointer fault in the lifted thunk, where the pin fails the
     `__getitem_param__` constraint "index is out of bounds".
   - Ledger name: `array-negative-literal-index`.
+  - R2043 waits on this: an `Array` display's subscript in a signature
+    becomes an application once the getter exists.
   - Found while landing R274 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
