@@ -13380,21 +13380,6 @@ Track: `tooling`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1998 Each std-linked checker test checks the whole standard
-  library from source**
-
-  `checker_test`'s 636 tests averaged 50 s in a debug build, about 32,000
-  CPU seconds on the 2026-11-04 gate.
-  - The tests link a snippet with `mojito::link_source` and check the
-    snippet and all of std together.
-  - The fix checks a snippet against a std checked once per test process,
-    or against the cached package.
-  - If the checker cannot check a module against an already checked std,
-    adding that is a contract change. Plan it before building it.
-  - Depends on R1996, whose measurement shows how much the corpus change
-    alone saves.
-  - Model: Fable, Planned.
-
 - [ ] **R1999 There is no test tier between `scripts/smoke` and the full
   gate**
 

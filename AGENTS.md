@@ -280,7 +280,9 @@ Every executing test goes through `Compiler` (`compile_source`,
 snippet programs that keep executable statements at module scope): the VM
 runs concrete MIR only, and no test seam runs a checked program without
 the elaborator. The raw phase functions (`link`/`parse` → `elaborate` →
-`check_program` → `lower_checked_program`) are for phase tests only.
+`check_program` → `lower_checked_program`) are for phase tests only, and
+a std-linked checker test checks through `Compiler::check_source`, against
+the cached package, never the whole library from source.
 - DO NOT generate narrative comments that merely restate what the code does.
 - DO NOT re-implement existing types or functions; check existing modules first.
 - Prefer idiomatic Rust patterns (e.g., `.map()`, `.and_then()`, `?` operator) over nested `match` or `if let` blocks.

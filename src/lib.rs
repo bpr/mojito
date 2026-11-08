@@ -59,7 +59,9 @@ pub use checked::{
     SemanticAdjustment, ValueCategory,
 };
 pub use checker::{Checker, check, check_program};
-pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope};
+pub use compiler::{
+    CheckedSource, CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope,
+};
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, TypeError};

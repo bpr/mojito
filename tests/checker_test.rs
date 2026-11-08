@@ -1,5 +1,8 @@
 use mojito::Ty;
-use mojito::{Lexer, Parser, SemanticAdjustment, TypeError, check, check_program, parse};
+use mojito::{
+    CheckedSource, Compiler, CompilerError, Lexer, Parser, SemanticAdjustment, TypeError, check,
+    parse,
+};
 
 /// Parse `source` and run the type checker, returning its result.
 fn check_source(source: &str) -> Result<(), TypeError> {
@@ -24,26 +27,42 @@ fn err(source: &str) -> TypeError {
     check_source(source).expect_err("expected a type error")
 }
 
-/// Link `source` against the bundled standard library (so `String` and the
-/// prelude resolve), elaborate it, and run the type checker. Elaboration
-/// validates the source first, so a type error it reports is the verdict.
+/// Check `source` against the bundled standard library (so `String` and the
+/// prelude resolve), through `Compiler::check_source`: against the cached
+/// package's installed declaration interfaces, as upstream checks a module
+/// against an imported package. Elaboration validates the source first, so a
+/// type error it reports is the verdict.
 fn check_with_std(source: &str) -> Result<(), TypeError> {
     checked_with_std(source).map(|_| ())
 }
 
 /// Like [`check_with_std`], returning the checked program.
 fn checked_with_std(source: &str) -> Result<mojito::checked::CheckedProgram, TypeError> {
-    let linked =
-        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
-    let program = match mojito::elaborate(linked) {
-        Err(mojito::ComptimeError::Type(error)) => return Err(error),
-        elaborated => elaborated.expect("elaborate"),
-    };
-    check_program(&program)
+    checked_source_with_std(source, "checker_test.mojo").map(CheckedSource::into_checked)
+}
+
+/// Like [`checked_with_std`], linking `source` as `file` and keeping the
+/// program's own elaborated statements beside its checked program.
+fn checked_source_with_std(source: &str, file: &str) -> Result<CheckedSource, TypeError> {
+    match Compiler::default()
+        .with_snippet_module_scope()
+        .check_source(source, std::path::Path::new(file))
+    {
+        Ok(checked) => Ok(checked),
+        Err(
+            CompilerError::Type(error)
+            | CompilerError::Comptime(mojito::ComptimeError::Type(error)),
+        ) => Err(error),
+        Err(CompilerError::Module(error)) => panic!("link error: {error}"),
+        Err(CompilerError::Comptime(error)) => panic!("elaborate: {error}"),
+        Err(error) => panic!("check: {error}"),
+    }
 }
 
 /// Whether `source`, a checked node's module path, is the bundled library's:
-/// a test over a program with the library linked reads only its own nodes.
+/// against the cached package a program holds no library node, but a run
+/// that checks the library from source (no package, or
+/// `MOJITO_STD_PACKAGE=0`) holds them, and a test reads only its own.
 fn from_library(source: Option<&str>) -> bool {
     source.is_some_and(|source| source.contains("/stdlib/std/"))
 }
@@ -193,10 +212,9 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
 #[test]
 fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     let source = "def outer[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        if True:\n            var x = args[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer(1, True)\n";
-    let linked =
-        mojito::link_source(source, std::path::Path::new("provenance.mojo")).expect("link");
-    let elaborated = mojito::elaborate(linked).expect("elaborate");
-    let checked = check_program(&elaborated).expect("check");
+    let checked = checked_source_with_std(source, "provenance.mojo")
+        .expect("check")
+        .into_checked();
     // The check types the template once: its `comptime for` stays in the
     // body for the elaborator to unroll, so its `x` is one declaration and
     // no instance of `outer` is declared above MIR.
@@ -233,12 +251,13 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
 
 #[test]
 fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
-    let program = mojito::link_source(
+    let checked = checked_source_with_std(
         "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> Int:\n    return 0\ndef main():\n    print(pick(1))\n",
-        std::path::Path::new("occurrence.mojo"),
+        "occurrence.mojo",
     )
-    .expect("link");
-    let body = program
+    .expect("check");
+    let body = checked
+        .statements()
         .iter()
         .find_map(|statement| match &statement.kind {
             mojito::ast::StmtKind::Def { name, body, .. } if name == "main" => Some(body),
@@ -252,10 +271,11 @@ fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
         },
         _ => panic!("expected expression statement"),
     };
-    let elaborated = mojito::elaborate(program.clone()).expect("elaborate");
-    let checked = check_program(&elaborated).expect("check");
     assert_eq!(
-        checked.overload_targets().get(&call.source_span()),
+        checked
+            .checked()
+            .overload_targets()
+            .get(&call.source_span()),
         Some(&"pick$ov$Int".to_string())
     );
 }
@@ -1128,13 +1148,10 @@ fn generic_call_sites_record_their_resolved_instantiations() {
     // plus exact compile-time arguments) for the elaborator — explicit and
     // inferred alike. A string literal argument materializes as `String`,
     // so the program links the prelude.
-    let linked = mojito::link_source(
+    let checked = checked_with_std(
         "def pick[T: Movable](var x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
-        std::path::Path::new("checker_test.mojo"),
     )
-    .expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let checked = check_program(&program).expect("check");
+    .expect("check");
     let picks: Vec<String> = checked
         .generic_instantiations()
         .values()
@@ -1159,10 +1176,7 @@ fn closed_bracket_arguments_record_their_folded_positions() {
     // argument's position among the brackets so MIR lowers no code for it. An argument over the
     // caller's binder is open and keeps its register.
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\ndef tup[p: Tuple[Int, Q]]():\n    print(p[0])\n\ndef one[q: Q]():\n    print(q.a)\n\ndef s[n: Int]():\n    print(n)\n\ndef f[n: Int]():\n    s[n]()\n\ndef main():\n    tup[(1, Q(8))]()\n    one[Q(8)]()\n    s[1 + 2]()\n    f[2]()\n";
-    let linked =
-        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let checked = check_program(&program).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let folded = |callee: &str| -> Vec<(bool, Vec<usize>)> {
         checked
             .generic_instantiations()
@@ -3616,9 +3630,7 @@ fn display_argument_to_generic_constructor_constructs_its_parameter() {
     // span records the collection construction, not the bare `Array`
     // literal a solving inference would have left.
     let source = "struct W[K: Copyable & Deinitable]:\n    var keys: List[Self.K]\n\n    def __init__(out self, var keys: List[Self.K], n: Optional[Int]):\n        self.keys = keys^\n\ndef main():\n    var w = W[String](['a', 'b'], None)\n    print(len(w.keys))\n";
-    let linked =
-        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link");
-    let checked = check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let display = own_expressions(&checked)
         .find(|expression| matches!(expression.op, mojito::checked::CheckedOp::ListLit(_)))
         .expect("the display argument is checked");
@@ -3669,9 +3681,7 @@ fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
 #[test]
 fn value_shaped_origin_argument_is_an_attribute() {
     let source = "def keep[o: ImmOrigin](n: Int) -> Int:\n    return n\n\ndef run(x: Int):\n    print(keep[origin_of(x)](1))\n\ndef main():\n    run(1)\n";
-    let linked =
-        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link");
-    let checked = check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let keep_arguments = bracket_arguments(&checked, "keep");
     assert!(
         matches!(
@@ -8596,29 +8606,24 @@ fn a_reflected_field_proof_is_keyed_by_its_element() {
     );
 }
 
-/// The one check of `source`, as `Compiler::compile_linked` runs it: every
+/// The one check of `source`, as `Compiler::check_source` runs it: every
 /// `comptime if` arm and `comptime for` body is checked with the
 /// declaration's parameters symbolic.
 fn check_once(source: &str, file: &str) -> Result<(), mojito::error::TypeError> {
-    let linked = mojito::link_source(source, std::path::Path::new(file)).expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let mut context = mojito::checker::CheckContext::default();
-    mojito::checker::check_program_in(&program, &mut context).map(|_| ())
+    checked_source_with_std(source, file).map(|_| ())
 }
 
 #[test]
 fn a_pack_body_without_a_symbolic_rule_is_rejected() {
-    // A method other than `__len__` on a pack that is still a parameter has
-    // no symbolic rule. The one check judges every body with its binders
-    // symbolic, so the body is rejected where source validation once left
-    // it without a verdict for a per-instantiation check that no longer
-    // exists.
+    // A pack that is still a parameter is the library's `VariadicPack`, whose
+    // members are its declared ones, as at the pin: it declares no
+    // `__getitem__` (upstream's bracket accessor is `__getitem_param__`). The
+    // one check judges every body with its binders symbolic, so the body is
+    // rejected without waiting for an instantiation.
     let source = "def outer[*Ts: Writable](*a: *Ts):\n    print(a.__getitem__[0]())\n\ndef main():\n    outer(1, \"two\")\n";
-    let error = check_once(source, "pack_no_verdict.mojo").expect_err("no symbolic rule");
+    let error = check_once(source, "pack_no_verdict.mojo").expect_err("no such member");
     assert!(
-        error
-            .to_string()
-            .contains("method '__getitem__' of an unbound pack"),
+        error.to_string().contains("has no field '__getitem__'"),
         "{error}"
     );
 }
@@ -8644,11 +8649,9 @@ fn overloads_of_one_generic_method_own_distinct_binders() {
     // Two overloads of `pick` whose slots agree are two declarations: each
     // owns its `U` under the symbol it lowers to.
     let source = "struct Box[T: Copyable & Deinitable](Copyable):\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def pick[U: Copyable & Deinitable](self, u: U, t: Self.T) -> Int:\n        return 1\n\n    def pick[U: Copyable & Deinitable](self, u: U, s: String) -> Int:\n        return 2\n\ndef main():\n    var b = Box[Int](3)\n    print(b.pick[Float64](1.5, 4))\n";
-    let linked = mojito::link_source(source, std::path::Path::new("overload_binders.mojo"))
-        .expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let checked = mojito::checker::check_program(&program).expect("check");
-    let (module, methods) = program
+    let checked = checked_source_with_std(source, "overload_binders.mojo").expect("check");
+    let (module, methods) = checked
+        .statements()
         .iter()
         .find_map(|statement| match &statement.kind {
             mojito::ast::StmtKind::Struct { name, methods, .. } if name == "Box" => {
@@ -8668,6 +8671,7 @@ fn overloads_of_one_generic_method_own_distinct_binders() {
                 method: index,
             };
             let decls = checked
+                .checked()
                 .generic_parameters_at(&site)
                 .expect("method binders");
             let [mojito::types::ParamDecl::Type { id, .. }] = decls else {
@@ -9958,20 +9962,13 @@ fn write_to_through_a_bound_or_on_simd_calls_the_member() {
         "def show[T: Writable](x: T, mut s: String):\n    x.write_to(s)\n\ndef main():\n    var s = String()\n    Int8(4).write_to(s)\n    Float32(1.5).write_repr_to(s)\n    show(3, s)\n",
     )
     .expect("check");
-    let inverted = |method: &str| {
+    let called = |method: &str| {
         own_expressions(&checked).any(|expression| {
             matches!(&expression.op, mojito::checked::CheckedOp::MethodCall { method: called, .. } if called == method)
-                && expression.adjustments.iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        SemanticAdjustment::InvertedWrite
-                            | SemanticAdjustment::InvertedReprWrite { .. }
-                    )
-                })
         })
     };
-    assert!(!inverted("write_to"), "the bound receiver does not invert");
-    assert!(!inverted("write_repr_to"), "a SIMD receiver does not");
+    assert!(called("write_to"), "the bound receiver calls the member");
+    assert!(called("write_repr_to"), "a SIMD receiver calls the member");
 }
 
 #[test]

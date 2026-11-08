@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Compiler::check_source` checks a program against the bundled library's
+  cached package and lowers nothing, as upstream checks a module against an
+  imported package; it shares `compile_importing`'s front half
+  (`Compiler::check_importing`), and returns a `CheckedSource`. The
+  std-linked checker tests check through it instead of linking,
+  elaborating, and checking the whole library from source, so each takes
+  milliseconds instead of about 50 seconds in a debug build (R1998). The
+  `checker_test` binary builds again after R1938's removal of the inverted
+  write adjustments.
+
 - A struct's synthesized `Copyable.copy` is now upstream's `return
   Self(copy=self)` for every struct, instead of the checker's
   `__mojito_fieldwise_copy` intrinsic when no copy constructor is declared;

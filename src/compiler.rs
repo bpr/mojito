@@ -287,6 +287,32 @@ impl CompiledProgram {
             .map_err(|error| CompilerError::Verify(error.findings().to_vec()))
     }
 }
+/// A program checked against its imports and lowered no further, as
+/// [`Compiler::check_source`] leaves it.
+#[derive(Debug)]
+pub struct CheckedSource {
+    own: Vec<Stmt>,
+    checked: CheckedProgram,
+}
+impl CheckedSource {
+    /// The checked program.
+    #[must_use]
+    pub const fn checked(&self) -> &CheckedProgram {
+        &self.checked
+    }
+    /// The checked program, by value.
+    #[must_use]
+    pub fn into_checked(self) -> CheckedProgram {
+        self.checked
+    }
+    /// The program's own statements as the check saw them, elaborated; an
+    /// imported package's declarations are not among them.
+    #[must_use]
+    pub fn statements(&self) -> &[Stmt] {
+        &self.own
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Observable result of executing a compiled program.
 pub struct Execution {
@@ -496,6 +522,23 @@ impl Compiler {
             None => inject_prelude(parsed.clone()).map(from_source),
         })
     }
+    /// Link in-memory source as `entry` and check it, importing the bundled
+    /// library's package when there is one: the program is checked against
+    /// the package's installed declaration interfaces, as upstream checks a
+    /// module against an imported package, and nothing is lowered.
+    pub fn check_source(&self, source: &str, entry: &Path) -> Result<CheckedSource, CompilerError> {
+        let (statements, package) = self.link_importing(|package| match package {
+            Some(package) => {
+                link_source_with_package(source, entry, self.link_options.clone(), &package.modules)
+            }
+            None => {
+                link_source_with_options(source, entry, self.link_options.clone()).map(from_source)
+            }
+        })?;
+        let FrontEnd { own, checked, .. } =
+            self.check_importing(&statements, package, &mut CheckContext::new())?;
+        Ok(CheckedSource { own, checked })
+    }
     /// Elaborate, check, verify, and ownership-verify an already linked
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
@@ -558,13 +601,23 @@ impl Compiler {
         &self,
         link: impl Fn(Option<&ImportedPackage>) -> Result<LinkedProgram, ModuleError>,
     ) -> Result<CompiledProgram, CompilerError> {
+        let (statements, package) = self.link_importing(link)?;
+        self.compile_importing(&statements, package, &mut CheckContext::new())
+    }
+
+    /// Link with `link`, importing the bundled library's package when there
+    /// is one: the linked program's own statements, and the package with the
+    /// declaration interfaces of the modules the link read from its records.
+    fn link_importing(
+        &self,
+        link: impl Fn(Option<&ImportedPackage>) -> Result<LinkedProgram, ModuleError>,
+    ) -> Result<LinkedImport, CompilerError> {
         let package = self.std_package()?;
         let linked = link(package.as_deref()).map_err(CompilerError::Module)?;
-        self.compile_importing(
-            &linked.statements,
+        Ok((
+            linked.statements,
             package.map(|package| importing(package, &linked.packaged)),
-            &mut CheckContext::new(),
-        )
+        ))
     }
 
     /// Compile `linked`, importing `package` when there is one: the
@@ -578,52 +631,9 @@ impl Compiler {
         context: &mut CheckContext,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        if let Some((_, installed)) = &package {
-            context.install(installed.clone());
-        }
-        let prepared = {
-            let _prepare = timing::span("prepare");
-            prepare_importing(
-                linked.to_vec(),
-                package.as_ref().map(|(_, installed)| installed),
-            )
-            .map_err(CompilerError::Comptime)?
-        };
-        context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
-            std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
-        }));
-        // One elaboration and one check: every body is checked once with
-        // every `comptime if` arm and `comptime for` body open and its
-        // binders symbolic, and the elaborator below MIR decides, unrolls,
-        // and finds the instances the entries reach.
-        let own = {
-            let _elaborate = timing::span("elaborate");
-            elaborate_importing(
-                &prepared,
-                ImportedScope {
-                    installed: package.as_ref().map(|(_, installed)| installed),
-                },
-            )
-            .map_err(CompilerError::Comptime)?
-        };
-        if !self.allow_executable_module_scope {
-            validate_module_scope(&own).map_err(CompilerError::Type)?;
-        }
-        let (package, installed): (Option<_>, Option<_>) = package.unzip();
-        let checked = {
-            let _check = timing::span("check");
-            crate::checker::check_program_in(&own, context)
-        };
-        // A package declaration whose record does not decode is missing from
-        // every lookup, so its failure outranks the check's verdict.
-        if let Some(installed) = &installed {
-            timing::count("package.interfaces_decoded", installed.decoded() as u64);
-            let failures = installed.failures();
-            if !failures.is_empty() {
-                return Err(CompilerError::Verify(failures));
-            }
-        }
-        let checked = checked.map_err(CompilerError::Type)?;
+        let FrontEnd {
+            checked, package, ..
+        } = self.check_importing(linked, package, context)?;
         let mir = {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program_importing(
@@ -671,6 +681,70 @@ impl Compiler {
             exports: self.exports.clone(),
         })
     }
+
+    /// Prepare, elaborate, and check `linked` against `package`'s installed
+    /// declaration interfaces when there is one, as upstream checks a module
+    /// against an imported package: the front half every package-importing
+    /// entry point shares, which lowers nothing.
+    fn check_importing(
+        &self,
+        linked: &[Stmt],
+        package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
+        context: &mut CheckContext,
+    ) -> Result<FrontEnd, CompilerError> {
+        if let Some((_, installed)) = &package {
+            context.install(installed.clone());
+        }
+        let prepared = {
+            let _prepare = timing::span("prepare");
+            prepare_importing(
+                linked.to_vec(),
+                package.as_ref().map(|(_, installed)| installed),
+            )
+            .map_err(CompilerError::Comptime)?
+        };
+        context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
+            std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
+        }));
+        // One elaboration and one check: every body is checked once with
+        // every `comptime if` arm and `comptime for` body open and its
+        // binders symbolic, and the elaborator below MIR decides, unrolls,
+        // and finds the instances the entries reach.
+        let own = {
+            let _elaborate = timing::span("elaborate");
+            elaborate_importing(
+                &prepared,
+                ImportedScope {
+                    installed: package.as_ref().map(|(_, installed)| installed),
+                },
+            )
+            .map_err(CompilerError::Comptime)?
+        };
+        if !self.allow_executable_module_scope {
+            validate_module_scope(&own).map_err(CompilerError::Type)?;
+        }
+        let (package, installed): (Option<_>, Option<_>) = package.unzip();
+        let checked = {
+            let _check = timing::span("check");
+            crate::checker::check_program_in(&own, context)
+        };
+        // A package declaration whose record does not decode is missing from
+        // every lookup, so its failure outranks the check's verdict.
+        if let Some(installed) = &installed {
+            timing::count("package.interfaces_decoded", installed.decoded() as u64);
+            let failures = installed.failures();
+            if !failures.is_empty() {
+                return Err(CompilerError::Verify(failures));
+            }
+        }
+        let checked = checked.map_err(CompilerError::Type)?;
+        Ok(FrontEnd {
+            own,
+            checked,
+            package,
+        })
+    }
+
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
@@ -701,6 +775,21 @@ impl Compiler {
         let program = self.compile_path(entry)?;
         self.execute(&program)
     }
+}
+
+/// A link's own statements, and the package it imports with the
+/// declaration interfaces of the modules it read from the package's records.
+type LinkedImport = (
+    Vec<Stmt>,
+    Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
+);
+
+/// What the front half leaves: the program's own elaborated statements, its
+/// checked program, and the package it imports.
+struct FrontEnd {
+    own: Vec<Stmt>,
+    checked: CheckedProgram,
+    package: Option<Arc<ImportedPackage>>,
 }
 
 /// A source link, which read no package record.

@@ -339,7 +339,9 @@ import (every compilation that links the bundled library):
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
   package's traits, borrowed, and the program's own statements
-  (`Compiler::compile_importing`). `comptime::prepare_importing` rewrites
+  (`Compiler::compile_importing`). The check-only `Compiler::check_source`
+  runs the same front half (`Compiler::check_importing`) and stops before
+  MIR, as upstream checks a module against an imported package. `comptime::prepare_importing` rewrites
   the own statements alone, reading the package's traits, which a
   conformer inherits defaults from, and its SIMD, `!kgen.type`, and `!kgen.string` aliases
   as its build's check resolved them (`InstalledInterfaces::type_alias`).
