@@ -30,8 +30,7 @@ and 11-04 (*Measure*), so the size steps still matter.
    R1544, R1882, R1280), and so are `write_string` (R1938) and the hash
    leaves, which only a dead `Variant` storage shape kept (R2010): the
    type-reached member list is gone. Left:
-   - A call through a `def(...)` bound is still a `call.indirect`: R1933,
-     after R1934 (`emit-mir`, which its probe reads).
+   - A call through a `def(...)` bound is still a `call.indirect`: R1933.
    - The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
      filed. Their first piece landed with R1832: the synthesized `copy` is
      upstream's `Self(copy=self)` for every struct.
@@ -155,7 +154,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | none | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none | R788, R378, R472, R508, R602 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2010, R1938; R1934 → R1933 | about 20 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2010, R1938; R1933 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1948, R1949 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1284 | about 20 (below) | slight |

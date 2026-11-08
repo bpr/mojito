@@ -2481,9 +2481,14 @@ impl<'a> Flatten<'a> {
             && !receiver.is_fresh_temporary()
         {
             let value = self.expr(receiver);
+            // A copying slot read, or a compile-time parameter's value,
+            // is already a fresh owned value the call may consume.
             let read_copied = matches!(
                 self.f.blocks[self.cur].instrs.last(),
-                Some(MirInstr::UseVar { dest, mode: UseMode::Copy, .. }) if *dest == value
+                Some(
+                    MirInstr::UseVar { dest, mode: UseMode::Copy, .. }
+                        | MirInstr::Const { dest, .. }
+                ) if *dest == value
             );
             if read_copied {
                 let ty = self.f.reg_types.get(&value.0).cloned();

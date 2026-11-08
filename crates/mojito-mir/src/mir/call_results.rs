@@ -257,7 +257,8 @@ impl<'a> Flatten<'a> {
             .iter()
             .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness));
         if !boolable {
-            return self.expr(condition);
+            let value = self.expr(condition);
+            return self.field_referent(condition, value);
         }
         let value = self.read_operand(condition);
         self.bool_conversion(condition.location(), value, condition.ty().as_ref())
@@ -281,15 +282,19 @@ impl<'a> Flatten<'a> {
     }
 
     /// `value`, the lowered `e`, as [`Self::call_result`] holds it, its
-    /// producer returning it through memory when `indirect`.
+    /// producer returning it through memory when `indirect`. A compile-time
+    /// parameter's value owning droppable storage is materialized in
+    /// memory too, as upstream's memory-only parameter constant is.
     fn result_storage(&mut self, e: Node<'a>, value: Reg, indirect: bool) -> CValue {
         if let Some(&slot) = self.call_result_slots.get(&value.0) {
             return CValue::Slot(slot);
         }
+        let last = self.f.blocks[self.cur].instrs.last();
         let forwarded = matches!(
-            self.f.blocks[self.cur].instrs.last(),
+            last,
             Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
         );
+        let constant = matches!(last, Some(MirInstr::Const { dest, .. }) if *dest == value);
         let ty = self.f.reg_types.get(&value.0).cloned().or_else(|| e.ty());
         let Some(ty) = ty.filter(|ty| {
             owns_droppable_storage(ty)
@@ -297,6 +302,7 @@ impl<'a> Flatten<'a> {
         }) else {
             return CValue::Value(value);
         };
+        let indirect = indirect || constant && owns_droppable_storage(&ty);
         if forwarded
             || !indirect
             || mojito_checked::checked::materialized_borrow_owner(e.adjustments()).is_some()

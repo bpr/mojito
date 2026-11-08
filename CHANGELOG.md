@@ -4025,6 +4025,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A memory-only compile-time parameter value is an owned temporary again
+  (R1934): a consuming method such as `note.or_else("")` receives it
+  without a copy, and a truth test or other read takes it in storage, so
+  the bundled `CompilationTarget.unsupported_target_error` and any
+  `x.or_else(...)` over an `Optional[String]` parameter pass the MIR
+  verifier, and `unsupported_target_error[operation="EBOGUS"]()` reaches
+  the pin's constraint failure.
+
+- An owned register of a memory-only type that drop elaboration ends is
+  destroyed through a fresh slot, as upstream destroys such a value only
+  in memory: `(s + "!", may(n))` whose `may` raises no longer fails
+  verification.
+
+- A direct `ref` field of a `Bool` read as a value, by `not self.flag` or
+  `if self.flag:`, tests its referent instead of failing verification as
+  a cast of the reference.
+
+- A native executable's lifecycle trace logs a raise of `Error` again, as
+  the VM does, now that `Error` is a library struct.
+
 - A compile-time call of any method of a `SIMD` receiver is that method's
   application, as at the pin (R1995): `T[v.reduce_add()]`,
   `T[v.reduce_max()]`, or `L[v.__len__()]` in a signature no longer fails

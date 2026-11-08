@@ -21,17 +21,17 @@ fixture assets/ok/comptime_application_ref_parameter.mojo
 fixture assets/ok/comptime_annotated_implicit_conversion.mojo
 fixture assets/ok/enum_like_protocol.mojo
 fixture assets/ok/std_plugin_hooks.mojo
-# R1934: fixture assets/ok/simd_pow_dunders.mojo
-# R1934: fixture assets/ok/index_list.mojo
-# R1934: fixture assets/ok/dtype_value_member_argument.mojo
+fixture assets/ok/simd_pow_dunders.mojo
+fixture assets/ok/index_list.mojo
+fixture assets/ok/dtype_value_member_argument.mojo
 fixture assets/ok/comptime_struct_values.mojo
 fixture assets/ok/comptime_pow_applies_dunder.mojo
 fixture assets/ok/comptime_application_string_float_argument.mojo
 fixture assets/ok/static_string_parameter.mojo
 fixture assets/ok/dunder_contains.mojo
-# R1934: fixture assets/ok/ctfe_dict_set_result.mojo
+fixture assets/ok/ctfe_dict_set_result.mojo
 fixture assets/ok/comptime_match_patterns.mojo
-# R1934: fixture assets/ok/comptime_for_borrowing_iterator.mojo
+fixture assets/ok/comptime_for_borrowing_iterator.mojo
 fixture assets/ok/template_method_bound_defaulted_argument.mojo
 fixture assets/ok/trait_method_parameter_markers.mojo
 # R2017: fixture assets/ok/conversion_traits_library.mojo
@@ -51,7 +51,7 @@ fixture assets/ok/comptime_string_value.mojo
 fixture assets/ok/comptime_string_annotated_constant.mojo
 fixture assets/ok/comptime_assert_static_string_message.mojo
 fixture assets/ok/static_string.mojo
-# R1934: fixture assets/ok/static_string_parameter_equality.mojo
+fixture assets/ok/static_string_parameter_equality.mojo
 fixture assets/ok/reflected_names_static_string.mojo
 fixture assets/ok/generic_param_string_literal_materializes.mojo
 fixture assets/ok/kgen_string_literal_value.mojo
@@ -96,18 +96,18 @@ fixture assets/ok/owned_pack_destroyed_in_reverse.mojo
 fixture assets/ok/value_pack_runtime_read.mojo
 fixture assets/ok/type_pack_runtime_read.mojo
 fixture assets/ok/application_type_pack.mojo
-# R1934: fixture assets/ok/application_value_pack.mojo
+fixture assets/ok/application_value_pack.mojo
 fixture assets/ok/pack_overload_arity.mojo
 fixture assets/ok/pack_element_alias_string_literal.mojo
 fixture assets/ok/trait_requirement_indexes_own_pack.mojo
 
 # Symbol naming
 fixture assets/ok/instance_constructor_symbols.mojo
-# R1934: fixture assets/ok/overloaded_method_checked_symbol.mojo
-# R1934: fixture assets/ok/overloaded_method_own_binder_symbols.mojo
+fixture assets/ok/overloaded_method_checked_symbol.mojo
+fixture assets/ok/overloaded_method_own_binder_symbols.mojo
 fixture assets/ok/symbolic_instance_construction.mojo
-# R1934: fixture assets/ok/simd_symbolic_surface.mojo
-# R1934: fixture assets/ok/simd_to_bits_default_symbolic.mojo
+fixture assets/ok/simd_symbolic_surface.mojo
+fixture assets/ok/simd_to_bits_default_symbolic.mojo
 fixture assets/ok/variadic_overload_collector_position.mojo
 fixture assets/ok/method_overload_parameter_pack.mojo
 fixture assets/ok/string_literal_generic_instances.mojo
@@ -120,11 +120,11 @@ fixture assets/ok/print_argument_read_in_place.mojo
 fixture assets/ok/template_print_keywords.mojo
 fixture assets/ok/pliron_print_str_literal.mojo
 fixture assets/ok/bool_declared_initializers.mojo
-# R1934: fixture assets/ok/bool_declared_members.mojo
+fixture assets/ok/bool_declared_members.mojo
 # R2018: fixture assets/ok/bool_declared_operators.mojo
 fixture assets/ok/bool_declared_writable.mojo
 fixture assets/ok/bool_storage_primitives.mojo
-# R1934: fixture assets/ok/simd_bool_masks.mojo
+fixture assets/ok/simd_bool_masks.mojo
 fixture assets/ok/dtype_keyed_bool_lane.mojo
 fixture assets/ok/string_literal_dunders.mojo
 fixture assets/ok/string_literal_bytes.mojo

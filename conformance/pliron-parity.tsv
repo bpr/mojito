@@ -866,6 +866,7 @@ assets/ok/parameter_list_raw_parameter.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized
 assets/ok/parameter_only_overloads.mojo	main	exe-differential	sanitized
 assets/ok/parameter_shadows_function.mojo	main	exe-differential	sanitized
+assets/ok/parameter_value_consuming_receiver.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
@@ -1011,6 +1012,7 @@ assets/ok/print_argument_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
 assets/ok/print_library_keywords.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
+assets/ok/raise_edge_tuple_temporary.mojo	main	exe-differential	sanitized
 assets/ok/raise_exit_destroys_live_values.mojo	main	exe-differential	sanitized
 assets/ok/raising_call_edge_destroys_held_values.mojo	main	exe-differential	sanitized
 assets/ok/raising_iter_call_edge.mojo	main	exe-differential	sanitized
@@ -1710,6 +1712,7 @@ assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	main	exe-diff
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_reborrow_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_template_method_construction.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_truth_test.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_for_temporary.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_free_function.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_method_return.mojo	main	exe-differential	sanitized

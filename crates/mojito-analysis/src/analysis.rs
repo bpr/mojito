@@ -286,6 +286,7 @@ pub fn elaborate_drops_function(
     mojito_mir::mir::refine_pack_drops(&mut elaborated, pack, &|ty| {
         declarations.drop_runs_no_code(ty)
     });
+    drop_registers_through_storage(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);
     lower_copies_and_moves(&mut elaborated, &|name| declarations.function(name));

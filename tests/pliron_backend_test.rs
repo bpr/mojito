@@ -105,24 +105,24 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block3v1()
 
               ^block3v1():
-                v5 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64;
-                v6 = llvm.icmp v0 <SLT> v5 : builtin.integer i1 !0;
-                llvm.cond_br if v6 ^block5v1() else ^block6v1() !1
+                v4 = llvm.constant <builtin.integer <2: i64>> : builtin.integer i64;
+                v5 = llvm.icmp v0 <SLT> v4 : builtin.integer i1 !0;
+                llvm.cond_br if v5 ^block5v1() else ^block6v1() !1
 
-              ^block4v1(v7: builtin.integer i64):
-                llvm.return v7 !2
+              ^block4v1(v6: builtin.integer i64):
+                llvm.return v6 !2
 
               ^block5v1():
                 llvm.br ^block4v1(v0)
 
               ^block6v1():
-                v8 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
-                v9 = llvm.sub v0, v8 <{nsw=false,nuw=false}>: builtin.integer i64 !3;
-                v10 = llvm.call @mj_fib (v9) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !4;
-                v11 = llvm.sub v0, v5 <{nsw=false,nuw=false}>: builtin.integer i64 !5;
-                v12 = llvm.call @mj_fib (v11) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
-                v13 = llvm.add v10, v12 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
-                llvm.br ^block4v1(v13)
+                v7 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
+                v8 = llvm.sub v0, v7 <{nsw=false,nuw=false}>: builtin.integer i64 !3;
+                v9 = llvm.call @mj_fib (v8) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !4;
+                v10 = llvm.sub v0, v4 <{nsw=false,nuw=false}>: builtin.integer i64 !5;
+                v11 = llvm.call @mj_fib (v10) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !6;
+                v12 = llvm.add v9, v11 <{nsw=false,nuw=false}>: builtin.integer i64 !7;
+                llvm.br ^block4v1(v12)
             } !8;
             llvm.func @mj_compute: llvm.func <builtin.integer i64() variadic = false>
               [] 
@@ -131,12 +131,12 @@ fn fib_lowers_verifies_and_prints_canonically() {
                 llvm.br ^block8v1()
 
               ^block8v1():
-                v16 = llvm.constant <builtin.integer <9: i64>> : builtin.integer i64;
-                v17 = llvm.call @mj_fib (v16) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
-                v18 = llvm.constant <builtin.integer <8: i64>> : builtin.integer i64;
-                v19 = llvm.call @mj_fib (v18) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !10;
-                v20 = llvm.add v17, v19 <{nsw=false,nuw=false}>: builtin.integer i64 !11;
-                llvm.return v20 !12
+                v14 = llvm.constant <builtin.integer <9: i64>> : builtin.integer i64;
+                v15 = llvm.call @mj_fib (v14) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !9;
+                v16 = llvm.constant <builtin.integer <8: i64>> : builtin.integer i64;
+                v17 = llvm.call @mj_fib (v16) : llvm.func <builtin.integer i64(builtin.integer i64) variadic = false> !10;
+                v18 = llvm.add v15, v17 <{nsw=false,nuw=false}>: builtin.integer i64 !11;
+                llvm.return v18 !12
             } !13
         }
 
@@ -291,7 +291,8 @@ fn simd_lowering_emits_vector_code() {
     for needle in [
         "mul <8 x i32>",
         "shl <8 x i32>",
-        "@llvm.vector.reduce.add.v8i32(",
+        // `reduce_add` is the pin's shuffle tree over its halves.
+        "shufflevector <8 x i32>",
         "fcmp ogt <8 x float>",
         "select <8 x i1>",
         "fadd <4 x float>",
@@ -924,19 +925,20 @@ def main():
         "llvm.global @mjstr_0",
         "llvm.linkage PrivateLinkage",
         "llvm.addressof @mjstr_0",
-        "llvm.call @mjrt_write_stdout",
+        "llvm.call @write",
     ] {
         assert!(
             text.contains(needle),
             "canonical text lacks `{needle}`:\n{text}"
         );
     }
-    // Pool contents in first-use order: "hello", "\n", " ", "ab" (the folded
-    // concatenation), "ab\0" (the frozen bytes `==` reads), "True", "False"
-    // — the repeated "hello" and "ab" share entries, and the fold-only
+    // Pool contents in first-use order: "hello\0", " ", "\n", "ab\0" (the
+    // frozen bytes `==` reads), "ab" (the folded concatenation), the
+    // standard output descriptor's short-write message, "True", "False" —
+    // the repeated "hello" and "ab" share entries, and the fold-only
     // "a"/"b" never intern.
     let globals = text.matches("llvm.global @mjstr_").count();
-    assert_eq!(globals, 7, "constant pool size changed:\n{text}");
+    assert_eq!(globals, 8, "constant pool size changed:\n{text}");
 }
 
 /// The aggregate memory model prints canonically: layout-engine offsets
@@ -1292,28 +1294,13 @@ mod native_abi_cross_checks {
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
                     }
-                    kind if kind.is_string_literal() => {
-                        let ptr = LLVMPointerTypeInContext(self.ctx, 0);
-                        let len = LLVMInt64TypeInContext(self.ctx);
-                        self.strukt(&[ptr, len])
-                    }
-                    TyKind::Error => {
-                        let string = self.rt_type(rt_abi::find_type("MjString").expect("known"));
-                        self.strukt(&[string])
-                    }
+                    // Upstream's `StringLiteral[v]` has no fields: the text
+                    // is its `value` parameter.
+                    kind if kind.is_string_literal() => self.strukt(&[]),
                     TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                         let fields: Vec<LLVMTypeRef> = elements
                             .iter()
                             .map(|element| self.ty(structs, element))
-                            .collect();
-                        self.strukt(&fields)
-                    }
-                    TyKind::Struct(name, _) => {
-                        let fields: Vec<LLVMTypeRef> = structs
-                            .get(name)
-                            .expect("struct in index")
-                            .iter()
-                            .map(|field| self.ty(structs, field))
                             .collect();
                         self.strukt(&fields)
                     }
@@ -1343,6 +1330,15 @@ mod native_abi_cross_checks {
                         } else {
                             LLVMArrayType2(lane, width as u64)
                         }
+                    }
+                    TyKind::Struct(name, _) => {
+                        let fields: Vec<LLVMTypeRef> = structs
+                            .get(name)
+                            .expect("struct in index")
+                            .iter()
+                            .map(|field| self.ty(structs, field))
+                            .collect();
+                        self.strukt(&fields)
                     }
                     other => panic!("no LLVM realization in this test for {other}"),
                 }
@@ -1395,7 +1391,25 @@ mod native_abi_cross_checks {
             td.assert_agrees(spec.name, td.rt_type(spec), &expected);
         }
 
-        let mut structs = StructFieldIndex::default();
+        // The library structs (`Bool`, `Error`, ...) lay out from a
+        // program's own declarations, as every native compilation's do.
+        let program = r#"
+def main() raises:
+    var flag = True
+    var error = Error("e")
+    print(flag, error)
+"#;
+        let compiled = Compiler::default()
+            .with_target(host_target())
+            .compile_source(program, std::path::Path::new(FIXTURE_NAME))
+            .expect("compiles");
+        let mut structs = mojito::mir::struct_field_index(
+            &compiled
+                .concrete_mir()
+                .expect("elaborates")
+                .program
+                .declarations,
+        );
         structs.insert("Pair".to_string(), vec![Ty::int(), Ty::bool()]);
         structs.insert(
             "Outer".to_string(),

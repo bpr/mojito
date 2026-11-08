@@ -100,6 +100,24 @@ impl<'a> Flatten<'a> {
         self.constant_at(location, ty, k)
     }
 
+    /// `value`, the lowered `e`, as a value: a direct `ref` field's load,
+    /// which [`Self::member_expr`] leaves holding its handle, reads
+    /// through to the referent, as a value use of a `ref` binding does.
+    pub(in crate::mir) fn field_referent(&mut self, e: Node<'a>, value: Reg) -> Reg {
+        let loads_field = matches!(
+            self.f.blocks[self.cur].instrs.last(),
+            Some(MirInstr::LoadPlace { dest, .. }) if *dest == value
+        );
+        if loads_field
+            && !matches!(e.ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            && let Some(TyKind::Ref(reference)) = self.f.reg_types.get(&value.0).map(Ty::kind)
+        {
+            let referent = reference.referent.clone();
+            self.f.reg_types.insert(value.0, referent);
+        }
+        value
+    }
+
     /// Read member node `e`, `object.field`.
     pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
         let node = e.checked;

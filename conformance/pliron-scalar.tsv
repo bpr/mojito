@@ -866,6 +866,7 @@ assets/ok/parameter_list_raw_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_raw_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_only_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_shadows_function.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_value_consuming_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_concrete.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shape
@@ -1011,6 +1012,7 @@ assets/ok/print_argument_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_keywords_file.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_library_keywords.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_borrowed_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/raise_edge_tuple_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_exit_destroys_live_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raising_call_edge_destroys_held_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raising_iter_call_edge.mojo	-	ineligible	no-scalar-entry-shape
@@ -1694,6 +1696,7 @@ assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_truth_test.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape

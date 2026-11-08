@@ -145,6 +145,18 @@ pub(super) fn elaborate_drops(
     function
 }
 
+/// End each owned register of a memory-only type through storage: its
+/// `drop.reg` becomes a fresh slot's `var.def` of the register and that
+/// slot's `drop.var`, as upstream destroys such a value only in memory.
+pub(super) fn drop_registers_through_storage(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) {
+    let mut blocks = std::mem::take(&mut function.blocks);
+    spill_register_drops(&mut blocks, function, declarations);
+    function.blocks = blocks;
+}
+
 /// The owner parts carried by each `EstablishLoans` generation. A later
 /// establishment for the same aggregate replaces the old marker; keeping the
 /// marker as the key prevents historical owners from becoming one permanent
@@ -1109,4 +1121,49 @@ fn prepend_drops(instrs: &mut Vec<MirInstr>, mut deaths: Vec<Death>, receiver: O
 /// the order its fields are declared, as `destroyValueIfNeeded` walks them.
 fn order_deaths(deaths: &mut [Death], receiver: Option<VarId>) {
     deaths.sort_by_key(|death| death.order(receiver));
+}
+
+/// [`drop_registers_through_storage`] over the block list `blocks` and its
+/// regions.
+fn spill_register_drops(
+    blocks: &mut [MirBlock],
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) {
+    for block in blocks {
+        let instructions = std::mem::take(&mut block.instrs);
+        block.instrs = Vec::with_capacity(instructions.len());
+        for mut instruction in instructions {
+            for region in instruction_regions_mut(&mut instruction) {
+                spill_register_drops(region, function, declarations);
+            }
+            let MirInstr::Drop { reg, destructor } = &instruction else {
+                block.instrs.push(instruction);
+                continue;
+            };
+            let Some(ty) = function
+                .reg_types
+                .get(&reg.0)
+                .filter(|ty| !declarations.register_passable(ty))
+                .cloned()
+            else {
+                block.instrs.push(instruction);
+                continue;
+            };
+            let slot = function.n_vars as VarId;
+            function.n_vars += 1;
+            function.var_names.push(format!("$drop_r{}", reg.0));
+            function.var_tys.insert(slot, ty.clone());
+            block.instrs.push(MirInstr::DefVar {
+                var: slot,
+                src: *reg,
+                binding_ty: Some(ty),
+                in_place: false,
+            });
+            block.instrs.push(MirInstr::DropVar {
+                var: slot,
+                destructor: destructor.clone(),
+            });
+        }
+    }
 }

@@ -882,6 +882,7 @@ impl<'a> Flatten<'a> {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
         let ra = self.lower_operator_operand(node, value);
+        let ra = self.field_referent(value, ra);
         // `not x` on a struct, a string literal, a numeric scalar, a
         // vector, or a `Boolable` type parameter is `not x.__bool__()`:
         // convert through the explicit `Bool(x)` call so the negation is

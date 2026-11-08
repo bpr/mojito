@@ -302,14 +302,18 @@ impl FnLowering<'_> {
             return Ok(());
         }
         self.store_error_into(ctx, storage, src)?;
-        // The VM's lifecycle log records only `Value::Error` raises; a
-        // raised error struct (`raise StopIteration()`) stays silent there.
+        // The VM's lifecycle log records only raises of `Error` (a raised
+        // string converts to one); another error struct (`raise
+        // StopIteration()`) stays silent there.
         let struct_raise = self
             .func
             .reg_types
             .get(&src.0)
             .and_then(|ty| ty.kind().as_non_simd_struct())
-            .is_some_and(|(name, _)| !mojito_symbol::symbol::is_stdlib_string_struct(name));
+            .is_some_and(|(name, _)| {
+                !mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    && name != mojito_types::types::ERROR_TYPE_NAME
+            });
         if self.trace_lifecycle && !struct_raise {
             self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_RAISE, storage);
         }

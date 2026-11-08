@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2045**.
+Next free ID: **R2047**.
 
 ## Ordered Work
 
@@ -1169,6 +1169,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     `Optional[String]` ones fail.
   - Probe: `f[3]()` over `def f[x: Optional[Int] = None]()` and
     `f["b"]()` over the `Optional[String]` form, natively.
+  - Probe: `var v = x.or_else("none")` and `var seen = True if x else
+    False` over the `Optional[String]` form fail natively the same way;
+    they pass the verifier since R1934 (2026-11-08), and join
+    `assets/ok/parameter_value_consuming_receiver.mojo` once this lands.
   - Then mark `assets/ok/nonmaterializable_converts_through_target.mojo`
     `exe-differential` in the parity manifest.
   - Found while landing R1864 (2026-11-06).
@@ -9607,67 +9611,42 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1934 A `deinit self` call on a memory-only parameter value
-  leaves a register drop the verifier rejects**
+- [ ] **R2045 Five MIR pass test inputs predate the verifier's
+  memory-only register rule and fail at load**
 
-  The bundled
-  `$comptime$__module$std$sys$info$CompilationTarget.unsupported_target_error$c0`
-  fails verification with "drop.reg destroys %r0 of memory-only type
-  Optional[String], which upstream destroys through its storage".
-  - It started with R1873's rule (2026-11-05). Since R1997 (2026-11-07)
-    an artifact carries only the package bodies its elaboration reaches,
-    so `emit-mir` fails only on a program that reaches this body.
-  - Probe: the `tuple_reverse_closed` case of `tests/mir_pass_test.rs`
-    fails at load, since its input predates R1873's rule (`swapped`'s
-    `deinit` receiver call destroys a memory-only `Tuple` register); it
-    needs re-emitting from current lowering once `emit-mir` works.
-  - Probe: `elaborate-drops/register_drop_named.mir` fails at load the
-    same way ("drop.reg destroys %r2 of memory-only type Noisy"), and
-    needs the same re-emit.
-  - Probe: `elaborate-drops/register_drop_unnamed.mir` drops a
-    memory-only `Error` register unnamed, which the verifier rejects since
-    R1932 (2026-11-08); it fails first at load with "unknown type
-    `Error`", and needs the same re-emit over a register-passable value.
-  - Probe: `inline-parametric/deinit_register_receiver.mir` and
-    `read_owned_register_temporary.mir` fail at load the same way (a
-    `deinit` receiver call destroys a memory-only `Box`/`Res` register).
-  - Both cases' `.expected` were rewritten by hand for R1837's storage
-    `literal.materialize` (2026-11-06), and every such case's literal
-    register types for R1849's MIR 1.172; re-bless them after the re-emit.
-  - The body's `note.or_else("")` calls a `deinit self` method on its
-    memory-only `Optional[String]` parameter value, which lowering keeps
-    in a register rather than in storage, as upstream materializes a
-    parameter value.
-  - Probe: `run` of
-    `CompilationTarget.unsupported_target_error[operation="EBOGUS"]()`
-    fails verification of the same `$c1` body, where the pin reaches its
-    constraint failure.
-  - Probe: `print(x.or_else("none"))` in `def f[x: Optional[String] =
-    None]()` fails verification of `f` ("drop.reg destroys %r0 of
-    memory-only type Optional[String]"), where the pin prints `none`.
-  - Probe: with `MOJITO_PRE_ELABORATION=0`, any program reaching the
-    bundled `_assert_enabled` (`assets/ok/generic_alias_construction.mojo`,
-    `and_alias_construction_operand.mojo`,
-    `generic_display_argument_infers_parameter.mojo`) fails verification
-    of that package body ("call.method deinit receiver destroys %r18 of
-    memory-only type String"); the pipeline's passes hide it when on.
-  - Probe: with `MOJITO_PRE_ELABORATION=0`, a user body hits the same
-    rule: `assets/ok/static_string_parameter_equality.mojo` fails
-    verification of its `same` and `is_mode` ("call.method deinit receiver
-    destroys %r6 of memory-only type String").
-  - `tests/focused/list.txt` leaves out the thirteen fixtures whose
-    `pre_elaboration` trial fails this way; restore them when this lands.
-  - Probe: with the library linked from source (`MOJITO_STD_PACKAGE=0`),
-    `run` of any program, even `print(1)`, fails verification of the
-    `$c0` and `$c1` bodies, so a source-linked check
-    (`assets/ok/comptime_match_patterns.mojo`) reaches no execution.
-    So do `module_type_alias_reads.mojo`,
-    `static_string_parameter.mojo`, and
-    `comptime_application_ref_parameter.mojo`, which check source-linked
-    since R1807 (2026-11-08); compare their runs with the package's here.
-  - Probe: with this rule relaxed, the source-linked run of
-    `assets/ok/ctfe_module_display_constant_requests.mojo` matches the
-    package run, so that fixture needs nothing more once this lands.
+  Each input destroys a memory-only register directly, which the MIR
+  verifier has rejected since R1873 (`deinit` receiver calls) and R1932
+  (unnamed `drop.reg`), so `tests/mir_pass_test.rs` fails before the pass
+  runs.
+  - `tuple_reverse_closed`: `swapped`'s `deinit` receiver call destroys
+    a memory-only `Tuple` register.
+  - `elaborate-drops/register_drop_named.mir` ("drop.reg destroys %r2 of
+    memory-only type Noisy").
+  - `elaborate-drops/register_drop_unnamed.mir` drops a memory-only
+    `Error` register; it fails first with "unknown type `Error`", and
+    needs a register-passable value instead.
+  - `inline-parametric/deinit_register_receiver.mir` and
+    `read_owned_register_temporary.mir`: a `deinit` receiver call
+    destroys a memory-only `Box`/`Res` register.
+  - Fix: re-emit each input from current lowering with `emit-mir`, which
+    since R1934 (2026-11-08) ends such a register through a slot, and
+    re-bless the `.expected` files, which R1837 and R1849 rewrote by hand.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2046 With the library linked from source, a compile-time call
+  passing a `String` to a `ref` parameter reads an unresolved value**
+
+  `MOJITO_STD_PACKAGE=0 mojito run
+  assets/ok/comptime_application_ref_parameter.mojo` fails with "unsupported
+  compile-time application `bc` reads an unresolved value
+  `__module$std$string$String("abc", "abc")`", where the package-linked run
+  prints the pin's output.
+  - The application is `bc(String("abc"))` in `H`'s `comptime m`, `bc`
+    taking `ref s: String`.
+  - It was hidden until R1934 (2026-11-08): the source-linked run failed
+    verification of `CompilationTarget.unsupported_target_error` first.
+  - Probe: the same run with the package linked, and compare.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
