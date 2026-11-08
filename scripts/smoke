@@ -25,21 +25,20 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import os
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tierlib  # noqa: E402
+from tierlib import ROOT, first_difference, indent, mojito, native_env, tail  # noqa: E402
+
 SMOKE = ROOT / "tests" / "smoke"
 FIXTURES = SMOKE / "fixtures.txt"
 EXPECTED = SMOKE / "expected"
-BIN = ROOT / "target" / "debug" / "mojito"
 LOG = ROOT / "target" / "smoke" / "last.log"
 MODES = ("run", "vm", "reject")
-TIMEOUT = 300
 
 
 @dataclass
@@ -50,12 +49,6 @@ class Fixture:
     @property
     def golden(self) -> Path:
         return EXPECTED / (self.path.replace("/", "__").removesuffix(".mojo") + ".out")
-
-
-@dataclass
-class Outcome:
-    exit_code: int
-    output: str
 
 
 def main() -> int:
@@ -164,53 +157,12 @@ def bless(fixtures: list[Fixture], env: dict[str, str]) -> int:
     return 1 if failed else 0
 
 
-def mojito(argv: list[str], env: dict[str, str]) -> Outcome:
-    try:
-        done = subprocess.run([str(BIN), *argv], cwd=ROOT, env=env, capture_output=True,
-                              text=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return Outcome(124, f"timed out after {TIMEOUT}s\n")
-    return Outcome(done.returncode, done.stdout + done.stderr)
-
-
 def build(vm_only: bool, env: dict[str, str]) -> bool:
     steps = [["cargo", "build", "--quiet"]]
     if not vm_only:
         steps = [["cargo", "build", "--quiet", "-p", "mojito-runtime"],
                  ["cargo", "build", "--quiet", "--features", "backend-pliron"]]
-    for step in steps:
-        done = subprocess.run(step, cwd=ROOT, env=env, capture_output=True, text=True)
-        if done.returncode != 0:
-            print(f"smoke: `{' '.join(step)}` failed:\n{tail(done.stderr, 40)}")
-            return False
-    return True
-
-
-def native_env() -> dict[str, str]:
-    """The environment `scripts/check-pliron` builds and runs under."""
-    env = dict(os.environ)
-    prefix = env.setdefault("LLVM_SYS_231_PREFIX", "/usr/lib/llvm-23")
-    env["PATH"] = f"{prefix}/bin:{env.get('PATH', '')}"
-    env.setdefault("MOJITO_RUNTIME_LIB", str(ROOT / "target" / "debug" / "libmojito_runtime.a"))
-    return env
-
-
-def first_difference(expected: str, actual: str) -> str:
-    want, got = expected.splitlines(), actual.splitlines()
-    for line, (a, b) in enumerate(zip(want, got), 1):
-        if a != b:
-            return f"line {line}: expected `{a}`, got `{b}`"
-    if len(want) != len(got):
-        return f"expected {len(want)} lines, got {len(got)}"
-    return "the outputs differ in trailing whitespace"
-
-
-def tail(text: str, lines: int = 8) -> str:
-    return "\n".join(text.rstrip().splitlines()[-lines:])
-
-
-def indent(text: str) -> str:
-    return "\n".join(f"    {line}" for line in text.splitlines())
+    return tierlib.build(steps, env, "smoke")
 
 
 if __name__ == "__main__":

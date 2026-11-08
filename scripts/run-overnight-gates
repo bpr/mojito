@@ -118,6 +118,9 @@ run_step instantiation-ratchet env RUSTC_WRAPPER= scripts/instantiation-report -
     echo "## Morning follow-up"
     echo
     echo "- Triage any FAIL above from its log."
+    echo "- Add each fixture or named test a failing step names to"
+    echo "  tests/focused/list.txt (a dated Gate failures heading);"
+    echo "  scripts/focused --from-gate <its log> prints the lines."
     echo "- A check-pliron manifest-assertion failure after hand-edited"
     echo "  pliron TSV rows: regenerate with scripts/run-parity-regen.sh,"
     echo "  review the diff, then rerun scripts/check-pliron."

@@ -45,6 +45,41 @@ report in `target/smoke/last.log`. `scripts/claude_loop.py` runs it after every
 task (`--no-smoke`, `--smoke-vm-only`, `--smoke-fix N`). Add a fixture to the
 list, then bless it, when a gate failure shows a feature the list misses.
 
+### Focused check
+
+`scripts/focused` is the tier between smoke and the overnight gate: it runs
+the fixtures and named tests in `tests/focused/list.txt`, the areas recent
+gates broke, in about four minutes (its budget is ten). The list has two line kinds:
+
+- `fixture <path under assets/>` runs every `corpus_test` trial the harness
+  generates for that file (`assets_*`, `vm_ok`, `artifact`,
+  `pre_elaboration`, `verify`, `roundtrip`, and the origin and ownership
+  groups), in a process of its own with `MOJITO_CORPUS_FOCUS` set to the
+  path, then the native differential its `conformance/pliron-parity.tsv` row
+  allows: an `exe-differential` fixture must print the same on both
+  backends, an `error-differential` one must fail on both, and one without
+  such a row is checked on the VM alone;
+- `test <root test target> <name>` runs that named test, after confirming
+  the target still lists it.
+
+```sh
+scripts/focused                 # VM and native
+scripts/focused --vm-only       # no LLVM needed
+scripts/focused --filter span   # entries whose path or test name contains `span`
+scripts/focused --no-build      # the newest built test binaries
+scripts/focused --jobs 12       # entries in parallel (default 8)
+scripts/focused --from-gate LOG # list lines for a nextest gate log's new failures
+```
+
+It exits 1 when an entry fails and 2 when the build does, prints
+`FAIL fixture <path>` or `FAIL test <target>::<name>` with the detail, and
+keeps the report in `target/focused/last.log`. A fixture or test an overnight
+gate finds broken joins the list under a dated `Gate failures` heading
+(`--from-gate` prints the lines a `check-default.log` adds, mapping each
+failing corpus trial to its file through the harness); a
+fixture that is red today waits for the entry that owns it, so the tier
+stays green until something regresses.
+
 ## CLI Usage
 
 Run a compiler stage over a file:

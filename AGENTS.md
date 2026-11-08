@@ -228,6 +228,11 @@ verification happens. In-session verification must take seconds, not hours:
   minute (`docs/usage.md` §Smoke check). `scripts/claude_loop.py` runs it
   after every task, so a session need not; run it when fixing a failure it
   reported.
+- `scripts/focused` runs the fragile-area fixtures in
+  `tests/focused/list.txt` through every corpus group and natively in about
+  four minutes (`docs/usage.md` §Focused check). It is the owner's
+  between-gates check; a session runs it only when fixing a failure it
+  reported, as with smoke.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; `--stdlib PATH` is
   another search root. `std` always comes from the bundled library.

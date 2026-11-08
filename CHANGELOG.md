@@ -6,6 +6,17 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/focused` is a test tier between `scripts/smoke` and the
+  overnight gate: it runs the fixtures and named tests in
+  `tests/focused/list.txt` — compile-time strings and parameters, origins
+  and spans, packs, symbol naming, library `print`/`Bool`/`StringLiteral`,
+  `rebind`, closures, and recent gate failures — through every corpus path
+  and natively in about four minutes (R1999). `corpus_test` reads
+  `MOJITO_CORPUS_FOCUS` to run only the listed fixtures, and the shared
+  script helpers moved to `scripts/tierlib.py`.
+
 ### Changed
 
 - `Compiler::check_source` checks a program against the bundled library's

@@ -1,0 +1,179 @@
+# The focused tier's list (`scripts/focused`, docs/usage.md §Focused check).
+#
+# Two line kinds:
+#   fixture <repo-relative path under assets/>
+#       runs every corpus_test trial the harness generates for that file
+#       (assets_*, vm_ok, artifact, pre_elaboration, verify, roundtrip, and
+#       the origin/ownership groups), then the native differential its
+#       conformance/pliron-parity.tsv row allows;
+#   test <root test target> <exact test name>
+#       runs that one named test.
+#
+# A fixture or test an overnight gate finds broken joins the list, under a
+# dated `Gate failures` heading. A fixture that is red today stays off the
+# list until the entry that owns it lands: a tier that starts red signals
+# nothing. Such an entry stays here commented out, prefixed with the roadmap
+# entry that owns it; restore it when that entry lands.
+
+# Gate failures (2026-11-04 overnight run)
+fixture assets/ok/application_string_parameter.mojo
+fixture assets/ok/comptime_application_ref_parameter.mojo
+fixture assets/ok/comptime_annotated_implicit_conversion.mojo
+fixture assets/ok/enum_like_protocol.mojo
+fixture assets/ok/std_plugin_hooks.mojo
+# R1934: fixture assets/ok/simd_pow_dunders.mojo
+# R1934: fixture assets/ok/index_list.mojo
+# R1934: fixture assets/ok/dtype_value_member_argument.mojo
+fixture assets/ok/comptime_struct_values.mojo
+fixture assets/ok/comptime_pow_applies_dunder.mojo
+fixture assets/ok/comptime_application_string_float_argument.mojo
+fixture assets/ok/static_string_parameter.mojo
+fixture assets/ok/dunder_contains.mojo
+# R1934: fixture assets/ok/ctfe_dict_set_result.mojo
+fixture assets/ok/comptime_match_patterns.mojo
+# R1934: fixture assets/ok/comptime_for_borrowing_iterator.mojo
+fixture assets/ok/template_method_bound_defaulted_argument.mojo
+fixture assets/ok/trait_method_parameter_markers.mojo
+# R2017: fixture assets/ok/conversion_traits_library.mojo
+fixture assets/ok/reference_element_chained_read.mojo
+fixture assets/ok/copyable_iterator_reference_aggregate.mojo
+fixture assets/ok/origin_delegated_multi_binder.mojo
+fixture assets/extensions/ok/origin_delegated_multi_binder.mojo
+
+# Gate failures (2026-11-05 to 2026-11-07 loop runs)
+fixture assets/ok/where_dtype_predicate.mojo
+fixture assets/ok/int_literal_bool_lane.mojo
+fixture assets/ok/pack_spread_into_writer_write.mojo
+fixture assets/ok/print_library_keywords.mojo
+
+# Compile-time strings and parameters
+fixture assets/ok/comptime_string_value.mojo
+fixture assets/ok/comptime_string_annotated_constant.mojo
+fixture assets/ok/comptime_assert_static_string_message.mojo
+fixture assets/ok/static_string.mojo
+# R1934: fixture assets/ok/static_string_parameter_equality.mojo
+fixture assets/ok/reflected_names_static_string.mojo
+fixture assets/ok/generic_param_string_literal_materializes.mojo
+fixture assets/ok/kgen_string_literal_value.mojo
+fixture assets/ok/template_method_string_literal_argument.mojo
+
+# Origins and aliasing (StringSpan, Span, subscripts)
+fixture assets/ok/string_span_equatable.mojo
+fixture assets/ok/string_span_implicit_temporary.mojo
+fixture assets/ok/string_span_literal.mojo
+fixture assets/ok/string_span_methods.mojo
+fixture assets/ok/span_view_basics.mojo
+fixture assets/ok/span_iteration.mojo
+fixture assets/ok/span_from_array.mojo
+fixture assets/ok/span_implicit_from_list.mojo
+fixture assets/ok/span_temp_method_argument.mojo
+fixture assets/ok/span_generic_free_def_view.mojo
+fixture assets/ok/list_to_span_conversion_borrows.mojo
+fixture assets/runtime_error/span_index_out_of_range.mojo
+fixture assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo
+fixture assets/ok/subscript_write_back.mojo
+fixture assets/ok/subscript_write_back_lifecycle.mojo
+fixture assets/ok/inplace_subscript_ref.mojo
+fixture assets/ok/pliron_subscript_ref.mojo
+fixture assets/ok/ref_binding_owned_subscript_result.mojo
+fixture assets/ok/list_subscript_field_store.mojo
+fixture assets/ok/pointer_subscript_reads_in_place.mojo
+fixture assets/ok/by_value_subscript_temporary_drop.mojo
+
+# Variadic packs
+fixture assets/ok/variadic_args.mojo
+fixture assets/ok/variadic_pack_upstream_spellings.mojo
+fixture assets/ok/variadic_pack_forwarding_generic_def.mojo
+fixture assets/ok/variadic_pack_read_collector_destroy_order.mojo
+fixture assets/ok/variadic_collector_forwarded_and_borrowed.mojo
+fixture assets/ok/variadic_list_members.mojo
+fixture assets/ok/variadic_subscript_collector.mojo
+fixture assets/ok/pack_forwarding_print.mojo
+fixture assets/ok/pack_struct_writable.mojo
+fixture assets/ok/pack_struct_variadic_init.mojo
+fixture assets/ok/pack_drop_names_element_destructors.mojo
+fixture assets/ok/owned_pack_destroyed_in_reverse.mojo
+fixture assets/ok/value_pack_runtime_read.mojo
+fixture assets/ok/type_pack_runtime_read.mojo
+fixture assets/ok/application_type_pack.mojo
+# R1934: fixture assets/ok/application_value_pack.mojo
+fixture assets/ok/pack_overload_arity.mojo
+fixture assets/ok/pack_element_alias_string_literal.mojo
+fixture assets/ok/trait_requirement_indexes_own_pack.mojo
+
+# Symbol naming
+fixture assets/ok/instance_constructor_symbols.mojo
+# R1934: fixture assets/ok/overloaded_method_checked_symbol.mojo
+# R1934: fixture assets/ok/overloaded_method_own_binder_symbols.mojo
+fixture assets/ok/symbolic_instance_construction.mojo
+# R1934: fixture assets/ok/simd_symbolic_surface.mojo
+# R1934: fixture assets/ok/simd_to_bits_default_symbolic.mojo
+fixture assets/ok/variadic_overload_collector_position.mojo
+fixture assets/ok/method_overload_parameter_pack.mojo
+fixture assets/ok/string_literal_generic_instances.mojo
+fixture assets/ok/template_method_own_lane.mojo
+
+# Library print, Bool, and StringLiteral
+fixture assets/ok/print_keywords_file.mojo
+fixture assets/ok/print_argument_drop_order.mojo
+fixture assets/ok/print_argument_read_in_place.mojo
+fixture assets/ok/template_print_keywords.mojo
+fixture assets/ok/pliron_print_str_literal.mojo
+fixture assets/ok/bool_declared_initializers.mojo
+# R1934: fixture assets/ok/bool_declared_members.mojo
+# R2018: fixture assets/ok/bool_declared_operators.mojo
+fixture assets/ok/bool_declared_writable.mojo
+fixture assets/ok/bool_storage_primitives.mojo
+# R1934: fixture assets/ok/simd_bool_masks.mojo
+fixture assets/ok/dtype_keyed_bool_lane.mojo
+fixture assets/ok/string_literal_dunders.mojo
+fixture assets/ok/string_literal_bytes.mojo
+fixture assets/ok/string_literal_slice_members.mojo
+fixture assets/ok/string_literal_struct.mojo
+fixture assets/ok/string_literal_overload.mojo
+fixture assets/ok/pliron_stringliteral_value.mojo
+
+# rebind
+fixture assets/ok/rebind_assignment.mojo
+fixture assets/ok/rebind_augmented_assignment.mojo
+fixture assets/ok/rebind_generic_body.mojo
+fixture assets/ok/rebind_method_template_served.mojo
+fixture assets/ok/rebind_overloaded_def.mojo
+fixture assets/ok/rebind_place_projection.mojo
+fixture assets/ok/rebind_type_of_target.mojo
+fixture assets/ok/pack_element_rebind.mojo
+fixture assets/ok/template_method_rebind.mojo
+
+# Closures
+fixture assets/ok/closures.mojo
+fixture assets/ok/lambda_basic.mojo
+fixture assets/ok/lambda_hof.mojo
+fixture assets/ok/lambda_generic_comptime.mojo
+fixture assets/ok/capturing_lambda_array_display.mojo
+fixture assets/ok/capturing_lambda_storage.mojo
+fixture assets/ok/closure_storage_values.mojo
+fixture assets/ok/closure_storage_drop_order.mojo
+fixture assets/ok/closure_storage_origin_arguments.mojo
+fixture assets/ok/capturing_callable_parameter_with_locals.mojo
+fixture assets/ok/forwarded_capturing_callable_parameter.mojo
+fixture assets/ok/generic_closure_in_generic_body_closure_binder.mojo
+fixture assets/ok/method_capturing_callable_parameter.mojo
+fixture assets/ok/pliron_closure_env.mojo
+
+# Named tests
+test checker_test accepts_string_compile_time_value_parameters
+test checker_test checks_each_heterogeneous_pack_element_against_its_bound
+# R2019: test checker_test bool_bodied_comptime_aliases_are_predicates
+test checker_test accepts_print_of_various_values
+test checker_test closure_uses_are_the_enclosing_binders_its_body_names
+test checker_test rejects_escaping_closure
+test comptime_test rebind_retypes_its_operand_and_checks_the_instantiation
+test comptime_test rebind_keys_specialization_without_compile_time_control_flow
+test comptime_test comptime_for_iterates_a_heterogeneous_pack
+test comptime_test a_comptime_member_value_converts_to_its_declared_type
+test symbol_test collector_position_is_part_of_callable_identity
+test symbol_test variadic_key_spells_a_collectors_position_and_pack_bounds
+test symbol_test struct_and_generic_parameter_types_mangle_from_their_annotations
+test symbol_test an_applied_type_operand_mangles_as_the_type_it_spells
+test ownership_test callable_capture_effects_end_at_the_call_boundary
+test vm_test owned_closure_captures_materialize_at_the_declaration

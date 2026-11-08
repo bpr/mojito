@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2017**.
+Next free ID: **R2020**.
 
 ## Ordered Work
 
@@ -74,6 +74,48 @@ which names the upstream pass each one follows. Each is measured by the
   - Lever: build `uninitmem` from the destination register's type.
   - With the pipeline off (`MOJITO_PRE_ELABORATION=0`) the VM prints the
     value. Found while landing R1310 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2017 With the pre-elaboration pipeline off, a call to a
+  `Some[Indexer]` parameter reaches the elaborator with the anonymous
+  parameter unsolved**
+
+  With `MOJITO_PRE_ELABORATION=0`, `values[Int32(1)]` over a
+  `List[Int]` fails with "unsupported monomorphizing
+  `List.__getitem__$ov$Some$u5B$Indexer$u5D$$Indexer`: solution for
+  `Some[Indexer]` is not concrete", where the pin and the default
+  pipeline print `20`.
+  - Upstream's `Some[Indexer]` is an infer-only type parameter that each
+    call binds to its argument's type; the call reaching the elaborator
+    keys the parameter by the opaque `Some[Indexer]` instead.
+  - With the pipeline on, `inline-parametric` inlines the accessor and
+    hides the call, so only the pipeline-off path, which the
+    `pre_elaboration` corpus group runs, meets it.
+  - Probe: the program above, and `assets/ok/conversion_traits_library.mojo`
+    with `MOJITO_PRE_ELABORATION=0` (its `pick[T: Indexer]` reaches the
+    same call), which `tests/focused/list.txt` leaves out until this lands.
+  - Found while landing R1999 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2018 With the pre-elaboration pipeline off, comparing a
+  `Scalar[DType.bool]` with a `Bool` reaches the VM unconverted**
+
+  With `MOJITO_PRE_ELABORATION=0`, `mask == True` or `mask.__eq__(True)`
+  over `var mask = SIMD[DType.bool, 1](True)` fails with "Type error:
+  cannot compare Bool and Bool", where the pin and the default pipeline
+  print `True`; `mask == Scalar[DType.bool](True)` runs.
+  - The VM's `values_equal` (`crates/mojito-vm/src/runtime.rs`) is handed
+    a one-lane `Value::Simd` and a `Value::Bool`: the `Bool` argument's
+    implicit conversion to `Scalar[DType.bool]`, which upstream performs
+    at the call through `SIMD`'s `@implicit` initializer, is not in the
+    MIR the elaborator receives.
+  - With the pipeline on, the passes fold the comparison away.
+  - Probe: the program above, and `assets/ok/bool_declared_operators.mojo`
+    with `MOJITO_PRE_ELABORATION=0` (its `b == mask` line), which
+    `tests/focused/list.txt` leaves out until this lands.
+  - Found while landing R1999 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4524,6 +4566,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2019 A Bool-bodied `comptime` alias accepts `T.values` of a
+  parameter that is not a pack**
+
+  `comptime AllCopy[T: AnyType] = conforms_to(T.values, Copyable)` is
+  accepted, where the pin rejects it at the declaration with "expected a
+  type or param_list operand", since `T` is not a variadic pack.
+  - `checker_test::bool_bodied_comptime_aliases_are_predicates` pins the
+    rejection ("a pack projection in a Bool-bodied comptime alias",
+    `crates/mojito-checker/src/checker/constraints.rs`) and fails today:
+    the body no longer lowers to a `ConformsPack`, so the check never
+    sees a pack projection.
+  - Fix: reject `.values` of a non-pack parameter where the body is
+    resolved, with the pin's diagnostic, then let the test assert that.
+  - `tests/focused/list.txt` leaves the test out until this lands.
+  - Found while landing R1999 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1960 An integer literal does not convert to a `bool` lane, so
   `~` over a mask fails, where the pin's `#pop.int_literal_convert`
@@ -9760,6 +9820,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `generic_display_argument_infers_parameter.mojo`) fails verification
     of that package body ("call.method deinit receiver destroys %r18 of
     memory-only type String"); the pipeline's passes hide it when on.
+  - Probe: with `MOJITO_PRE_ELABORATION=0`, a user body hits the same
+    rule: `assets/ok/static_string_parameter_equality.mojo` fails
+    verification of its `same` and `is_mode` ("call.method deinit receiver
+    destroys %r6 of memory-only type String").
+  - `tests/focused/list.txt` leaves out the thirteen fixtures whose
+    `pre_elaboration` trial fails this way; restore them when this lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13379,30 +13445,6 @@ Track: `tooling`.
   - Found while landing R1938 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1999 There is no test tier between `scripts/smoke` and the full
-  gate**
-
-  `scripts/smoke` runs in under a minute and the full gate takes about
-  nine hours, so a loop session's regression in a fragile area waits for a
-  gate the owner rarely runs.
-  - Add a script, for example `scripts/focused`, that runs a checked-in
-    list of fixtures and named tests in about ten minutes. Its output
-    style matches `scripts/smoke`'s.
-  - The list covers the areas recent gates broke:
-    - compile-time strings and parameters
-    - origins and aliasing (`StringSpan`, `Span`, subscripts)
-    - variadic packs
-    - symbol naming
-    - library `print`, `Bool`, and `StringLiteral`
-    - `rebind`
-    - closures
-  - Each fixture runs through every corpus path (`vm_ok`, `artifact`,
-    `verify`, `roundtrip`, `pre_elaboration`), on the VM and natively.
-  - A fixture a gate finds broken joins the list.
-  - Depends on R1996 and R1997, so the per-fixture paths are fast enough
-    for the tier's time budget.
-  - Model: Opus, Planned.
 
 - [ ] **R1954 An older artifact's parameterized associated type keeps
   its one-binder pack arguments**

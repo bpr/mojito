@@ -43,6 +43,12 @@
 //! skips it) that its ownership seam must enter at `link`. Corpus
 //! non-emptiness invariants are synthetic `*::guard_*` trials so a violation
 //! reads as an ordinary test failure.
+//!
+//! `MOJITO_CORPUS_FOCUS`, a list of repository-relative fixture paths
+//! separated by newlines or the platform path separator, restricts every
+//! group to those fixtures; `scripts/focused` sets it. A focused run skips
+//! the size guards, since it checks the listed fixtures rather than the
+//! corpus.
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::backend::VmBackend;
@@ -51,11 +57,13 @@ use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate, inject_prelude,
     link, parse,
 };
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 fn main() {
     let arguments = Arguments::from_args();
@@ -111,7 +119,42 @@ fn labeled_fixtures(category: &str) -> Vec<(PathBuf, String)> {
                 .map(|path| (path, format!("extensions_{category}"))),
         );
     }
+    if let Some(focus) = focus() {
+        all.retain(|(path, _)| focus.contains(path));
+    }
     all
+}
+
+/// The fixtures `MOJITO_CORPUS_FOCUS` names, joined to the repository root,
+/// or `None` when the variable is unset and the whole corpus runs.
+fn focus() -> Option<&'static HashSet<PathBuf>> {
+    static FOCUS: OnceLock<Option<HashSet<PathBuf>>> = OnceLock::new();
+    FOCUS
+        .get_or_init(|| {
+            let list = std::env::var_os("MOJITO_CORPUS_FOCUS")?;
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            Some(
+                std::env::split_paths(&list)
+                    .flat_map(|entry| {
+                        entry
+                            .to_string_lossy()
+                            .lines()
+                            .map(str::trim)
+                            .filter(|line| !line.is_empty())
+                            .map(|line| root.join(line))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect(),
+            )
+        })
+        .as_ref()
+}
+
+/// Push a corpus-size guard unless the run is focused on chosen fixtures.
+fn push_guard(trials: &mut Vec<Trial>, guard: Trial) {
+    if focus().is_none() {
+        trials.push(guard);
+    }
 }
 
 fn stem(path: &Path) -> String {
@@ -259,12 +302,15 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
         .filter(|(path, _)| !reads_stdin(path))
         .collect();
     let count = paths.len();
-    trials.push(Trial::test("vm_ok::guard_nonempty", move || {
-        if count == 0 {
-            return Err(fail("expected some ok fixtures".to_string()));
-        }
-        Ok(())
-    }));
+    push_guard(
+        trials,
+        Trial::test("vm_ok::guard_nonempty", move || {
+            if count == 0 {
+                return Err(fail("expected some ok fixtures".to_string()));
+            }
+            Ok(())
+        }),
+    );
     // The VM is the sole executor: every `assets/ok/*.mojo` fixture must pass
     // the authoritative whole-program discovery/specialization pipeline and
     // run without error. (Exact-output correctness is asserted by targeted
@@ -362,12 +408,15 @@ fn artifact_trials(trials: &mut Vec<Trial>) {
         })
         .collect();
     let count = paths.len();
-    trials.push(Trial::test("artifact::guard_corpus", move || {
-        if count == 0 {
-            return Err(fail("expected some ok fixtures".to_string()));
-        }
-        Ok(())
-    }));
+    push_guard(
+        trials,
+        Trial::test("artifact::guard_corpus", move || {
+            if count == 0 {
+                return Err(fail("expected some ok fixtures".to_string()));
+            }
+            Ok(())
+        }),
+    );
     for (path, name) in paths {
         trials.push(Trial::test(format!("artifact::{name}"), move || {
             artifact_runs_as_source(&path)
@@ -522,12 +571,15 @@ fn pre_elaboration_trials(trials: &mut Vec<Trial>) {
         })
         .collect();
     let count = paths.len();
-    trials.push(Trial::test("pre_elaboration::guard_corpus", move || {
-        if count == 0 {
-            return Err(fail("expected some executable fixtures".to_string()));
-        }
-        Ok(())
-    }));
+    push_guard(
+        trials,
+        Trial::test("pre_elaboration::guard_corpus", move || {
+            if count == 0 {
+                return Err(fail("expected some executable fixtures".to_string()));
+            }
+            Ok(())
+        }),
+    );
     for (path, name) in paths {
         trials.push(Trial::test(format!("pre_elaboration::{name}"), move || {
             pipeline_preserves_behavior(&path)
@@ -553,12 +605,15 @@ fn verify_trials(trials: &mut Vec<Trial>) {
             }));
         }
     }
-    trials.push(Trial::test("verify::guard_corpus_size", move || {
-        if total <= 40 {
-            return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
-        }
-        Ok(())
-    }));
+    push_guard(
+        trials,
+        Trial::test("verify::guard_corpus_size", move || {
+            if total <= 40 {
+                return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
+            }
+            Ok(())
+        }),
+    );
 }
 
 /// The fixture compiled as production compiles it, importing the cached
@@ -635,12 +690,15 @@ fn roundtrip_trials(trials: &mut Vec<Trial>) {
             }));
         }
     }
-    trials.push(Trial::test("roundtrip::guard_corpus_size", move || {
-        if total <= 40 {
-            return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
-        }
-        Ok(())
-    }));
+    push_guard(
+        trials,
+        Trial::test("roundtrip::guard_corpus_size", move || {
+            if total <= 40 {
+                return Err(fail(format!("fixture corpus unexpectedly small: {total}")));
+            }
+            Ok(())
+        }),
+    );
 }
 
 fn origin_trials(trials: &mut Vec<Trial>) {
@@ -701,17 +759,17 @@ fn own(path: &Path) -> Result<(), OwnershipError> {
 fn ownership_trials(trials: &mut Vec<Trial>) {
     let error_paths = labeled_fixtures("ownership_error");
     let count = error_paths.len();
-    trials.push(Trial::test(
-        "ownership_error::guard_corpus_size",
-        move || {
+    push_guard(
+        trials,
+        Trial::test("ownership_error::guard_corpus_size", move || {
             if count < 4 {
                 return Err(fail(format!(
                     "expected several ownership-error fixtures, found {count}"
                 )));
             }
             Ok(())
-        },
-    ));
+        }),
+    );
     // Every `assets/ownership_error/*.mojo` must be a move violation whose
     // message contains its required `# expect:` substring.
     for (path, label) in error_paths {
