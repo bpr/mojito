@@ -60,28 +60,14 @@ pub fn struct_layout_reads(name: &str, declarations: &MirDeclarations) -> Layout
 /// declaration's member table (`StructDeclaration::members`) records.
 pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__moveinit__"];
 
-/// The members a backend reaches from a value's type, not from a call
-/// naming them.
-///
-/// A concrete struct declaration's member table records them beside its
-/// lifecycle members: the hash leaf (`__hash__`, a hasher's
-/// `_update_with_simd`). Upstream reaches neither so: each is a call in its
-/// library code, which `RemoveUnusedParams` rewrites, so each keeps its
-/// unused arguments until its reach becomes such a call.
-pub const TYPE_REACHED_MEMBERS: [&str; 2] = ["__hash__", "_update_with_simd"];
-
 /// The member a struct's member table records the method `method` under
-/// (its spelling before any `$` qualifier), when it is a lifecycle or
-/// type-reached member.
+/// (its spelling before any `$` qualifier), when it is a lifecycle member.
 ///
 /// A constructor, which a call or a slice bound's read reaches, is the
 /// instance it names, never a table entry.
 pub fn table_member(method: &str) -> Option<&'static str> {
     let base = method.split('$').next().unwrap_or(method);
-    LIFECYCLE_MEMBERS
-        .into_iter()
-        .chain(TYPE_REACHED_MEMBERS)
-        .find(|member| *member == base)
+    LIFECYCLE_MEMBERS.into_iter().find(|member| *member == base)
 }
 
 /// [`struct_layout_reads`] and the member reads of one walk's struct types,

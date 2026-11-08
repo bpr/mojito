@@ -30,8 +30,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
 /// Every function but a constructor, a lifecycle member, and a member a
-/// backend reaches from a value's type ([`crate::mir::table_member`],
-/// [`crate::mir::TYPE_REACHED_MEMBERS`]), which keep every argument, and
+/// backend reaches from a value's type ([`crate::mir::table_member`]),
+/// which keep every argument, and
 /// one whose signature ties an origin or a returned reference to a
 /// parameter, has candidates: a free function, a nested one, and a method
 /// a method call, an operator, a protocol's call (`len`, `in`, `for`,

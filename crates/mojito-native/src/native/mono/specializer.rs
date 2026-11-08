@@ -488,8 +488,8 @@ impl<'a> Specializer<'a> {
             // generator over the ones it kept, as upstream's method
             // generator lists them before its own: it names no owner
             // instance, and its kept owner arguments lead its own: a
-            // lifecycle or type-reached member too, which each struct
-            // instance's member table names, and a constructor, which each
+            // lifecycle member too, which each struct instance's member
+            // table names, and a constructor, which each
             // construction names.
             Some((owner_template, _))
                 if self
@@ -707,9 +707,8 @@ impl<'a> Specializer<'a> {
 
     /// The key a struct's member table records an instance of the method
     /// `template` under, when a backend reaches it from the struct's type:
-    /// a lifecycle member under its bare name (`__deinit__`); a type-reached
-    /// member (`mir::table_member`), another special method, or a
-    /// requirement of a trait the struct declares
+    /// a lifecycle member under its bare name (`__deinit__`); another
+    /// special method or a requirement of a trait the struct declares
     /// (`MirDeclarations::reached_from_type`) under the template's method
     /// spelling, overload qualifier included (`__eq__$ov$Self`), as
     /// upstream's struct nests these members and its conformances' witness
@@ -733,9 +732,10 @@ impl<'a> Specializer<'a> {
                 if matches!(base, "write_to" | "write_repr_to") && !self.writes_protocol(template) {
                     return None;
                 }
-                (mojito_mir::mir::table_member(method).is_some()
-                    || self.source.declarations.reached_from_type(owner, method))
-                .then(|| method.to_string())
+                self.source
+                    .declarations
+                    .reached_from_type(owner, method)
+                    .then(|| method.to_string())
             });
         self.table_keys.insert(template.to_string(), key.clone());
         key
@@ -2984,16 +2984,6 @@ impl<'a> Specializer<'a> {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
-                        // A Variant receiver's lowered `__hash__` dispatches
-                        // to its alternatives'; enqueue those instances.
-                        if method == "__hash__"
-                            && args.len() == 1
-                            && kwargs.is_empty()
-                            && !peel_refs(receiver).kind().is_non_simd_struct()
-                        {
-                            let receiver = peel_refs(receiver).clone();
-                            self.enqueue_hash_leaf_instances(owner, function, args[0], &receiver)?;
-                        }
                         if let Some(dispatch) = resolved.as_deref().filter(|symbol| {
                             mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
                         }) && !peel_refs(receiver).kind().is_non_simd_struct()

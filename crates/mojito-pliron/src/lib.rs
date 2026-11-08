@@ -929,7 +929,6 @@ fn reachable_set<'p>(
             &function.blocks,
             function,
             &functions,
-            &structs,
             &mut reachable,
             &mut queue,
         );
@@ -944,14 +943,13 @@ fn visit_call_edges<'p>(
     blocks: &'p [mojito_mir::mir::MirBlock],
     function: &'p MirFunction,
     functions: &HashMap<&'p str, &'p MirFunction>,
-    structs: &HashMap<&str, &MirStructDeclaration>,
     reachable: &mut HashSet<&'p str>,
     queue: &mut VecDeque<&'p str>,
 ) {
     for block in blocks {
         for instr in &block.instrs {
             for region in mojito_mir::mir::instruction_regions(instr) {
-                visit_call_edges(region, function, functions, structs, reachable, queue);
+                visit_call_edges(region, function, functions, reachable, queue);
             }
             if matches!(instr, MirInstr::Try { .. }) {
                 continue;
@@ -959,7 +957,6 @@ fn visit_call_edges<'p>(
             let mut edges = CallEdges {
                 function,
                 functions,
-                structs,
                 targets: Vec::new(),
             };
             edges.dispatch_edges(instr);
@@ -978,7 +975,6 @@ fn visit_call_edges<'p>(
 struct CallEdges<'p, 'a> {
     function: &'p MirFunction,
     functions: &'a HashMap<&'p str, &'p MirFunction>,
-    structs: &'a HashMap<&'a str, &'a MirStructDeclaration>,
     targets: Vec<&'p str>,
 }
 
@@ -986,21 +982,6 @@ impl<'p> CallEdges<'p, '_> {
     fn push_named(&mut self, name: &str) {
         if let Some((callee, _)) = self.functions.get_key_value(name) {
             self.targets.push(*callee);
-        }
-    }
-
-    /// A member the lowered expansion reaches from a value's type is each
-    /// instance the struct's member table names.
-    fn push_members(&mut self, name: &str, method: &str) {
-        let members = self
-            .structs
-            .get(name)
-            .into_iter()
-            .flat_map(|declaration| declaration.members_of(method));
-        for entry in members {
-            if let Some((callee, _)) = self.functions.get_key_value(entry.symbol.as_str()) {
-                self.targets.push(*callee);
-            }
         }
     }
 
@@ -1044,59 +1025,6 @@ impl<'p> CallEdges<'p, '_> {
                         .is_some_and(is_stdlib_string_type)
                 {
                     self.push_named(constructor);
-                }
-            }
-            // A `Variant` receiver's lowered `__hash__` reaches its
-            // hasher's compiled `_update_with_simd`.
-            MirInstr::MethodCall {
-                recv,
-                method,
-                resolved: None,
-                args,
-                ..
-            } if method == "__hash__" && args.len() == 1 => {
-                let hasher = self
-                    .function
-                    .reg_types
-                    .get(&args[0].0)
-                    .map(|ty| match ty.kind() {
-                        TyKind::Ref(reference) => &reference.referent,
-                        _ => ty,
-                    });
-                if let Some((hasher, _)) = hasher.and_then(|ty| ty.kind().as_non_simd_struct()) {
-                    self.push_members(hasher, "_update_with_simd");
-                    let receiver = self
-                        .function
-                        .reg_types
-                        .get(&recv.0)
-                        .map(|ty| match ty.kind() {
-                            TyKind::Ref(reference) => &reference.referent,
-                            _ => ty,
-                        });
-                    // A Variant leaf dispatches the active alternative's
-                    // `__hash__` under a tag switch: every nominal
-                    // alternative's instances are edges.
-                    let mut nominal_alternatives: Vec<&str> = Vec::new();
-                    let mut string_leaf = false;
-                    if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
-                        for alternative in alternatives {
-                            if let Some((name, _)) = alternative.kind().as_non_simd_struct() {
-                                if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                                    string_leaf = true;
-                                } else {
-                                    nominal_alternatives.push(name.as_str());
-                                }
-                            }
-                        }
-                    }
-                    if string_leaf {
-                        for string in string_structs(self.structs) {
-                            self.push_members(string, "__hash__");
-                        }
-                    }
-                    for alternative in nominal_alternatives {
-                        self.push_members(alternative, "__hash__");
-                    }
                 }
             }
             _ => {}
@@ -1326,18 +1254,6 @@ fn line_column(text: &str, byte: usize) -> Option<(usize, usize)> {
         .rfind('\n')
         .map_or(byte + 1, |newline| byte - newline);
     Some((line, column))
-}
-
-/// The declared structs that are the nominal `String`, whose names are
-/// module-qualified.
-fn string_structs<'s>(
-    structs: &'s HashMap<&str, &MirStructDeclaration>,
-) -> impl Iterator<Item = &'s str> {
-    structs.keys().copied().filter(|name| {
-        name.rsplit('$')
-            .next()
-            .is_some_and(mojito_symbol::symbol::is_stdlib_string_struct)
-    })
 }
 
 #[cfg(test)]

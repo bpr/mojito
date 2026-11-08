@@ -1,9 +1,8 @@
-//! Derived-instance enqueueing: hash leaves, nominal methods,
-//! display, and Intable instances.
+//! Witness lookup, the writer-protocol test, and the constants of
+//! value-parameter reads.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
     /// The constant a value-parameter member read (`Self.length`) at `read`
@@ -46,119 +45,6 @@ impl Specializer<'_> {
             }
             _ => None,
         }
-    }
-
-    /// Enqueue the instances a lowered builtin `__hash__(hasher)` over a
-    /// Variant receiver calls: the `__hash__` of every nominal alternative
-    /// (the lowered tag switch dispatches whichever is active).
-    pub(super) fn enqueue_hash_leaf_instances(
-        &mut self,
-        owner: &str,
-        function: &MirFunction,
-        hasher: Reg,
-        receiver: &Ty,
-    ) -> Result<(), MonoError> {
-        let Some(hasher_ty) = function.reg_types.get(&hasher.0) else {
-            return Ok(());
-        };
-        let hasher_ty = peel_refs(hasher_ty).clone();
-        if !hasher_ty.kind().is_non_simd_struct() {
-            return Ok(());
-        }
-        if let TyKind::Variant(alternatives) = receiver.kind() {
-            for alternative in alternatives {
-                if alternative.kind().is_non_simd_struct() {
-                    self.nominal_method_instance(
-                        owner,
-                        alternative,
-                        "__hash__",
-                        1,
-                        std::slice::from_ref(&hasher_ty),
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The instance one nominal method reached by a lowered intrinsic
-    /// rather than an explicit MIR call names, enqueued: the receiver binds
-    /// the owner's parameters and `argument_types` solve the method's own
-    /// binders as a call's arguments would. Every type parameter must be
-    /// solved, as upstream never elaborates a call with an unsolved one.
-    /// `None` when the receiver declares no such method.
-    pub(super) fn nominal_method_instance(
-        &mut self,
-        owner: &str,
-        receiver: &Ty,
-        method: &str,
-        argc: usize,
-        argument_types: &[Ty],
-    ) -> Result<Option<String>, MonoError> {
-        let Some((name, arguments)) = struct_receiver(receiver) else {
-            return Ok(None);
-        };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            nominal_template(name),
-            method,
-            None,
-            argc,
-        );
-        if !self.functions.contains_key(target.as_str()) {
-            return Ok(None);
-        }
-        let Some(declaration) = self.declarations.get(target.as_str()) else {
-            return Ok(None);
-        };
-        let mut bindings = self.base_bindings();
-        let mut owner_covered = 0;
-        if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
-            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
-                self.error(
-                    Some(owner),
-                    format!("monomorphizing receiver for `{target}`: {e}"),
-                )
-            })?;
-            if nominal_template(name) != name {
-                bindings.self_instance =
-                    Some((nominal_template(name).to_string(), receiver.clone()));
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-            }
-        }
-        for (pattern, actual) in declaration.param_types.iter().zip(argument_types) {
-            unify(pattern, actual, &mut bindings)
-                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
-        }
-        let unsolved = declaration
-            .param_decls
-            .iter()
-            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
-            .map(ParamDecl::binder)
-            .chain(
-                declaration
-                    .param_types
-                    .iter()
-                    .filter_map(|ty| match ty.kind() {
-                        TyKind::Param { binder, .. } => Some(binder.clone()),
-                        _ => None,
-                    }),
-            )
-            .find(|binder| !bindings.types.contains_key(binder));
-        if let Some(binder) = unsolved {
-            return Err(self.error(
-                Some(owner),
-                format!(
-                    "monomorphizing `{target}`: its arguments leave the type parameter `{}` unsolved",
-                    binder.name
-                ),
-            ));
-        }
-        let mut arguments =
-            self.own_arguments(&declaration.param_decls, &bindings, &target, owner_covered)?;
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
-        self.enqueue(&target, bindings, arguments).map(Some)
     }
 
     /// The member the receiver's template records in its witness table for
@@ -228,10 +114,4 @@ impl Specializer<'_> {
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
     }
-}
-
-/// The struct and arguments whose member table a receiver of type `ty`
-/// reads: a non-`SIMD` struct's own.
-fn struct_receiver(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [mojito_types::types::TyArg]>)> {
-    mojito_types::types::nominal_parts(ty).filter(|_| ty.kind().is_non_simd_struct())
 }

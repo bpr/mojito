@@ -27,12 +27,9 @@ and 11-04 (*Measure*), so the size steps still matter.
 1. **Gap F: members reached by name, not called** (size, the largest
    lever left). `__call__` on a struct value, `__int__`, `write_to`,
    `write_repr_to`, and the iteration step are requirement calls now (R1466,
-   R1544, R1882, R1280). `mir::TYPE_REACHED_MEMBERS`
-   (`mir/struct_reads.rs`) lists the three left:
-   - `write_string`, which the intrinsic receivers' `$write_formatted`
-     reaches: R1938 (`Error` is the library struct), after R1936.
-   - The hash leaves (`__hash__`, `_update_with_simd`): only a `Variant`
-     receiver's lowered `__hash__` keeps them, R2010.
+   R1544, R1882, R1280), and so are `write_string` (R1938) and the hash
+   leaves, which only a dead `Variant` storage shape kept (R2010): the
+   type-reached member list is gone. Left:
    - A call through a `def(...)` bound is still a `call.indirect`: R1933,
      after R1934 (`emit-mir`, which its probe reads).
    - The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
@@ -40,8 +37,7 @@ and 11-04 (*Measure*), so the size steps still matter.
      upstream's `Self(copy=self)` for every struct.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R2010 --task R1938 \
-     --task R1933 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 -n 0
    ```
 
 2. **Finish gap D′** (size). Only the verifier rule's unnamed `drop.reg`
@@ -135,7 +131,7 @@ and 11-04 (*Measure*), so the size steps still matter.
   (hand-written MIR).
 - Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932),
   behind R359.
-- Gap F has three type-reached members left (step 1). Gaps H and I have
+- Gap F has its `def(...)` bound calls left (step 1, R1933). Gaps H and I have
   their cores and their binder reads in. Their members are filed against
   shapes that have since changed, so each needs a re-probe.
 - Of the 10-25 conformance blocks, five have landed: type versus value
@@ -192,10 +188,8 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 ### F. Members reached by name, not called as the requirement
 
-- **Mojito**: the backends dispatch a writer's `write_string` and the
-  hash leaves from the value's type, through `mir::TYPE_REACHED_MEMBERS`,
-  because `DType` and `Error` are compiler builtins (R1936, R1938). Each
-  such member keeps every argument, so it keeps one instance per `n`. A
+- **Mojito**: no backend reaches a member by name from the value's type
+  any more but the lifecycle members (R1938, R2010). A
   call through a `def(...)` bound is a `call.indirect`, not the bound's
   `__call__` requirement (R1933).
 - **Upstream**: the traits are library declarations with default bodies,
@@ -203,7 +197,7 @@ R1411 and R1413 under *Entries outside the gaps*.
   requirement, which substitution folds to the member.
 - **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
   instances reached through trait-bound calls.
-- **Closes**: R1933, R2010, R1938.
+- **Closes**: R1933.
 - **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list

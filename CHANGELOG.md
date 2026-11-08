@@ -19,6 +19,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct's `__hash__` and a hasher's `_update_with_simd` are no longer
+  reached from a value's type: the dead `Variant`-storage `__hash__` shape
+  the elaborator and Pliron's reachability walk special-cased is gone, so
+  both members drop their unused arguments like any other call target, and
+  `mir::TYPE_REACHED_MEMBERS` is retired (R2010).
 - `TypeList.__getitem_param__` takes a `SIMDLength` index through
   upstream's `#kgen.param_list.get` body, as at the pin: `L[SIMDLength(0)]`
   indexes a `TypeList` value, `comptime E = Ts.__getitem_param__[1]` and

@@ -7237,10 +7237,9 @@ point where a slot declared in a loop is uninitialized again.
   copies, and moves run, which the elaborator records as it demands it
   (`Specializer::record_struct_member`), so `DBox[1]` and `DBox[2]` share
   one `DBox.__deinit__$mono`, as upstream's struct nests its member
-  generators. The table names each member a backend reaches from a
-  value's type rather than from the instance a call names, too
-  (`mir::TYPE_REACHED_MEMBERS`: a writer's `write_string`, the
-  hash leaf, the `__int__` a scalar construction converts through), each
+  generators. The table names each other special method and trait
+  requirement the struct's type reaches, too
+  (`MirDeclarations::reached_from_type`), each
   a full instance: the generator a
   call names without its unused arguments is no entry
   (`Specializer::enqueue`),
@@ -7276,7 +7275,7 @@ point where a slot declared in a loop is uninitialized again.
   instance (R1110: `a + g` runs `Grid.__radd__$REMOVED$ARG$mono`, not the
   table's `__add__`). One with
   no selected instance of the receiver's own struct (an operator, a
-  protocol method, a trait requirement, a type-reached dunder) runs the
+  protocol method, a trait requirement, another dunder) runs the
   instance the table records under the selected method spelling, else
   the one callable resolution picks among the member's entries, and
   never composes `{struct}.{method}` (`Prog::runtime_method_name`,
@@ -7358,9 +7357,8 @@ point where a slot declared in a loop is uninitialized again.
   only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
   and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a free
   function, a nested one, and a method (R1011, R1032) that is no
-  `mir::table_member` (a lifecycle member, or one of
-  `mir::TYPE_REACHED_MEMBERS`, which a backend reaches from a value's type
-  with every argument), none declared in a compile-time region nor tying
+  `mir::table_member` (a lifecycle member, which a backend reaches from a
+  value's type with every argument), none declared in a compile-time region nor tying
   an origin or a returned reference to a parameter, has candidates
   (`mir::unused_arguments`), and never a `deinit` or a callable
   parameter. A protocol's member is a call like any other (R1109): `len`,

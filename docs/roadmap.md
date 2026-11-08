@@ -10912,24 +10912,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2008.
   - Model: Opus, Not Planned.
 
-- [ ] **R2010 A `Variant`'s lowered `__hash__` keeps the hash leaves
-  type-reached**
-
-  `__hash__` and `_update_with_simd` stay in `mir::TYPE_REACHED_MEMBERS`
-  only for a `resolved: None` `__hash__` call on a `TyKind::Variant`
-  receiver, where upstream's `Variant.__hash__` is a library body that
-  calls each alternative's requirement.
-  - The places that handle it: `enqueue_hash_leaf_instances`
-    (`mono/instances.rs`) and Pliron's `push_members` arm (`lib.rs`).
-  - The VM implements no such call, so the MIR shape may be dead. Find
-    whether lowering still emits it.
-  - If not, delete both places and drop the two names from
-    `TYPE_REACHED_MEMBERS`. If so, lower it as the requirement call
-    upstream's body spells.
-  - Probe: `TYPE_REACHED_MEMBERS` is empty (R1938 retired `write_string`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1972 `TyKind::as_non_simd_struct` excludes a `StringLiteral[v]`
   application, so the struct rules never see it**
 

@@ -94,8 +94,7 @@ pub struct StructDeclaration {
     /// from a value's type, sorted by key, as upstream's struct nests its
     /// member functions: in a template, the lifecycle members it declares
     /// (its destructor, copy, and move constructors); in a concrete struct,
-    /// every full instance of a lifecycle or type-reached member
-    /// (`mojito_mir::mir::TYPE_REACHED_MEMBERS`), other special method, or
+    /// every full instance of a lifecycle member, other special method, or
     /// trait requirement (`MirDeclarations::reached_from_type`) the
     /// elaborator made for it, as upstream's witness tables name a
     /// conformance's members. The generator a call names without its unused
