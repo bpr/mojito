@@ -1155,30 +1155,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1974 Natively, a run-time read of a memory-only struct
-  parameter value fails as an untyped variable**
-
-  `if x: print(x.value())` in `def f[x: Optional[String] = None]()` runs
-  on the VM, but the Pliron backend rejects the instance ("unsupported
-  untyped variable `x`"), where upstream materializes the parameter
-  value into a typed temporary.
-  - The concrete MIR's variable holding the materialized parameter
-    carries no `var_tys` entry, which the VM does not need and
-    `var_lower_ty` (`mojito-pliron/src/lower/emit.rs`) does.
-  - A `[x: String]` parameter runs natively; `Optional[Int]` and
-    `Optional[String]` ones fail.
-  - Probe: `f[3]()` over `def f[x: Optional[Int] = None]()` and
-    `f["b"]()` over the `Optional[String]` form, natively.
-  - Probe: `var v = x.or_else("none")` and `var seen = True if x else
-    False` over the `Optional[String]` form fail natively the same way;
-    they pass the verifier since R1934 (2026-11-08), and join
-    `assets/ok/parameter_value_consuming_receiver.mojo` once this lands.
-  - Then mark `assets/ok/nonmaterializable_converts_through_target.mojo`
-    `exe-differential` in the parity manifest.
-  - Found while landing R1864 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 

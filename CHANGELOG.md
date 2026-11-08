@@ -4061,6 +4061,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A run-time read of a memory-only compile-time parameter value compiles
+  natively (R1974): `if x: print(x.value())` over `[x: Optional[Int] =
+  None]` or `[x: Optional[String] = None]` reads the typed temporary the
+  value materializes into, and no longer leaves an untyped slot named `x`
+  that the Pliron backend rejected.
 - A memory-only compile-time parameter value is an owned temporary again
   (R1934): a consuming method such as `note.or_else("")` receives it
   without a copy, and a truth test or other read takes it in storage, so

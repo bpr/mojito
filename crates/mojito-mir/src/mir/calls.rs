@@ -2317,9 +2317,13 @@ impl<'a> Flatten<'a> {
         {
             return None;
         }
-        let var = self.expression_var(&name, expression);
-        if self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var) {
-            return None;
+        // A compile-time binding's read owns no slot: its place is the
+        // hidden slot it materializes into, never an alias.
+        if expression.recorded_value().is_none() {
+            let var = self.expression_var(&name, expression);
+            if self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var) {
+                return None;
+            }
         }
         let place = self.simple_place(expression)?;
         let dest = self.fresh_typed(
