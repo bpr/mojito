@@ -1316,9 +1316,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Index`/`MultiIndex` and `Invoke` arms and `infer_with_expected` spell as
   the `TypeApply` or `Call` they check through
   `infer_specialized_callable_value`, over a `CallableValueSource`: a
-  binding, or a static or initializer read through its struct (an
-  initializer's value returns its `out self` struct; a `@fieldwise_init`
-  struct's is `fieldwise_initializer_sig`), which
+  binding, or a method read through its struct (an initializer's value
+  returns its `out self` struct, a `@fieldwise_init` struct's is
+  `fieldwise_initializer_sig`, and an instance method's takes its receiver
+  first, `method_value_ty`'s `with_receiver_parameter`), which
   `type_receivers.rs`'s `infer_static_method_value` routes there from
   `infer_member`, `infer`'s bracket arm (`static_method_bracket`, over
   `Expr::bracket_operands`), and `infer_with_expected`, and which MIR's
@@ -1338,7 +1339,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   devirtualized call binds its destination as the receiver, the VM's
   `CallIndirect` enters with `VmBackend::initializer_receiver`'s skeleton,
   and Pliron's `invoke` thunk passes its out-pointer or scalar slot
-  (`ThunkReceiver`, `lower/support.rs`);
+  (`ThunkReceiver`, `lower/support.rs`). A call through an instance
+  method's value passes the receiver as its first argument: the elaborator
+  keeps it indirect, `call_defaults.rs`'s `Site` binds the rest of the
+  declaration's slots past it, and the VM's `bind_for_closure_call` puts
+  it in frame slot zero;
   `solve_value_args` solves value binders from argument
   types, a vector's width slot as a struct value argument: a `SIMDLength`
   binder binds to the actual's length (`simd_length_value` of a known

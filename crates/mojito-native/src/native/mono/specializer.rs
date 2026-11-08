@@ -3128,9 +3128,19 @@ impl<'a> Specializer<'a> {
                                         }
                                 )
                             });
+                        // An instance method's value takes its receiver as
+                        // its first argument, which a direct call would bind
+                        // as a receiver: the call stays indirect.
                         if let Some((callable, captures_are_empty)) =
                             self.callable_targets.get(&callee.0).cloned()
                             && (captures_are_empty || dependent_callable)
+                            && !self.declarations.get(callable.as_str()).is_some_and(
+                                |declaration| {
+                                    declaration.has_receiver
+                                        && declaration.receiver_convention
+                                            != Some(mojito_ast::ast::ArgConvention::Out)
+                                },
+                            )
                         {
                             let target = callable.clone();
                             // The lifted body takes its environment as leading

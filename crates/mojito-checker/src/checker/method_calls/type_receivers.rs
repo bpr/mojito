@@ -170,10 +170,11 @@ impl Checker {
     }
 
     /// Type `object.method` read as a value when `object` spells a struct
-    /// and `method` names one of its statics (`S.st`, `Q.__init__`,
-    /// `Self.st`), binding a bracket's operands (`S.gst[10]`): upstream's
-    /// overload set for that attribute of the struct type, read as the
-    /// function it selects. `None` when `object.method` names no static.
+    /// and `method` names one of its methods (`S.st`, `Q.__init__`,
+    /// `Self.st`, `S.get`), binding a bracket's operands (`S.gst[10]`):
+    /// upstream's overload set for that attribute of the struct type, read
+    /// as the function it selects, an instance method's taking its receiver
+    /// first. `None` when `object.method` names no method.
     pub(in crate::checker) fn infer_static_method_value(
         &self,
         span: SourceSpan,
@@ -195,6 +196,20 @@ impl Checker {
             }
             Vec::new()
         };
+        // A `ref self` method is generic over its receiver's mutability
+        // and origin, which the read binds neither of.
+        if self.structs.get(&owner).is_some_and(|info| {
+            info.methods
+                .get(method)
+                .is_some_and(|signatures| signatures.iter().all(MethodSig::takes_ref_receiver))
+        }) {
+            return Err(TypeError::BadCall {
+                func: format!("{owner}.{method}"),
+                reason: "cannot use parametric function as a runtime closure: parameter \
+                         'self_is_mut' is not bound"
+                    .to_string(),
+            });
+        }
         // A movable struct's `__init__` overload set holds the move
         // initializer upstream synthesizes beside its declared ones, so
         // only an expected type or a bracket's operands select one.
@@ -268,8 +283,9 @@ impl Checker {
 
     /// The struct `object` spells and whether it is parametric, when
     /// `object` is a struct name no binding shadows, bare or applied, or
-    /// `Self`, and `method` names one of that struct's statics or
-    /// initializers. An applied struct counts as parametric.
+    /// `Self`, and `method` names one of that struct's methods: a static,
+    /// an initializer, or an instance method, whose value takes its
+    /// receiver first. An applied struct counts as parametric.
     pub(in crate::checker) fn static_method_owner(
         &self,
         object: &Expr,
@@ -290,10 +306,8 @@ impl Checker {
         };
         let info = self.structs.get(&owner)?;
         let parametric = !info.decls.is_empty() || !matches!(object.kind, ExprKind::Identifier(_));
-        match info.methods.get(method) {
-            Some(signatures) => signatures.iter().any(takes_no_receiver),
-            None => self.fieldwise_initializer_sig(&owner, method).is_some(),
-        }
+        (info.methods.contains_key(method)
+            || self.fieldwise_initializer_sig(&owner, method).is_some())
         .then_some((owner, parametric))
     }
 
@@ -643,11 +657,4 @@ impl Checker {
             reason: format!("cannot use parametric function as a runtime closure{unbound}"),
         })
     }
-}
-
-/// Whether the method `sig` is called with no receiver value, and so reads
-/// through its struct as a function: a static, or an initializer, whose
-/// `out self` is its result.
-fn takes_no_receiver(sig: &MethodSig) -> bool {
-    !sig.has_self || sig.self_convention == Some(mojito_ast::ast::ArgConvention::Out)
 }

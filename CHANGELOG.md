@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An instance method read through its type is a function value taking the
+  receiver as its first argument, as at the pin: `S.get`, a `mut` or
+  `deinit` receiver, an overload selected by the expected type, `S.gen[3]`,
+  `Self.plus`, `P[Int].get`, a trait default, a reference return, and a
+  raising method run on the VM and natively (R1795). A `ref self` method is
+  rejected as an unbound parametric function, as at the pin, and a call
+  spelling the bracket (`S.gen[3](s)`) now passes its first argument as the
+  receiver.
+
 - A static or initializer of a parametric struct read through one of its
   instances is a function value, as at the pin: `P[Int].st`, `Self.st`,
   `W[1].gst[3]`, an overload selected by the expected type, and

@@ -2790,6 +2790,32 @@ fn reads_a_static_method_through_its_struct_as_a_function_value() {
 }
 
 #[test]
+fn reads_an_instance_method_through_its_type_as_a_function_taking_the_receiver() {
+    let declarations = "struct S:\n    var x: Int\n    def __init__(out self, x: Int):\n        \
+        self.x = x\n    def get(self) -> Int:\n        return self.x\n    \
+        def bump(mut self, d: Int):\n        self.x += d\n    \
+        def r(ref self) -> ref[self.x] Int:\n        return self.x\n\n";
+    ok_std(&format!(
+        "{declarations}def main():\n    var s = S(1)\n    var f = S.get\n    \
+        var g: Int = f(s)\n    var b: def(mut S, Int) thin -> None = S.bump\n    b(s, 2)\n"
+    ));
+    let wrong_receiver = err_std(&format!(
+        "{declarations}def main():\n    var f = S.get\n    var g: Int = f(3)\n"
+    ));
+    assert!(
+        matches!(&wrong_receiver, TypeError::TypeMismatch { .. }),
+        "got {wrong_receiver:?}"
+    );
+    // A `ref self` method is generic over its receiver's mutability, which
+    // the read binds none of.
+    let ref_receiver = err_std(&format!("{declarations}def main():\n    var f = S.r\n"));
+    assert!(
+        matches!(&ref_receiver, TypeError::BadCall { reason, .. } if reason.contains("self_is_mut")),
+        "got {ref_receiver:?}"
+    );
+}
+
+#[test]
 fn enforces_raises_effect_at_instance_and_static_method_calls() {
     let declarations = "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n    @staticmethod\n    def static_explode() raises -> Int:\n        raise \"boom\"\n";
     assert!(matches!(

@@ -804,6 +804,14 @@ impl<'a> Flatten<'a> {
         };
         let field = field.clone();
         let param_decls = parameterized_method_decls(node).unwrap_or_default();
+        // An instance method called through its type (`S.gen[3](s)`): the
+        // checker typed the first argument as the receiver.
+        let (object, args) = match args.split_first() {
+            Some((receiver, rest)) if super::expr_method::receives_first_argument(node) => {
+                (*receiver, rest)
+            }
+            _ => (object, args),
+        };
         // A parameterized **static** call (`Bag[Int, String].has[Bool]()`,
         // `Lanes.ident[Int](3)`): the receiver is a type, so this
         // is a call on the checker-selected symbol with the

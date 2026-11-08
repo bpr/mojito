@@ -2557,6 +2557,13 @@ struct MethodSig {
 }
 
 impl MethodSig {
+    /// Whether this method takes `ref self`, which upstream makes generic
+    /// over the receiver's mutability (`self_is_mut`) and origin: its value
+    /// read through the struct binds neither.
+    fn takes_ref_receiver(&self) -> bool {
+        self.has_self && self.self_convention == Some(ArgConvention::Ref)
+    }
+
     fn intrinsic(params: Vec<Ty>, ret: Ty) -> Self {
         let len = params.len();
         Self {

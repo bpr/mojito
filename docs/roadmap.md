@@ -3995,6 +3995,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     function: the alias's head `Scalar` is looked up as a variable.
   - Upstream checks `T.method(x, ...)` as `x.method(...)` once `x`
     converts to `T`, whatever spelling names `T`.
+  - Probe: the value read `var f = Int.__add__; print(f(1, 2))` fails
+    with the same "Undefined variable 'Scalar'" where the pin prints `3`,
+    while `List[Int].__len__` reads (found while landing R1795,
+    2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4018,23 +4022,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     and `def(var x: Int) thin -> F[3] = F[3].__init__` over a parametric
     `@fieldwise_init struct F[n: Int]` does too, where the pin runs both
     (found while landing R1794, 2026-11-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1795 An instance method read through its type is reported as a
-  missing field**
-
-  Problem: `var h = S.get`, over `def get(self) -> Int`, fails with "type
-  'S' has no field 'get'".
-  - The pin's behavior is not yet recorded: probe it first.
-  - If the pin accepts it, the value takes the receiver as its first
-    parameter, as the call `S.get(s)` already does
-    (`infer_type_receiver_instance_call`).
-  - The static path that would carry it is `callable_value_candidates`
-    (`checker/generics.rs`), which today gathers receiver-less methods
-    only.
-  - If the pin rejects it, move this to an `assets/type_error` fixture
-    with the pin's message and delete the entry.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -517,6 +517,7 @@ assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
+assets/ok/instance_method_value.mojo	main	exe-differential	sanitized
 assets/ok/int_float64_alias_shadowed.mojo	main	exe-differential	sanitized
 assets/ok/int_floordiv_zero_divisor.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_bool_lane.mojo	main	exe-differential	sanitized

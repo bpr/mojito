@@ -967,7 +967,6 @@ impl VmBackend {
                         signature,
                         &positional,
                         &keywords,
-                        capture_count,
                     )?,
                     None => (
                         positional,
@@ -1004,11 +1003,11 @@ impl VmBackend {
                         let place = bound_argument_place(
                             slots.get(parameter),
                             prog.sigs.get(&function).and_then(|signature| {
-                                // A closure's storage is a method's receiver,
-                                // which its signature does not list.
-                                signature.frame_param_name(parameter.checked_sub(usize::from(
-                                    signature.has_receiver && capture_count > 0,
-                                ))?)
+                                // A method's receiver, which its signature does
+                                // not list, is the value's first argument.
+                                signature.frame_param_name(
+                                    parameter.checked_sub(usize::from(signature.has_receiver))?,
+                                )
                             }),
                             capture_count,
                             arg_places,

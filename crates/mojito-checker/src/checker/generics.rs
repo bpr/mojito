@@ -4,6 +4,7 @@ use super::constraints::LACKING_EVIDENCE;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub(super) use mojito_symbol::symbol::materialized_instantiation_argument;
+use mojito_types::origin::{RefSig, SigOrigin};
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 pub use mojito_types::types::{map_tyargs, substitute};
@@ -1856,17 +1857,18 @@ impl Checker {
             },
         };
         // An initializer's `out self` is its result, as upstream's
-        // `__init__` is a function returning the struct it initializes.
-        let result = TyKind::Struct(owner.to_string(), receiver.to_vec()).into();
+        // `__init__` is a function returning the struct it initializes; an
+        // instance method's receiver is its first parameter.
+        let instance = TyKind::Struct(owner.to_string(), receiver.to_vec()).into();
         let statics = signatures
             .iter()
-            .filter(|sig| !sig.has_self || is_initializer_sig(sig))
+            .filter(|sig| !sig.takes_ref_receiver())
             .collect::<Vec<_>>();
         let info = self.structs.get(owner);
         let mut types = statics
             .iter()
             .map(|sig| {
-                let ty = static_method_value_ty(sig, &result);
+                let ty = method_value_ty(sig, &instance);
                 match info {
                     Some(info) if !receiver.is_empty() => {
                         self.resolve_assoc_ty(&substitute_at(&ty, info, receiver))
@@ -1946,12 +1948,18 @@ struct CallableValueCandidates {
     targets: Vec<Option<String>>,
 }
 
-/// The value type of the static `sig`: a thin function, since a static
-/// captures nothing, generic over the method's own parameters.
-fn static_method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
+/// The value type of the method `sig` read through its struct, the
+/// instance `owner`: a thin function, since the read captures nothing,
+/// generic over the method's own parameters. An initializer returns the
+/// struct its `out self` initializes, and an instance method takes its
+/// receiver as its first parameter, as upstream's method is a function
+/// whose `self` is an ordinary argument.
+fn method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
     let mut func = method_func_ty(sig, mojito_types::origin::CallableEnvironment::Thin);
     if is_initializer_sig(sig) {
         func.ret = sig.refined_self.clone().unwrap_or_else(|| owner.clone());
+    } else if sig.has_self {
+        func = with_receiver_parameter(func, sig.self_convention, owner);
     }
     if sig.decls.is_empty() {
         return TyKind::Func(Box::new(func)).into();
@@ -1961,6 +1969,48 @@ fn static_method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
         func,
     }))
     .into()
+}
+
+/// `func`, a method's call surface, with its `self` receiver of type
+/// `owner` passed under `convention` as the leading positional parameter:
+/// each reference contract naming the receiver names that parameter, and
+/// every other parameter's index moves past it.
+fn with_receiver_parameter(
+    mut func: FuncTy,
+    convention: Option<mojito_ast::ast::ArgConvention>,
+    owner: &Ty,
+) -> FuncTy {
+    let shift = |sig: &RefSig| RefSig {
+        origin: receiver_shifted_origin(&sig.origin),
+        mutability: sig.mutability.clone(),
+    };
+    func.ref_params = std::iter::once(None)
+        .chain(func.ref_params.iter().map(|sig| sig.as_ref().map(shift)))
+        .collect();
+    func.ref_return = func.ref_return.as_deref().map(|sig| Box::new(shift(sig)));
+    func.params.insert(0, owner.clone());
+    func.names.insert(0, "self".to_string());
+    func.required.insert(0, true);
+    func.conventions.insert(0, convention);
+    func.positional_only = Some(func.positional_only.map_or(1, |count| count + 1));
+    func.keyword_only = func.keyword_only.map(|index| index + 1);
+    func
+}
+
+/// `origin`, a reference contract of a method's call surface, read on the
+/// function whose first parameter is the receiver.
+fn receiver_shifted_origin(origin: &SigOrigin) -> SigOrigin {
+    match origin {
+        SigOrigin::Self_ => SigOrigin::Param(0),
+        SigOrigin::Param(index) => SigOrigin::Param(index + 1),
+        SigOrigin::Projected(base, segments) => {
+            SigOrigin::Projected(Box::new(receiver_shifted_origin(base)), segments.clone())
+        }
+        SigOrigin::Union(members) => {
+            SigOrigin::Union(members.iter().map(receiver_shifted_origin).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Whether `sig` is an initializer, whose `out self` receiver is its result.

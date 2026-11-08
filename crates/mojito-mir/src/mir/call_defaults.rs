@@ -185,6 +185,10 @@ struct Site {
     /// The position in `args` of the positional collector the call builds
     /// ([`build_collector`]).
     spread: Option<usize>,
+    /// The receiver a call through an instance method's function value
+    /// passes ahead of `args`, and its place: the declaration lists no
+    /// slot for it, so it binds none of the callee's parameters.
+    receiver: Option<(Reg, Option<MirPlace>)>,
 }
 
 /// One omitted argument, bound: the parameter it fills and the value its
@@ -459,6 +463,7 @@ fn collect_subscript_store(
         kwarg_places: vec![value_place.as_deref().cloned()],
         bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),
         spread: None,
+        receiver: None,
     };
     let location = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
     build_collector(
@@ -598,6 +603,7 @@ fn collect_through_requirement(
             .zip(instantiated_args.iter().cloned())
             .collect(),
         spread: None,
+        receiver: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
     let collected = build_keyword_collector(
@@ -678,6 +684,7 @@ fn collect_through_contract(
         kwarg_places: kwarg_places.clone(),
         bound: Vec::new(),
         spread: None,
+        receiver: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
     if build_keyword_collector(
@@ -1577,6 +1584,7 @@ impl Site {
     ) -> Option<Self> {
         let declarations = caller.declarations;
         let mut leading = record.leading;
+        let mut passed_receiver = None;
         let (callee, receiver, instantiated, args, kwargs, arg_places, kwarg_places, spread) =
             match instruction {
                 MirInstr::Call {
@@ -1670,15 +1678,39 @@ impl Site {
                         leading = 0;
                         target.clone()
                     };
+                    // An instance method's value takes its receiver first.
+                    let declaration = declarations.function(&target)?;
+                    let mut args = args.clone();
+                    let mut arg_places = arg_places.clone();
+                    let mut spread = *spread;
+                    let mut receiver_type = None;
+                    if declaration.has_receiver
+                        && declaration.receiver_convention != Some(ArgConvention::Out)
+                    {
+                        if args.is_empty() || spread == Some(0) {
+                            return None;
+                        }
+                        let register = args.remove(0);
+                        let place = (!arg_places.is_empty())
+                            .then(|| arg_places.remove(0))
+                            .flatten();
+                        receiver_type = function
+                            .reg_types
+                            .get(&register.0)
+                            .or_else(|| place.as_ref()?.ty.as_ref())
+                            .cloned();
+                        spread = spread.map(|position| position - 1);
+                        passed_receiver = Some((register, place));
+                    }
                     (
                         target,
-                        None,
+                        receiver_type,
                         instantiated_args,
-                        args.clone(),
+                        args,
                         kwargs.clone(),
-                        arg_places.clone(),
+                        arg_places,
                         kwarg_places.clone(),
-                        *spread,
+                        spread,
                     )
                 }
                 MirInstr::MultiIndex {
@@ -1717,6 +1749,7 @@ impl Site {
                         kwarg_places: kwarg_places.clone(),
                         bound,
                         spread: None,
+                        receiver: None,
                     });
                 }
                 _ => return None,
@@ -1739,6 +1772,7 @@ impl Site {
             kwarg_places,
             bound,
             spread,
+            receiver: passed_receiver,
         })
     }
 
@@ -1771,11 +1805,16 @@ impl Site {
                 spread,
                 ..
             } => {
-                *args = self.args;
+                let leading = usize::from(self.receiver.is_some());
+                let (receiver, receiver_place) = self.receiver.unzip();
+                *args = receiver.into_iter().chain(self.args).collect();
+                *arg_places = match receiver_place {
+                    Some(place) => std::iter::once(place).chain(self.arg_places).collect(),
+                    None => self.arg_places,
+                };
                 *kwargs = self.kwargs;
-                *arg_places = self.arg_places;
                 *kwarg_places = self.kwarg_places;
-                *spread = self.spread;
+                *spread = self.spread.map(|position| position + leading);
             }
             MirInstr::MultiIndex {
                 args,

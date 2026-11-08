@@ -16,13 +16,7 @@ impl<'a> Flatten<'a> {
         // An instance method called through its type
         // (`List[Int].__len__(xs)`): the checker typed the first
         // argument as the receiver, so lower exactly that call.
-        let receiver_argument = node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { .. }
-            )
-        });
-        let (object, args): (Node<'a>, &[Node<'a>]) = if receiver_argument {
+        let (object, args): (Node<'a>, &[Node<'a>]) = if receives_first_argument(node) {
             let Some((receiver, rest)) = args.split_first() else {
                 unreachable!("checked type-receiver call carries a receiver argument")
             };
@@ -834,6 +828,17 @@ impl<'a> Flatten<'a> {
         self.error_region(raises);
         d
     }
+}
+
+/// Whether the checker typed `call`'s first argument as its receiver: an
+/// instance method called through its type (`List[Int].__len__(xs)`).
+pub(super) fn receives_first_argument(call: &CheckedExpr) -> bool {
+    call.adjustments.iter().any(|adjustment| {
+        matches!(
+            adjustment,
+            mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { .. }
+        )
+    })
 }
 
 /// One method call's lowered receiver, positional arguments, and keyword

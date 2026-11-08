@@ -208,10 +208,11 @@ impl VmBackend {
         bind_args(name, sig, argv, kwargs, make_default)
     }
 
-    /// [`Self::bind_for_call`] of a call of a closure over `name`, whose
-    /// first `captures` arguments its captures fill. A closure over a
-    /// method passes its first capture, the closure's storage, as the
-    /// receiver its signature does not list, in frame slot zero.
+    /// [`Self::bind_for_call`] of a call through a function value of
+    /// `name`, whose leading arguments its captures fill. A value of a
+    /// method passes the receiver its signature does not list first, in
+    /// frame slot zero: a closure's storage, an initializer's `out self`,
+    /// or the `self` argument of an instance method read through its type.
     pub(super) fn bind_for_closure_call(
         &mut self,
         prog: &Prog,
@@ -219,12 +220,8 @@ impl VmBackend {
         sig: &FnSig,
         argv: &[Value],
         kwargs: &[(String, Value)],
-        captures: usize,
     ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
-        let Some((receiver, arguments)) = argv
-            .split_first()
-            .filter(|_| sig.has_receiver && captures > 0)
-        else {
+        let Some((receiver, arguments)) = argv.split_first().filter(|_| sig.has_receiver) else {
             return self.bind_for_call(prog, name, sig, argv, kwargs);
         };
         let (bound, slots) = self.bind_for_call(prog, name, sig, arguments, kwargs)?;
