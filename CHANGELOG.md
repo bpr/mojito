@@ -27,6 +27,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier rejects an unnamed `drop.reg` of a memory-only register
+  too, as upstream's `CheckLifetimes` destroys a memory-only value only
+  through its storage. `not x` over a `Boolable` type parameter now reads
+  `x` where it lies instead of copying it into a register, and a
+  `__generator_type` value is register-passable, as upstream's
+  `!kgen.generator` is (R1932).
 - `Tuple`'s private storage is trivially destructible, as upstream's
   `!kgen.struct`, and `Tuple` declares upstream's `__deinit__`, which
   destroys each element through `unsafe_deinit_pointee`. `reverse`,

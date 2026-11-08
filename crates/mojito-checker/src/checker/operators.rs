@@ -96,8 +96,10 @@ impl Checker {
             return Ok(ty);
         }
         // `not x` over a type parameter bounded by `Boolable` is
-        // `not Bool(x)`, its `__bool__` requirement's conversion.
+        // `not Bool(x)`, its `__bool__` requirement's conversion, which
+        // reads a place where it lies.
         if op == PrefixOp::Not && self.param_has_bound(&t, "Boolable") {
+            self.borrow_operator_operand(operand, &t);
             self.record_read_temporary_argument(operand);
             return Ok(Ty::bool());
         }

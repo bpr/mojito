@@ -9644,28 +9644,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1932 The MIR verifier does not reject an unnamed `drop.reg` of a
-  memory-only register**
-
-  `verify/drops.rs`'s `verify_register_destroys` rejects a `drop.reg`
-  naming its destructor and a `deinit`-receiver call on a memory-only
-  register, but not an unnamed `drop.reg`, which drops its value's fields
-  by their types, where upstream's `CheckLifetimes` destroys every
-  memory-only value through its storage.
-  - Drop the `destructor: Some(_)` filter in `RegisterDestroys::blocks`.
-  - With the filter off, `llvm_intrinsic.mojo`,
-    `llvm_intrinsic_shuffles.mojo`, and `bit_count_ops.mojo` pass by
-    default since R359 made tuple storage trivially destructible (with
-    `MOJITO_PRE_ELABORATION=0` they stop first at R1934's
-    `_assert_enabled`).
-  - Probe: with the filter off, `assets/ok/llvm_intrinsic.mojo` (and 54
-    fixtures with `MOJITO_PRE_ELABORATION=0`) report `drop.reg destroys
-    %r2 of memory-only type Tuple[*types]`; re-run that census of
-    `assets/ok` and `assets/ownership_ok`, both ways, before landing.
-  - Split from R1873 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1934 A `deinit self` call on a memory-only parameter value
   leaves a register drop the verifier rejects**
 
@@ -9683,6 +9661,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `elaborate-drops/register_drop_named.mir` fails at load the
     same way ("drop.reg destroys %r2 of memory-only type Noisy"), and
     needs the same re-emit.
+  - Probe: `elaborate-drops/register_drop_unnamed.mir` drops a
+    memory-only `Error` register unnamed, which the verifier rejects since
+    R1932 (2026-11-08); it fails first at load with "unknown type
+    `Error`", and needs the same re-emit over a register-passable value.
   - Probe: `inline-parametric/deinit_register_receiver.mir` and
     `read_owned_register_temporary.mir` fail at load the same way (a
     `deinit` receiver call destroys a memory-only `Box`/`Res` register).

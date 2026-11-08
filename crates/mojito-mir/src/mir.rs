@@ -586,7 +586,8 @@ impl MirDeclarations {
     /// Whether a value of `ty` is register-passable, as upstream's
     /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
     /// whose copy is the value itself ([`Self::copy_is_identity`]), a
-    /// `StringLiteral` or `None`, an MLIR type (`!kgen.string`) or a
+    /// `StringLiteral` or `None`, an MLIR type (`!kgen.string`,
+    /// `!kgen.generator`) or a
     /// function value other than a closure's storage (a struct), which
     /// upstream holds as a raw MLIR value, a tuple or pack of
     /// register-passable elements, a type parameter bound by
@@ -609,6 +610,7 @@ impl MirDeclarations {
             | TyKind::KgenString
             | TyKind::KgenDeferred
             | TyKind::KgenTarget
+            | TyKind::Generator(_)
             | TyKind::PopIntLiteral
             | TyKind::PopFloatLiteral => true,
             TyKind::Func(_) | TyKind::GenericFunc(_) => true,

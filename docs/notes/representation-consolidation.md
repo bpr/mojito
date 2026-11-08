@@ -10,7 +10,7 @@ The next step is always at the top. Finished steps are deleted;
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R1932`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R1933`. Every command runs on
 Opus. `--plan-fable-on-opus` gives a plan pass to every entry whose
 `Model:` bullet says Fable, `Planned` or not. `--task` runs an entry after
 its open prerequisites. `--only` runs exactly the entries named. A single
@@ -40,14 +40,8 @@ and 11-04 (*Measure*), so the size steps still matter.
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 -n 0
    ```
 
-2. **Finish gap D′** (size). Only the verifier rule's unnamed `drop.reg`
-   half is left: R1932. The compiler's tuple storage is trivially
-   destructible since R359, so the bundled `llvm_intrinsic` no longer
-   blocks it; its census of the corpus remains.
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1932 -n 0
-   ```
+2. **Gap D′ is finished**: R1932 (11-08) made the verifier reject an
+   unnamed `drop.reg` of a memory-only register as well.
 
 3. **Residues of the 10-27 to 10-31 `SIMD` runs** not yet run. The
    ownership, syntax, and compile-time application entries landed 11-06 to
@@ -129,7 +123,7 @@ and 11-04 (*Measure*), so the size steps still matter.
   conformance and cleanup: R1414 (a display's elements bind as call
   arguments), R695 after it, R1415 (fieldwise keywords), and R1416
   (hand-written MIR).
-- Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932).
+- Gap D′'s verifier rule is whole (R1932, 11-08).
 - Gap F has its `def(...)` bound calls left (step 1, R1933). Gaps H and I have
   their cores and their binder reads in. Their members are filed against
   shapes that have since changed, so each needs a re-probe.
@@ -160,7 +154,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932 | about 15 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | none | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2010, R1938; R1934 → R1933 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
@@ -176,7 +170,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 - **Mojito**: R1355, R1356, and R1440–R1444 moved the consumers onto the
   call-result slot, and R1418 (11-04) put every loan anchor and borrow
   slot's loans on it, closing R1331, R123, and R166. The verifier rejects
-  the class (R1873), but for an unnamed `drop.reg` (R1932).
+  the class (R1873, R1932).
 - **Still open from R1355's list**: R715 (a `^` argument), R1212
   (`$mat_r`), and R406 (a forwarded call-result subscript). Re-probe each.
 - **Shrinks** R691, R1234, R118, R54, and R718.

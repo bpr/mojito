@@ -88,17 +88,13 @@ pub(super) fn verify_slot_ends(
 }
 
 /// Report every destroy of a memory-only register in `function`: a
-/// `drop.reg` naming its destructor, or a `deinit`-receiver call with no
+/// `drop.reg`, or a `deinit`-receiver call with no
 /// receiver place, of a register whose type
 /// [`MirDeclarations::register_passable`] answers no for. Upstream's
 /// `CheckLifetimes` tracks only a register-passable value as an SSA value
 /// (`ValueSet::addValue`'s `numValueBits = 1`) and destroys a memory-only
 /// one through its storage. A receiver a forwarding `var.use` defines is
 /// that storage handed over, the form `lower_drops` gives every slot drop.
-/// An unnamed `drop.reg`, which drops its value's fields by their types,
-/// is not judged yet: the compiler's tuple storage, which upstream's
-/// trivially destructible `!kgen.struct` is, still destroys its elements
-/// through one.
 pub(super) fn verify_register_destroys(
     name: &str,
     function: &MirFunction,
@@ -881,10 +877,7 @@ impl RegisterDestroys<'_> {
                     self.blocks(region, errors);
                 }
                 let (reg, what) = match instruction {
-                    MirInstr::Drop {
-                        reg,
-                        destructor: Some(_),
-                    } => (*reg, "drop.reg"),
+                    MirInstr::Drop { reg, .. } => (*reg, "drop.reg"),
                     MirInstr::MethodCall {
                         recv,
                         recv_place: None,

@@ -2735,8 +2735,8 @@ fn deinit_call(dest: u32, recv: u32) -> MirInstr {
 
 /// A memory-only value is destroyed through its storage, as upstream's
 /// `CheckLifetimes` tracks only a register-passable value as an SSA value:
-/// a named `drop.reg` or a `deinit`-receiver call of a memory-only
-/// register is rejected, while one of a register-passable register, or a
+/// a `drop.reg`, named or unnamed, or a `deinit`-receiver call of a
+/// memory-only register is rejected, while one of a register-passable register, or a
 /// `deinit` call on a slot's storage a forwarding `var.use` hands over, is
 /// accepted.
 #[test]
@@ -2757,6 +2757,16 @@ fn verifier_rejects_a_destroy_of_a_memory_only_register() {
     };
     assert_eq!(
         findings([copy_x_and_condition(), vec![named_drop(0)]].concat()),
+        [
+            "MIR function 'test' block 0: drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
+        ]
+    );
+    let unnamed_drop = MirInstr::Drop {
+        reg: Reg(0),
+        destructor: None,
+    };
+    assert_eq!(
+        findings([copy_x_and_condition(), vec![unnamed_drop]].concat()),
         [
             "MIR function 'test' block 0: drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
         ]
