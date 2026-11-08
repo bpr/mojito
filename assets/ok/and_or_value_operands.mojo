@@ -3,7 +3,8 @@
 # the operand the test selects, so operands of a common type yield it (`n or
 # 2` is an `Int`, a literal materialized to its partner's type) and any other
 # pair yields `Bool`. The right operand runs only when selected. A closed or
-# symbolic compile-time `and`/`or` folds the same selection.
+# symbolic compile-time `and`/`or` folds the same selection, testing a
+# symbolic left operand through its `__bool__` per instance.
 @fieldwise_init
 struct Flag(Boolable, ImplicitlyCopyable, Writable):
     var v: Int
@@ -30,6 +31,18 @@ def with_default[N: Int, M: Int = N or 4]() -> Int:
 
 def both[N: Int, M: Int = N and 7]() -> Int:
     return M
+
+
+def float_default[F: Float64, G: Float64 = F or 1.5]() -> Float64:
+    return G
+
+
+def mixed_default[N: Int, B: Bool = N or False]() -> Bool:
+    return B
+
+
+def mixed_and[N: Int, F: Float64, B: Bool = N and F]() -> Bool:
+    return B
 
 
 comptime CLOSED_OR = 0 or 3
@@ -73,3 +86,5 @@ def main():
 
     print(CLOSED_OR, CLOSED_AND, MIXED)
     print(with_default[0](), with_default[3](), both[0](), both[2]())
+    print(float_default[0.0](), float_default[2.0](), mixed_default[0](), mixed_default[3]())
+    print(mixed_and[0, 1.0](), mixed_and[2, 0.0](), mixed_and[2, 3.0]())

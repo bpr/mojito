@@ -2229,10 +2229,12 @@ impl Checker {
             // `a and b` / `a or b` over a non-`Bool` left operand: the
             // operand `Bool(a)` selects ([`Self::short_circuit_value`]).
             ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), left, right)
-                if let Ok(left) = build(left)
-                    && *left.meta() != MetaTy::bool() =>
+                if let Ok(left_built) = build(left)
+                    && let Ok(right_built) = build(right)
+                    && (*left_built.meta() != MetaTy::bool()
+                        || *right_built.meta() != MetaTy::bool()) =>
             {
-                self.short_circuit_value(*op, &left, &build(right)?)
+                self.short_circuit_value(*op, (left, &left_built), (right, &right_built))
             }
             ExprKind::Infix(op, left, right) => self.infix_value(expr, *op, left, right, recording),
             _ => self.build_ct_rest(expr, recording),
@@ -2398,88 +2400,63 @@ impl Checker {
         }
     }
 
-    /// The compile-time value of `left and right` or `left or right`, as
-    /// upstream folds the operator to `POC::Cond` on `Bool(left)`: `and`
-    /// selects `right` when `left` is true and `left` otherwise, `or` the
-    /// reverse. Operands of one type, or a literal beside the machine type
-    /// it materializes to, give that type; closed operands of any other
-    /// pair give the selected operand's `Bool`. A symbolic selection is the
-    /// `Cond` over an integer or `Bool` left operand's truth.
+    /// The compile-time value of `left and right` or `left or right`, each
+    /// operand its expression and its built value, as upstream folds the
+    /// operator to `POC::Cond` on `Bool(left)`: `and` selects `right` when
+    /// `left` is true and `left` otherwise, `or` the reverse. Operands with a
+    /// common type ([`Self::common_type`]) give that type, a constant
+    /// converting to it; any other pair gives the selected operand's
+    /// `Bool`. A symbolic operand's `Bool` is
+    /// its `__bool__` application ([`Self::truth_value`]).
     fn short_circuit_value(
         &self,
         op: InfixOp,
-        left: &ParamExpr,
-        right: &ParamExpr,
+        (left_expr, left): (&Expr, &ParamExpr),
+        (right_expr, right): (&Expr, &ParamExpr),
     ) -> Result<ParamExpr, TypeError> {
-        let (left_ty, right_ty) = (left.meta().as_value(), right.meta().as_value());
-        // Two differently valued literals of one family merge at its
-        // default type, as upstream's `coerceTypesToEachOther` does.
-        let common = match (left_ty, right_ty) {
-            _ if left_ty == right_ty => left_ty.cloned(),
-            (Some(l), Some(r))
-                if l.is_int_literal() && r.is_int_literal()
-                    || l.is_float_literal() && r.is_float_literal() =>
-            {
-                Some(mojito_types::types::default_literal(l))
-            }
-            _ => [left_ty, right_ty]
-                .into_iter()
-                .flatten()
-                .find(|ty| !ty.is_numeric_literal())
-                .cloned(),
-        };
-        let materialized = |value: &ParamExpr| match (value.as_constant(), common.as_ref()) {
-            (Some(constant), Some(ty)) => constant.clone().materialize_as(ty),
+        // Upstream coerces the operands to each other, as the run-time
+        // operator types them; operands with no common type each become
+        // their `Bool`.
+        let common = match (left.meta().as_value(), right.meta().as_value()) {
+            (Some(left_ty), Some(right_ty)) => match self.common_type(left_ty, right_ty, None)? {
+                super::operators::CommonType::Common(ty) => Some(ty),
+                _ => None,
+            },
             _ => None,
         };
-        if let (Some(lhs), Some(rhs)) = (left.as_constant(), right.as_constant()) {
-            let truth = |value: &CtValue| {
-                ct_truth(value).ok_or_else(|| TypeError::TypeMismatch {
-                    expected: "Bool".to_string(),
-                    found: value.to_string(),
-                    context: format!("compile-time operand of '{}'", op.symbol()),
-                })
-            };
-            let take_right = truth(lhs)? == (op == InfixOp::And);
-            let (selected, value) = if take_right {
-                (rhs, right)
-            } else {
-                (lhs, left)
-            };
-            return match materialized(value) {
-                Some(value) => self.ct_param(value),
-                None => self.ct_param(CtValue::Bool(truth(selected)?)),
-            };
-        }
-        let unsupported = || {
-            TypeError::Unsupported(format!(
-                "'{}' over a symbolic parameter value of another type than its \
-                 other operand, or neither an integer nor a Bool, is not supported \
-                 yet (roadmap R1604)",
-                op.symbol()
-            ))
-        };
-        let operand = |value: &ParamExpr| -> Result<ParamExpr, TypeError> {
+        let convert = |value: &ParamExpr, ty: &Ty| -> Result<ParamExpr, TypeError> {
             match value.as_constant() {
-                None if value.meta().as_value() == common.as_ref() => Ok(value.clone()),
-                None => Err(unsupported()),
-                Some(_) => materialized(value)
-                    .ok_or_else(unsupported)
+                Some(constant) if value.meta().as_value() != Some(ty) => constant
+                    .clone()
+                    .materialize_as(ty)
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: ty.to_string(),
+                        found: constant.to_string(),
+                        context: format!("compile-time operand of '{}'", op.symbol()),
+                    })
                     .and_then(|value| self.ct_param(value)),
+                None if value.meta().as_value() != Some(ty) => {
+                    Err(TypeError::NotComptime(format!(
+                        "compile-time operand of '{}' converting a symbolic '{}' value to '{ty}'",
+                        op.symbol(),
+                        value.meta()
+                    )))
+                }
+                _ => Ok(value.clone()),
             }
         };
-        let (left, right) = (operand(left)?, operand(right)?);
-        let condition = match common.as_ref().map(Ty::kind) {
-            Some(kind) if kind.is_bool() => left.clone(),
-            Some(kind) if kind.is_int() || kind.is_uint() || matches!(kind, TyKind::Index) => {
-                let zero = CtValue::IntLiteral(0.into())
-                    .materialize_as(common.as_ref().ok_or_else(unsupported)?)
-                    .ok_or_else(unsupported)?;
-                self.param_context
-                    .infix(InfixOp::Ne, &left, &self.ct_param(zero)?)
-                    .map_err(param_error)?
+        let condition = self.truth_value(op, left_expr, left)?;
+        let take_right = |truth: bool| truth == (op == InfixOp::And);
+        let (left, right) = match (common.as_ref(), condition.as_bool()) {
+            (Some(ty), Some(truth)) => {
+                return convert(if take_right(truth) { right } else { left }, ty);
             }
-            _ => return Err(unsupported()),
+            (None, Some(truth)) if take_right(truth) => {
+                return self.truth_value(op, right_expr, right);
+            }
+            (None, Some(_)) => return Ok(condition),
+            (Some(ty), None) => (convert(left, ty)?, convert(right, ty)?),
+            (None, None) => (condition.clone(), self.truth_value(op, right_expr, right)?),
         };
         let (then, orelse) = if op == InfixOp::And {
             (right, left)
@@ -2492,6 +2469,45 @@ impl Checker {
                 &[condition, then, orelse],
             )
             .map_err(param_error)
+    }
+
+    /// `Bool(value)`, the test of a compile-time `and`/`or` whose operand
+    /// `expr` built to `value`: a `Bool` is itself, a scalar constant folds
+    /// by its truth, and any other value is its `__bool__` application,
+    /// which `Bool.__init__` calls and the elaborator folds per instance.
+    fn truth_value(
+        &self,
+        op: InfixOp,
+        expr: &Expr,
+        value: &ParamExpr,
+    ) -> Result<ParamExpr, TypeError> {
+        if *value.meta() == MetaTy::bool() {
+            return Ok(value.clone());
+        }
+        if let Some(truth) = value.as_constant().and_then(ct_truth) {
+            return Ok(self.param_context.boolean(truth));
+        }
+        self.bool_application(expr)
+            .ok_or_else(|| TypeError::TypeMismatch {
+                expected: "Bool".to_string(),
+                found: value.to_string(),
+                context: format!("compile-time operand of '{}'", op.symbol()),
+            })
+    }
+
+    /// The application of `expr.__bool__()`, a symbolic value's `Bool`.
+    fn bool_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        let mut call = Expr::new(
+            ExprKind::MethodCall {
+                object: Box::new(expr.clone()),
+                method: "__bool__".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            expr.span,
+        );
+        call.source.clone_from(&expr.source);
+        self.called_application(&call)
     }
 
     /// The proposition a comparison `expr` of `left` and `right` states

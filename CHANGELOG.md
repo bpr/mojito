@@ -19,6 +19,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time `and`/`or` over a symbolic parameter of any type folds as
+  at the pin: the left operand is tested through its `__bool__`
+  application per instance, operands that coerce to one type yield it, and
+  any other pair yields each operand's `Bool`, so `G: Float64 = F or 1.5`
+  and `B: Bool = N or False` are accepted rather than rejected (R1604).
 - A module `comptime` constant annotated with a sized scalar type is
   converted to that type where it is declared, so a constant folded from
   it wraps to its width as at the pin: `comptime H = Q + 254` over

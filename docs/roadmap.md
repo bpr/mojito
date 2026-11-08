@@ -4690,25 +4690,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1604 A symbolic compile-time `and`/`or` takes only integer or
-  `Bool` operands of one type**
-
-  `def h[F: Float64, G: Float64 = F or 1.5]()` and `def k[N: Int, B: Bool
-  = N or False]()` print `1.5 2.0 False True` for `h[0.0]()`, `h[2.0]()`,
-  `k[0]()`, and `k[3]()` at the pin; Mojito rejects both ("over a
-  symbolic parameter value of another type").
-  - Upstream folds the operator to `POC::Cond` on the left operand's
-    `Bool`, after converting both operands to a common type or each to
-    `Bool`.
-  - `Checker::short_circuit_value` builds the test as `x != 0` over an
-    integer, so a float's test, and the `Bool` of each operand when the
-    types differ, have no symbolic form yet.
-  - Fix: build the symbolic test as the `Bool(x)` application the
-    elaborator folds per instance, as a closed operand's `ct_truth` does.
-  - Found while landing R97 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1650 The elaborator binds a callable binder to its argument's
   type with the environment erased, so `conforms_to` over a thin function
   answers as for a contract**
@@ -6079,6 +6060,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `SIMD.__mlir_index__` is `pop.cast_to_builtin` of `pop.cast` to `int`.
     A closed `UInt(3).__mlir_index__()` folds, but `Int(UInt(3))` in a
     type argument is still "not a compile-time Int".
+  - Probe: `def h[F: Float64, G: Bool = Bool(F)]()` is rejected with
+    "'Bool' conversion of a symbolic 'Float64' value", where the pin prints
+    `False True` for `h[0.0]()` and `h[2.0]()`; `F.__bool__()`, which
+    `Bool.__init__` calls, already builds as an application.
   - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on R386, which gives the parameter domain a value meta for a
     `Float64` and a `String`.
