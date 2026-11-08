@@ -2915,6 +2915,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it of `mlir_value=`, and `method_calls/pop_ops.rs` types `pop` operands
   and results by it. Inference solves it as its vector
   (`generics::solve_value_args`, mono's `unify`/`substitute_ty`).
+  The same reader resolves ``!kgen.simd<length, address>`` to
+  `TyKind::KgenAddressSimd`, a vector of addresses whose only slot is the
+  width, which those same arms solve and close as an `int` vector's;
+  `types::mlir_type_named` reads its literal-width spelling, and
+  `LayoutCx::layout_of` lays it out as `width` pointers.
   `symbol::ast_raw` reads the same spelling through the same two helpers
   (`mlir_simd_annotation`) and keys it `__KgenSimd$…` as `ty_raw` keys the
   storage type, and spells an `` __mlir_type.`name` `` by

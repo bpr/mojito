@@ -781,6 +781,17 @@ pub enum TyKind {
         dtype: SimdDtype,
         width: SimdWidth,
     },
+    /// Upstream's KGEN vector of addresses `!kgen.simd<width, address>`,
+    /// displayed ``__mlir_type.`!kgen.simd<4, address>` ``: `width`
+    /// untyped pointers, LLVM's `<width x ptr>`, the base-pointer operand
+    /// `llvm.masked.gather` and `llvm.masked.scatter` take. Its lane is
+    /// KGEN's `address` dtype, which no public `DType` names, so it is
+    /// apart from [`TyKind::KgenSimd`]. It has no members and conforms to
+    /// no trait. The width is a parameter expression while its declaration
+    /// is symbolic. Both backends lay it out as `width` pointers.
+    KgenAddressSimd {
+        width: SimdWidth,
+    },
     /// Upstream's generator type `!kgen.generator`, spelled
     /// `__generator_type[idx: Int] Int`: the type of a parameterized
     /// `comptime` declaration read unapplied, and of a parameter that takes
@@ -1681,7 +1692,9 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// It is one of the types the subset reads: the builtins `index`
 /// ([`TyKind::Index`]), `i1` ([`TyKind::I1`]), and `ui8` ([`TyKind::Ui8`]),
 /// `!kgen.dtype` ([`TyKind::KgenDtype`]), a scalar's `!kgen.scalar<dtype>` storage
-/// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
+/// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), a vector's
+/// `!kgen.simd<n, dtype>` storage or a `!kgen.simd<n, address>` vector of
+/// addresses ([`TyKind::KgenAddressSimd`]) of a literal width, or the
 /// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
 /// ([`TyKind::KgenString`]), `!pop.int_literal` ([`TyKind::PopIntLiteral`]),
 /// `!pop.float_literal` ([`TyKind::PopFloatLiteral`]), `!kgen.deferred`
@@ -1703,7 +1716,27 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
             .and_then(|rest| rest.strip_suffix('>'))
             .and_then(Dtype::from_kgen_mnemonic)
             .map(|dtype| kgen_simd_ty(dtype, 1))
+            .or_else(|| kgen_simd_named(name))
             .or_else(|| pop_array_named(name)),
+    }
+}
+
+/// The `!kgen.simd<n, lane>` of a literal width over a dtype mnemonic
+/// ([`TyKind::KgenSimd`]) or KGEN's `address` ([`TyKind::KgenAddressSimd`]).
+fn kgen_simd_named(name: &str) -> Option<Ty> {
+    let (width, lane) = name
+        .strip_prefix("!kgen.simd<")?
+        .strip_suffix('>')?
+        .split_once(',')?;
+    let width = width.trim().parse().ok().filter(|width| *width > 0)?;
+    match lane.trim() {
+        "address" => Some(
+            TyKind::KgenAddressSimd {
+                width: SimdWidth::Known(width),
+            }
+            .into(),
+        ),
+        lane => Dtype::from_kgen_mnemonic(lane).map(|dtype| kgen_simd_ty(dtype, width)),
     }
 }
 
@@ -3695,6 +3728,9 @@ impl fmt::Display for TyKind {
                     width => write!(f, "__mlir_type.`!kgen.simd<{width}, {dtype}>`"),
                 }
             }
+            Self::KgenAddressSimd { width } => {
+                write!(f, "__mlir_type.`!kgen.simd<{width}, address>`")
+            }
             Self::Generator(generator) => {
                 f.write_str("__generator_type")?;
                 if !generator.params.is_empty() {
@@ -4748,7 +4784,7 @@ pub fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
     copy_is_identity(ty)
         || ty.is_simd()
         || ty.is_string_literal()
-        || matches!(ty, TyKind::KgenSimd { .. })
+        || matches!(ty, TyKind::KgenSimd { .. } | TyKind::KgenAddressSimd { .. })
 }
 
 /// Whether this KGEN type's values are attributes only.
@@ -5338,7 +5374,9 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             ty.reusing(TyKind::Struct(name.clone(), args))
         }
-        TyKind::Dependent(_) | TyKind::KgenSimd { .. } if is_symbolic(ty) => {
+        TyKind::Dependent(_) | TyKind::KgenSimd { .. } | TyKind::KgenAddressSimd { .. }
+            if is_symbolic(ty) =>
+        {
             replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
                 .unwrap_or_else(|_| ty.clone())
         }
@@ -5684,6 +5722,18 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::KgenSimd { dtype, width } => {
             let vector = rewrite_ty(&simd_node(dtype.clone(), width.clone()), rewrite)?;
             simd_storage(&vector).unwrap_or(vector)
+        }
+        TyKind::KgenAddressSimd { width } => {
+            // The width rewrites as an `int` vector's would, the lane
+            // standing aside.
+            let vector = rewrite_ty(
+                &simd_node(SimdDtype::Known(Dtype::Int), width.clone()),
+                rewrite,
+            )?;
+            match vector.kind().as_simd() {
+                Some((_, width)) => TyKind::KgenAddressSimd { width }.into(),
+                None => vector,
+            }
         }
         TyKind::None
         | TyKind::Never
@@ -6286,6 +6336,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::KgenAddressSimd { width } => width.is_symbolic(),
         TyKind::AnyTrait(_)
         | TyKind::Trait(_)
         | TyKind::TypeType
@@ -6602,6 +6653,9 @@ fn decorated(ty: &Ty) -> bool {
             matches!(dtype, SimdDtype::Expr(expr) if expr.carries_decorations())
                 || matches!(width, SimdWidth::Expr(expr) if expr.carries_decorations())
         }
+        TyKind::KgenAddressSimd {
+            width: SimdWidth::Expr(expr),
+        } => expr.carries_decorations(),
         _ => false,
     }
 }
@@ -6694,6 +6748,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Ui8
         | TyKind::KgenDtype => true,
         TyKind::KgenSimd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        TyKind::KgenAddressSimd { width } => !width.is_expr(),
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().all(Ty::is_closed)
@@ -6964,7 +7019,9 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        TyKind::KgenSimd { .. } if !values.is_empty() && is_symbolic(ty) => {
+        TyKind::KgenSimd { .. } | TyKind::KgenAddressSimd { .. }
+            if !values.is_empty() && is_symbolic(ty) =>
+        {
             let context = ParamContext::detached();
             replace_parameters(
                 &context,

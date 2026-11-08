@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1117
+# swept-count	1118
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -703,6 +703,7 @@ assets/type_error/mlir_index_parameter_symbolic_mismatch.mojo	compile-reject	agr
 assets/type_error/mlir_kgen_dtype_argument_to_dtype_parameter.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'd' has 'DType' type, but value has type '__mlir_type.`!kgen.dtype`'
 assets/type_error/mlir_kgen_dtype_parameter_dtype_argument.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'd' has '__mlir_type.`!kgen.dtype`' type, but value has type 'DType'
 assets/type_error/mlir_kgen_dtype_unknown_mnemonic.mojo	runs	divergence	the pin runs it; Mojito rejects: DType ui128 is not supported yet
+assets/type_error/mlir_kgen_simd_address_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[1]' value to '__mlir_type.`!kgen.simd<4, address>`' in 'var' initializer
 assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: 'pop.cmp' op requires attribute 'pred'
 assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: 'pop.add' op requires the same type for all operands and results
 assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: 'pop.select' op failed to verify that all of {trueValue, falseValue, result} have same type

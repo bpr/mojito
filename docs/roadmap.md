@@ -11080,18 +11080,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
-
-  ``__mlir_type[`!kgen.simd<`, size._mlir_value, `, address>`]`` is
-  rejected by `mlir_applied_type`, where the pin types a vector of pointers.
-  - `TyKind::Simd` lanes are `Dtype`s, and no `Dtype` is an address.
-  - Probe: upstream's `masked_gather` and `masked_scatter`
-    (`std/sys/intrinsics.mojo`) pass their base pointers in that type to
-    `llvm.masked.gather`/`scatter`.
-  - Found while planning R1394 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1521 An LLVM intrinsic outside Mojito's table is rejected, where
   the pin calls it**
 
@@ -11106,6 +11094,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `acos`), `llvm.umulh`/`smulh`, `llvm.usub.sat`, and `llvm.is.fpclass`.
   - Probe: `std.sys.intrinsics`' `assume`, `expect` (`likely`/`unlikely`),
     `prefetch`, and the `llvm.memcpy`/`memmove` calls of `std.memory`.
+  - Probe: `std.sys.intrinsics`' `gather` and `scatter`, unported, whose
+    `llvm.masked.gather`/`scatter` take their base pointers as a
+    `!kgen.simd<size, address>` vector of addresses
+    (`TyKind::KgenAddressSimd`, R1520), read through R221's
+    `unsafe_bitcast` of a `SIMD[.int, size]`.
   - Target- and GPU-specific intrinsics (`llvm.x86.*`, `llvm.nvvm.*`,
     `llvm.amdgcn.*`) stay outside: the VM has no target to read.
   - Found while landing R1394 (2026-10-27).
@@ -12701,6 +12694,11 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: upstream's `VariadicList` constructor ends with
     `.unsafe_bitcast[Self._EltPointerType]()` over the array's first
     element (R1317).
+  - Probe: upstream's `Pointer(unsafe_from_address=)` is
+    `Pointer(to=unsafe_from_address).unsafe_bitcast[type_of(self)]()[]`,
+    and `gather`/`scatter` load their `SIMD[.int, size]` addresses as a
+    `!kgen.simd<size, address>` through
+    `Pointer(to=base).unsafe_bitcast[...]()[]` (R1520).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

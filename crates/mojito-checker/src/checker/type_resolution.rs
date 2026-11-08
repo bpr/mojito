@@ -1230,6 +1230,8 @@ impl Checker {
     /// `!kgen.param_list<T>` is upstream's `_MLIR.KGENParamListType[T]`
     /// body, the raw parameter list of `T`, and `!kgen.simd<length, dtype>`
     /// the vector storage `SIMD._mlir_value` holds ([`TyKind::KgenSimd`]),
+    /// `!kgen.simd<length, address>` a vector of `length` addresses
+    /// ([`TyKind::KgenAddressSimd`]),
     /// and `!kgen.pointer<T>` the default-address-space address a `Pointer`
     /// wraps ([`TyKind::KgenPointer`]). Every other spelling is outside the
     /// subset.
@@ -1244,6 +1246,10 @@ impl Checker {
                 let vector = simd_of(self.dtype_from_arg(&dtype)?, positive_width(width)?)?;
                 Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
+            ("!kgen.simd<{},address>", [length]) => Ok(TyKind::KgenAddressSimd {
+                width: positive_width(self.mlir_index_operand(length)?)?,
+            }
+            .into()),
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
             ("!lit.ref.pack<:param_list<{}>{},{}>", [element_trait, elements, origin]) => {
                 self.mlir_ref_pack_type(element_trait, elements, origin)
@@ -5016,6 +5022,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         kind if kind.is_string_literal() || kind.is_numeric_literal() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::KgenAddressSimd { width } => width.is_symbolic(),
         TyKind::None
         | TyKind::Never
         | TyKind::AnyTrait(_)

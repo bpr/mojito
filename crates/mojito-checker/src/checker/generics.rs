@@ -405,6 +405,23 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 );
             }
         }
+        // A vector of addresses solves its width as an `int` vector's
+        // storage of that width would.
+        (
+            TyKind::KgenAddressSimd { width },
+            TyKind::KgenAddressSimd {
+                width: actual_width,
+            },
+        ) => {
+            let storage = |width: &SimdWidth| -> Ty {
+                TyKind::KgenSimd {
+                    dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int),
+                    width: width.clone(),
+                }
+                .into()
+            };
+            solve_value_args(&storage(width), &storage(actual_width), out);
+        }
         // A literal's value binds an `IntLiteral[v]` or `FloatLiteral[v]`
         // pattern's binder, as a literal's text binds a `StringLiteral[v]`
         // one's through the struct arm below.

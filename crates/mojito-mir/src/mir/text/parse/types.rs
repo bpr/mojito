@@ -172,6 +172,11 @@ impl Decoder {
                         .ok()
                         .and_then(|vector| mojito_types::types::simd_storage(&vector))?
                 }
+                "kgen_address_simd" => {
+                    let width = self.req(value, fields, "width", Self::simd_width_slot)?;
+                    self.unknown(fields, &["width"]);
+                    TyKind::KgenAddressSimd { width }.into()
+                }
                 "pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;

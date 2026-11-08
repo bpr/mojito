@@ -1157,6 +1157,10 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.180 adds the type `kgen_address_simd { width }` (R1520),
+upstream's KGEN vector of addresses `!kgen.simd<width, address>`, with
+`simd`'s width slot. The package format moves to `mojito-package 204`.
+
 Schema 1.179 adds the field `receiver: option(type)` to the constant
 `function_instance`: a static of a parametric struct read as a value names
 the struct instance it is read through (`P[Int].st`, `Self.gst[3]`), as
@@ -1955,6 +1959,13 @@ It is a type apart from the `simd` it stores, but both backends hold it as
 that vector, and the verifier compares the two as one held representation:
 `_mlir_value` reads the vector's register, and `mlir_value=` constructs the
 vector from its storage.
+
+`kgen_address_simd { width }` (schema 1.180) is upstream's vector of
+addresses `!kgen.simd<width, address>`, LLVM's `<width x ptr>`: `width`
+untyped pointers, the base-pointer operand of `llvm.masked.gather` and
+`llvm.masked.scatter`. Its lane is KGEN's `address` dtype, which no public
+`DType` names, so it is a type apart from `kgen_simd`. Both backends lay it
+out as `width` pointers.
 
 `kgen_pointer { element }` (schema 1.140) is upstream's raw address
 `!kgen.pointer<T>` in the default address space, the field a `Pointer`

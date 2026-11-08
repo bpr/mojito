@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's KGEN vector of addresses `!kgen.simd<size, address>`, the
+  base-pointer type `gather` and `scatter` pass to `llvm.masked.gather` and
+  `llvm.masked.scatter`, is a type: spelled through a `SIMDLength`'s
+  `_mlir_value` or with a literal width, it checks, elaborates, and lays out
+  natively as `size` pointers (R1520). No operation builds one yet. MIR
+  text moves to schema 1.180 and the package format to 204.
+
 - An instance method read through its type is a function value taking the
   receiver as its first argument, as at the pin: `S.get`, a `mut` or
   `deinit` receiver, an overload selected by the expected type, `S.gen[3]`,

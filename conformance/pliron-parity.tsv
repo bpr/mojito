@@ -664,6 +664,7 @@ assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
 assets/ok/mlir_kgen_dtype_layer.mojo	main	exe-differential	sanitized
 assets/ok/mlir_kgen_scalar_comptime_alias.mojo	main	exe-differential	sanitized
+assets/ok/mlir_kgen_simd_address_type.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_generic_element.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_gep.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_array_ops.mojo	main	exe-differential	sanitized

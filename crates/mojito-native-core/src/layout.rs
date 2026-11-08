@@ -126,6 +126,18 @@ impl LayoutCx<'_> {
             // `{ data: ptr, len: u64 }` (`MjStrDesc` in the runtime
             // contract), as KGEN lowers one to its address and size.
             TyKind::KgenString => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
+            // A vector of addresses is `width` pointers, laid out as a
+            // vector's lanes are.
+            TyKind::KgenAddressSimd { width } => {
+                let width = width
+                    .known()
+                    .ok_or_else(|| LayoutError::Symbolic(ty.to_string()))?;
+                let lanes = u64::try_from(width).map_err(|_| {
+                    LayoutError::Unsupported(format!("'{ty}' has a negative SIMD width"))
+                })?;
+                let pointer = self.pointer();
+                Ok(Layout::new(pointer.size * lanes, pointer.align))
+            }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(

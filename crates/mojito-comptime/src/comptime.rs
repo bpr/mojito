@@ -487,6 +487,9 @@ fn source_type_from_ty_with_origins(
         TyKind::I1 => mlir_source_type("i1"),
         TyKind::Ui8 => mlir_source_type("ui8"),
         TyKind::KgenDtype => mlir_source_type("!kgen.dtype"),
+        TyKind::KgenAddressSimd {
+            width: mojito_types::types::SimdWidth::Known(width),
+        } => mlir_source_type(&format!("!kgen.simd<{width}, address>")),
         // A callable has no source spelling a clone could carry.
         TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
         TyKind::ComptimeList(element) => Type::Named(

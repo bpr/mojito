@@ -534,6 +534,13 @@ impl ScopeCx<'_> {
                 self.simd_slots(role, &dtype, &width, nested);
             }
             TyKind::KgenSimd { dtype, width } => self.simd_slots(role, dtype, width, nested),
+            TyKind::KgenAddressSimd {
+                width: SimdWidth::Expr(expr),
+            } => {
+                let length = MetaTy::value(mojito_types::types::simd_length_ty());
+                self.expr(role, "width", expr, &length, nested);
+            }
+            TyKind::KgenAddressSimd { .. } => {}
             TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations

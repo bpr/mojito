@@ -2345,6 +2345,9 @@ fn ty_value(ty: &Ty) -> String {
                 ("width", simd_width_slot(width)),
             ],
         ),
+        TyKind::KgenAddressSimd { width } => {
+            record("kgen_address_simd", &[("width", simd_width_slot(width))])
+        }
         TyKind::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
         TyKind::ParamList(value) => positional("param_list", &ty_value(value)),
         TyKind::AnyTrait(traits) => {

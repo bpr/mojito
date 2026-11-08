@@ -172,6 +172,7 @@ pub fn reflects_no_conformance(ty: &Ty) -> bool {
             | TyKind::Ui8
             | TyKind::KgenDtype
             | TyKind::KgenSimd { .. }
+            | TyKind::KgenAddressSimd { .. }
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
@@ -299,6 +300,7 @@ pub fn modelled_conformance(
             | TyKind::KgenDtype
             | TyKind::KgenString
             | TyKind::KgenSimd { .. }
+            | TyKind::KgenAddressSimd { .. }
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
@@ -389,6 +391,7 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
                 | TyKind::Ui8
                 | TyKind::KgenDtype
                 | TyKind::KgenSimd { .. }
+                | TyKind::KgenAddressSimd { .. }
                 | TyKind::KgenPointer(_)
                 | TyKind::LitRef { .. }
                 | TyKind::LitRefPack { .. }

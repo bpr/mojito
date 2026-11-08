@@ -2774,6 +2774,28 @@ fn kgen_simd_storage_round_trips() {
     assert!(write::program(&program).contains("kgen_simd { dtype: int32, width: 4 }"));
 }
 
+/// Schema 1.180 spells upstream's vector of addresses `!kgen.simd<n,
+/// address>` `kgen_address_simd { width }`.
+#[test]
+fn kgen_address_simd_round_trips() {
+    let addresses: Ty = mojito_types::types::TyKind::KgenAddressSimd {
+        width: mojito_types::types::SimdWidth::Known(4),
+    }
+    .into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![addresses.clone()],
+            vec![MirInstr::ConstructType {
+                dest: Reg(0),
+                ty: addresses,
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("kgen_address_simd { width: 4 }"));
+}
+
 /// Schema 1.78 spells a trait used as a type `trait_type([...])` and a type
 /// binder's trait-parameter bound `trait_param: present(binder {...})`.
 #[test]

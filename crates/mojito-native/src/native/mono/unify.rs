@@ -630,6 +630,17 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 _ => Err(format!("expected `{pattern}`, found `{actual}`")),
             }
         }
+        // A vector of addresses binds its width as an `int` vector would.
+        TyKind::KgenAddressSimd { width } => match actual.kind() {
+            TyKind::KgenAddressSimd {
+                width: actual_width,
+            } => unify(
+                &Ty::simd(SimdDtype::Known(mojito_ast::ast::Dtype::Int), width.clone()),
+                &Ty::simd(SimdDtype::Known(mojito_ast::ast::Dtype::Int), actual_width.clone()),
+                bindings,
+            ),
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+        },
         // Callable contracts unify on their runtime structure — parameters,
         // return, raising — never on the environment (`thin` vs
         // `capturing[...]`) or origin spellings, which erase from the ABI.

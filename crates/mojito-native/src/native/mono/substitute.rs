@@ -589,6 +589,17 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
 
             mojito_types::types::simd_storage(&vector).unwrap_or(vector)
         }
+        // A vector of addresses closes its width as an `int` vector would.
+        TyKind::KgenAddressSimd { width } => {
+            let vector = substitute_ty(
+                &Ty::simd(SimdDtype::Known(mojito_ast::ast::Dtype::Int), width.clone()),
+                bindings,
+            )?;
+            match vector.kind().as_simd() {
+                Some((_, width)) => TyKind::KgenAddressSimd { width }.into(),
+                None => vector,
+            }
+        }
         _ => ty.clone(),
     })
 }

@@ -322,6 +322,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
                 | TyKind::Ui8
                 | TyKind::KgenDtype
                 | TyKind::KgenSimd { .. }
+                | TyKind::KgenAddressSimd { .. }
         )
 }
 
