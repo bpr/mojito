@@ -415,22 +415,12 @@ impl Checker {
     }
 
     /// What `source`'s field projections reach: a named binding, or a
-    /// temporary (a call result, a by-value subscript, an element of the
-    /// private `Tuple` storage, which is a tracked owned slot until R359).
-    /// Any other subscript yields a reference, which reaches no tracked
-    /// root.
+    /// temporary (a call result, a by-value subscript). Any other subscript
+    /// yields a reference, which reaches no tracked root.
     fn transfer_root<'e>(&self, source: &'e Expr) -> Result<TransferRoot<'e>, TypeError> {
         match &source.kind {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
             ExprKind::Member { object, .. } => self.transfer_root(object),
-            ExprKind::Index { object, .. }
-                if matches!(
-                    self.infer(object).as_ref().map(Ty::kind),
-                    Ok(TyKind::Tuple(_))
-                ) =>
-            {
-                Ok(TransferRoot::Temporary)
-            }
             _ if self.designates_place(source)
                 && !matches!(source.kind, ExprKind::TypeApply { .. }) =>
             {

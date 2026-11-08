@@ -861,6 +861,23 @@ fn explicit_destroy_values_owned_at_a_raise_edge_are_abandoned() {
 }
 
 #[test]
+fn explicit_destroy_deinit_parameter_is_torn_down_by_parts() {
+    let linear = "@explicit_destroy(\"use eat\")\nstruct W(Movable, Deinitable where False):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n";
+    // A `deinit` parameter's destructor is disabled, as a `deinit self`
+    // receiver's: it owes no whole-value destruction.
+    ok(&format!(
+        "{linear}    def eat(deinit self, deinit other: W):\n        pass\n\ndef main():\n    var w = W(1)\n    w^.eat(W(2))\n"
+    ));
+    // A `var` parameter still owes it.
+    assert!(matches!(
+        err(&format!(
+            "{linear}    def eat(deinit self, var other: W):\n        pass\n\ndef main():\n    var w = W(1)\n    w^.eat(W(2))\n"
+        )),
+        TypeError::Abandoned { var, .. } if var == "other"
+    ));
+}
+
+#[test]
 fn collection_displays_use_parameter_and_return_context() {
     ok_std(
         "from std.collections.set import Set\n\ndef consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",

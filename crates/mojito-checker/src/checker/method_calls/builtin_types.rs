@@ -711,8 +711,9 @@ impl Checker {
     /// `origin`. Upstream requires only a mutable pointer. An origin-bearing
     /// pointee still belongs to its checked storage, which would destroy it
     /// again, so a tracked origin is accepted only for a trivially
-    /// destructible element, or in the bundled modules that end the
-    /// storage's value themselves (`lit.ownership.mark_destroyed`).
+    /// destructible element, or in the bundled private-storage modules,
+    /// whose destructors and consuming members take every element out of
+    /// trivially destructible storage (R2029).
     fn check_pointer_take_source(
         &self,
         span: &SourceSpan,

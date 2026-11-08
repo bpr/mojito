@@ -329,6 +329,7 @@ assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/deinit_parameter_by_parts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dependent_struct_value_parameter.mojo	-	ineligible	no-scalar-entry-shape

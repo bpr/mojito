@@ -1,18 +1,20 @@
-//! Pack drops refined per element: upstream's `Tuple.__del__` and
-//! `VariadicPack.__deinit__` unrolling a `comptime for` of
-//! `destroy_pointee` over the elements.
+//! Pack drops refined per element: upstream's `VariadicPack.__deinit__`
+//! unrolling a `comptime for` of `destroy_pointee` over the elements.
 //!
-//! A pack aggregate (a `Tuple`'s private storage, a heterogeneous
-//! collector) has no destructor of its own, so a `drop.var` or `drop.place`
-//! of one names none. Upstream's library destructor destroys each element
-//! in its own step, in which destructor insertion names that element's
-//! `__del__`: a tuple's first to last, an owning collector's last to first.
-//! Here such a drop becomes one `drop.place` per element that runs code,
-//! which naming then gives its element's destructor, as a field's; a
-//! whole slot ends after them with a `consume.var`, which destroys nothing
-//! more, and a part pack ends with its last element. A drop whose
-//! pack type is still symbolic waits for the elaborator, which refines an
-//! instance's once its elements are concrete.
+//! A pack aggregate has no destructor of its own, so a `drop.var` or
+//! `drop.place` of one names none. A `Tuple`'s private storage is
+//! upstream's `!kgen.struct`, trivially destructible: its drop destroys
+//! nothing, since `Tuple.__deinit__` destroys each element itself. The
+//! owning heterogeneous collector (`var *args: *Ts`, the `owned_pack`
+//! slot) and an elaborated `RuntimePack` destroy their elements, each in
+//! its own step in which destructor insertion names that element's
+//! `__del__`, the owning collector's last to first. Here such a drop
+//! becomes one `drop.place` per element that runs code, which naming then
+//! gives its element's destructor, as a field's; a whole slot ends after
+//! them with a `consume.var`, which destroys nothing more, and a part pack
+//! ends with its last element. A drop whose pack type is still symbolic
+//! waits for the elaborator, which refines an instance's once its elements
+//! are concrete.
 
 use crate::mir::{MirBlock, MirFunction, MirInstr, MirPlace, Proj, instruction_regions_mut};
 use mojito_hir::hir::VarId;
@@ -20,10 +22,11 @@ use mojito_types::types::{Ty, TyKind};
 
 /// Refine every drop of a concrete pack aggregate in `function` per element.
 ///
-/// Each `drop.var` and `drop.place`, regions included, becomes the drops of
-/// its elements that run code (`runs_no_code` answering no), a whole
-/// slot's end after them; `owned_pack` is the slot of the function's owning
-/// collector, whose elements die last to first.
+/// Each `drop.var` and `drop.place`, regions included, of the owning
+/// collector `owned_pack` (whose elements die last to first) or of a
+/// `RuntimePack` becomes the drops of its elements that run code
+/// (`runs_no_code` answering no), a whole slot's end after them. A drop of
+/// any other `Tuple` storage destroys no element: only a whole slot ends.
 pub fn refine_pack_drops(
     function: &mut MirFunction,
     owned_pack: Option<VarId>,
@@ -88,11 +91,21 @@ impl Refine<'_> {
     /// nested pack refined in turn, in the order its library destructor
     /// destroys them, then the end of the pack's slot when it is one.
     fn pack_drops(&self, place: &MirPlace, out: &mut Vec<MirInstr>) {
-        let Some(elements) = place.ty.as_ref().and_then(pack_elements) else {
+        let Some(ty) = place.ty.as_ref() else {
             return;
         };
+        let Some(elements) = pack_elements(ty) else {
+            return;
+        };
+        let owned = Some(place.root) == self.owned_pack;
+        if !owned && matches!(ty.kind(), TyKind::Tuple(_)) {
+            if place.is_whole_root() {
+                out.push(MirInstr::ConsumeVar { var: place.root });
+            }
+            return;
+        }
         let mut positions: Vec<usize> = (0..elements.len()).collect();
-        if place.is_whole_root() && Some(place.root) == self.owned_pack {
+        if place.is_whole_root() && owned {
             positions.reverse();
         }
         for position in positions {
@@ -195,11 +208,11 @@ mod tests {
     }
 
     #[test]
-    fn tuple_storage_drops_first_to_last_and_nested_packs_in_turn() {
+    fn tuple_storage_drop_destroys_no_element() {
         let inner: Ty = TyKind::Tuple(vec![Ty::int(), noisy()]).into();
         let storage: Ty = TyKind::Tuple(vec![noisy(), inner]).into();
         let mut place = MirPlace::root(0, Some(noisy()));
-        place.project(Proj::Field("storage".into()), storage);
+        place.project(Proj::Field("storage".into()), storage.clone());
         let mut f = function(
             noisy(),
             vec![MirInstr::DropPlace {
@@ -208,14 +221,33 @@ mod tests {
             }],
         );
         refine_pack_drops(&mut f, None, &runs_no_code);
+        assert!(shape(&f).is_empty());
+        let mut whole = function(
+            storage,
+            vec![MirInstr::DropVar {
+                var: 0,
+                destructor: None,
+            }],
+        );
+        refine_pack_drops(&mut whole, None, &runs_no_code);
+        assert_eq!(shape(&whole), ["consume $0"]);
+    }
+
+    #[test]
+    fn runtime_pack_drops_its_elements_first_to_last() {
+        let pack: Ty = TyKind::RuntimePack(vec![noisy(), Ty::int(), noisy()]).into();
+        let mut f = function(
+            pack,
+            vec![MirInstr::DropVar {
+                var: 0,
+                destructor: None,
+            }],
+        );
+        refine_pack_drops(&mut f, None, &runs_no_code);
         assert_eq!(
             shape(&f),
-            [
-                "drop [Field(\"storage\"), ConstIndex(0)]",
-                "drop [Field(\"storage\"), ConstIndex(1), ConstIndex(1)]",
-            ]
+            ["drop [ConstIndex(0)]", "drop [ConstIndex(2)]", "consume $0"]
         );
-        assert_eq!(f.n_regs, 0);
     }
 
     #[test]

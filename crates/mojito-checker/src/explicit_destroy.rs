@@ -456,7 +456,6 @@ impl Env {
             name: name.to_string(),
             linear,
             uninitialized: false,
-            by_parts: false,
             obligations: if live {
                 HashSet::from([Vec::new()])
             } else {
@@ -570,9 +569,6 @@ struct Var {
     /// Consumed on a path that may have raised into the enclosing `except`
     /// arm: every use there is a use of an uninitialized value, as upstream.
     uninitialized: bool,
-    /// A `deinit` parameter the callee tears down by parts
-    /// ([`marks_storage_destroyed`]), as it does a `deinit self` receiver.
-    by_parts: bool,
     /// Minimal linear subobjects that still require explicit destruction. The
     /// empty path denotes the intact whole value. Once a field is moved, that
     /// whole obligation is decomposed into its linear child fields.
@@ -948,74 +944,17 @@ fn check_function<'a>(
 ) -> Result<(), TypeError> {
     env.push();
     for (name, convention, linear) in params {
-        // A `deinit` parameter whose storage the body marks destroyed is
-        // torn down by parts, as a `deinit self` receiver is, so it owes no
-        // whole-value destruction.
-        let by_parts =
-            convention == Some(ArgConvention::Deinit) && marks_storage_destroyed(body, name);
-        let live = linear.is_some()
-            && !by_parts
-            && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
+        // A `deinit` parameter is torn down by parts, as a `deinit self`
+        // receiver is: upstream's `deinit` convention disables the whole
+        // value's destructor, so it owes no whole-value destruction.
+        let live = linear.is_some() && convention == Some(ArgConvention::Var);
         env.declare(name, linear, live);
-        if let Some(parameter) = env.vars.last_mut() {
-            parameter.by_parts = by_parts;
-        }
     }
     let normal = check_block(body, env, false, node_facts, deletability, types)?;
     if let Some(env) = normal {
         env.check_ids(0..env.vars.len())?;
     }
     Ok(())
-}
-
-/// Whether `body` marks storage of the binding `name` destroyed.
-///
-/// That is upstream's `lit.ownership.mark_destroyed` statement over
-/// `__get_mvalue_as_litref(other.storage)`: the teardown by parts the
-/// bundled private-storage structs spell after moving each element out
-/// through a pointer.
-fn marks_storage_destroyed(body: &[Stmt], name: &str) -> bool {
-    struct Finder<'a> {
-        name: &'a str,
-        found: bool,
-    }
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            let ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                ..
-            } = &expr.kind
-            else {
-                return;
-            };
-            if !matches!(&object.kind, ExprKind::Identifier(op) if op == "__mlir_op")
-                || method != "lit.ownership.mark_destroyed"
-            {
-                return;
-            }
-            let [
-                Expr {
-                    kind: ExprKind::Call { args: operand, .. },
-                    ..
-                },
-            ] = args.as_slice()
-            else {
-                return;
-            };
-            let Some(mut root) = operand.first() else {
-                return;
-            };
-            while let ExprKind::Member { object, .. } = &root.kind {
-                root = object;
-            }
-            self.found |= matches!(&root.kind, ExprKind::Identifier(root) if root == self.name);
-        }
-    }
-    let mut finder = Finder { name, found: false };
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.found
 }
 
 fn root_id(expr: &Expr, env: &Env) -> Option<usize> {

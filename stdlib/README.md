@@ -60,8 +60,9 @@ point, as upstream's toolchain does.
 - `std/builtin/tuple.mojo` — the public heterogeneous `Tuple[*Ts]`, with
   current `__getitem_param__` indexing and element-conditional lifecycle,
   comparison, formatting, concatenation, reversal, and consuming APIs. Its
-  `__RuntimeTuple[*Ts]` field is compiler-private heterogeneous pack storage;
-  public Tuple is nominal and is not a method-free runtime iterable. Its
+  `__RuntimeTuple[*Ts]` field is compiler-private heterogeneous pack storage,
+  trivially destructible as upstream's `!kgen.struct`, and its declared
+  `__deinit__` destroys each element; public Tuple is nominal and is not a method-free runtime iterable. Its
   default initializer stores each element's default construction to that
   storage, available where every element is `Defaultable`.
 - `std/builtin/len.mojo` — upstream's `Sized` and `SizedRaising` traits,

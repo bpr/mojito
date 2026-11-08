@@ -5499,4 +5499,13 @@ mod tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn tuple_storage_drop_runs_no_code_but_a_runtime_pack_drop_does() {
+        let declarations = MirDeclarations::default();
+        let noisy: Ty = TyKind::Struct("Noisy".into(), Vec::new()).into();
+        assert!(!declarations.drop_runs_no_code(&noisy));
+        assert!(declarations.drop_runs_no_code(&TyKind::Tuple(vec![noisy.clone()]).into()));
+        assert!(!declarations.drop_runs_no_code(&TyKind::RuntimePack(vec![noisy]).into()));
+    }
 }

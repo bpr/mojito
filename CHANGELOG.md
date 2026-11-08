@@ -27,6 +27,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Tuple`'s private storage is trivially destructible, as upstream's
+  `!kgen.struct`, and `Tuple` declares upstream's `__deinit__`, which
+  destroys each element through `unsafe_deinit_pointee`. `reverse`,
+  `concat`, `consume_elements`, and the move initializer no longer end the
+  storage with `lit.ownership.mark_destroyed`, and the bundled
+  `llvm_intrinsic`'s loaded pack is no longer destroyed (R359).
+- A `deinit` parameter other than `self` is torn down by parts, as at the
+  pin: an `@explicit_destroy` value passed to one owes no explicit
+  destruction (`assets/ok/deinit_parameter_by_parts.mojo`) (R359).
 - Inside an element-wise pack struct (`Tuple`, `Variant`, `TString`),
   `Self` is the canonical instance, so `self = Self(...)` checks and the
   synthesized copy's workaround is gone (R2016).

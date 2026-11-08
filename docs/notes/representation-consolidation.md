@@ -41,9 +41,9 @@ and 11-04 (*Measure*), so the size steps still matter.
    ```
 
 2. **Finish gap D′** (size). Only the verifier rule's unnamed `drop.reg`
-   half is left: R1932, behind R359 (Planned) and R2025. The compiler's
-   tuple storage, upstream's trivially destructible `!kgen.struct`, still
-   destroys its elements through one.
+   half is left: R1932. The compiler's tuple storage is trivially
+   destructible since R359, so the bundled `llvm_intrinsic` no longer
+   blocks it; its census of the corpus remains.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1932 -n 0
@@ -129,8 +129,7 @@ and 11-04 (*Measure*), so the size steps still matter.
   conformance and cleanup: R1414 (a display's elements bind as call
   arguments), R695 after it, R1415 (fieldwise keywords), and R1416
   (hand-written MIR).
-- Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932),
-  behind R359.
+- Gap D′ has its verifier rule's unnamed `drop.reg` half left (R1932).
 - Gap F has its `def(...)` bound calls left (step 1, R1933). Gaps H and I have
   their cores and their binder reads in. Their members are filed against
   shapes that have since changed, so each needs a re-probe.
@@ -161,7 +160,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 
 | gap | upstream's shape | open core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932, behind R359 | about 15 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1932 | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none | R788, R378, R472, R508, R602 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2010, R1938; R1934 → R1933 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
@@ -274,7 +273,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | Overload identity is a partial mangled string | R934 → R935 | R1172, R105, R64, R1294, R570, R1111 |
 | Relocations name no `__moveinit__` | R1047, R2027, R2025 | R731, R738, R732, R739, R740, R32, R1048 |
 | One-shot parameter inference | R52 | R53, R537, R726, R61 |
-| `Tuple` is `__RuntimeTuple` storage | R2025, R359 | R343, R1121, R208, R1122, R207 |
+| `Tuple` is `__RuntimeTuple` storage | R2025, R2028 | R343, R1121, R208, R1122, R207 |
 
 The landed 10-25 blocks left one or two entries each, none with a core
 to wait on:

@@ -1,7 +1,9 @@
 # Public heterogeneous tuple, an ordinary variadic struct generator: this one
 # template serves every element list.  `__RuntimeTuple` is a compiler-private
 # pack aggregate: users see this nominal struct, while the private field gives
-# the compiler exact per-index storage and move tracking. The default and copy
+# the compiler exact per-index storage. The storage is trivially destructible,
+# as upstream's `!kgen.struct`, and `__deinit__` destroys each element through
+# `unsafe_deinit_pointee`. The default and copy
 # initializers build through `init_with`, and the copy and move initializers
 # take upstream's `__copy_ctor_is_trivial`/`__move_ctor_is_trivial` fast paths.
 
@@ -48,6 +50,14 @@ struct Tuple[*Ts: Movable](
         )
         comptime for i in range(Self.__len__()):
             Pointer(to=self[i]).unsafe_write(init_with[i]())
+
+    # The storage, upstream's `!kgen.struct`, is trivially destructible: the
+    # destructor destroys each element itself.
+    def __deinit__(
+        deinit self,
+    ) where Self.Ts.all_conforms_to[Deinitable]():
+        comptime for i in range(Self.__len__()):
+            Pointer(to=self[i]).unsafe_deinit_pointee()
 
     @inline(.nodebug)
     def __init__(out self) where conforms_to(Self.Ts.values, Defaultable):
@@ -170,8 +180,7 @@ struct Tuple[*Ts: Movable](
         writer.write(")")
 
     # Upstream's signatures. Each element is moved out through a pointer, as
-    # upstream moves it; the storage, whose destruction would reach the moved
-    # elements again, is then marked destroyed.
+    # upstream moves it; the trivially destructible storage ends with `self`.
     @inline(.nodebug)
     def reverse(deinit self, out result: Tuple[*Self.Ts.reverse()]):
         __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))
@@ -179,9 +188,6 @@ struct Tuple[*Ts: Movable](
             Pointer(to=result[i]).unsafe_write(
                 Pointer(to=self[Self.Ts.length - 1 - i]).unsafe_take_pointee()
             )
-        __mlir_op.`lit.ownership.mark_destroyed`(
-            __get_mvalue_as_litref(self.storage)
-        )
 
     @inline(.nodebug)
     def concat[*OtherTs: Movable](
@@ -199,12 +205,6 @@ struct Tuple[*Ts: Movable](
             Pointer(to=rebind[OtherTs[i]](result[self_len + i])).unsafe_write(
                 Pointer(to=other[i]).unsafe_take_pointee()
             )
-        __mlir_op.`lit.ownership.mark_destroyed`(
-            __get_mvalue_as_litref(self.storage)
-        )
-        __mlir_op.`lit.ownership.mark_destroyed`(
-            __get_mvalue_as_litref(other.storage)
-        )
 
     @inline(.nodebug)
     def consume_elements[
@@ -212,9 +212,6 @@ struct Tuple[*Ts: Movable](
     ](deinit self, elt_handler: F, /):
         comptime for i in range(len(Self.Ts)):
             elt_handler[i](Pointer(to=self[i]).unsafe_take_pointee())
-        __mlir_op.`lit.ownership.mark_destroyed`(
-            __get_mvalue_as_litref(self.storage)
-        )
 
     # Current Mojo's family spelling for the same consuming teardown.
     def deinit_with[
@@ -224,7 +221,7 @@ struct Tuple[*Ts: Movable](
 
     # Upstream's copy initializer. `self.storage = copy.storage.copy()`
     # stands for upstream's `self._mlir_value = copy._mlir_value`: the
-    # private storage is no register value (R359).
+    # private storage is not implicitly copyable at a symbolic pack (R2028).
     @inline(.nodebug)
     def __init__(
         out self, *, copy: Self
@@ -236,22 +233,17 @@ struct Tuple[*Ts: Movable](
                 init_with=lambda [i: Int]() -> Self.Ts[i]: copy[i].copy()
             )
 
-    # Upstream's move initializer. `self.storage = move.storage^` stands for
-    # upstream's `self._mlir_value = move._mlir_value`. The private storage
-    # would destroy the moved elements again, so `move`'s storage is marked
-    # destroyed (R359).
+    # Upstream's move initializer. The destructor on `move` is disabled by
+    # its `deinit` convention, and its storage is trivially destructible.
     @inline(.nodebug)
     def __init__(
         out self, *, deinit move: Self
     ) where Self.Ts.all_conforms_to[Movable]():
         comptime if Self.__move_ctor_is_trivial:
-            self.storage = move.storage^
+            self.storage = move.storage
         else:
             __mlir_op.`lit.ownership.mark_initialized`(
                 __get_mvalue_as_litref(self.storage)
             )
             comptime for i in range(Self.__len__()):
                 Pointer(to=self[i]).unsafe_write_move_from(Pointer(to=move[i]))
-            __mlir_op.`lit.ownership.mark_destroyed`(
-                __get_mvalue_as_litref(move.storage)
-            )

@@ -5633,13 +5633,17 @@ name theirs the same way, from MIR lowering on
 (`mir::name_teardown_destructors`, `mir/teardown_calls.rs`, rerun by
 `name_destructors` and by a pass that retypes one), respelled by the same
 `name_lifecycle_calls`, so the VM's `drop_named` and Pliron's `emit_drop`
-call them. A pack aggregate (a `Tuple`'s storage, a heterogeneous owning
-collector) has no destructor of its own: a `drop.var` or `drop.place` of
-one becomes one `drop.place` per element whose drop runs code, then, for a
-whole slot, a `consume.var` of it (`mir::refine_pack_drops`, `mir/pack_drops.rs`), as upstream's
-`Tuple.__del__` and `VariadicPack.__deinit__` unroll a `comptime for` of
-`destroy_pointee`, a tuple's first to last and a collector's last to
-first. Drop elaboration refines a concrete pack's before
+call them. A `Tuple`'s private storage is upstream's trivially
+destructible `!kgen.struct`: its drop runs no code
+(`MirDeclarations::drop_runs_no_code`), since the declared
+`Tuple.__deinit__` destroys each element through `unsafe_deinit_pointee`.
+A heterogeneous owning collector (and an elaborated `RuntimePack`) has no
+destructor of its own either, but owns its elements: a `drop.var` or
+`drop.place` of one becomes one `drop.place` per element whose drop runs
+code, then, for a whole slot, a `consume.var` of it
+(`mir::refine_pack_drops`, `mir/pack_drops.rs`), as upstream's
+`VariadicPack.__deinit__` unrolls a `comptime for` of `destroy_pointee`,
+the collector's last to first. Drop elaboration refines a concrete pack's before
 `name_destructors`, and the elaborator an instance's before
 `name_lifecycle_calls`, so each element's drop names its destructor as a
 field's does. A consumed residue's fields still find their destructor
@@ -6103,11 +6107,10 @@ it, as upstream destroys in descending discovery order. Struct destruction runs:
    nothing
 2. otherwise the fields, in declaration order
 
-The compiler-private tuple storage likewise drops elements left-to-right
-where it backs a `Tuple`: drop elaboration lays the nominal `Tuple` out as
-the struct it is, by its one `storage` field, so its synthesized
-`__deinit__` destroys that field by a `DropPlace`, which
-`mir::refine_pack_drops` splits into one named drop per element. An owning `var *args` collector — the slot
+A `Tuple` destroys its elements left-to-right through its declared
+`__deinit__`, a `comptime for` of `unsafe_deinit_pointee`, as upstream's;
+its `storage` field is trivially destructible, so the field's `DropPlace`
+in a `deinit self` body destroys nothing. An owning `var *args` collector — the slot
 `MirFunctionDeclaration::owned_pack_slot` names — drops them last to first,
 matching current Mojo's pack lifecycle, in the VM and natively. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary

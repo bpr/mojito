@@ -34,7 +34,7 @@
 # tuple pattern over an rvalue subject the pin rejects ("use of uninitialized
 # value '(pattern child)'") and the previous pin ran
 # (`conformance/probes/var_case_rvalue_tuple_literal_sibling.mojo`).
-# swept-count	1657
+# swept-count	1658
 fixture	family	first-error
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
 assets/ok/dtype_value_member_argument.mojo	ledgered	error: parameter 'op' has '_BinaryMathOp' type, but value has type 'StringLiteral["pow"]'

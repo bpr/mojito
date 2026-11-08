@@ -698,9 +698,10 @@ impl MirDeclarations {
 
     /// Whether dropping a value of `ty` runs no code, as upstream's
     /// `IsTriviallyDeinitable` answers: a compiler-known scalar
-    /// ([`has_no_destructor`]), a pointer or reference, a tuple or pack of
-    /// such types,
-    /// a struct with no explicit-destroy obligation whose
+    /// ([`has_no_destructor`]), a pointer or reference, a `Tuple`'s private
+    /// storage (upstream's trivially destructible `!kgen.struct`; the
+    /// declared `Tuple.__deinit__` destroys the elements), a pack of such
+    /// types, a struct with no explicit-destroy obligation whose
     /// `IsTriviallyDeinitable` row holds at its arguments, as upstream's
     /// `CheckLifetimes` binds a destructor's `__del__is_trivial` witness to
     /// the instance's parameters and calls none where it is `True`
@@ -754,7 +755,8 @@ impl MirDeclarations {
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
             | TyKind::Ref(_) => true,
-            TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
+            TyKind::Tuple(_) => true,
+            TyKind::RuntimePack(items) => items
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),
             TyKind::PopArray { element, .. } => self.drop_runs_no_code_within(element, visiting),

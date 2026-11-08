@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2028**.
+Next free ID: **R2030**.
 
 ## Ordered Work
 
@@ -1458,6 +1458,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Same family as R1047: name the constructor on the instruction and
     run it in both backends.
   - Found while landing R341 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2029 Taking or destroying a pointee with a destructor through an
+  origin-bearing pointer is rejected outside five bundled modules, where
+  the pin accepts it**
+
+  `check_pointer_take_source` (`checker/method_calls/builtin_types.rs`)
+  requires a trivially destructible element for `unsafe_take_pointee`,
+  `unsafe_deinit_pointee`, and `unsafe_write_move_from` unless the origin is
+  untracked or the call is in a module `is_bundled_private_storage_source`
+  lists (`tuple`, `_enum`, `variadics`, `maybe_uninit`, `variant`).
+  - Probe: `var b = Pointer(to=a).unsafe_take_pointee()` over a local `N`
+    with a destructor, then `Pointer(to=a).unsafe_write(N(2))`: the pin
+    prints `took 1 / del 1 / del 2 / end`, Mojito reports "requires a
+    trivially destructible element".
+  - Lifting the gate means the ownership analysis must accept a
+    pointer-side take of a tracked slot as upstream does, leaving soundness
+    to the caller.
+  - Found while landing R359 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9632,17 +9652,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   register, but not an unnamed `drop.reg`, which drops its value's fields
   by their types, where upstream's `CheckLifetimes` destroys every
   memory-only value through its storage.
-  - The compiler's tuple storage (`TyKind::Tuple`, upstream's
-    `!kgen.struct`) still destroys its elements whole through one (R359),
-    so judging the unnamed form rejects the bundled `llvm_intrinsic`.
-  - Then drop the `destructor: Some(_)` filter in
-    `RegisterDestroys::blocks`.
+  - Drop the `destructor: Some(_)` filter in `RegisterDestroys::blocks`.
+  - With the filter off, `llvm_intrinsic.mojo`,
+    `llvm_intrinsic_shuffles.mojo`, and `bit_count_ops.mojo` pass by
+    default since R359 made tuple storage trivially destructible (with
+    `MOJITO_PRE_ELABORATION=0` they stop first at R1934's
+    `_assert_enabled`).
   - Probe: with the filter off, `assets/ok/llvm_intrinsic.mojo` (and 54
     fixtures with `MOJITO_PRE_ELABORATION=0`) report `drop.reg destroys
     %r2 of memory-only type Tuple[*types]`; re-run that census of
     `assets/ok` and `assets/ownership_ok`, both ways, before landing.
   - Split from R1873 (2026-11-05).
-  - Depends on R359.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1934 A `deinit self` call on a memory-only parameter value
@@ -11486,31 +11507,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R359 `Tuple`'s private storage destroys its elements, where
-  upstream's storage is trivially destructible**
+- [ ] **R2028 `Tuple`'s storage is a non-copyable
+  `storage: __RuntimeTuple[*Self.Ts]`, where upstream's is
+  `_mlir_value: !kgen.struct`, a bit-copied MLIR value**
 
-  Problem: Mojito's `Tuple` holds a `__RuntimeTuple[*Self.Ts]` whose
-  destruction destroys every element, where upstream's `!kgen.struct`
-  storage has a trivial destructor and `Tuple.__deinit__` destroys each
-  element through `Pointer(to=self[i]).unsafe_deinit_pointee()`.
-  - The consuming members (`reverse`, `concat`, `consume_elements`) take
-    each element with `Pointer(to=self[i]).unsafe_take_pointee()` and then
-    must end the storage with `lit.ownership.mark_destroyed`, which upstream
-    does not need.
-  - `Tuple`'s move initializer ends `move.storage` with
-    `lit.ownership.mark_destroyed` for the same reason, and its trivial
-    copy and move fast paths spell `self._mlir_value = copy._mlir_value` as
-    `self.storage = copy.storage.copy()` and `move.storage^`.
-  - `unsafe_take_pointee()` through an origin-bearing pointer to an element
-    with a destructor is admitted only in the bundled storage modules
-    (`checker/method_calls/builtin_types.rs`), because user code cannot end
-    the owner's storage.
-  - Probe: `llvm_intrinsic`'s `loaded_pack`, a `Tuple[*types]` from
-    `kgen.struct.load_indirect`, is moved into a register and
-    `drop.reg`'d after `pop.call_llvm_intrinsic` reads it, where
-    upstream's loaded `!kgen.struct` is never destroyed (R1932).
+  Upstream's trivial copy fast path is `self._mlir_value = copy._mlir_value`;
+  Mojito's must call `self.storage = copy.storage.copy()`, because the
+  storage at a symbolic pack is not `ImplicitlyCopyable`.
+  - Probe: with `self.storage = copy.storage`, the bundled library does not
+    package ("value of type 'Tuple[*Ts]' cannot be implicitly copied").
+  - The field is named `storage`, so `reflect[Tuple[Int]]` names a field
+    the pin calls `_mlir_value`.
+  - Renaming it collides with the compiler's `ct::MLIR_VALUE_FIELD`
+    special cases, and the VM spells `"storage"` for tuples
+    (`vm/adapters.rs`, `vm.rs`, `crossing.rs`).
+  - Upstream spells the type
+    `__mlir_type[\`!kgen.struct<:\`, type_of(Self.Ts.values), Self.Ts.values, \` isParamPack>\`]`.
+  - Found while landing R359 (2026-11-08).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R360 `TString` owns a `Tuple` of its parts, where the pin's borrows
   a pack beside its encoded literal text**
@@ -12590,11 +12605,10 @@ residue found inside a task moves to the task that owns its fix.
 
   Problem: both are declared in `std/builtin/tuple.mojo` with upstream's
   signatures, but their bodies write
-  `Pointer(to=result[i]).unsafe_write(self.storage[k]^)`, where upstream
+  `Pointer(to=result[i]).unsafe_write(Pointer(to=self[k]).unsafe_take_pointee())`,
+  where upstream
   writes `Pointer(to=result[i]).unsafe_write_move_from(rebind[Pointer[
   type_of(result[i]), origin_of(self)]](Pointer(to=self[k])))`.
-  - A move out through a pointer is untracked, and the compiler destroys the
-    `__RuntimeTuple` storage, so the element would be destroyed twice.
   - `concat` retypes the destination place instead of the source pointer:
     `rebind[Self.Ts[i]](result[i])`.
   - `concat` reads its length as `Self.Ts.length` where upstream calls
@@ -12603,9 +12617,9 @@ residue found inside a task moves to the task that owns its fix.
     upstream reads `type_of(result).__len__()` and
     `type_of(other).__len__()`.
   - Pinned by `assets/ok/tuple_reverse_concat.mojo`.
-  - `Pointer.unsafe_write_move_from` exists; the storage model still
-    double-destroys an element moved out through a pointer (R359).
-  - Depends on R359, R1509
+  - `Pointer.unsafe_write_move_from` exists, and the storage is trivially
+    destructible, so the respelling waits only on the dependencies below.
+  - Depends on R1509
     (a `type_of(...)` receiver), R495 (its symbolic spelling), R340 (`Self.__len__()` in a header), and
     R344.
   - Model: Fable, Planned.
