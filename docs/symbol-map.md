@@ -2322,7 +2322,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `self_instance_spelling`. A folded struct result is respelled as the
   method's call (`respelled_struct_value`). `build_ct`'s operators
   (`Checker::infix_value`, `negated_value`, `checker/constraints.rs`) call
-  an operand's builtin dunder through `struct_operator_value`, and a
+  an operand's builtin dunder through `struct_operator_value`; a
+  symbolic `SIMD` operand's infix operator is its dunder's call too
+  (`dunder_call`, `Checker::operator_application`,
+  `comptime_validation.rs`), the shared folder's node standing for a
+  builtin dunder whose body has not folded yet (R2052), and a
   `where` comparison of struct values compiles through it
   (`struct_comparison`); `param_expr::write_operator_application` shows
   such a call in operator form. `builtin_convention_rejection`

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time operator over a symbolic `SIMD` operand is its dunder's
+  call, as Mojo's parser spells it (R1994): `T[v // w]` and `T[v % w]`
+  are `T[v.__floordiv__(w)]` and `T[v.__mod__(w)]` over `Int32`, and
+  `V[v * 2.0]` and `B[v == 2.0]` are `V[v.__mul__(2.0)]` and
+  `B[v.__eq__(2.0)]` over a float vector. A kept `//` or `**` now shows
+  in parentheses, as at the pin (`Buf[(8 // 2)]`).
 - A compile-time call of `SIMD`'s arithmetic dunders folds its builtin
   `pop` body, as the pin does, so `T[v.__add__(w)]`, `T[v.__neg__()]`,
   and `T[v.__sub__(w)]` are `T[v + w]`, `T[-v]`, and `T[v - w]` over

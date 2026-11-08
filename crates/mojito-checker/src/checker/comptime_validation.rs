@@ -1939,6 +1939,20 @@ impl Checker {
         })
     }
 
+    /// The application of the operator dunder call `expr`
+    /// ([`Self::called_application`]), and whether it is the kept
+    /// application of an `@always_inline("builtin")` callable whose body
+    /// did not fold over the call's arguments
+    /// ([`Self::fold_builtin_bodies`]). `None` for a call no compile-time
+    /// call applies.
+    pub(super) fn operator_application(&self, expr: &Expr) -> Option<(ParamExpr, bool)> {
+        let selected = self.selected_application(expr)?;
+        if self.application_constraint_failure(&selected).is_some() {
+            return None;
+        }
+        self.selected_call_folding(selected)
+    }
+
     /// Whether `expr` calls an `@always_inline("builtin")` callable whose
     /// body folded and holds a `comptime assert`
     /// ([`Self::fold_builtin_bodies`]), every argument of the call a
@@ -3184,6 +3198,13 @@ impl Checker {
     /// them. `None` for a result no parameter expression holds or a
     /// `raises` callable.
     fn selected_call(&self, selected: Selected<'_>) -> Option<ParamExpr> {
+        self.selected_call_folding(selected)
+            .map(|(application, _)| application)
+    }
+
+    /// [`Self::selected_call`], and whether its value is the kept
+    /// application of a builtin callable whose body did not fold.
+    fn selected_call_folding(&self, selected: Selected<'_>) -> Option<(ParamExpr, bool)> {
         let Selected {
             function,
             instance,
@@ -3233,7 +3254,11 @@ impl Checker {
                 &applied,
                 mojito_types::param_expr::MetaTy::value(reference.into()),
             );
-            return self.param_context.load_from_mem(&application).ok();
+            return self
+                .param_context
+                .load_from_mem(&application)
+                .ok()
+                .map(|value| (value, false));
         }
         let application = self.param_context.apply(
             function.symbol(),
@@ -3242,8 +3267,11 @@ impl Checker {
         );
         match self.folded_builtin_call(function, instance.as_ref(), &arguments, Some(&application))
         {
-            BuiltinFold::Folded(folded) => Some(folded),
-            BuiltinFold::Applied => Some(application),
+            BuiltinFold::Folded(folded) => Some((folded, false)),
+            BuiltinFold::Applied => Some((
+                application,
+                function.inline == mojito_checked::declaration::InlineLevel::Builtin,
+            )),
             BuiltinFold::Unbound => None,
         }
     }

@@ -2347,14 +2347,23 @@ impl Checker {
                 .as_value()
                 .is_some_and(|ty| ty.is_simd() || ty.kind().is_int_literal())
         };
-        let right_built = if is_simd_length_value(&right_built) && numeric(&left_built) {
+        let converted = is_simd_length_value(&right_built) && numeric(&left_built);
+        let right_built = if converted {
             mojito_types::types::simd_length_image(&self.param_context, &right_built)
                 .map_err(param_error)?
         } else {
             right_built
         };
-        let dunder_operand =
+        let struct_operand =
             |built: &ParamExpr| struct_valued(built) || literal_construction(built);
+        // A `SIMD` operand applies its dunder too, as the pin spells `v < w`
+        // as `v.__lt__(w)`. Closed operands fold through the shared folder,
+        // the value the dunder's application evaluates to; a converted
+        // `SIMDLength` operand is its image, which no spelled receiver is.
+        let simd_dunder = !converted
+            && (left_built.as_constant().is_none() || right_built.as_constant().is_none());
+        let dunder_operand =
+            |built: &ParamExpr| struct_operand(built) || (simd_dunder && simd_valued(built));
         if dunder_operand(&left_built) || dunder_operand(&right_built) {
             let mut candidates = Vec::new();
             if dunder_operand(&left_built)
@@ -2366,6 +2375,20 @@ impl Checker {
                 && let Some(dunder) = op.reflected_dunder()
             {
                 candidates.push((right, dunder, Some(left)));
+            }
+            // A `SIMD` operator is its dunder's application: a builtin
+            // dunder's folded body, the node the shared folder builds
+            // (`v < w`, `v + w`), and any other dunder's call (`v // w`). A
+            // builtin body that does not fold over the operands yet (a
+            // signature `SIMD`'s own module checks before its bodies fold)
+            // and a dunder no call applies keep the folder's node.
+            if !struct_operand(&left_built) && !struct_operand(&right_built) {
+                return match candidates.iter().find_map(|(receiver, dunder, operand)| {
+                    self.operator_application(&dunder_call(expr, receiver, dunder, *operand))
+                }) {
+                    Some((application, false)) => Ok(application),
+                    _ => self.fold_infix(op, &left_built, &right_built),
+                };
             }
             let applied = self.struct_operator_value(expr, op.symbol(), &candidates);
             // A `SIMDLength` before a vector or a literal, under an operator
@@ -2584,17 +2607,7 @@ impl Checker {
         candidates
             .iter()
             .find_map(|(receiver, dunder, operand)| {
-                let mut call = Expr::new(
-                    ExprKind::MethodCall {
-                        object: Box::new((*receiver).clone()),
-                        method: (*dunder).to_string(),
-                        args: operand.iter().map(|operand| (*operand).clone()).collect(),
-                        kwargs: Vec::new(),
-                    },
-                    expr.span,
-                );
-                call.source.clone_from(&expr.source);
-                self.called_application(&call)
+                self.called_application(&dunder_call(expr, receiver, dunder, *operand))
             })
             .ok_or_else(|| {
                 TypeError::NotComptime(format!(
@@ -6235,6 +6248,31 @@ fn literal_construction(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(|ty| ty.kind().is_numeric_literal())
+}
+
+/// The call `receiver.dunder(operand)` the operator `expr` spells, as
+/// Mojo's parser spells `a + b` as `a.__add__(b)`.
+fn dunder_call(expr: &Expr, receiver: &Expr, dunder: &str, operand: Option<&Expr>) -> Expr {
+    let mut call = Expr::new(
+        ExprKind::MethodCall {
+            object: Box::new(receiver.clone()),
+            method: dunder.to_string(),
+            args: operand.into_iter().cloned().collect(),
+            kwargs: Vec::new(),
+        },
+        expr.span,
+    );
+    call.source.clone_from(&expr.source);
+    call
+}
+
+/// Whether `value` is a `SIMD`-typed compile-time value (`Int`, `Int32`,
+/// `Float32`, a vector), whose operators are `SIMD`'s dunders.
+fn simd_valued(value: &ParamExpr) -> bool {
+    value
+        .meta()
+        .as_value()
+        .is_some_and(|ty| ty.kind().is_simd())
 }
 
 fn is_simd_length_value(value: &ParamExpr) -> bool {

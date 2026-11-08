@@ -1,4 +1,4 @@
-# expect: expected Buf[8 // 2], found Buf[4]
+# expect: expected Buf[(8 // 2)], found Buf[4]
 # Replacement re-folds the polynomial part of a type argument and leaves an
 # opaque atom unfolded, as the pinned Mojo does: `Buf[n // 2]` at `n = 8` is
 # `Buf[8 // 2]`, which is not `Buf[4]` (`docs/notes/param-expr-attributes.md`).

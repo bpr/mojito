@@ -1162,6 +1162,7 @@ assets/ok/simd_mod_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_modf_floor.mojo	main	exe-differential	sanitized
 assets/ok/simd_non_power_of_two_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
+assets/ok/simd_operator_dunder_application.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_pow_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_prefix_operator_runtime_fold.mojo	main	exe-differential	sanitized

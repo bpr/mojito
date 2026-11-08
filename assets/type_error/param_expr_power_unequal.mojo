@@ -1,4 +1,4 @@
-# expect: expected Buf[n ** 2], found Buf[n * n]
+# expect: expected Buf[(n ** 2)], found Buf[n * n]
 # A symbolic power is a deferred atom and is never expanded: the pinned Mojo
 # does not equate `n ** 2` with `n * n`.
 struct Buf[n: Int](Copyable, Movable):

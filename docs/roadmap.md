@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2052**.
+Next free ID: **R2053**.
 
 ## Ordered Work
 
@@ -11196,29 +11196,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1994 A compile-time operator over `SIMD` operands builds its
-  `ParamOp` directly, where upstream folds the operator's dunder call**
+- [ ] **R2052 A builtin body folds in one pass after signatures check,
+  where upstream folds an inline-builtin call on demand**
 
-  Mojo's parser spells `a < b` as `a.__lt__(b)` and folds that call;
-  `Checker::infix_value` (`checker/constraints.rs`) builds `ParamOp::Lt`
-  over `SIMD` operands itself, since `SIMD` is not `struct_valued`.
-  - Since R1574 the comparison dunders fold to the same nodes, so the
-    comparison arm can route through `struct_operator_value` /
-    `called_application` with no change in identity.
-  - Since R1993 the arithmetic dunders fold to the infix nodes too.
-  - Done when `infix_value`'s `SIMD` operands go through the dunder call.
-  - Probe: `assets/ok/always_inline_builtin_comparison_fold.mojo`,
-    `always_inline_builtin_arithmetic_fold.mojo`,
-    `simd_comparison_dunders.mojo`, and `where n < 3` keep their output.
-  - Probe: `T[v // w]` against `T[v.__floordiv__(w)]` and `T[v % w]`
-    against `T[v.__mod__(w)]` over `Int32`, which the pin equates; the
-    infix builds `ParamOp::FloorDiv`/`Mod` where the dunder is a kept
-    application.
-  - Probe: `T[v * 2.0]` against `T[v.__mul__(2.0)]` and `B[v == 2.0]`
-    against `B[v.__eq__(2.0)]` over `SIMD[DType.float32, 2]`, which the
-    pin equates; `literal_at` folds the float literal where the dunder's
-    argument keeps the non-builtin `SIMD.__init__(FloatLiteral)`.
-  - Found while landing R1574 (2026-11-07).
+  `fold_builtin_bodies` (`checker/builtin_fold.rs`) folds every
+  `@always_inline("builtin")` body once, so a call checked earlier keeps
+  its application. Upstream's `foldInlineBuiltinFunction` folds the
+  callee's body wherever a call is built.
+  - The stdlib's own signatures are checked before `SIMD`'s and `DType`'s
+    bodies fold: `2 * Int(Self.length)` in `SIMD.join`'s `indices`,
+    `length * 2`, `width == 8` in `dtype.mojo`, and `self == rhs`.
+  - `Checker::infix_value` (`checker/constraints.rs`) covers those with
+    the shared folder's node when `operator_application` reports an
+    unfolded builtin dunder. Fold on demand, then delete that arm.
+  - The `where`-clause replacement in `constraints.rs` also refolds "a
+    builtin call the clause recorded before its callee's body folded".
+    That workaround goes too.
+  - Probe: a trace on the unfolded arm of `infix_value` fires for no call
+    while the bundled stdlib packages, and
+    `assets/ok/always_inline_builtin_arithmetic_fold.mojo` and
+    `simd_operator_dunder_application.mojo` keep their output.
+  - Found while landing R1994 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
