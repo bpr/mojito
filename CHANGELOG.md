@@ -4025,6 +4025,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time call of any method of a `SIMD` receiver is that method's
+  application, as at the pin (R1995): `T[v.reduce_add()]`,
+  `T[v.reduce_max()]`, or `L[v.__len__()]` in a signature no longer fails
+  as "not an associated comptime expression". A standard-library signature
+  over a builtin conversion classifies again once the builtin folds, so
+  `reduce_add`'s result is `Int32` rather than an unfolded width.
+
 - A field moved out of an expression temporary (`mk().s^`) is rejected as
   at the pin, with `field '(expression temporary).s' destroyed out of the
   middle of a value`, instead of trapping at run time with a use after

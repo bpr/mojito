@@ -253,6 +253,7 @@ assets/ok/comptime_scalar_constant_method_call.mojo	-	ineligible	no-scalar-entry
 assets/ok/comptime_self_member_applied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_simd_initializer_applications.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_simd_member_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_slice_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_annotated_constant.mojo	-	ineligible	no-scalar-entry-shape

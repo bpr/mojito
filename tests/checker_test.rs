@@ -10099,3 +10099,14 @@ fn a_literal_rule_type_carries_a_symbolic_attribute() {
         "{error}"
     );
 }
+
+/// A compile-time call of a `SIMD` receiver's non-builtin method in a
+/// signature is that method's application, as the pin's is, `Self._T[k]`
+/// results included; a `mut self` member takes no compile-time receiver.
+#[test]
+fn simd_member_call_in_signature_is_an_application() {
+    let applied = "struct T[n: Int32]:\n    def __init__(out self):\n        pass\n\ndef use[v: SIMD[DType.int32, 4]](var t: T[v.reduce_add()], var u: T[v.reduce_max()]):\n    print(v[0])\n";
+    check_with_std(applied).expect("a SIMD member call in a signature applies");
+    let mutating = "struct T[n: Int32]:\n    def __init__(out self):\n        pass\n\ndef use[v: SIMD[DType.int32, 1]](var t: T[v.__iadd__(v)]):\n    print(v)\n";
+    check_with_std(mutating).expect_err("a `mut self` member is no application");
+}

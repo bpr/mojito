@@ -386,6 +386,45 @@ impl ApplicableFunction {
             .map(|signature| signature.decls.as_slice())
     }
 
+    /// Whether its classified signature, its result, a value parameter's
+    /// type, or a runtime parameter's, holds an application of one of
+    /// `symbols`.
+    fn applies_any_of(&self, symbols: &HashSet<String>) -> bool {
+        let Some(signature) = &self.signature else {
+            return false;
+        };
+        let mut search = ApplicationSearch {
+            symbols,
+            found: false,
+        };
+        let declared = self
+            .params
+            .iter()
+            .map(|param| &param.ty)
+            .chain(self.collector.as_ref().map(|collector| &collector.element))
+            .filter_map(|slot| match slot {
+                SlotType::Declared(_, ty) => ty.as_ref(),
+                _ => None,
+            });
+        let decl_types = signature.decls.iter().filter_map(|decl| match decl {
+            ParamDecl::Value { ty, .. } => Some(ty),
+            ParamDecl::Type { .. } => None,
+        });
+        for ty in signature
+            .result
+            .iter()
+            .chain(&signature.refined_self)
+            .chain(declared)
+            .chain(decl_types)
+        {
+            if search.found {
+                break;
+            }
+            let _ = mojito_types::types::rewrite_ty(ty, &mut search);
+        }
+        search.found
+    }
+
     /// Take `clauses`, emitted by its registered signature over its binders
     /// `decls`, as its constraints, each binder re-owned to the one its
     /// own declared binder at that position is: an overloaded callable's
@@ -2322,6 +2361,37 @@ impl Checker {
         }
     }
 
+    /// Classify again each callable `stmts` declare whose classified
+    /// signature applies a builtin `stmts` declare whose body has since folded, so the
+    /// application folds in it as the pin folds an `@always_inline("builtin")`
+    /// application wherever it is built: `SIMD.reduce_add`'s `SIMD[Self.dtype,
+    /// size_out]` width converts through `SIMDLength.__init__`, which folds
+    /// after the signatures it appears in first classify.
+    pub(super) fn reclassify_signatures_over_folded_builtins(&mut self, stmts: &[Stmt]) {
+        let declarations = self.listed_declarations(stmts);
+        let folded: HashSet<String> = declarations
+            .iter()
+            .filter(|declaration| declaration.function.folded_body.is_some())
+            .map(|declaration| declaration.function.symbol().to_string())
+            .collect();
+        if folded.is_empty() {
+            return;
+        }
+        let stale: Vec<_> = declarations
+            .into_iter()
+            .filter(|declaration| declaration.function.applies_any_of(&folded))
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        for declaration in &stale {
+            if let Some(entry) = self.applicable_entry(declaration) {
+                entry.signature = None;
+            }
+        }
+        self.classify_applicable_signatures(stmts);
+    }
+
     /// [`applicable_declarations`] of `stmts`, each callable as
     /// [`Self::applicable_functions`] holds it, its signature classified and
     /// its body folded so far.
@@ -3274,25 +3344,20 @@ impl Checker {
         };
         let instance = receiver.meta().as_value()?.clone();
         // A numeric literal is its declared struct's application, whose
-        // dunders a literal construction (`type_of(exp)()`) applies.
-        // A vector applies only its builtin members, whose bodies fold
-        // (`v.lt(w)`); any other member call runs lifted.
-        let simd = instance.is_simd();
+        // dunders a literal construction (`type_of(exp)()`) applies; a
+        // vector is `SIMD`'s, whose builtin members fold (`v.lt(w)`) and
+        // whose others the elaborator runs (`v.reduce_add()`).
         let owner = match instance.kind() {
             kind if kind.is_int_literal() => mojito_types::types::INT_LITERAL_TYPE_NAME,
             kind if kind.is_float_literal() => mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
-            _ if simd => mojito_types::types::SIMD_TYPE_NAME,
+            _ if instance.is_simd() => mojito_types::types::SIMD_TYPE_NAME,
             kind => kind.as_non_simd_struct()?.0.as_str(),
         };
         let name = format!("{}.{method}", template_name(owner));
         self.applicable_functions
             .get(&name)?
             .iter()
-            .any(|function| {
-                function.takes_self()
-                    && (!simd
-                        || function.inline == mojito_checked::declaration::InlineLevel::Builtin)
-            })
+            .any(ApplicableFunction::takes_self)
             .then_some((name, instance, Some(receiver)))
     }
 
@@ -6372,6 +6437,30 @@ struct AppliedSignature {
     refined_self: Option<Ty>,
 }
 
+/// Whether a type holds an application of one of `symbols`
+/// ([`ApplicableFunction::applies_any_of`]).
+struct ApplicationSearch<'a> {
+    symbols: &'a HashSet<String>,
+    found: bool,
+}
+
+impl mojito_types::types::TyRewrite for ApplicationSearch<'_> {
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        let mut nested = Vec::new();
+        expr.visit(&mut |node| {
+            self.found |= matches!(node.kind(), ParamKind::Apply { function, .. } if self.symbols.contains(function.as_str()));
+            nested.extend(node.embedded_types().into_iter().cloned());
+        });
+        for ty in &nested {
+            mojito_types::types::rewrite_ty(ty, self)?;
+        }
+        Ok(expr.clone())
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ApplicableParameter {
     name: String,
@@ -6594,15 +6683,13 @@ impl ApplicableShape<'_> {
                     (**referent).clone()
                 }
                 // A `comptime` member type of `Self` (`SIMD.eq`'s
-                // `Self._Mask`) a builtin body returns, registered before
-                // the body folds ([`Checker::register_builtin_result_members`]).
-                SourceType::SelfParam(_)
-                    if mojito_checked::declaration::InlineLevel::of(self.decorators).is_ok_and(
-                        |level| level == mojito_checked::declaration::InlineLevel::Builtin,
-                    ) =>
-                {
-                    self.ret.clone()
-                }
+                // `Self._Mask`), or a parametric one applied
+                // (`SIMD.reduce_max`'s `Self._T[size_out]`), resolved in its
+                // struct's member scope as the signature classifies. A
+                // builtin's bare member is registered before its body folds
+                // ([`Checker::register_builtin_result_members`]); no other
+                // callable's member is needed sooner.
+                SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => self.ret.clone(),
                 ret if is_mlir_index_source(ret)
                     || is_mlir_source(ret, "!kgen.deferred")
                     || is_mlir_source(ret, "!kgen.string")

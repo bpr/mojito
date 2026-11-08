@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2044**.
+Next free ID: **R2045**.
 
 ## Ordered Work
 
@@ -6271,23 +6271,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1995 A compile-time call of a `SIMD` receiver's non-builtin
-  method is no application**
+- [ ] **R2044 A value parameter read only through an application in
+  another parameter's type is removed, and its caller fails to elaborate**
 
-  `use[v](T[v.reduce_add()]())` over `def use[v: SIMD[DType.int32, 4]](var
-  t: T[v.reduce_add()])` is "not a compile-time Int constant: not an
-  associated comptime expression", where the pin prints `ok`.
-  - `Checker::applied_receiver` (`checker/comptime_validation.rs`) applies
-    a `SIMD` receiver's member only when it is `@always_inline("builtin")`,
-    so any other member call in a signature builds nothing.
-  - `ApplicableShape::applicable` likewise admits a `Self.T` result
-    (`SourceType::SelfParam`) only for a builtin callable.
-  - Upstream applies any such call, which the elaborator runs.
-  - Lever: admit both for every callable, then confirm the corpus keeps
-    its output where a body's lifted thunk becomes an application.
-  - Found while landing R1574 (2026-11-07).
+  `def use[v: SIMD[DType.int32, 4]](var t: T[f(v)]): print("ok")`, called
+  as `use[v](T[f(v)]())`, fails with "unsupported monomorphizing `use`:
+  unresolved value parameter `v`", where the pin prints `ok`.
+  - `remove-unused-params` (`unread_parameters_of`, `mir/param_uses.rs`)
+    walks the body, not the runtime parameters' declared types, so it
+    drops `v`, which only `t`'s type reads.
+  - `Specializer::infer_call` (`native/mono/infer.rs`) then unifies `t`'s
+    pattern `T[f(v)]` through `substituted_struct_arguments` with `v`
+    unbound.
+  - Upstream's `RemoveUnusedParams` keeps a parameter the function's type
+    depends on: count a parameter a runtime parameter's declared type
+    reads as read.
+  - Probes: the shape above over a free `f(x: SIMD[DType.int32, 4]) ->
+    Int`; the same with `T[v.reduce_add()]` over `struct T[n: Int32]`
+    (R1995's headline). Each runs once the body reads `v`.
+  - Found while landing R1995 (2026-11-08).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1220 A `TypeList` proposition over a pack in a signature type is
   rejected**

@@ -2294,7 +2294,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `spells_asserting_builtin`), so `Checker::record_folded_builtin_call`
   records a run-time call of one over compile-time arguments as its folded
   parameter value, as upstream's parser folds the call, and returns the pin's rejection of a body construct its fold
-  refuses (`builtin_body_rejection`). A static method's body is folded and
+  refuses (`builtin_body_rejection`); then
+  `Checker::reclassify_signatures_over_folded_builtins` classifies again
+  each signature that applied one of those builtins before it folded
+  (`SIMD.reduce_add`'s `SIMDLength` width). A static method's body is folded and
   judged in its struct's scope (`in_owner_scope`, over
   `ApplicableDeclaration::owner`), so `Self.k` is the struct's own binder,
   which `called_application` binds from the instance through

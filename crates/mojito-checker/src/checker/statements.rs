@@ -167,6 +167,7 @@ impl Checker {
         self.register_builtin_result_members(stmts);
         self.classify_applicable_signatures(stmts);
         self.fold_builtin_bodies(stmts)?;
+        self.reclassify_signatures_over_folded_builtins(stmts);
         self.compile_application_constraints(stmts);
         self.complete_shell_defaults(stmts, false)?;
         drop(phase);
