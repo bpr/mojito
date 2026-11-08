@@ -4006,6 +4006,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call of a struct's `comptime` type member that applies a function by
+  keyword (`CompilationTarget.current()`, whose member is
+  `CompilationTarget[_mlir_value=_current_target()]`) spells the member's
+  application under identities derived from the call's (R1808). Each call
+  now builds its own checked node for the applied function, where every
+  call shared the member's one source occurrence.
+
 - A struct shell whose parameter is typed by a module alias that has yet to
   register (`struct Tag[s: StaticString]`, with `std.string`'s
   `StaticString` declared above `struct StringSpan`) waits for the alias

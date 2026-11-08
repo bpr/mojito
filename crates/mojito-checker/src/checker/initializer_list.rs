@@ -790,7 +790,7 @@ impl Checker {
                 },
             ));
         }
-        let Some((callee, param_args)) = alias_application(value) else {
+        let Some((callee, param_args)) = alias_application(&applied) else {
             return self.initializer_list_construction(
                 expression,
                 args.to_vec(),

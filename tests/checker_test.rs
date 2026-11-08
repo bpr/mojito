@@ -250,6 +250,21 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
 }
 
 #[test]
+fn type_member_construction_spells_its_alias_under_the_call_identity() {
+    let source = "def seed() -> Int:\n    return 3\n\nstruct Holder[v: Int = seed(), //](TrivialRegisterPassable):\n    var _d: Int\n\n    def __init__(out self):\n        self._d = 0\n\n    comptime current = Holder[v=seed()]\n\n    def get(self) -> Int:\n        return Self.v\n\ndef main():\n    print(Holder.current().get())\n    print(Holder.current().get())\n";
+    let checked = checked_source_with_std(source, "alias_construction.mojo")
+        .expect("check")
+        .into_checked();
+    let mut locations = std::collections::HashSet::new();
+    for expression in own_expressions(&checked) {
+        assert!(
+            locations.insert(expression.location()),
+            "one checked syntax occurrence must build exactly one node: {expression:?}"
+        );
+    }
+}
+
+#[test]
 fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
     let checked = checked_source_with_std(
         "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> Int:\n    return 0\ndef main():\n    print(pick(1))\n",

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2042**.
+Next free ID: **R2043**.
 
 ## Ordered Work
 
@@ -4713,17 +4713,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1808 `CompilationTarget.current`'s `_current_target()` builds two
-  checked nodes at one source occurrence**
+- [ ] **R2042 A `case` pattern's value builds a checked node of its own
+  beside the one inside the case's planned test**
 
-  The member `comptime current = CompilationTarget[_mlir_value=
-  _current_target()]` in `stdlib/std/sys/info.mojo` checks its call twice,
-  where every syntax occurrence should build exactly one node.
-  - `checked_boundary_keys_template_source_provenance_by_occurrence` in
-    `tests/checker_test.rs` checks the program's own expressions only
-    until this lands; restore the whole-program check with the fix.
+  The checked arena builds a node for each expression a `case` pattern
+  embeds (`CheckedPattern`), and again for the clone of that expression
+  the pattern compiler put in the case's planned test (`subject ==
+  value`) or `comptime match` condition, so one source occurrence builds
+  two nodes.
+  - Upstream's pattern is lowered into its tests: the value is one
+    operand of one comparison, never a node of its own.
+  - Lever: let the checked pattern name the test's operand, or carry no
+    expression nodes at all, and move the readers of
+    `CheckedPattern::expressions` (HIR, the comptime rewrite) to the
+    commands.
+  - Probe: `checked_boundary_keys_template_source_provenance_by_occurrence`
+    in `tests/checker_test.rs` with `MOJITO_STD_PACKAGE=0` and the
+    whole-program check (`checked.expressions()` instead of
+    `own_expressions`) reports 99 duplicates, every one a pattern value:
+    `case "bool":` and `case .bool:` in `DType`, `comptime match width:
+    case 8:`, and `comptime match dtype: case .float16:` in
+    `utils/numerics.mojo`, `math/math.mojo`, and `simd.mojo`.
+  - Restore that test's whole-program check with the fix.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1650 The elaborator binds a callable binder to its argument's
   type with the environment erased, so `conforms_to` over a thin function
