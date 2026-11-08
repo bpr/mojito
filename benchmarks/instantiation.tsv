@@ -171,7 +171,7 @@ assets/ok/comptime_for_collection_template_served.mojo	elaborated	43	4327	27	33	
 assets/ok/comptime_for_display_binding.mojo	elaborated	49	4879	30	39	2749	4525	242	892	207
 assets/ok/comptime_for_display_element_reads.mojo	elaborated	45	3075	21	31	1682	2707	169	512	114
 assets/ok/comptime_for_display_method_reads.mojo	elaborated	48	3555	23	30	1702	2235	280	533	117
-assets/ok/comptime_for_display_over_binder.mojo	elaborated	41	3052	28	33	2431	2881	126	788	103
+assets/ok/comptime_for_display_over_binder.mojo	elaborated	37	2935	24	29	2157	2764	117	685	94
 assets/ok/comptime_for_display_simd_elements.mojo	elaborated	27	1367	17	19	1976	971	107	646	84
 assets/ok/comptime_for_element_alias_index.mojo	elaborated	30	1801	18	23	1571	1629	106	482	89
 assets/ok/comptime_for_generic_iterator_parameter.mojo	elaborated	31	1793	17	24	1567	1484	104	495	89
@@ -179,7 +179,7 @@ assets/ok/comptime_for_index_typed_local.mojo	elaborated	46	2766	23	39	2474	2357
 assets/ok/comptime_for_iterable_struct.mojo	elaborated	22	985	14	15	1437	743	83	459	68
 assets/ok/comptime_for_iteration_scope.mojo	elaborated	27	1907	15	19	1444	1025	96	460	72
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	elaborated	39	1905	17	23	1572	1290	141	499	82
-assets/ok/comptime_for_named_collection.mojo	elaborated	38	2347	25	30	1951	2120	122	620	99
+assets/ok/comptime_for_named_collection.mojo	elaborated	34	2230	21	26	1677	2003	113	517	90
 assets/ok/comptime_for_nested_inlined_constructor_instances.mojo	elaborated	32	1471	20	25	1509	880	93	483	78
 assets/ok/comptime_for_nested_unread_instances.mojo	elaborated	47	1655	34	40	1755	952	108	588	93
 assets/ok/comptime_for_nested_unused_argument_instances.mojo	elaborated	39	1495	23	29	1617	964	100	517	82
@@ -187,7 +187,7 @@ assets/ok/comptime_for_over_chained_reflect_binding.mojo	elaborated	32	1481	18	2
 assets/ok/comptime_for_string_aggregates.mojo	elaborated	44	4446	18	25	1957	2948	260	594	92
 assets/ok/comptime_for_struct_elements.mojo	elaborated	23	1015	15	16	1474	891	84	467	69
 assets/ok/comptime_for_template_served.mojo	elaborated	46	3603	21	30	2055	2941	183	648	122
-assets/ok/comptime_for_tuple_elements.mojo	elaborated	36	2301	22	26	1948	1924	109	614	84
+assets/ok/comptime_for_tuple_elements.mojo	elaborated	32	2184	18	22	1674	1807	100	511	75
 assets/ok/comptime_for_unserved_nested.mojo	elaborated	27	1408	17	20	1596	1282	90	508	75
 assets/ok/comptime_for_user_iterator.mojo	elaborated	29	2456	18	22	1747	1671	112	551	89
 assets/ok/comptime_for_value_pack_iterator.mojo	elaborated	48	3320	29	39	2243	2932	168	706	137
@@ -1636,4 +1636,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	101	6349	50	90	3245	4876	598	107
 benchmarks/compile/trait_defaults.mojo	elaborated	125	7895	43	87	2027	6352	302	627	194
 benchmarks/compile/tstring.mojo	elaborated	29	1158	17	20	1458	865	94	467	73
 benchmarks/compile/tuple.mojo	elaborated	36	1639	19	25	1527	1015	112	478	83
-total	1637	62961	4188527	32073	46558	2857140	2629224	311613	912327	209076
+total	1637	62949	4188176	32061	46546	2856318	2628873	311586	912018	209049
