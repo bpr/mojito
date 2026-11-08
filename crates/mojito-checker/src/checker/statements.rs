@@ -157,6 +157,8 @@ impl Checker {
                 waiting_aliases.retain(|waiting| *waiting != index);
             }
         }
+        // A shell typed by such an alias (`struct Tag[s: StaticString]`).
+        self.settle_deferred_shells(stmts, &mut deferred_shells);
         self.resolve_materialization_targets(stmts, false)?;
         drop(phase);
         // A builtin body folds before any signature or field type calls it,
@@ -579,9 +581,10 @@ impl Checker {
     }
 
     /// Whether a struct shell over `params` that failed waits for other
-    /// declarations: a parameter typed by another struct's member, or by a
+    /// declarations: a parameter typed by another struct's member, by a
     /// struct this program declares that has yet to register its shell
-    /// (`w: W`, `t: T[1]`).
+    /// (`w: W`, `t: T[1]`), or by a module alias this program declares that
+    /// has yet to register (`s: StaticString` above `struct StringSpan`).
     fn shell_awaits_declarations(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
         super::traits::names_member_type(params)
             || params.iter().any(|param| {
@@ -591,7 +594,11 @@ impl Checker {
                     None => param.bounds.first().filter(|_| param.bounds.len() == 1),
                 };
                 named.is_some_and(|name| {
-                    self.declared_structs.contains(name) && !self.predeclared_structs.contains(name)
+                    let unregistered_struct = self.declared_structs.contains(name)
+                        && !self.predeclared_structs.contains(name);
+                    let unregistered_alias = self.declared_aliases.contains(name)
+                        && !self.comptime_aliases.contains_key(name);
+                    unregistered_struct || unregistered_alias
                 })
             })
     }

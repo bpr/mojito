@@ -4006,6 +4006,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct shell whose parameter is typed by a module alias that has yet to
+  register (`struct Tag[s: StaticString]`, with `std.string`'s
+  `StaticString` declared above `struct StringSpan`) waits for the alias
+  instead of reading it as an unknown trait, so
+  `assets/ok/static_string_parameter.mojo` checks with the library linked
+  from source (R1807). `module_type_alias_reads.mojo` and
+  `comptime_application_ref_parameter.mojo` already did; all three reach
+  execution source-linked once R1934 lands.
+
 - A library struct's conditional conformance reads its own parameter beside a
   user module constant of that name: `MaybeUninit[T]`'s `Copyable where …`
   no longer reads a program's `comptime T = (twice(1), "a")` when the

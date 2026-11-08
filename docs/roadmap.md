@@ -4713,27 +4713,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1807 Three fixtures fail to check with the library linked from
-  source, which the compiled package checks**
-
-  The raw phase seams (`link` → `elaborate` → `check_program`, and
-  `MOJITO_STD_PACKAGE=0`) reject them; `Compiler` with the package runs them.
-  - `assets/ok/module_type_alias_reads.mojo`: "unknown type 'C'" for
-    `comptime C = B` over `comptime B = Int`, since `Int` became a
-    `std.simd` alias (1650c7c3).
-    With the package it now fails later, on R2000.
-  - `assets/ok/static_string_parameter.mojo`: "unknown trait
-    '__module$std$string$StaticString' in a type-parameter bound", already
-    failing at 0db05093.
-  - `assets/ok/comptime_application_ref_parameter.mojo` and
-    `compile_time_application_takes_ref_but_not_mut_parameters` in
-    `tests/checker_test.rs`: "not an associated comptime expression" for
-    `comptime m = bc(String("ab")) + Self.n` over a `ref` parameter, already
-    failing at 0db05093.
-  - Split this entry per fixture if one session cannot land all three.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1808 `CompilationTarget.current`'s `_current_target()` builds two
   checked nodes at one source occurrence**
 
@@ -9739,6 +9718,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `run` of any program, even `print(1)`, fails verification of the
     `$c0` and `$c1` bodies, so a source-linked check
     (`assets/ok/comptime_match_patterns.mojo`) reaches no execution.
+    So do `module_type_alias_reads.mojo`,
+    `static_string_parameter.mojo`, and
+    `comptime_application_ref_parameter.mojo`, which check source-linked
+    since R1807 (2026-11-08); compare their runs with the package's here.
   - Probe: with this rule relaxed, the source-linked run of
     `assets/ok/ctfe_module_display_constant_requests.mojo` matches the
     package run, so that fixture needs nothing more once this lands.
