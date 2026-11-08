@@ -462,6 +462,15 @@ fn constant_families_reprint_byte_identically() {
         Const::FunctionInstance {
             function: "twice".into(),
             arguments: vec![TyArg::Val(CtValue::Int(4)), TyArg::Ty(Ty::int())],
+            receiver: None,
+        },
+        Const::FunctionInstance {
+            function: "P.st".into(),
+            arguments: Vec::new(),
+            receiver: Some(Ty::new(TyKind::Struct(
+                "P".into(),
+                vec![TyArg::Ty(Ty::int())],
+            ))),
         },
         Const::Dtype(Dtype::UInt16),
         Const::None,

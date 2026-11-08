@@ -2503,13 +2503,16 @@ impl<'a> Specializer<'a> {
 
     /// The instance a generic function's value names: `target`'s
     /// parameters bound to `arguments`, closed under the instance being
-    /// specialized, and defaulted past them. It removes no argument, as a
-    /// call through the value passes the whole signature.
+    /// specialized, and defaulted past them, and a static's struct
+    /// parameters bound from the struct instance `receiver` it is read
+    /// through. It removes no argument, as a call through the value passes
+    /// the whole signature.
     fn function_value_instance(
         &mut self,
         owner: &str,
         target: &str,
         arguments: &[TyArg],
+        receiver: Option<&Ty>,
     ) -> Result<String, MonoError> {
         let decls = self
             .declarations
@@ -2526,6 +2529,10 @@ impl<'a> Specializer<'a> {
             .map(|argument| substitute_arg(argument, &self.enclosing))
             .collect::<Result<Vec<_>, _>>()?;
         let mut bindings = self.base_bindings();
+        if let Some(receiver) = receiver {
+            let receiver = substitute_ty(receiver, &self.enclosing)?;
+            self.bind_static_receiver(owner, target, &receiver, &mut bindings)?;
+        }
         self.bind_instantiated_arguments(owner, target, &decls, &arguments, &mut bindings)?;
         apply_defaults(&decls, &[], &mut bindings)?;
         let instance_arguments = ordered_arguments(&decls, &bindings, target)?;
@@ -3314,9 +3321,15 @@ impl<'a> Specializer<'a> {
                             Const::FunctionInstance {
                                 function,
                                 arguments,
+                                receiver,
                             },
                     } => {
-                        let instance = self.function_value_instance(owner, function, arguments)?;
+                        let instance = self.function_value_instance(
+                            owner,
+                            function,
+                            arguments,
+                            receiver.as_ref(),
+                        )?;
                         *instruction = MirInstr::Const {
                             dest: *dest,
                             k: Const::Function(instance),

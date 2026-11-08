@@ -865,6 +865,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sani
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member.mojo	main	exe-differential	sanitized
 assets/ok/parametric_setitem_store.mojo	main	exe-differential	sanitized
+assets/ok/parametric_static_method_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
 assets/ok/partial_alias_hole_argument.mojo	main	exe-differential	sanitized
 assets/ok/partial_explicit_application.mojo	main	exe-differential	sanitized

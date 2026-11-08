@@ -2597,11 +2597,13 @@ fn const_value(value: &Const) -> String {
         Const::FunctionInstance {
             function,
             arguments,
+            receiver,
         } => record(
             "function_instance",
             &[
                 ("function", symbol(function)),
                 ("arguments", list(arguments.iter().map(ty_arg))),
+                ("receiver", option(receiver.as_ref().map(ty_value))),
             ],
         ),
         Const::Dtype(v) => positional("dtype", v.name()),

@@ -2774,21 +2774,18 @@ fn reads_a_static_method_through_its_struct_as_a_function_value() {
         "struct S:\n    @staticmethod\n    def st(x: Int) -> Int:\n        return x + 1\n\n\
         def main():\n    var f = S.st\n    var g: Int = f(3)\n",
     );
-    let parametric = err_std(
-        "struct P[T: AnyType]:\n    @staticmethod\n    def st(x: Int) -> Int:\n        \
-        return x + 1\n\ndef main():\n    var f = P.st\n",
-    );
+    // A parametric struct's static is read at the instance it is spelled
+    // through; a bare struct name binds none of its parameters, which the
+    // pin rejects as a parametric runtime closure.
+    let parametric = "struct P[T: AnyType]:\n    @staticmethod\n    def st(x: Int) -> Int:\n        \
+        return x + 1\n\n";
+    ok_std(&format!(
+        "{parametric}def main():\n    var f = P[Int].st\n    var g: Int = f(3)\n"
+    ));
+    let unbound = err_std(&format!("{parametric}def main():\n    var f = P.st\n"));
     assert!(
-        matches!(&parametric, TypeError::Unsupported(message) if message.contains("R1794")),
-        "got {parametric:?}"
-    );
-    let initializer = err_std(
-        "struct Q:\n    var a: Int\n    def __init__(out self):\n        \
-        self.a = 1\n\ndef main():\n    var f = Q.__init__\n",
-    );
-    assert!(
-        matches!(&initializer, TypeError::Unsupported(message) if message.contains("R1796")),
-        "got {initializer:?}"
+        matches!(&unbound, TypeError::BadCall { reason, .. } if reason.contains("runtime closure")),
+        "got {unbound:?}"
     );
 }
 

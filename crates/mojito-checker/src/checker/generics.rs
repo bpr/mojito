@@ -652,12 +652,17 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
 }
 
 /// What a function value reads: a binding in scope (`twice`), or a static
-/// method reached through its struct (`S.st`), upstream's overload set for
-/// that attribute of the struct type.
+/// method reached through its struct (`S.st`, `P[Int].st`), upstream's
+/// overload set for that attribute of the struct type, read at the
+/// instance's `receiver` arguments (none for a non-parametric struct).
 #[derive(Clone, Copy)]
 pub(super) enum CallableValueSource<'n> {
     Binding(&'n str),
-    Static { owner: &'n str, method: &'n str },
+    Static {
+        owner: &'n str,
+        method: &'n str,
+        receiver: &'n [TyArg],
+    },
 }
 
 /// The bindings concrete resolution of a parameterized associated type
@@ -1799,8 +1804,12 @@ impl Checker {
         source: CallableValueSource<'_>,
         record: bool,
     ) -> Result<Option<CallableValueCandidates>, TypeError> {
-        let (owner, method) = match source {
-            CallableValueSource::Static { owner, method } => (owner, method),
+        let (owner, method, receiver) = match source {
+            CallableValueSource::Static {
+                owner,
+                method,
+                receiver,
+            } => (owner, method, receiver),
             CallableValueSource::Binding(name) => {
                 let Some(callable) = self.lookup(name).cloned() else {
                     return Ok(None);
@@ -1848,14 +1857,23 @@ impl Checker {
         };
         // An initializer's `out self` is its result, as upstream's
         // `__init__` is a function returning the struct it initializes.
-        let result = TyKind::Struct(owner.to_string(), Vec::new()).into();
+        let result = TyKind::Struct(owner.to_string(), receiver.to_vec()).into();
         let statics = signatures
             .iter()
             .filter(|sig| !sig.has_self || is_initializer_sig(sig))
             .collect::<Vec<_>>();
+        let info = self.structs.get(owner);
         let mut types = statics
             .iter()
-            .map(|sig| static_method_value_ty(sig, &result))
+            .map(|sig| {
+                let ty = static_method_value_ty(sig, &result);
+                match info {
+                    Some(info) if !receiver.is_empty() => {
+                        self.resolve_assoc_ty(&substitute_at(&ty, info, receiver))
+                    }
+                    _ => ty,
+                }
+            })
             .collect::<Vec<_>>();
         // A method sharing its name with another lowers to its overload's
         // symbol, as the static call through the struct names it.

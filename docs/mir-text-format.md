@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.178
+mojito-mir 1.179
 ```
 
-The writer emits 1.178. The reader accepts 1.0 through 1.178; *Schema 1.0*
+The writer emits 1.179. The reader accepts 1.0 through 1.179; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,14 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.179 adds the field `receiver: option(type)` to the constant
+`function_instance`: a static of a parametric struct read as a value names
+the struct instance it is read through (`P[Int].st`, `Self.gst[3]`), as
+upstream's symbol reference names the struct's specialization and the
+method's together, and the elaborator binds the struct's parameters from
+it (R1794). An older artifact's constant carries none. The package format
+moves to `mojito-package 203`.
+
 Schema 1.178 removes the `Error` type tag, the builtin callee `Error`,
 and the methods `$write_formatted` and `$write_repr_formatted` (R1938):
 `Error` is the bundled library struct `std.builtin.error.Error`, an
@@ -1674,8 +1682,10 @@ record.
 `Const` is one of `int(sint)`, `float(bits_hex)`,
 `int_literal(decimal)`, `float_literal(exact)`, `bool(true|false)`,
 `string(string)`, `function(symbol)`, `function_instance { function:
-symbol, arguments: [ty-arg, ...] }` (schema 1.116), a generic function's
-value at the compile-time arguments its bracket bound, which the elaborator
+symbol, arguments: [ty-arg, ...], receiver: option(type) }` (schema 1.116;
+`receiver` 1.179), a generic function's value at the compile-time arguments
+its bracket bound, or a parametric struct's static at the struct instance
+it is read through, which the elaborator
 rewrites to its instance's `function` and concrete MIR never holds, `none`,
 `param(param-expr)` (schema
 1.20), a parameter expression read as a runtime value — a pack's

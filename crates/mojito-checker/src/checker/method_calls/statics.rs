@@ -199,31 +199,40 @@ impl Checker {
         sname: &str,
         struct_targs: &[mojito_ast::ast::ParamArg],
     ) {
-        let Some(info) = self.structs.get(sname) else {
-            return;
-        };
-        let instance = self
-            .partition_struct_origin_args(sname, &info.source_params, struct_targs)
-            .and_then(|partitioned| {
-                self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
-                    .map(|bound| (bound, partitioned.brackets))
-            });
-        let Ok((
-            BoundParameters {
-                arguments,
-                attributes,
-                ..
-            },
-            brackets,
-        )) = instance
-        else {
-            return;
-        };
-        self.record_bracket_attributes(object.source_span(), brackets.scatter(attributes));
-        if !arguments.is_empty() {
-            self.record_at(object.source_span()).ty =
-                Some(TyKind::Struct(sname.to_string(), arguments).into());
+        let _ = self.static_receiver_arguments(object, sname, struct_targs, true);
+    }
+
+    /// The arguments of the instance a static's spelled receiver names
+    /// (`Pair[Self.U]`), recording it as the receiver expression's type when
+    /// `record` is set, as [`Self::record_static_receiver`] does.
+    pub(super) fn static_receiver_arguments(
+        &self,
+        object: &Expr,
+        sname: &str,
+        struct_targs: &[mojito_ast::ast::ParamArg],
+        record: bool,
+    ) -> Result<Vec<TyArg>, TypeError> {
+        let info = self.structs.get(sname).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
+        })?;
+        let partitioned =
+            self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+        let BoundParameters {
+            arguments,
+            attributes,
+            ..
+        } = self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])?;
+        if record {
+            self.record_bracket_attributes(
+                object.source_span(),
+                partitioned.brackets.scatter(attributes),
+            );
+            if !arguments.is_empty() {
+                self.record_at(object.source_span()).ty =
+                    Some(TyKind::Struct(sname.to_string(), arguments.clone()).into());
+            }
         }
+        Ok(arguments)
     }
 
     pub(super) fn infer_struct_static_method(

@@ -865,6 +865,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-ent
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_setitem_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parametric_static_method_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_alias_hole_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_explicit_application.mojo	-	ineligible	no-scalar-entry-shape

@@ -1531,11 +1531,16 @@ pub enum Const {
     /// A generic function's instance at the compile-time arguments its
     /// value's bracket bound, in declaration order (`twice[4]`,
     /// `ident[Point]`): upstream's symbol reference to a specialization. The
-    /// elaborator names the instance, so concrete MIR holds none.
+    /// elaborator names the instance, so concrete MIR holds none. A static
+    /// of a parametric struct (`P[Int].st`, `Self.gst[3]`) also names the
+    /// struct instance it is a member of, in the reader's binder scope, as
+    /// upstream's reference names the struct's specialization and the
+    /// method's together.
     FunctionInstance {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         function: String,
         arguments: Vec<TyArg>,
+        receiver: Option<Ty>,
     },
     /// A `DType` value.
     Dtype(mojito_ast::ast::Dtype),

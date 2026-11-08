@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1115
+# swept-count	1116
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -828,6 +828,7 @@ assets/type_error/param_expr_unfolded_atom.mojo	compile-reject	agree	error: inva
 assets/type_error/param_expr_where_false.mojo	compile-reject	agree	error: invalid call to 'check': violated constraint
 assets/type_error/param_expr_where_residual.mojo	compile-reject	agree	error: invalid call to 'below': lacking evidence to prove correctness
 assets/type_error/param_expr_where_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'floored': lacking evidence to prove correctness
+assets/type_error/parametric_static_method_value_unbound.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization

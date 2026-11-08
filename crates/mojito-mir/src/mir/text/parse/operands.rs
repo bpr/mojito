@@ -528,12 +528,19 @@ impl Decoder {
             ValueKind::Record(tag, fields) if tag == "function_instance" => {
                 let function = self.req(value, fields, "function", Self::symbol);
                 let arguments = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)));
-                self.unknown(fields, &["function", "arguments"]);
+                // Schema 1.179 records a static's struct instance; an older
+                // artifact carries none.
+                let receiver = self
+                    .field(fields, "receiver")
+                    .ok()
+                    .and_then(|found| self.option_ty(Some(found)));
+                self.unknown(fields, &["function", "arguments", "receiver"]);
                 let function = function?;
                 let arguments = self.upgraded_named_arguments(&function, arguments?);
                 Some(Const::FunctionInstance {
                     function,
                     arguments,
+                    receiver,
                 })
             }
             ValueKind::Positional(tag, inner) => match tag.as_str() {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2033**.
+Next free ID: **R2034**.
 
 ## Ordered Work
 
@@ -3980,31 +3980,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1794 A static of a parametric struct read as a value is not a
-  function value**
-
-  Problem: `var f = P[Int].st` then `print(f(3))`, over `struct P[T:
-  Copyable]` with `@staticmethod def st(x: Int) -> Int`, is rejected with
-  "reading the static method 'P.st' of a parametric struct as a value is
-  not supported yet".
-  - A non-parametric struct's static reads as `Const::Function` (R59).
-  - A parametric struct's static is a template over the struct's
-    parameters too.
-  - `Const::FunctionInstance` names only the function's own arguments.
-    The static call carries the receiver instance separately (`receiver:
-    struct_type`), which a constant has no slot for.
-  - Upstream's symbol reference names the specialization of the struct
-    and the method together.
-  - Probe: `var f = Self.st` inside a method of `P`, and `var f = P.st`
-    where `P`'s parameters default, give the same error.
-  - Probe: `var g = P[Int].gst[3]` over `def gst[k: Int](x: Int)`.
-  - Probe: `var f: def(Int) thin -> P[Int] = P[Int].__init__` over
-    `__init__(out self, k: Int)` gives the same error, where a
-    non-parametric struct's initializer reads as a function value
-    returning the struct (R1796).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1838 A type-receiver call on a `SIMD` receiver is rejected**
 
   Problem: `Int.__add__(x, x)`, `Int8.__add__(x, x)`, and
@@ -4020,6 +3995,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     function: the alias's head `Scalar` is looked up as a variable.
   - Upstream checks `T.method(x, ...)` as `x.method(...)` once `x`
     converts to `T`, whatever spelling names `T`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2033 A `read` function does not convert to a function type
+  taking `var`**
+
+  Problem: `var a: def(var Int) thin -> Int = rd`, over `def rd(x: Int)
+  -> Int`, is rejected with "expected def(Int) thin -> Int, found def(Int)
+  thin -> Int", where the pin prints `2`.
+  - Upstream converts a function value whose parameter is `read` to a
+    type taking that parameter `var`: a callee that only reads accepts an
+    owned argument. The reverse (`def(var x: Int)` to `def(Int)`) is
+    rejected, as Mojito does.
+  - The `Func` arm of `coerces` (`mojito-types/src/types.rs`) demands
+    `conventions == to_conventions`.
+  - Lowering must then pass the caller's owned argument to a `read`
+    callee and destroy it after the call, on the VM's `CallIndirect` and
+    in Pliron's `invoke` thunk.
+  - Probe: `var b: def(var Int) thin -> G = G.__init__` over
+    `@fieldwise_init struct G(Copyable): var x: Int` fails the same way,
+    and `def(var x: Int) thin -> F[3] = F[3].__init__` over a parametric
+    `@fieldwise_init struct F[n: Int]` does too, where the pin runs both
+    (found while landing R1794, 2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

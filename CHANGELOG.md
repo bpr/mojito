@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A static or initializer of a parametric struct read through one of its
+  instances is a function value, as at the pin: `P[Int].st`, `Self.st`,
+  `W[1].gst[3]`, an overload selected by the expected type, and
+  `Q[3].__init__` run on the VM and natively (R1794). Read through the bare
+  struct name, it is rejected as an unbound parametric function, as at the
+  pin. MIR text moves to schema 1.179 and the package format to 203.
 - An initializer read through its struct is a function value returning the
   struct it initializes, as upstream's `__init__` is: `Q.__init__` under an
   expected `def(...)` type, `R.__init__[7]`, `Self.__init__`, and a

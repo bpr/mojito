@@ -89,6 +89,7 @@ fn constants_and_types_use_schema_tags() {
         constant_spelling(&Const::FunctionInstance {
             function: "twice".into(),
             arguments: Vec::new(),
+            receiver: None,
         }),
         "function_instance"
     );

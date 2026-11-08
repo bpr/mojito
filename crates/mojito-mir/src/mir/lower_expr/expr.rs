@@ -1001,14 +1001,16 @@ impl<'a> Flatten<'a> {
     /// arguments its bracket bound.
     fn callable_constant(&mut self, node: Node<'a>, function: String) -> Reg {
         let arguments = node.instantiated_args();
+        let receiver = static_value_receiver(node);
         self.literal(
             node.checked,
-            if arguments.is_empty() {
+            if arguments.is_empty() && receiver.is_none() {
                 Const::Function(function)
             } else {
                 Const::FunctionInstance {
                     function,
                     arguments,
+                    receiver,
                 }
             },
         )
@@ -1112,4 +1114,20 @@ fn variant_projection(node: &CheckedExpr) -> bool {
             mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
         )
     })
+}
+
+/// The struct instance a static read through a parametric struct is a
+/// member of (`P[Int].st`, `Self.gst[3]`), which the check recorded as its
+/// receiver's type: the member read's object, or that of the member a
+/// bracket binds.
+fn static_value_receiver(node: Node<'_>) -> Option<Ty> {
+    let member = match node.op() {
+        CheckedOp::Member { .. } => node,
+        CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. } => node.object()?,
+        _ => return None,
+    };
+    if !matches!(member.op(), CheckedOp::Member { .. }) {
+        return None;
+    }
+    Flatten::static_receiver(member.object()?)
 }

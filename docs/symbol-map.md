@@ -1326,7 +1326,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `callable_constant`; a generic function's value records
   its bound arguments as `GenericInstantiation`, which MIR lowers to
   `Const::FunctionInstance` and `native::mono`'s
-  `Specializer::function_value_instance` names as the instance. A call
+  `Specializer::function_value_instance` names as the instance. A
+  parametric struct's static is read at the instance its receiver spells
+  (`static_value_receiver`, over `statics.rs`'s
+  `static_receiver_arguments`, or `Self`'s own binders), which the check
+  records as the receiver's type and `callable_constant` carries as
+  `Const::FunctionInstance::receiver` for `function_value_instance` to bind
+  through `bind_static_receiver`; a bare parametric struct's static is
+  rejected as an unbound parametric function, as at the pin. A call
   through an initializer's value constructs: the elaborator's
   devirtualized call binds its destination as the receiver, the VM's
   `CallIndirect` enters with `VmBackend::initializer_receiver`'s skeleton,
@@ -2779,10 +2786,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## The function instance constant (2026-10-27)
 
-- `Const::FunctionInstance { function, arguments }` (`mir/ir.rs`, text
-  `function_instance { ... }`, schema 1.116) is a generic function's value
-  at the compile-time arguments its bracket bound (`twice[4]`,
-  `ident[Point]`), upstream's symbol reference to a specialization. MIR
+- `Const::FunctionInstance { function, arguments, receiver }`
+  (`mir/ir.rs`, text `function_instance { ... }`, schema 1.116, `receiver`
+  1.179) is a generic function's value at the compile-time arguments its
+  bracket bound (`twice[4]`, `ident[Point]`), upstream's symbol reference
+  to a specialization, and for a static of a parametric struct the struct
+  instance it is read through (`P[Int].st`). MIR
   lowers it from a checked `TypeApply` that records `InstantiatedArguments`
   (`lower_expr/expr.rs`); `Specializer::function_value_instance`
   (`mono/specializer.rs`) closes the arguments under the instance being

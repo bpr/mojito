@@ -185,19 +185,26 @@ impl Checker {
         let Some((owner, parametric)) = self.static_method_owner(object, method) else {
             return Ok(None);
         };
-        if parametric {
-            return Err(TypeError::Unsupported(format!(
-                "reading the static method '{owner}.{method}' of a parametric struct as a \
-                 value is not supported yet (roadmap R1794)"
-            )));
-        }
+        // A parametric struct's static is a member of one of its instances
+        // (`P[Int].st`, `Self.st`), whose arguments its type is read at.
+        let receiver = if parametric {
+            self.static_value_receiver(object, &owner, method, record)?
+        } else {
+            if record {
+                self.record_static_receiver(object, &owner, &[]);
+            }
+            Vec::new()
+        };
         // A movable struct's `__init__` overload set holds the move
         // initializer upstream synthesizes beside its declared ones, so
         // only an expected type or a bracket's operands select one.
         if mojito_symbol::symbol::is_initializer_member(method)
             && arguments.is_empty()
             && expected.is_none_or(|expected| expected.callable().is_none())
-            && self.conforms_to(&TyKind::Struct(owner.clone(), Vec::new()).into(), "Movable")
+            && self.conforms_to(
+                &TyKind::Struct(owner.clone(), receiver.clone()).into(),
+                "Movable",
+            )
         {
             return Err(TypeError::BadCall {
                 func: format!("{owner}.{method}"),
@@ -205,14 +212,12 @@ impl Checker {
                     .to_string(),
             });
         }
-        if record {
-            self.record_static_receiver(object, &owner, &[]);
-        }
         self.infer_specialized_callable_value(
             span,
             CallableValueSource::Static {
                 owner: &owner,
                 method,
+                receiver: &receiver,
             },
             arguments,
             expected,
@@ -270,29 +275,21 @@ impl Checker {
         object: &Expr,
         method: &str,
     ) -> Option<(String, bool)> {
-        let ExprKind::Identifier(name) = &object.kind else {
+        let owner = match &object.kind {
+            ExprKind::Identifier(name) if name == "Self" => self.self_instance_spelling()?.0,
+            ExprKind::Identifier(name) if self.lookup(name).is_none() => name.clone(),
+            ExprKind::Identifier(_) => return None,
             // An applied struct (`P[Int].st`) is a parametric receiver.
-            let (name, _) = object.bracket_application()?;
-            let info = self
-                .structs
-                .get(name)
-                .filter(|_| self.lookup(name).is_none())?;
-            return info
-                .methods
-                .get(method)?
-                .iter()
-                .any(takes_no_receiver)
-                .then(|| (name.to_string(), true));
-        };
-        let owner = if name == "Self" {
-            self.self_instance_spelling()?.0
-        } else if self.lookup(name).is_none() {
-            name.clone()
-        } else {
-            return None;
+            _ => {
+                let (name, _) = object.bracket_application()?;
+                if self.lookup(name).is_some() {
+                    return None;
+                }
+                name.to_string()
+            }
         };
         let info = self.structs.get(&owner)?;
-        let parametric = !info.decls.is_empty();
+        let parametric = !info.decls.is_empty() || !matches!(object.kind, ExprKind::Identifier(_));
         match info.methods.get(method) {
             Some(signatures) => signatures.iter().any(takes_no_receiver),
             None => self.fieldwise_initializer_sig(&owner, method).is_some(),
@@ -607,6 +604,44 @@ impl Checker {
             });
         }
         Ok(None)
+    }
+
+    /// The arguments of the instance of the parametric struct `owner` a
+    /// static read through `object` is a member of: `Self`'s own binders,
+    /// or an application's arguments with the rest defaulted. A bare struct
+    /// name binds none of its parameters, so its static stays a parametric
+    /// function, which the pin rejects as a runtime value.
+    fn static_value_receiver(
+        &self,
+        object: &Expr,
+        owner: &str,
+        method: &str,
+        record: bool,
+    ) -> Result<Vec<TyArg>, TypeError> {
+        if let Some((_, struct_targs)) = object.bracket_application() {
+            return self.static_receiver_arguments(object, owner, &struct_targs, record);
+        }
+        if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            && let Some(instance) = self.self_ty.clone()
+            && let Some((_, arguments)) = instance.kind().as_non_simd_struct()
+        {
+            let arguments = arguments.clone();
+            if record {
+                self.record_at(object.source_span()).ty = Some(instance);
+            }
+            return Ok(arguments);
+        }
+        let unbound = self
+            .structs
+            .get(owner)
+            .and_then(|info| info.decls.first())
+            .map_or_else(String::new, |decl| {
+                format!(": parameter '{}' is not bound", decl.name())
+            });
+        Err(TypeError::BadCall {
+            func: format!("{owner}.{method}"),
+            reason: format!("cannot use parametric function as a runtime closure{unbound}"),
+        })
     }
 }
 
