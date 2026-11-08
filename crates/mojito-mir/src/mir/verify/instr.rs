@@ -624,7 +624,12 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 .is_some_and(|(dtype, _)| dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found.kind() {
-                    kind if kind.is_int_literal() && scalar_target => true,
+                    // An integer literal converts at any lane, a `bool` one
+                    // to whether it is nonzero, as the pin's
+                    // `#pop.int_literal_convert` does.
+                    kind if kind.is_int_literal() && (scalar_target || vector_lane.is_some()) => {
+                        true
+                    }
                     kind if kind.is_float_literal() && scalar_target => {
                         target.is_float64()
                             || symbolic_lane

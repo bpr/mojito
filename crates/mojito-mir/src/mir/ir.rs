@@ -3357,15 +3357,15 @@ impl MirInstr {
                 target,
             } => {
                 let literal = operand(*value)?;
-                if let Some((dtype, width)) = mojito_types::types::simd_shape(
+                if let Some((_, width)) = mojito_types::types::simd_shape(
                     mojito_types::types::storage_simd(target)?.kind(),
                 ) && width > 1
                 {
                     // Upstream's `#pop.int_literal_convert` at a vector
-                    // storage: the converted lane at every lane. A `bool`
-                    // vector is no literal's conversion target.
+                    // storage: the converted lane at every lane, a `bool`
+                    // lane whether the literal is nonzero.
                     let (op, literal) = match literal {
-                        CtValue::IntLiteral(value) if dtype != Dtype::Bool => {
+                        CtValue::IntLiteral(value) => {
                             (ParamOp::IntLiteralConvert, CtValue::PopIntLiteral(value))
                         }
                         CtValue::FloatLiteral(value) => (
@@ -5296,7 +5296,15 @@ mod tests {
             )),
             Some(vec![CtLane::Float(f64::from(0.1f32).to_bits()); 8])
         );
-        assert!(convert(int(1), Ty::int_literal_of(&0.into()), Dtype::Bool, 4).is_none());
+        assert_eq!(
+            lanes_of(convert(
+                int(-1),
+                Ty::int_literal_of(&0.into()),
+                Dtype::Bool,
+                4
+            )),
+            Some(vec![CtLane::Bool(true); 4])
+        );
     }
 
     #[test]

@@ -176,12 +176,19 @@ pub(super) fn splice_comptime_arm(
 /// The assertions of a tail an arm that leaves dropped, which the instance
 /// still judges as the pin does: those of the tail and of its runtime
 /// regions, never those under a `comptime if` or `comptime for` the tail
-/// holds, which are never elaborated.
+/// holds, which are never elaborated, nor those of a callee
+/// `inline-parametric` spliced into it, whose dead call the pin never
+/// instantiates.
 fn tail_asserts(instructions: &[MirInstr], asserts: &mut Vec<MirInstr>) {
     for instruction in instructions {
         match instruction {
             MirInstr::ComptimeAssert { .. } => asserts.push(instruction.clone()),
-            MirInstr::ComptimeIf { .. } | MirInstr::ComptimeFor { .. } => {}
+            MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Loop {
+                label: Some(mojito_mir::mir::LoopLabel::INLINED_CF_SCOPE),
+                ..
+            } => {}
             instruction => {
                 for block in mojito_mir::mir::instruction_regions(instruction)
                     .into_iter()

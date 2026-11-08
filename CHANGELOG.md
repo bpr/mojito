@@ -3838,6 +3838,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Eleven corpus fixtures that the 11-05 to 11-07 runs left failing compile
+  and run as at the pin again:
+  - `where dtype == DType.float32` is decided once `dtype` is closed, now
+    that `DType` is a library struct.
+  - A dead tail after a `comptime if` arm that returns no longer judges
+    the assertions of callees inlined into it (`SIMD[DType.bool,
+    2].__round__(1)`).
+  - A `write_to(String)` overload beats the `Some[Writer]` default again.
+  - A vector alias's element list (`Keyed[V(5, 6)]`) is the `SIMD`
+    construction it spells.
+  - A run-time call reading a local `comptime` application stays a call.
+  - An integer literal converts to `Bool` lanes, so `~` over a `Bool`
+    vector runs.
+  - A `writer.write(...)` pack holding a `StringSpan` binds its slot.
+
 - `Self` spelled as a value inside a struct with an origin parameter binds:
   `Self.size()` and `Self(copy=self)` call the static and copy the
   receiver's own type, and a struct application binds an infer-only origin

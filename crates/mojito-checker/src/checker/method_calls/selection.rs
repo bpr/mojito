@@ -404,7 +404,9 @@ impl Checker {
                 });
             }
             if !literal {
-                score += conversion_count(&actual, &expected);
+                // A deduced existential still ranks as the generic binder it
+                // is, below an overload declaring the argument's own type.
+                score += conversion_count(&actual, &params[index]);
             }
             simd_erasures += usize::from(
                 matches!(

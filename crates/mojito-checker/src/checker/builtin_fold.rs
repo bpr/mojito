@@ -177,7 +177,9 @@ impl Checker {
     }
 
     /// Whether `expr` reads a name that denotes no parameter expression (a
-    /// local `var`, an argument, `self`), so no call in it is one: the
+    /// local `var`, an argument, `self`), or a local `comptime` binding of
+    /// an application, which each read materializes rather than folds
+    /// ([`Self::local_comptime_application`]), so no call in it is one: the
     /// cheap test a run-time fold makes before selecting its callee.
     pub(super) fn reads_run_time_binding(&self, expr: &Expr) -> bool {
         struct RunTimeRead<'a> {
@@ -188,8 +190,9 @@ impl Checker {
             fn visit_expr(&mut self, expr: &Expr) {
                 self.found = self.found
                     || matches!(&expr.kind, ExprKind::Identifier(name)
-                        if self.checker.lookup(name).is_some())
-                        && self.checker.compile_dependent_ct_expr(expr).is_err();
+                        if self.checker.lookup(name).is_some()
+                            && self.checker.compile_dependent_ct_expr(expr).is_err()
+                            || self.checker.local_comptime_application(name).is_some());
             }
         }
         let _position = self.comptime_position();

@@ -1339,6 +1339,9 @@ impl Checker {
     ///   ([`Self::literal_initializer_body`]).
     /// - A vector alias's one argument (`Int32(n)`), which no compile-time
     ///   call resolves through the alias yet: its lane cast and splat.
+    /// - A vector alias's element list (`V(5, 6)` over `comptime V =
+    ///   SIMD[DType.int32, 2]`): the `SIMD[DType.int32, 2](5, 6)` it spells,
+    ///   the application of `SIMD`'s `*elems` initializer.
     fn staged_simd_construction(
         &self,
         name: &str,
@@ -1351,6 +1354,30 @@ impl Checker {
                 .and_then(|lanes| simd_construction(dtype, width as usize, &lanes))
                 .and_then(|vector| self.ct_param(vector))
         };
+        if name != "SIMD"
+            && let [first, _, ..] = args
+        {
+            let construction = (|| {
+                let param_args = [
+                    mojito_types::types::dtype_value(dtype).materialize(first.span)?,
+                    CtValue::Int(width).materialize(first.span)?,
+                ]
+                .map(mojito_ast::ast::ParamArg::Value)
+                .to_vec();
+                let mut call = Expr::new(
+                    ExprKind::Call {
+                        name: "SIMD".to_string(),
+                        param_args,
+                        args: args.to_vec(),
+                        kwargs: Vec::new(),
+                    },
+                    first.span,
+                );
+                call.source.clone_from(&first.source);
+                Some(call)
+            })()?;
+            return Some(self.compile_dependent_ct_expr(&construction));
+        }
         let [argument] = args else {
             return None;
         };
@@ -2468,6 +2495,21 @@ impl Checker {
     /// method's application folds to ([`Self::infix_value`]) is true, as
     /// the pin decides `where L(n) < L(3)` by the builtin `__lt__`. `None`
     /// when neither operand is a struct value.
+    /// Whether `left` and `right` are both `DType` values, which `==` and
+    /// `!=` compare as upstream's builtin `DType.__eq__` folds: by the code
+    /// each `!kgen.dtype` holds, decided once both are closed.
+    fn compares_dtypes(&self, left: &Expr, right: &Expr) -> bool {
+        let _lifting = self.lifting_position();
+        [left, right].into_iter().all(|operand| {
+            self.compile_dependent_ct_expr(operand).is_ok_and(|built| {
+                built
+                    .meta()
+                    .as_value()
+                    .is_some_and(mojito_types::types::is_dtype)
+            })
+        })
+    }
+
     fn struct_comparison(
         &self,
         expr: &Expr,
@@ -4275,11 +4317,13 @@ impl Checker {
             ),
             ExprKind::Infix(op, left, right) => {
                 self.reject_type_parameter_comparison(*op, left, right)?;
-                if let Some(compared) = self.struct_comparison(expr, left, right) {
+                let dtypes =
+                    matches!(op, InfixOp::Eq | InfixOp::Ne) && self.compares_dtypes(left, right);
+                if !dtypes && let Some(compared) = self.struct_comparison(expr, left, right) {
                     return compared;
                 }
                 let (left, right) = binary(left, right)?;
-                if [&left, &right].into_iter().any(struct_valued_operand) {
+                if !dtypes && [&left, &right].into_iter().any(struct_valued_operand) {
                     return Err(struct_comparison_rejection());
                 }
                 // A KGEN string implements no comparison, which the shared

@@ -208,7 +208,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
                 .zip(&expected_args)
                 .all(|(found, expected)| match (found, expected) {
                     (TyArg::Ty(found), TyArg::Ty(expected)) => types_compatible(found, expected),
-                    (TyArg::Val(found), TyArg::Val(expected)) => found == expected,
+                    (TyArg::Val(found), TyArg::Val(expected)) => values_compatible(found, expected),
                     _ => false,
                 })
         {
@@ -244,6 +244,25 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
 /// keeps none. A kept type argument agrees either way round: the reduced generator is keyed by the
 /// elaborator's instance identity, which spells a callable without its
 /// environment, so its `self` holds the struct a `thin` instance names.
+/// Whether two compile-time arguments are one value at run time: equal, or
+/// a type or a list of them (a `VariadicPack`'s element types) that agrees
+/// by [`types_compatible`], so the origins it erases inside a struct's
+/// argument erase inside a type-valued one too.
+fn values_compatible(found: &CtValue, expected: &CtValue) -> bool {
+    match (found, expected) {
+        (CtValue::Type(found), CtValue::Type(expected)) => types_compatible(found, expected),
+        (CtValue::Tuple(found), CtValue::Tuple(expected))
+        | (CtValue::List(found), CtValue::List(expected)) => {
+            found.len() == expected.len()
+                && found
+                    .iter()
+                    .zip(expected)
+                    .all(|(found, expected)| values_compatible(found, expected))
+        }
+        (found, expected) => found == expected,
+    }
+}
+
 fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
     // A symbolic `SIMD` pattern is judged slot-wise
     // (`symbolic_simd_compatible`).

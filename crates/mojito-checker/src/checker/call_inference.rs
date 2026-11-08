@@ -1728,7 +1728,9 @@ impl Checker {
                     context: format!("argument '{}' to '{}'", names[i], name),
                 });
             }
-            score += conversion_count(&arg_ty, &expected);
+            // A deduced existential still ranks as the generic binder it is,
+            // below an overload declaring the argument's own type.
+            score += conversion_count(&arg_ty, &params[i]);
             // Only a `var`/`deinit` parameter *consumes* its argument (moving the
             // value in). `read` (the default), `mut`, and `ref` all **borrow** — no
             // copy — so passing a non-Copyable value to them is fine.
