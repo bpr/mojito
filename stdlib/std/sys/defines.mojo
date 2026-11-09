@@ -1,11 +1,10 @@
 # Upstream's `std/sys/defines.mojo`, in part: `is_defined`,
 # `_is_bool_like`, `get_defined_bool`, both `get_defined_int`s, and both
-# `get_defined_string`s, verbatim, over `#kgen.param.expr<get_env>`. The
-# compiler takes no `-D` yet (R1981), so no name is defined, as under a
-# `mojo run` given none.
-# Omitted: `get_defined_dtype`, over the unbundled `DType._from_str`
-# (R1978), and `MojoVersion` with `MOJO_VERSION`, over the
-# `lit.mojo.version` ops (R1982).
+# `get_defined_string`s, and `get_defined_dtype`, verbatim, over
+# `#kgen.param.expr<get_env>`. The compiler takes no `-D` yet (R1981), so no
+# name is defined, as under a `mojo run` given none.
+# Omitted: `MojoVersion` with `MOJO_VERSION`, over the `lit.mojo.version`
+# ops (R1982).
 
 """Implements functions for retrieving compile-time defines.
 
@@ -196,5 +195,25 @@ def get_defined_string[
 
     comptime if is_defined[name]():
         return get_defined_string[name]()
+    else:
+        return default
+
+
+def get_defined_dtype[name: StaticString, default: DType]() -> DType:
+    """Try to get a DType-valued define. If the name is not defined,
+    return a default value instead.
+
+    Parameters:
+        name: The name of the define.
+        default: The default value to use.
+
+    Returns:
+        A DType parameter value.
+    """
+
+    comptime if is_defined[name]():
+        comptime parsed = DType._from_str(get_defined_string[name]())
+        comptime assert parsed, "invalid DType define for '" + name + "'"
+        return parsed.value()
     else:
         return default

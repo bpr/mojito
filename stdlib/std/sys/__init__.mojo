@@ -5,7 +5,8 @@ queries `CompilationTarget`, `is_gpu`, `is_nvidia_gpu`, `is_amd_gpu`,
 `align_of`, `bit_width_of`, and `simd_width_of` (`std.sys.info`), `llvm_intrinsic`, and the
 `_RegisterPackType` its struct-valued intrinsics return, and the
 compile-time define reads `is_defined`, `get_defined_bool`,
-`get_defined_int`, and `get_defined_string` (`std.sys.defines`)."""
+`get_defined_int`, `get_defined_string`, and `get_defined_dtype`
+(`std.sys.defines`)."""
 
 from ._io import stderr, stdin, stdout
 from .info import (
@@ -24,6 +25,7 @@ from .info import (
 from .intrinsics import _RegisterPackType, llvm_intrinsic
 from .defines import (
     get_defined_bool,
+    get_defined_dtype,
     get_defined_int,
     get_defined_string,
     is_defined,

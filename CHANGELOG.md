@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.sys` bundles upstream's `get_defined_dtype`, verbatim over
+  `DType._from_str`; with no `-D` it gives its default, as at the pin
+  (R1978).
 - `std.os` bundles upstream's no-argument `abort() -> Never`, which traps
   through `_abort_base()` (R1980). `mojito run` on the VM now prints the
   output a program wrote before a runtime error, as the native run and

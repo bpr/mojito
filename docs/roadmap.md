@@ -13088,19 +13088,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1978 `get_defined_dtype` is not bundled**
-
-  `std.sys.defines.get_defined_dtype` is missing, since its body reads
-  `DType._from_str`, which the bundled `DType` does not declare.
-  - Port `DType._from_str` from upstream's `std/builtin/dtype.mojo`, then
-    `get_defined_dtype` verbatim into `stdlib/std/sys/defines.mojo`, and
-    re-export it from `std.sys`.
-  - Probe: `from std.sys import get_defined_dtype` then
-    `print(get_defined_dtype["DT", DType.int8]())` prints `int8` at the pin.
-  - Found while landing R1598 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1982 `MojoVersion` and `MOJO_VERSION` are not bundled**
 
   `std.sys.defines.MojoVersion` reads the compiler's version through the
@@ -13346,6 +13333,9 @@ Track: `tooling`.
     checker's folds and the elaborator's per-instance ones alike.
   - Then `-D ASSERT=all` makes `assert n == 3, "boom"` fail, and
     `-D ASSERT=bogus` fails `_assert_enabled`'s instance, as at the pin.
+  - Probe: `-D DT=float32` makes `get_defined_dtype["DT", DType.int8]()`
+    give `float32` through `DType._from_str`, and `-D DT=bogus` fails its
+    instance with "invalid DType define for 'DT'", as at the pin.
   - Revisit `docs/non-goals.md`'s note on evaluating stdlib asserts as the
     pin does under `-D ASSERT=all`.
   - Found while landing R1598 (2026-11-06).
