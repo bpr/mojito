@@ -2124,8 +2124,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def _justify(self, start: Int, width: Int, fillchar: StringSpan) -> String:
         if self._size >= width:
             return self.to_string()
-        if fillchar._size != 1:
-            _mojito_abort("fill char needs to be a one byte literal")
+        assert fillchar.byte_length() == 1, "fill char needs to be a one byte literal"
         var result = String(capacity_bytes=width)
         var i = 0
         while i < start:

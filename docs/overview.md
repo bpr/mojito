@@ -102,10 +102,8 @@ Language deficiencies:
   removed `capturing` effect and `@parameter` closures are parse errors);
   accepting a stateful closure through an unqualified `def(...)` and captured
   nested Origin specialization are pinned-nightly Mojito extensions. The removed
-  `unified {...}` spelling is accepted only as an explicit compatibility
-  extension, and escaping closures remain intentionally rejected
-- no self-hosted `String`; string literals and runtime strings still rely on VM
-  support while storage, Unicode, slicing, and literal interop are designed
+  `unified {...}` spelling is a parse error, as at the pin, and escaping
+  closures remain intentionally rejected
 - public heterogeneous `Tuple` is a nominal variadic-generic library struct,
   but its field uses a compiler-private heterogeneous pack carrier; that carrier
   is also the ABI for specialized `*args` and is not a source-level collection
@@ -120,11 +118,17 @@ Infrastructure and backend boundaries:
   schedule yet; GPU is a stretch goal, intended but not near
 - whether MLIR (or any backend IR) becomes an internal compiler layer is a
   staged question, not a standing exclusion
-- no production optimizer
+- optimization is upstream's two MIR pass pipelines, pre-elaboration
+  (`analysis::PIPELINE`: inlining, unused-parameter and dead-symbol removal,
+  `sroa`, `mem-2-reg`, `sccp`, canonicalization, `cse`) and post-elaboration
+  (`analysis::POST_ELABORATION_PIPELINE`: `lower-arg-conventions`,
+  `automatic-inline`, `sroa`, `mem-2-reg`, `sccp`, `canonicalize`, `cse`),
+  plus LLVM's own at `--native-opt release`; there is no other optimizer
 - native code generation only through the Pliron backend (Cranelift and a
   C/C++ source backend remain unimplemented)
-- no real SIMD lowering to machine vector instructions; SIMD values are modeled
-  at the VM value level
+- `SIMD` is the bundled library struct over `!kgen.simd` storage; the native
+  backend lowers that storage to LLVM vector types and its `pop` ops and
+  intrinsics to vector instructions, while the VM models it as a value
 - no performance claim beyond "useful as a reference implementation"
 
 The language deficiencies are the ones most likely to shrink as mojito grows.

@@ -745,6 +745,7 @@ assets/ok/nominal_string_graphemes.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_indexing.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_join.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_justify.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_justify_fillchar.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_keyword_slices.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_operations.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_parse.mojo	main	exe-differential	sanitized
@@ -1774,7 +1775,6 @@ assets/runtime_error/nominal_string_byte_slice_boundary.mojo	main,__toplevel__	e
 assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	main,__toplevel__	error-differential	category=UnhandledError
-assets/runtime_error/nominal_string_justify_fillchar.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/nominal_string_resize_boundary.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/optional_take_empty_aborts.mojo	main,__toplevel__	error-differential	category=Abort

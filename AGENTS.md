@@ -272,9 +272,10 @@ memory-heavy Pliron corpus sweeps: the two generated manifests
 their coverage ratchets, the negative-ownership corpus check, and the
 corpus-wide debug-correlation premise. Each compiles several hundred
 fixtures through the front end and the native backend and peaks at several
-gigabytes, so it is excluded from `scripts/check-pliron` and from the
-overnight gate; `scripts/check-pliron-heavy` runs it alone, one sweep at a
-time. Put a new whole-corpus sweep there, not in `tests/pliron_*.rs`.
+gigabytes, so it is excluded from `scripts/check-pliron`;
+`scripts/check-pliron-heavy` runs it alone, one sweep at a time, and the
+overnight gate (`scripts/run-overnight-gates`) runs that script as its own
+step, directly after `check-pliron`. Put a new whole-corpus sweep there, not in `tests/pliron_*.rs`.
 
 `tests/mir_passes/<pass>/` holds MIR pass tests, MIR text in and the
 expected `functions:` section out, run by `tests/mir_pass_test.rs`; a new

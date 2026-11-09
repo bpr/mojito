@@ -9315,23 +9315,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1983 A multi-byte `ascii_rjust` fill character traps where the
-  pin's default mode skips upstream's `assert`**
-
-  `String("hi").ascii_rjust(6, "é")` traps with "fill char needs to be a one
-  byte literal", where the pin skips `_justify`'s `assert` under its default
-  `ASSERT` mode and pads with the fill's first byte (`\xc3` four times, then
-  `hi`).
-  - The bundled `_justify` (`stdlib/std/string.mojo`) checks with
-    `_mojito_abort`, written before the `assert` statement parsed.
-  - Spell upstream's `assert fillchar.byte_length() == 1, "fill char needs
-    to be a one byte literal"` there, and move
-    `assets/runtime_error/nominal_string_justify_fillchar.mojo` to an `ok`
-    fixture with its manifest rows.
-  - Found while landing R1598 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2014 `String.write_repr_to` writes its quoted text in one write,
   where upstream's writes each piece**
 

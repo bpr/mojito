@@ -139,6 +139,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A multi-byte `ascii_rjust`/`ascii_ljust`/`ascii_center` fill character
+  no longer traps: `_justify` spells upstream's one-byte `assert`, which the
+  default `ASSERT` mode skips, so the fill's first byte pads as at the pin
+  (R1983).
+
 - A one-field struct declaring `RegisterPassable` unconditionally is held
   as its field in both backends even when it owns a destructor or a copy
   constructor, as the pin passes it as `i64` (R1984). Pliron passes a held

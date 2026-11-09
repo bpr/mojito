@@ -745,6 +745,7 @@ assets/ok/nominal_string_graphemes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_indexing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_join.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_justify.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nominal_string_justify_fillchar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_keyword_slices.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_parse.mojo	-	ineligible	no-scalar-entry-shape
@@ -1750,7 +1751,6 @@ assets/runtime_error/nominal_string_byte_slice_boundary.mojo	-	ineligible	no-sca
 assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/nominal_string_justify_fillchar.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/nominal_string_resize_boundary.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/optional_take_empty_aborts.mojo	-	ineligible	no-scalar-entry-shape
