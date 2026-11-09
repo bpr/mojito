@@ -152,6 +152,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `automatic-inline` binds no owner for a callee, which after elaboration
+  is an instance whose owner is already bound, as upstream's
+  `AutomaticInline` meets only concrete generators. A `SIMD` method, whose
+  instances keep the template's name the concrete declarations no longer
+  hold, now inlines as any other, so `v.reduce_add()` holds the library's
+  split tree instead of passing the vector to an out-of-line call (R1809).
 - `mem-2-reg` no longer asks how often a stored register is read, as
   upstream's `canPromote` does not, so a closure or function-typed slot is
   judged as a trivially copyable one already was (R1350). No program's

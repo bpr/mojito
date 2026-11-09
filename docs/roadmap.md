@@ -9304,22 +9304,6 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R1809 `SIMD.reduce_add`, declared `@inline(.always)`, stays an
-  out-of-line call**
-
-  A caller of `v.reduce_add()` keeps a call to the library's split-tree
-  instance, so a native caller spills the vector to pass it by pointer,
-  where upstream inlines the body at every call.
-  - Seen in `simd_lowering_emits_vector_code`
-    (`tests/pliron_backend_test.rs`), whose fixture now calls
-    `reduce_add` where it was a builtin rule.
-  - Find which pass declines the splice (`inline-parametric` or the
-    post-elaboration `automatic-inline`) and why; the body recurses through
-    `slice` on halves.
-  - Found while fixing the 2026-11-01 overnight gate.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
 

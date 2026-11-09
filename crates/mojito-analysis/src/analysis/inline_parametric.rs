@@ -1632,7 +1632,16 @@ impl<'c> Inliner<'_, 'c> {
     /// The struct whose method `callee` is, instantiated at `ty`, the type
     /// of the call's receiver or result; `None` when `ty` is no application
     /// of it.
+    ///
+    /// After elaboration a callee is an instance, its owner's binders
+    /// already bound, as upstream's `AutomaticInline` meets only concrete
+    /// generators: there is nothing to bind, and the owner's template need
+    /// not survive among the declarations (`SIMD`, whose instances keep its
+    /// name).
     fn owner(&self, callee: &MirFunction, ty: &Ty) -> Option<Owner<'c>> {
+        if matches!(self.admission, Admission::Automatic { .. }) {
+            return Some(Owner::Unbound);
+        }
         let (template, _) = nominal_parts(callee.param_types.first()?)?;
         let structure = self.declarations.structure(template)?;
         let decls = &structure.param_decls;

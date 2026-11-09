@@ -270,6 +270,13 @@ fn simd_lowering_emits_vector_code() {
             "a whole-vector move still emits `{needle}`:\n{mover}"
         );
     }
+    // `reduce_add` and the split tree it calls are `@inline(.always)`, so
+    // `total` holds the tree itself even at `O0`, as at the pin.
+    let reducer = llvm_function(&unoptimized, "total");
+    assert!(
+        !reducer.contains("@mj_SIMD_2ereduce"),
+        "an always-inline reduction stays an out-of-line call:\n{reducer}"
+    );
     // A float→int cast emits a range guard over the whole vector and, on
     // its fast path, one `fptosi`; the per-lane
     // `llvm.fptosi.sat.i128.f64` loop is the other arm of the branch,
