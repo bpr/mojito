@@ -4718,13 +4718,13 @@ pub fn callable_environment_coerces(
 
 /// Whether `Copyable.copy` on a value of this type has no callee.
 ///
-/// The compiler's own value types (`Bool`, numeric literals, tuples,
-/// packs, and variants) copy by the ordinary value read. Structs (a `SIMD`
-/// and a `StringLiteral` application included),
+/// The compiler's own value types (`Bool`, tuples, packs, and variants)
+/// copy by the ordinary value read. Structs (a `SIMD`, a `StringLiteral`,
+/// and a numeric literal application included),
 /// parametric, associated, and reference types resolve their `copy`
 /// through declarations or trait dispatch instead.
-pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
-    (!matches!(ty, TyKind::Struct(..)) || ty.is_numeric_literal())
+pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
+    !matches!(ty, TyKind::Struct(..))
         && !matches!(
             ty,
             TyKind::Param { .. }

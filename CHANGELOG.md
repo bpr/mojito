@@ -152,6 +152,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal's construction and copy are its declared struct's:
+  the elaborator declares the field-less `IntLiteral`/`FloatLiteral` as
+  any generic struct, so `IntLiteral[v]()`, `Self()`, `{}`, and a generic
+  `T()` call the declared `__init__(out self)` and `copy=`/`.copy()` the
+  declared copy, replacing the checker's and MIR's construction rules
+  (R1968).
+
 - A multi-byte `ascii_rjust`/`ascii_ljust`/`ascii_center` fill character
   no longer traps: `_justify` spells upstream's one-byte `assert`, which the
   default `ASSERT` mode skips, so the fill's first byte pads as at the pin

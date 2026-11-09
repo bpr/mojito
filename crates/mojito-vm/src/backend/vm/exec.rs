@@ -1587,6 +1587,7 @@ impl VmBackend {
                     .and_then(|ty| super::simd_instance(&prog.structs, ty))
                     .map(|(name, _)| name)
                     .or_else(|| prog.declared_struct(dest_ty))
+                    .or_else(|| prog.declared_literal_struct(dest_ty))
                     .ok_or_else(|| {
                         RuntimeError::TypeError(
                             "struct.create builds no declared struct".to_string(),

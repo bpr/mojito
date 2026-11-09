@@ -802,45 +802,6 @@ impl<'a> Flatten<'a> {
         Some(self.literal(node, zero))
     }
 
-    /// The construction `IntLiteral[(4).value]()` (`FloatLiteral[v]()`) a
-    /// use also materializes: the materialization is the node's one
-    /// adjustment, so the construction is read off the type, which names
-    /// the one value it constructs. `None` for any other call.
-    pub(in crate::mir) fn materialized_literal_construction(
-        &mut self,
-        node: &mojito_checked::checked::CheckedExpr,
-    ) -> Option<Reg> {
-        let mojito_checked::checked::CheckedOp::Call {
-            name, args, kwargs, ..
-        } = &node.op
-        else {
-            return None;
-        };
-        let literal_struct = [
-            mojito_types::types::INT_LITERAL_TYPE_NAME,
-            mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
-        ]
-        .contains(&name.as_str());
-        let materialized = node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_)
-            )
-        });
-        if !(args.is_empty() && kwargs.is_empty() && literal_struct && materialized) {
-            return None;
-        }
-        let kind = node.ty.as_ref()?.kind();
-        let constant = kind
-            .int_literal_value()
-            .map(|value| Const::IntLiteral(value.clone()))
-            .or_else(|| {
-                kind.float_literal_value()
-                    .map(|value| Const::FloatLiteral(value.clone()))
-            })?;
-        Some(self.literal(node, constant))
-    }
-
     /// Emit a `Const` writing a fresh register.
     pub(in crate::mir) fn constant(&mut self, e: Node<'a>, k: Const) -> Reg {
         let function_ty = e.ty();

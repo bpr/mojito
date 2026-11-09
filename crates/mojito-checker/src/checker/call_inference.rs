@@ -326,15 +326,12 @@ impl Checker {
         }
     }
 
-    /// A construction of a `StringLiteral[value]`, `IntLiteral[value]`, or
-    /// `FloatLiteral[value]` instance (`Self` in its own members), or
-    /// `None` for any other call. Upstream's structs have no fields, so
-    /// their default initializer and their copy each build the one value
-    /// the type names: the elaborator writes the closed type's default
-    /// construction, the literal of its value, while a string literal's
-    /// declared `__init__` is not yet its construction (R1973) and a
-    /// numeric one's the compiler's field-less literal rather than an
-    /// instance of the declared struct (R1968).
+    /// A construction of a `StringLiteral[value]` instance (`Self` in its
+    /// own members), or `None` for any other call. Upstream's struct has no
+    /// fields, so its default initializer and its copy each build the one
+    /// value the type names: the elaborator writes the closed type's
+    /// default construction, the literal of its value, while the declared
+    /// `__init__` is not yet its construction (R1973).
     fn literal_construction(
         &self,
         span: &SourceSpan,
@@ -347,12 +344,7 @@ impl Checker {
         if !args.is_empty() || !(kwargs.is_empty() || copy) {
             return None;
         }
-        let spelled = [
-            mojito_types::types::STRING_LITERAL_TYPE_NAME,
-            mojito_types::types::INT_LITERAL_TYPE_NAME,
-            mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
-        ]
-        .contains(&name)
+        let spelled = name == mojito_types::types::STRING_LITERAL_TYPE_NAME
             && !param_args.is_empty()
             && self.structs.contains_key(name);
         let instance = match name {
@@ -362,7 +354,7 @@ impl Checker {
                 .ok(),
             _ => None,
         }
-        .filter(|ty| ty.kind().string_literal_value().is_some() || ty.is_numeric_literal())?;
+        .filter(|ty| ty.kind().string_literal_value().is_some())?;
         let construct = || {
             // The application's arguments are typed as the instance's.
             if spelled {
@@ -371,9 +363,8 @@ impl Checker {
             if copy {
                 self.infer_builtin_copy_construction(span.clone(), name, &instance, &kwargs[0])?;
             } else {
-                // A use's materialization supersedes the construction, which
-                // MIR reads off the type (`materialized_literal_construction`),
-                // so re-inferring the argument keeps it.
+                // A use's materialization supersedes the construction, so
+                // re-inferring the argument keeps it.
                 let mut record = self.record_at(span.clone());
                 if !matches!(
                     record.adjustment.as_deref(),
@@ -403,11 +394,11 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
-            // A literal's default construction is the literal of its value,
-            // symbolic until the instance is elaborated
+            // A string literal's default construction is the literal of its
+            // value, symbolic until the instance is elaborated
             // (`StringLiteral.__add__`'s `{}`). A use's materialization
             // supersedes it, as at a spelled literal construction.
-            kind if (kind.string_literal_value().is_some() || kind.is_numeric_literal())
+            kind if kind.string_literal_value().is_some()
                 && args.is_empty()
                 && kwargs.is_empty() =>
             {
@@ -423,6 +414,10 @@ impl Checker {
                     ));
                 }
                 Ok(instance.clone())
+            }
+            // A numeric literal's construction is its declared struct's.
+            TyKind::Struct(name, _) if instance.is_numeric_literal() => {
+                self.infer_construction_of(span, name, Some(instance), &[], args, kwargs)
             }
             kind if kind.as_simd().is_some() => self.infer_construction_of(
                 span,

@@ -585,8 +585,8 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        // `x.copy()` on a built-in copyable value (`Bool`, a literal,
-        // a tuple, or a variant) is `Copyable.copy` with no callee: the copy
+        // `x.copy()` on a built-in copyable value (`Bool`, a tuple, or a
+        // variant) is `Copyable.copy` with no callee: the copy
         // is the value read itself, and MIR lowers it as one.
         if method == "copy"
             && args.is_empty()

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2063**.
+Next free ID: **R2064**.
 
 ## Ordered Work
 
@@ -6801,32 +6801,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1968 A numeric literal's value is not an instance of the declared
-  `IntLiteral` struct, so its construction and copy are checker rules**
+- [ ] **R2063 An explicit numeric literal type argument of a function's
+  type parameter binds the literal, where the pin binds its materialized
+  `Int` or `Float64`**
 
-  `IntLiteral[v]()`, `Self()` in a literal's member, and
-  `IntLiteral[v](copy=x)` are built by the checker's
-  `literal_construction` and `infer_instance_construction`
-  (`call_inference.rs`), where upstream runs the declared
-  `__init__(out self)` and the synthesized copy.
-  - Cause: the elaborator declares no struct instance for a literal type,
-    so `MirDeclarations::struct_instance` answers `None` for one, and a
-    `struct.create` of it would not verify.
-  - Stand-ins to delete: those two checker arms, MIR's
-    `materialized_literal_construction` (`mir/lower_expr/calls.rs`), and
-    the numeric-literal guard in `struct_instance` (`mir.rs`).
-  - `builtin_copy_is_value_read` (`types.rs`) admits a numeric literal
-    for the same reason.
-  - Lever: declare `IntLiteral[v]` and `FloatLiteral[v]` as zero-field
-    instances, so `struct.create` of one is the VM's empty literal struct.
-  - A use's `MaterializeLiteral` then converts the call's result register,
-    since it reads the number off the register's type (R1850).
-  - Probe: `assets/ok/int_literal_struct.mojo`,
-    `int_literal_value_type.mojo`, and `simd_literal_convert_attribute.mojo`
-    print unchanged on both backends.
-  - Found while landing R1851 (2026-11-06).
+  At the pin, `make[type_of(4)]()` and `make[IntLiteral[(4).value]]()`
+  bind `T` as `Int`, as inferring `T` from a literal argument does; Mojito
+  binds `T` as `IntLiteral[4]`.
+  - Probe: with `def make[T: Defaultable & Movable]() -> T:
+    return T()`, `print(make[type_of(4)]() + 1, make[type_of(2.5)]() + 1)`
+    prints `5 3.5`, where the pin prints `1 1.0`.
+  - Probe: with `def g[T: Writable](x: T): print(x)`, `g[type_of(4)](4)` fails
+    on the VM ("simd.extract of a non-SIMD value"), where the pin prints
+    `4`.
+  - The VM failure is the elaborator's `materialize_nested_literals`
+    (`mono/equiv.rs`) spelling `print`'s pack element as `Int` while the
+    value stays the empty literal struct.
+  - Lever: materialize the literal at the checker's explicit binding of a
+    function's type parameter, as inference already does, so no literal
+    type reaches a function instance's solution.
+  - Found while landing R1968 (2026-11-08).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1969 A numeric literal's operators and conformances are compiler
   rules, where upstream's are `IntLiteral`'s declared dunders and
@@ -6848,7 +6844,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `print(2 ** 10, -(3), ~5, 1 / 2)` keeps printing
     `1024 -3 -6 0.5`, through the declared dunders.
   - Found while landing R1851 (2026-11-06).
-  - Depends on R1968, and R1855 for the declared `__pow__`.
+  - Depends on R1855 for the declared `__pow__`.
   - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
@@ -10908,8 +10904,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where upstream runs the struct's empty `__init__(out self)`.
   - Lever: delete the string halves of both checker rules and the MIR arm,
     so `Self()`, `StringLiteral[v]()`, and `{}` reach the declared
-    `__init__` and `Self(copy=x)` the synthesized copy. The numeric halves
-    stay for R1968.
+    `__init__` and `Self(copy=x)` the synthesized copy.
   - Probe: `comptime template = StaticString(Self())` in
     `StringLiteral.format` fails to package the bundled library ("Undefined
     variable '__module$std$string$_FormatUtils'"; rebuild after the stdlib

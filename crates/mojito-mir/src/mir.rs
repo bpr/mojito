@@ -457,16 +457,12 @@ impl MirDeclarations {
     /// body holds ([`mojito_symbol::symbol::member_table_name`]), read at no
     /// arguments; any other application, and a `SIMD` with no declared
     /// instance (the source program's, or one no body holds), reads the
-    /// template it names at its own arguments. A numeric literal answers
-    /// `None`: its run-time value is still the compiler's field-less literal
-    /// rather than an instance of the declared struct (R1968).
+    /// template it names at its own arguments, a numeric literal's
+    /// field-less `IntLiteral` or `FloatLiteral` among them.
     pub fn struct_instance<'t>(&self, ty: &'t Ty) -> Option<(&MirStructDeclaration, &'t [TyArg])> {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return None;
         };
-        if ty.is_numeric_literal() {
-            return None;
-        }
         mojito_symbol::symbol::member_table_name(ty)
             .filter(|instance| instance != name)
             .and_then(|instance| self.structure(&instance))

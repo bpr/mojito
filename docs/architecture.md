@@ -2227,10 +2227,15 @@ upstream's is: `IntLiteral[v]` and `FloatLiteral[v]` are `TyKind::Struct`
 over a `#pop.int_literal`/`#pop.float_literal` slot or a symbolic
 expression of that type, which `TyKind::{int,float,numeric}_literal_slot`
 read and `Ty::new` folds when closed
-(`canonical_numeric_literal_application`). Its construction, copy,
-operators, and conformances are still the compiler's rules, so
-`as_non_simd_struct`, `MirDeclarations::struct_instance`, and the
-elaborator's `declared_operator_receiver` leave it out (R1968, R1969).
+(`canonical_numeric_literal_application`). Its construction and copy
+are the declared struct's: the elaborator declares the field-less
+`IntLiteral`/`FloatLiteral` under its template name, as any non-`SIMD`
+application (`declared_application`), so `MirDeclarations::struct_instance`
+reads it at its value, `IntLiteral[v]()` and `T()` call the declared
+`__init__(out self)`, and a `struct.create` of it is the VM's empty literal
+struct and Pliron's erased register. Its operators and conformances are
+still the compiler's rules, so `as_non_simd_struct` and the elaborator's
+`declared_operator_receiver` leave it out (R1969).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`

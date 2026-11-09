@@ -40,14 +40,19 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
-            LowerTy::ZeroSized if held => {
+            // A struct of no storage (a held one's erased field, or a
+            // numeric literal's no fields) is the erased register, as
+            // upstream's `kgen.struct.create` of no fields is no storage.
+            LowerTy::ZeroSized => {
                 self.erased.insert(dest.0);
                 Ok(())
             }
             LowerTy::Aggregate { layout, .. } => {
                 self.store_fields(ctx, dest, layout, &field_tys, fields)
             }
-            _ => Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest)),
+            LowerTy::Scalar(_) => {
+                Err(self.unsupported_reg(format!("struct creation of `{name}`"), dest))
+            }
         }
     }
 

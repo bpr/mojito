@@ -1080,6 +1080,22 @@ impl Prog {
             .map(String::as_str)
     }
 
+    /// The declared field-less struct a value of the numeric literal type
+    /// `ty` is: `IntLiteral` or `FloatLiteral`, read at its value.
+    fn declared_literal_struct<'t>(
+        &self,
+        ty: Option<&'t mojito_types::types::Ty>,
+    ) -> Option<&'t str> {
+        match ty?.kind() {
+            mojito_types::types::TyKind::Struct(name, _)
+                if ty?.is_numeric_literal() && self.structs.contains_key(name) =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        }
+    }
+
     /// The function index of the member `method` the struct `name` runs for
     /// a dispatch with `argc` arguments besides the receiver, from its
     /// declaration's member table: the one instance under the key callable
