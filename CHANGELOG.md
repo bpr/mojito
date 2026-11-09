@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `-D NAME[=VALUE]` (also `--define`) defines a compile-time name for
+  `check`, `own`, `run`, `emit-mir`, and `compile`, read by every
+  `#kgen.param.expr<get_env>` fold in the checker and the elaborator
+  (`Compiler::with_defines`), so `-D ASSERT=all` enables every `assert`
+  and `-D DT=float32` sets `get_defined_dtype["DT", ...]()`, as at the
+  pin (R1981).
 - `std.sys.defines` bundles upstream's `MojoVersion` and `MOJO_VERSION`,
   verbatim, over the `lit.mojo.version.major`/`minor`/`patch` ops, which
   the checker now admits as the pin's version components, so

@@ -116,6 +116,12 @@ cargo run -- run assets/ok/list_and_struct.mojo
 cargo run -- emit-mir assets/ok/defines_main.mojo | cargo run -- exec -
 ```
 
+`-D NAME[=VALUE]` (also `-DNAME=VALUE` and `--define NAME[=VALUE]`;
+repeatable) defines a compile-time name for `check`, `own`, `run`,
+`emit-mir`, and `compile`, as `mojo -D` does: `-D ASSERT=all` enables
+every `assert`, and `get_defined_string["NAME", "default"]()` and its
+siblings read the value. `-D NAME` alone defines the empty string.
+
 `compile` selects its output with `--emit plir|ll|bc|obj|exe` (default `ll`;
 text kinds print to stdout unless `-o PATH` is given, binary kinds require
 `-o PATH`) and rejects any program whose reachable-from-`main` call graph

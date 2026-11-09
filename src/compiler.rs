@@ -12,6 +12,7 @@ use crate::module::{
     link_source_with_options, link_source_with_package, link_with_options, link_with_package,
 };
 use crate::native::mono::{MonoError, SpecializedProgram};
+use crate::param_expr::fold::{CompileTimeDefines, with_compile_time_defines};
 use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 use crate::timing;
@@ -43,6 +44,8 @@ pub struct CompiledProgram {
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
+    /// The compile-time defines the elaborator's `get_env` folds read.
+    defines: CompileTimeDefines,
     /// The compiled package the program imports, whose bodies were checked
     /// and lowered when it was built.
     package: Option<Arc<ImportedPackage>>,
@@ -161,12 +164,14 @@ impl CompiledProgram {
             .get_or_init(|| {
                 let mir = self.elaborated_mir();
                 let _elaborate = timing::span("elaborate");
-                let concrete = crate::native::mono::specialize_importing(
-                    mir,
-                    self.package.as_deref().map(|package| &package.bodies),
-                    &crate::mir::entry_roots(mir),
-                    self.target.as_ref(),
-                );
+                let concrete = with_compile_time_defines(&self.defines, || {
+                    crate::native::mono::specialize_importing(
+                        mir,
+                        self.package.as_deref().map(|package| &package.bodies),
+                        &crate::mir::entry_roots(mir),
+                        self.target.as_ref(),
+                    )
+                });
                 let concrete = if self.pre_elaboration {
                     let _passes = timing::span("post_elaboration");
                     concrete
@@ -388,6 +393,11 @@ pub struct Compiler {
     /// a run, otherwise the host with the host CPU. `None` on a host
     /// with no native target, where a program that asks a layout fails.
     target: Option<crate::native::target::NativeTarget>,
+    /// The compile-time defines (`-D NAME[=VALUE]`) every `get_env` fold
+    /// reads, the checker's and the elaborator's alike. The bundled
+    /// library's package is built without them, as upstream's
+    /// `std.mojopkg` is, and its bodies fold them when elaborated.
+    defines: CompileTimeDefines,
     /// Import the bundled library's compiled package instead of checking
     /// its bodies again. `None` defers to the `MOJITO_STD_PACKAGE`
     /// environment variable (`0` compiles the library from source, a
@@ -458,12 +468,30 @@ impl Compiler {
             pre_elaboration: None,
             exports: Vec::new(),
             target: crate::native::target::NativeTarget::host(),
+            defines: CompileTimeDefines::default(),
         }
     }
     /// Elaborate for `target` instead of the host.
     #[must_use]
     pub fn with_target(mut self, target: crate::native::target::NativeTarget) -> Self {
         self.target = Some(target);
+        self
+    }
+    /// Compile with the compile-time defines `defines` (`mojo -D
+    /// NAME=VALUE`), each a name and its value; `-D NAME` alone defines
+    /// `NAME` as the empty string. A later definition of a name replaces an
+    /// earlier one.
+    #[must_use]
+    pub fn with_defines<N: Into<String>, V: Into<String>>(
+        mut self,
+        defines: impl IntoIterator<Item = (N, V)>,
+    ) -> Self {
+        let table = Arc::make_mut(&mut self.defines);
+        table.extend(
+            defines
+                .into_iter()
+                .map(|(name, value)| (name.into(), value.into())),
+        );
         self
     }
     /// Turn body-fact carry-over on or off, whatever the environment says:
@@ -697,6 +725,7 @@ impl Compiler {
             artifact: OnceLock::new(),
             concrete: OnceLock::new(),
             target: self.target.clone(),
+            defines: Arc::clone(&self.defines),
             package,
             pre_elaboration: self.pre_elaboration(),
             exports: self.exports.clone(),
@@ -709,6 +738,19 @@ impl Compiler {
     /// against an imported package: the front half every package-importing
     /// entry point shares, which lowers nothing.
     fn check_importing(
+        &self,
+        linked: &[Stmt],
+        package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
+        context: &mut CheckContext,
+    ) -> Result<FrontEnd, CompilerError> {
+        with_compile_time_defines(&self.defines, || {
+            self.check_importing_with_defines(linked, package, context)
+        })
+    }
+
+    /// [`Self::check_importing`] with the compilation's compile-time
+    /// defines installed.
+    fn check_importing_with_defines(
         &self,
         linked: &[Stmt],
         package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,

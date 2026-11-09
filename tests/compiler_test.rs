@@ -36,6 +36,34 @@ fn compiler_materializes_only_closed_public_tuple_signatures() {
 }
 
 #[test]
+fn compile_time_defines_reach_the_check_and_the_elaborator() {
+    let source = "from std.sys import get_defined_dtype, get_defined_int, is_defined\n\n\
+                  def main():\n    \
+                  comptime n = get_defined_int[\"N\", 7]()\n    \
+                  print(n, is_defined[\"FLAG\"](), get_defined_dtype[\"DT\", DType.int8]())\n";
+    let path = std::path::Path::new("/tmp/mojito_defines.mojo");
+    let run = |compiler: Compiler| {
+        let program = compiler.compile_source(source, path)?;
+        compiler.execute(&program).map(|execution| execution.output)
+    };
+    assert_eq!(
+        run(Compiler::default()).expect("no defines"),
+        "7 False int8\n"
+    );
+    assert_eq!(
+        run(Compiler::default().with_defines([("N", "42"), ("FLAG", ""), ("DT", "float32")]))
+            .expect("defines"),
+        "42 True float32\n"
+    );
+    let error = run(Compiler::default().with_defines([("DT", "bogus")]))
+        .expect_err("an invalid DType define fails its instance");
+    assert!(
+        error.to_string().contains("invalid DType define for 'DT'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn compiler_driver_reports_the_failing_stage() {
     let compiler = Compiler::default();
     let error = compiler

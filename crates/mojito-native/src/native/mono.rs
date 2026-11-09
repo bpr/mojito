@@ -353,10 +353,15 @@ pub fn specialize_importing(
     // deeper than the last, and the type walks recurse on that nesting, so
     // the elaborator runs on a stack deep enough to reach the instance
     // budget rather than overflow on the way.
+    // The elaboration reads the caller's compile-time defines on whichever
+    // thread it runs.
+    let defines = mojito_types::param_expr::fold::compile_time_defines();
     let elaborate = || {
-        Specializer::new(program, target)
-            .importing(package)
-            .run(entries)
+        mojito_types::param_expr::fold::with_compile_time_defines(&defines, || {
+            Specializer::new(program, target)
+                .importing(package)
+                .run(entries)
+        })
     };
     std::thread::scope(|scope| {
         std::thread::Builder::new()

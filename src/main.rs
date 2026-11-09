@@ -91,10 +91,10 @@ fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> Exit
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
         Some("parse") => stage_parse(file),
-        Some("check") => stage_check("check", file, &cli.link_options, CompilerError::to_string),
-        Some("own") => stage_check("own", file, &cli.link_options, describe_ownership),
+        Some("check") => stage_check("check", file, cli, CompilerError::to_string),
+        Some("own") => stage_check("own", file, cli, describe_ownership),
         Some("run") => stage_run(file, cli),
-        Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
+        Some("emit-mir") => stage_emit_mir(file, cli),
         Some("compile") => stage_compile(file, cli),
         Some("link") => stage_link(file, cli),
         Some("precompile") => stage_precompile(file, cli),
@@ -148,6 +148,9 @@ struct CliArgs {
     /// `--runtime-lib PATH` for `compile`/`run`/`link`: explicit runtime
     /// archive, first in the backend's ordered discovery contract.
     runtime_lib: Option<String>,
+    /// `-D NAME[=VALUE]` (also `--define`): the compile-time defines every
+    /// compiling command folds `get_env` against, in occurrence order.
+    defines: Vec<(String, String)>,
     /// `--pass NAME` for `opt`, repeatable: the passes to run, in order.
     passes: Vec<String>,
 }
@@ -157,6 +160,12 @@ impl CliArgs {
     /// given.
     const fn has_target_flags(&self) -> bool {
         self.target.is_some() || self.target_cpu.is_some() || self.target_features.is_some()
+    }
+
+    /// A compiler over the command line's module roots and compile-time
+    /// defines that runs on `backend`.
+    fn compiler(&self, backend: BackendKind) -> Compiler {
+        Compiler::new(self.link_options.clone(), backend).with_defines(self.defines.clone())
     }
 }
 
@@ -177,6 +186,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut native_debug = None;
     let mut runtime_lib = None;
     let mut passes = Vec::new();
+    let mut defines = Vec::new();
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -244,6 +254,16 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             runtime_lib = Some(path.to_string());
         } else if arg == "--runtime-lib" {
             runtime_lib = Some(iter.next().ok_or("--runtime-lib requires a path")?);
+        } else if arg == "-D" || arg == "--define" {
+            let define = iter
+                .next()
+                .ok_or_else(|| format!("{arg} requires a NAME[=VALUE]"))?;
+            defines.push(parse_define(&arg, &define)?);
+        } else if let Some(define) = arg
+            .strip_prefix("--define=")
+            .or_else(|| arg.strip_prefix("-D"))
+        {
+            defines.push(parse_define("-D", define)?);
         } else if let Some(name) = arg.strip_prefix("--pass=") {
             passes.push(name.to_string());
         } else if arg == "--pass" {
@@ -272,7 +292,20 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         native_debug,
         runtime_lib,
         passes,
+        defines,
     })
+}
+
+/// One `-D NAME[=VALUE]` define: `NAME` alone defines it as the empty
+/// string.
+fn parse_define(option: &str, define: &str) -> Result<(String, String), String> {
+    let (name, value) = define.split_once('=').unwrap_or((define, ""));
+    if name.is_empty() {
+        return Err(format!(
+            "{option} requires a non-empty NAME in NAME[=VALUE]"
+        ));
+    }
+    Ok((name.to_string(), value.to_string()))
 }
 
 fn require_path(option: &str, path: &str, roots: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -308,10 +341,10 @@ fn format_module_error(err: &ModuleError, entry_path: &str, entry_source: &str) 
 fn stage_check(
     name: &str,
     file: Option<&str>,
-    link_options: &LinkOptions,
+    cli: &CliArgs,
     describe: fn(&CompilerError) -> String,
 ) -> ExitCode {
-    let compiler = Compiler::new(link_options.clone(), BackendKind::Vm);
+    let compiler = cli.compiler(BackendKind::Vm);
     let _frontend = mojito::timing::span("frontend");
     match compile_input_describing(&compiler, file, describe) {
         Ok(_) => {
@@ -428,7 +461,7 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
 }
 
 fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
-    let compiler = Compiler::new(cli.link_options.clone(), backend);
+    let compiler = cli.compiler(backend);
     let compiler = if cli.has_target_flags() {
         compiler.with_target(native_target(cli)?)
     } else {
@@ -464,8 +497,8 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
 
 /// `emit-mir`: compile source through ownership analysis and print the exact
 /// post-drop artifact accepted by `exec` and future backends.
-fn stage_emit_mir(file: Option<&str>, link_options: &LinkOptions) -> ExitCode {
-    let compiler = Compiler::new(link_options.clone(), BackendKind::Vm);
+fn stage_emit_mir(file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    let compiler = cli.compiler(BackendKind::Vm);
     let result = compile_input(&compiler, file)
         .and_then(|compiled| compiled.emit_mir().map_err(|error| error.to_string()));
     match result {
@@ -573,8 +606,9 @@ fn compile_native_module(
     // production pipeline, and hand the cached post-drop MIR to the backend.
     let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
     let label = file.unwrap_or("-").to_string();
-    let compiler =
-        Compiler::new(cli.link_options.clone(), BackendKind::Vm).with_target(native_target(cli)?);
+    let compiler = cli
+        .compiler(BackendKind::Vm)
+        .with_target(native_target(cli)?);
     let compiled = cli_timing("frontend", || {
         match file {
             Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),
@@ -918,6 +952,7 @@ fn print_usage() {
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
          \x20 --timings              print per-phase timings and counters to stderr\n\
          \x20 --pass NAME            a MIR pass for opt to run (repeatable, in order)\n\
+         \x20 -D, --define NAME[=VALUE] a compile-time define get_env reads (repeatable)\n\
 \n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\

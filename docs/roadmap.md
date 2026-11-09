@@ -9303,9 +9303,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   other site at its start.
   - Probe: `print(s   + s)` with an `@always_inline` `__add__` returning
     `call_location()` reports the `s`, where the pin reports the `+`.
-  - Probe: under `-D ASSERT=all` (R1981), `assert   x == 2, "m"` on line
+  - Probe: under `-D ASSERT=all`, `assert   x == 2, "m"` on line
     3 fails `At: …:3:16:`, the `==`, at the pin; the linker places the
-    statement's call at its condition, so Mojito will report `3:12`.
+    statement's call at its condition, so Mojito reports `3:14`.
   - Probe: a unary operator (`-x`), a comparison, an augmented assignment
     (`x += 1`), and a call through a parenthesized callee.
   - Lever: the parser records each call-like node's point beside its
@@ -13308,24 +13308,6 @@ Track: `tooling`.
     `package_bodies_decoded`.
   - `emit-mir` shows the spans because it decodes on the main thread.
   - Found while landing R584 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1981 The CLI takes no `-D NAME[=VALUE]` define**
-
-  `mojo run -D ASSERT=all f.mojo` enables every `assert`, where Mojito has
-  no `-D` and every `#kgen.param.expr<get_env>` sees an empty table.
-  - Add `-D`/`--define` to `src/main.rs` and `Compiler`, and fill
-    `mojito_types::param_expr::fold::compile_time_define` from it, for the
-    checker's folds and the elaborator's per-instance ones alike.
-  - Then `-D ASSERT=all` makes `assert n == 3, "boom"` fail, and
-    `-D ASSERT=bogus` fails `_assert_enabled`'s instance, as at the pin.
-  - Probe: `-D DT=float32` makes `get_defined_dtype["DT", DType.int8]()`
-    give `float32` through `DType._from_str`, and `-D DT=bogus` fails its
-    instance with "invalid DType define for 'DT'", as at the pin.
-  - Revisit `docs/non-goals.md`'s note on evaluating stdlib asserts as the
-    pin does under `-D ASSERT=all`.
-  - Found while landing R1598 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

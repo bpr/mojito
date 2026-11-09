@@ -326,7 +326,8 @@ point, as upstream's toolchain does.
   `get_defined_int`, `get_defined_string`, `get_defined_dtype`) over
   `#kgen.param.expr<get_env>`, `MojoVersion` and `MOJO_VERSION` over the
   `lit.mojo.version` ops, and `is_debug_build`/`is_release_build`.
-  The compiler takes no `-D` yet, so every define is absent.
+  `-D NAME[=VALUE]` defines a name; the package is built with none and
+  folds a program's defines when the program elaborates it.
 - `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
   `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`
   mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —

@@ -28,6 +28,9 @@ use crate::ct::{
 use crate::types::{Ty, TyKind, same_type};
 use mojito_ast::ast::{Dtype, InfixOp};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Fold `left op right` over two concrete values.
 ///
@@ -404,11 +407,41 @@ pub fn fold_target_has_feature(target: &CtValue, name: &CtValue) -> Result<CtVal
     Ok(CtValue::Bool(target.has_feature(name)))
 }
 
+/// The compile-time defines of one compilation (`mojo -D name=value`), by
+/// name. A `-D name` that gives no value defines `name` as the empty
+/// string, as at the pin.
+pub type CompileTimeDefines = Arc<BTreeMap<String, String>>;
+
+/// Run `run` with `defines` as the compilation's compile-time defines.
+///
+/// Every `get_env` fold reads the table ([`compile_time_define`]), and the
+/// enclosing table is restored afterwards. The table is per thread: a phase
+/// that moves its work to another thread reinstalls
+/// [`compile_time_defines`] there.
+pub fn with_compile_time_defines<R>(defines: &CompileTimeDefines, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<CompileTimeDefines>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if let Some(enclosing) = self.0.take() {
+                DEFINES.with(|table| table.replace(enclosing));
+            }
+        }
+    }
+    let _restore = Restore(Some(
+        DEFINES.with(|table| table.replace(Arc::clone(defines))),
+    ));
+    run()
+}
+
+/// The compile-time defines installed on this thread.
+pub fn compile_time_defines() -> CompileTimeDefines {
+    DEFINES.with(|table| Arc::clone(&table.borrow()))
+}
+
 /// The value of the compile-time define `name` (`mojo -D name=value`),
-/// if it is defined. The compiler takes no `-D` yet, so no name is
-/// defined, as under a `mojo run` given none (R1981).
-pub const fn compile_time_define(_name: &str) -> Option<&'static str> {
-    None
+/// if it is defined.
+pub fn compile_time_define(name: &str) -> Option<String> {
+    DEFINES.with(|table| table.borrow().get(name).cloned())
 }
 
 /// KGEN's `get_env` over a concrete define name at result type `ty`.
@@ -434,7 +467,7 @@ pub fn fold_get_env(ty: &Ty, name: &CtValue) -> Result<CtValue, ParamError> {
         ))
     })?;
     match ty.kind() {
-        TyKind::KgenString => Ok(CtValue::KgenString(value.to_string())),
+        TyKind::KgenString => Ok(CtValue::KgenString(value)),
         TyKind::Index => value
             .parse::<i64>()
             .map(CtValue::Index)
@@ -956,6 +989,10 @@ fn target_operands<'a>(
     }
 }
 
+thread_local! {
+    static DEFINES: RefCell<CompileTimeDefines> = RefCell::default();
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -990,6 +1027,34 @@ mod tests {
                     .contains("define 'ASSERT' does not exist"))
             );
         }
+    }
+
+    #[test]
+    fn a_define_reads_as_given_within_its_scope() {
+        use crate::types::{Ty, TyKind};
+        let name = CtValue::KgenString("N".to_string());
+        let defines = std::sync::Arc::new(std::collections::BTreeMap::from([(
+            "N".to_string(),
+            "3".to_string(),
+        )]));
+        super::with_compile_time_defines(&defines, || {
+            assert_eq!(
+                fold_get_env(&Ty::bool(), &name).ok(),
+                Some(CtValue::Bool(true))
+            );
+            assert_eq!(
+                fold_get_env(&TyKind::KgenString.into(), &name).ok(),
+                Some(CtValue::KgenString("3".to_string()))
+            );
+            assert_eq!(
+                fold_get_env(&Ty::index(), &name).ok(),
+                Some(CtValue::Index(3))
+            );
+        });
+        assert_eq!(
+            fold_get_env(&Ty::bool(), &name).ok(),
+            Some(CtValue::Bool(false))
+        );
     }
 
     #[test]
