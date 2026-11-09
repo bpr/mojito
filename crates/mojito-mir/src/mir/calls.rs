@@ -94,11 +94,13 @@ pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
 /// Whether a value of this type owns storage that destruction must release:
 /// an aggregate (a struct with a destructor or owning fields, the built-in
 /// tuple/pack storage, a variant, or a still-abstract parameter
-/// type). Kept textually aligned with the drop analysis'
+/// type). A struct whose copy is its operand (a numeric literal, upstream's
+/// `TrivialRegisterPassable` `IntLiteral[v]`/`FloatLiteral[v]`) owns none.
+/// Kept textually aligned with the drop analysis'
 /// `may_alias_owned_storage`, which drop elaboration refines by
 /// `MirDeclarations::copy_is_identity`.
 pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
-    ty.is_non_simd_struct()
+    (ty.is_non_simd_struct() && !mojito_types::types::copy_is_identity(ty.kind()))
         || matches!(
             ty.kind(),
             TyKind::Tuple(_)
@@ -2352,8 +2354,13 @@ impl<'a> Flatten<'a> {
         let closure_storage = self
             .nested_info(expression)
             .map(|info| info.storage.is_some());
-        // A module constant read is a value with no slot of its own.
+        // A module constant read is a value with no slot of its own, and a
+        // literal its use materializes (`x // C` of `comptime C = 8`) is
+        // upstream's implicit conversion: the callee receives the converted
+        // value, never the literal's place.
         if expression.resolved_callable().is_some()
+            || expression.param_literal_target().is_some()
+            || expression.literal_materialization().is_some()
             || closure_storage == Some(false)
             || expression.is_origin_bearing_pointer()
             || expression.constant_param_value()

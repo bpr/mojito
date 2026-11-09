@@ -6266,13 +6266,22 @@ fn struct_comparison_rejection() -> TypeError {
     TypeError::Unsupported("a comparison of struct values is no generic proposition".to_string())
 }
 
-/// Whether `value` is a struct-typed compile-time value. A `Bool` is not:
-/// its compile-time value is the scalar its storage holds.
+/// Whether `value` is a struct-typed compile-time value
+/// ([`folds_as_struct`]).
 fn struct_valued(value: &ParamExpr) -> bool {
-    value
-        .meta()
-        .as_value()
-        .is_some_and(|ty| ty.kind().is_non_simd_struct() && !ty.kind().is_bool())
+    value.meta().as_value().is_some_and(folds_as_struct)
+}
+
+/// Whether a compile-time value of `ty` folds an operator as its struct's
+/// dunder call. A `Bool` does not: its compile-time value is the scalar its
+/// storage holds. Nor does a numeric literal: its value is its
+/// `#pop.int_literal`/`#pop.float_literal` attribute, and every operator
+/// `IntLiteral` and `FloatLiteral` declare is an `@always_inline("builtin")`
+/// body over `pop.int_literal_bin`/`pop.float_literal_bin`, the fold the
+/// shared folder computes over that attribute. A literal construction
+/// ([`literal_construction`]) still applies its dunder.
+fn folds_as_struct(ty: &Ty) -> bool {
+    ty.kind().is_non_simd_struct() && !ty.kind().is_bool() && !ty.is_numeric_literal()
 }
 
 /// Whether `value` constructs a numeric literal (`type_of(exp)()` over `exp:
@@ -6849,10 +6858,9 @@ fn self_reads(member: &StructComptime) -> HashSet<String> {
 fn struct_valued_operand(operand: &ConstraintOperand) -> bool {
     match operand {
         ConstraintOperand::Expr(expression)
-        | ConstraintOperand::Value(CtValue::Expr(expression)) => expression
-            .meta()
-            .as_value()
-            .is_some_and(|ty| ty.kind().is_non_simd_struct() && !ty.kind().is_bool()),
+        | ConstraintOperand::Value(CtValue::Expr(expression)) => {
+            expression.meta().as_value().is_some_and(folds_as_struct)
+        }
         _ => false,
     }
 }

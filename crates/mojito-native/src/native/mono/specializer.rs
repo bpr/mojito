@@ -3643,7 +3643,7 @@ impl<'a> Specializer<'a> {
             if ty.is_string_literal() {
                 self.declare_string_literal_instance(owner, &ty)?;
             }
-            let Some((name, _)) = declared_application(&ty) else {
+            let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                 continue;
             };
             let template_name = name.split("$mono").next().unwrap_or(name).to_string();
@@ -4081,7 +4081,7 @@ impl<'a> Specializer<'a> {
     /// The bindings of the struct instance `ty`, `None` when it names no
     /// struct template or applies too few of its parameters.
     fn struct_bindings(&self, owner: &str, ty: &Ty) -> Result<Option<Bindings>, MonoError> {
-        let Some((name, arguments)) = declared_application(ty) else {
+        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return Ok(None);
         };
         let template_name = name.split("$mono").next().unwrap_or(name);
@@ -4686,17 +4686,6 @@ fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
             .as_non_simd_struct()
             .is_some_and(|(name, _)| nominal_template(name) == owner),
         _ => false,
-    }
-}
-
-/// The name and arguments of the struct application `ty` the elaborator
-/// declares under its template name and reads at its arguments: any
-/// non-`SIMD`, non-`StringLiteral` one, a numeric literal's field-less
-/// `IntLiteral[v]` or `FloatLiteral[v]` among them.
-fn declared_application(ty: &Ty) -> Option<(&String, &Vec<TyArg>)> {
-    match ty.kind() {
-        TyKind::Struct(name, arguments) if ty.is_numeric_literal() => Some((name, arguments)),
-        kind => kind.as_non_simd_struct(),
     }
 }
 

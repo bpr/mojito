@@ -288,9 +288,9 @@ impl Specializer<'_> {
                             || declarations.trait_refines(&declared.trait_name, trait_name)
                     })
                 });
-        let Some((name, arguments)) = mojito_types::types::nominal_parts(ty).filter(|_| {
-            declared_by_bridge || ty.kind().is_non_simd_struct() || ty.is_numeric_literal()
-        }) else {
+        let Some((name, arguments)) = mojito_types::types::nominal_parts(ty)
+            .filter(|_| declared_by_bridge || ty.kind().is_non_simd_struct())
+        else {
             let mut undecided = false;
             let mut element = |element: &Ty, required: &str| {
                 self.type_conforms(element, required, visiting)

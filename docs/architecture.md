@@ -2230,15 +2230,24 @@ read and `Ty::new` folds when closed
 (`canonical_numeric_literal_application`). Its construction and copy
 are the declared struct's: the elaborator declares the field-less
 `IntLiteral`/`FloatLiteral` under its template name, as any non-`SIMD`
-application (`declared_application`), so `MirDeclarations::struct_instance`
+application (`as_non_simd_struct`), so `MirDeclarations::struct_instance`
 reads it at its value, `IntLiteral[v]()` and `T()` call the declared
 `__init__(out self)`, and a `struct.create` of it is the VM's empty literal
-struct and Pliron's erased register. Its conformances are the declared
-lists (`Checker::conformance`'s literal arm, the elaborator's
-`type_conforms`), and the elaborator dispatches its operators to the
-declared dunders (`declared_operator_receiver`). `as_non_simd_struct`
-still leaves it out (R2064), and the checker's literal rule types the
-operators whose dunders are not ported yet (R1784, R1853, R1854).
+struct and Pliron's erased register. `as_non_simd_struct` answers it as
+the struct it is, so its conformances are the declared lists through the
+struct arm of `Checker::conformance` and the elaborator's
+`type_conforms`, and the elaborator dispatches its operators to the
+declared dunders (`declared_operator_receiver`). Three struct rules read
+what upstream's literal is beyond its struct: a compile-time literal value
+folds its operators through the shared folder (`folds_as_struct`,
+`constraints.rs`), since every literal dunder is a builtin body over
+`pop.int_literal_bin`/`float_literal_bin`; a literal, being
+`TrivialRegisterPassable`, owns no droppable storage
+(`owns_droppable_storage`, `may_alias_owned_storage`, by
+`types::copy_is_identity`); and a read its use materializes is the
+conversion's value, never a borrowed place (`lower_borrowed_name_read`).
+The checker's literal rule types the operators whose dunders are not
+ported yet (R1784, R1853, R1854).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`

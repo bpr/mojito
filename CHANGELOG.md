@@ -174,6 +174,12 @@ to evolve under the `0.x` compatibility rules.
   constructor in a `comptime` binding, lifted over the struct's
   parameters, so `comptime w = H(Self())` through a type alias is a
   parameter argument, as at the pin (R1973).
+- An `IntLiteral[v]` or `FloatLiteral[v]` application is an ordinary
+  struct to the struct rules (`as_non_simd_struct`), as at the pin, so its
+  conformances need no literal arm of their own. A compile-time literal
+  still folds its operators over its attribute, a literal owns no
+  droppable storage, and a local `comptime C = 8` read at run time passes
+  its materialized value rather than the literal's place (R2064).
 - A `StringLiteral[v]` application is an ordinary struct to the struct
   rules (`as_non_simd_struct`), and its register passability is its
   declared `TrivialRegisterPassable`. A builtin body's `return {}` folds as

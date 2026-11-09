@@ -2256,14 +2256,6 @@ impl Checker {
             {
                 self.struct_conformance(name, &args, tr)
             }
-            // A numeric literal answers every trait as the field-less
-            // `IntLiteral`/`FloatLiteral` struct its library declares.
-            literal
-                if literal.is_numeric_literal()
-                    && let Some((name, args)) = self.nominal_struct(ty) =>
-            {
-                self.struct_trait_conformance(ty, name, &args, tr)
-            }
             TyKind::Param { .. } | TyKind::Assoc { .. } => self.archetype_conformance(ty, tr),
             TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
             _ if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) => {

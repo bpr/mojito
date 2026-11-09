@@ -10966,29 +10966,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2008.
   - Model: Opus, Not Planned.
 
-- [ ] **R2064 `TyKind::as_non_simd_struct` excludes a numeric literal
-  application, so the struct rules never see it**
-
-  `as_non_simd_struct` (`mojito-types/src/types.rs`) answers `None` for an
-  `IntLiteral[v]`/`FloatLiteral[v]`, where upstream's literal is an
-  ordinary struct.
-  - Its conformances (`Checker::conformance`, the elaborator's
-    `type_conforms`) and operator dispatch (`declared_operator_receiver`)
-    already read the declared struct through their own literal arms.
-  - Probe: with `&& !self.is_numeric_literal()` deleted, the bundled
-    library fails to package ("invalid call to '_shuffle_list': no
-    overload matches the supplied arguments", `stdlib/std/simd.mojo`'s
-    `StaticTuple[SIMDLength, …]` mask parameter), so every program fails.
-  - Lever: find which `as_non_simd_struct`/`is_non_simd_struct` reader
-    mistakes an `IntLiteral` argument for a run-time struct during
-    packaging, starting with overload matching for a `StaticTuple` value
-    parameter, then fold the literal arms above into the struct arm.
-  - Do not re-add a literal check at one of the call sites without naming
-    the upstream rule it encodes.
-  - Found while landing R1969 (2026-11-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2065 The elaborator keeps a `StringLiteral[v]` type under its
   template name, where any other struct application names its instance**
 

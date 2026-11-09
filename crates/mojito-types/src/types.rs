@@ -1202,17 +1202,14 @@ impl TyKind {
     }
 
     /// The name and arguments of a struct application other than a `SIMD`
-    /// or a numeric literal one. A rule written for a declared struct reads
-    /// this rather than matching [`TyKind::Struct`], since `SIMD`'s copies
-    /// and lanes are still the compiler's own rules (R1575) and a numeric
-    /// literal's materialization is still the compiler's (R2064), though
-    /// each application is the declared struct. A `StringLiteral[v]`
-    /// application is the declared struct it names.
+    /// one. A rule written for a declared struct reads this rather than
+    /// matching [`TyKind::Struct`], since `SIMD`'s copies and lanes are
+    /// still the compiler's own rules (R1575), though its application is
+    /// the declared struct. A `StringLiteral[v]`, `IntLiteral[v]`, or
+    /// `FloatLiteral[v]` application is the declared struct it names.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
-            Self::Struct(name, arguments) if !self.is_simd() && !self.is_numeric_literal() => {
-                Some((name, arguments))
-            }
+            Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
             _ => None,
         }
     }

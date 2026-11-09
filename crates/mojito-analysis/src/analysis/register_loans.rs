@@ -74,11 +74,12 @@ pub(super) fn active_register_loan_roots(
 /// Whether a shallowly read value of this type can alias heap storage owned by
 /// its source place — an aggregate whose fields may hold owning pointers (the
 /// self-hosted `String`/`List`/`Error` shape), or any binder, a requirement's
-/// abstract `Self` among them. Scalars and compile-time values own their
-/// bits; a bare `Pointer` read aliases by design (the `unsafe_*`
-/// vocabulary makes its lifetime the user's obligation).
+/// abstract `Self` among them. Scalars, compile-time values, and a struct
+/// whose copy is its operand (a numeric literal) own their bits; a bare
+/// `Pointer` read aliases by design (the `unsafe_*` vocabulary makes its
+/// lifetime the user's obligation).
 pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
-    ty.is_non_simd_struct()
+    (ty.is_non_simd_struct() && !mojito_types::types::copy_is_identity(ty.kind()))
         || matches!(
             ty.kind(),
             TyKind::Tuple(_)

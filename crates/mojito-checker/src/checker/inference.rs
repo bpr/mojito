@@ -2476,15 +2476,19 @@ impl Checker {
             TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
         })?;
         let mut element = first.clone();
+        // Two struct elements over literal arguments default them, as
+        // deduction materializes a literal argument; a literal element is
+        // itself a struct, which merges through `findCommonType` as a
+        // conditional's arms do (`[1, 2.5]` is ambiguous).
+        let defaults_arguments =
+            |ty: &Ty| ty.kind().is_non_simd_struct() && !ty.is_numeric_literal();
         for ty in rest {
-            let (left, right) = if element != *ty
-                && element.kind().is_non_simd_struct()
-                && ty.kind().is_non_simd_struct()
-            {
-                (default_literal(&element), default_literal(ty))
-            } else {
-                (element, ty.clone())
-            };
+            let (left, right) =
+                if element != *ty && defaults_arguments(&element) && defaults_arguments(ty) {
+                    (default_literal(&element), default_literal(ty))
+                } else {
+                    (element, ty.clone())
+                };
             element = self
                 .common_type(&left, &right, None)?
                 .into_result(&left, &right)?;
