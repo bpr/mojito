@@ -400,6 +400,7 @@ assets/ok/error_library_struct.mojo	main	exe-differential	sanitized
 assets/ok/error_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized
+assets/ok/existential_parameters_deduce_apart.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raise_edges.mojo	main	exe-differential	sanitized

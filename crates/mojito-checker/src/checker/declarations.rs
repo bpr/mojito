@@ -1960,7 +1960,7 @@ impl Checker {
                 self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
             self.generated_declaration.set(generated);
             self.resolving_parameter_annotation.set(false);
-            let mut pty = resolved?;
+            let mut pty = existential_at_slot(resolved?, index);
             pty = match p.kind {
                 mojito_ast::ast::ParamKind::Variadic => {
                     mojito_types::types::variadic_collector_type(pty, p.convention)

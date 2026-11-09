@@ -10887,26 +10887,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1975 Two existential `Some[Trait]` parameters of one trait share
-  one binder**
-
-  `synthetic_binder` makes the spelling `Some[Trait]` a binder's whole
-  identity, where upstream desugars each `Some[Trait]` occurrence to its
-  own anonymous `[T: Trait]` binder.
-  - So a call binding the two at different types elaborates one instance
-    keyed by the first argument, and the specialized MIR fails to verify.
-  - Lever: mint one binder per parameter slot when resolving a
-    signature (as `with_existential_binders` in
-    `checker/traits_support.rs` already numbers them for witness
-    comparison), and give the body's parameter binding the same id.
-  - Probe: `two(String("a"), 1)` over `def two(a: Some[Writable], b:
-    Some[Writable]): print(a, b)` fails elaboration ("argument 1 of
-    'two$mono$TString$TString' has type Int, declared String"), where the
-    pin prints `a 1`.
-  - Found while landing R1865 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1866 The bundled string iterators are not upstream's
   `CodepointSliceIter`, `CodepointsIter`, and `GraphemeSliceIter`**
 

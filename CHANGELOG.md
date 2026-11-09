@@ -4082,6 +4082,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Each existential `Some[Trait]` parameter is now its own anonymous
+  `[T: Trait]` binder, as upstream desugars it, so two parameters of one
+  trait deduce different types at one call (`two(String("a"), 1)` over
+  `def two(a: Some[Writable], b: Some[Writable])` prints `a 1` instead of
+  failing elaboration) (R1975).
 - A run-time read of a memory-only compile-time parameter value compiles
   natively (R1974): `if x: print(x.value())` over `[x: Optional[Int] =
   None]` or `[x: Optional[String] = None]` reads the typed temporary the

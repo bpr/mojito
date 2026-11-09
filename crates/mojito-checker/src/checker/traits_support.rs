@@ -306,13 +306,11 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
         if !is_existential_binder(binder) {
             continue;
         }
-        let id = ParamId::new(&binder.id.owner, slot + 1);
+        let binder = existential_slot_binder(binder, slot);
+        let id = binder.id.clone();
         let bounds = bounds.clone();
         *param = TyKind::Param {
-            binder: ParamRef {
-                id: id.clone(),
-                name: binder.name.clone(),
-            },
+            binder,
             bounds: bounds.clone(),
             callable_bound: None,
         }

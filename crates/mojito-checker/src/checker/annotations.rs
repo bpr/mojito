@@ -341,6 +341,34 @@ pub(super) fn is_existential_binder(binder: &ParamRef) -> bool {
     binder.id.owner.starts_with(SYNTHETIC_BINDER_PREFIX) && binder.name.starts_with("Some[")
 }
 
+/// The anonymous `[T: Trait]` binder upstream desugars the existential
+/// `Some[Trait]` of parameter `slot` to: one binder per parameter, so two
+/// `Some[Trait]` parameters of one trait deduce independently.
+pub(super) fn existential_slot_binder(binder: &ParamRef, slot: usize) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&binder.id.owner, slot + 1),
+        name: binder.name.clone(),
+    }
+}
+
+/// `ty` with a whole-type existential `Some[Trait]` bound by parameter
+/// `slot`'s own [`existential_slot_binder`]; any other type is kept.
+pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
+    match ty.kind() {
+        TyKind::Param {
+            binder,
+            bounds,
+            callable_bound: None,
+        } if is_existential_binder(binder) => TyKind::Param {
+            binder: existential_slot_binder(binder, slot),
+            bounds: bounds.clone(),
+            callable_bound: None,
+        }
+        .into(),
+        _ => ty,
+    }
+}
+
 /// The reference to the value binder `id` spelled `name`, typed `ty`.
 pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
     ParamContext::detached().decl_ref(

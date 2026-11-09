@@ -4252,7 +4252,8 @@ impl Checker {
     ) -> Result<Vec<Ty>, TypeError> {
         params
             .iter()
-            .map(|parameter| {
+            .enumerate()
+            .map(|(slot, parameter)| {
                 if matches!(
                     &parameter.ty,
                     SourceType::Func { type_params, .. } if !type_params.is_empty()
@@ -4272,7 +4273,7 @@ impl Checker {
                     super::StorageStrictness::AllowBare,
                 );
                 self.resolving_parameter_annotation.set(false);
-                let resolved = resolved?;
+                let resolved = existential_at_slot(resolved?, slot);
                 let declared = match parameter.kind {
                     mojito_ast::ast::ParamKind::Variadic => {
                         mojito_types::types::variadic_collector_type(
