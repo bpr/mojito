@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- ``__mlir_op.`llvm.intr.trap`()`` and `llvm_intrinsic["llvm.trap", NoneType]()`
+  trap uncatchably, as at the pin: the VM reports `abort: trap`, the native
+  program executes LLVM's trap, and compile-time evaluation reaching it
+  fails (R1701). `std.os.os` bundles upstream's `_abort_base() -> Never`
+  over it, and the `paramfor_*` stubs call it where they called the
+  compiler-private `_mojito_abort` (R799); the stubs now link after the
+  prelude's own dependencies, so their imports load in the prelude's order.
 - A call whose result is `Never` ends its path, as at the pin (R50):
   `std.os.abort` now returns `Never`, so a value-returning body, a named
   result, or an `out self` field left unset on an aborting path is

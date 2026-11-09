@@ -716,7 +716,7 @@ impl FnLowering<'_> {
     /// defined result for a zero lane the VM computes; a shuffle's index
     /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
     /// LLVM's verifier rejects as an `immarg` unless it is a constant.
-    /// `llvm.donothing` returns nothing, and `llvm.assume` nothing from its
+    /// `llvm.donothing` and `llvm.trap` return nothing, and `llvm.assume` nothing from its
     /// `i1`. A result LLVM translation sees as a
     /// literal struct (`MirDeclarations::translated_intrinsic_type`, a
     /// `_RegisterPackType`'s) is LLVM's literal struct of its elements'
@@ -729,7 +729,7 @@ impl FnLowering<'_> {
         intrinsic: LlvmIntrinsic,
         args: &[Reg],
     ) -> Result<(), PlironError> {
-        if intrinsic == LlvmIntrinsic::Donothing {
+        if matches!(intrinsic, LlvmIntrinsic::Donothing | LlvmIntrinsic::Trap) {
             let void = VoidType::get(ctx).to_handle();
             let fn_ty = FuncType::get(ctx, void, Vec::new(), false);
             let call = CallIntrinsicOp::new(

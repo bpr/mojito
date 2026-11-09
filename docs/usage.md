@@ -103,9 +103,8 @@ Commands:
 | `opt` | load a textual MIR artifact, run each `--pass NAME` in order (verifying after each), and print the canonical artifact |
 
 `run` and `exec` instantiate every reachable generic body before execution,
-as the native backend does. `--erased` (or `MOJITO_VM_ERASED=1`) runs generic
-bodies erased instead, resolving their parameters at run time; it is the
-oracle the default path is compared against.
+as the native backend does: the VM runs the concrete MIR the elaborator
+produces, and nothing else.
 
 `FILE` is optional. Use a path, `-`, or omit it to read from standard input:
 

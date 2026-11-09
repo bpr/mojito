@@ -9,7 +9,7 @@
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
 //! `pop.array` ops of `pop_array_ops.rs`, the
 //! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
-//! intrinsic call of `llvm_intrinsic.rs`.
+//! intrinsic call and `llvm.intr.trap` of `llvm_intrinsic.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -26,6 +26,7 @@ impl Checker {
     /// element list and `StaticTuple`'s initializers do, initialize `out
     /// self` element by element. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
+    /// the LLVM dialect's trap ([`Self::infer_llvm_trap_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
     /// source location ([`Self::infer_kgen_source_loc_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a lane gather
@@ -48,8 +49,12 @@ impl Checker {
         const STRING_SIZE: &str = "pop.string.size";
         const STRING_ADDRESS: &str = "pop.string.address";
         const SOURCE_LOC: &str = "kgen.source_loc";
+        const LLVM_TRAP: &str = "llvm.intr.trap";
         if method == LLVM_INTRINSIC {
             return self.infer_llvm_intrinsic_op(span, method, call);
+        }
+        if method == LLVM_TRAP {
+            return self.infer_llvm_trap_op(span, method, call);
         }
         if matches!(method, STRUCT_EXTRACT | REF_PACK_EXTRACT) {
             return self.infer_kgen_struct_extract_op(span, method, call);

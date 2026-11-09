@@ -124,6 +124,56 @@ impl Checker {
         Ok(result)
     }
 
+    /// Type ``__mlir_op.`llvm.intr.trap`()``, the LLVM dialect's op for
+    /// `llvm.trap`, which upstream's `_abort_base` spells: no attributes,
+    /// operands, or results. It records the intrinsic call
+    /// `SemanticAdjustment::LlvmIntrinsic` of `llvm.trap` with side
+    /// effects, which every backend lowers as `pop.call_llvm_intrinsic`'s.
+    /// The op does not end its block, so a `-> Never` caller follows it
+    /// with a loop, as upstream's does.
+    pub(super) fn infer_llvm_trap_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: String| TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        };
+        if let Some(argument) = param_args.first() {
+            let attribute = match argument {
+                mojito_ast::ast::ParamArg::Named { name, .. } => name.as_str(),
+                _ => "",
+            };
+            return Err(invalid(format!(
+                "attribute '{attribute}' is not an inherent attribute of '{name}'"
+            )));
+        }
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(invalid("op requires zero operands".to_string()));
+        }
+        let constant = |value| {
+            self.param_context
+                .constant(value)
+                .map_err(|error| TypeError::Unsupported(error.to_string()))
+        };
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::LlvmIntrinsic {
+                intrinsic: constant(CtValue::KgenString(LlvmIntrinsic::Trap.name().to_string()))?,
+                has_side_effect: constant(CtValue::Bool(true))?,
+                spread: None,
+            },
+        ));
+        Ok(Ty::none())
+    }
+
     /// The `intrin` attribute: a compile-time `!kgen.string`, closed or a
     /// template's parameter expression. A closed name must be in the table.
     fn llvm_intrinsic_name(

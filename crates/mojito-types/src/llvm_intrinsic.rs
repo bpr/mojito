@@ -36,6 +36,7 @@ pub enum LlvmIntrinsic {
     IsFpclass,
     Donothing,
     Assume,
+    Trap,
     VectorReduce(VectorReduction),
     VectorExtract,
     VectorInsert,
@@ -366,6 +367,7 @@ impl LlvmIntrinsic {
             Self::IsFpclass,
             Self::Donothing,
             Self::Assume,
+            Self::Trap,
             Self::VectorReduce(VectorReduction::And),
             Self::VectorReduce(VectorReduction::Or),
             Self::VectorReduce(VectorReduction::Smax),
@@ -414,6 +416,7 @@ impl LlvmIntrinsic {
             Self::IsFpclass => "llvm.is.fpclass",
             Self::Donothing => "llvm.donothing",
             Self::Assume => "llvm.assume",
+            Self::Trap => "llvm.trap",
             Self::VectorReduce(VectorReduction::And) => "llvm.vector.reduce.and",
             Self::VectorReduce(VectorReduction::Or) => "llvm.vector.reduce.or",
             Self::VectorReduce(VectorReduction::Smax) => "llvm.vector.reduce.smax",
@@ -446,7 +449,7 @@ impl LlvmIntrinsic {
     /// The number of operands the intrinsic takes.
     pub const fn arity(self) -> usize {
         match self {
-            Self::Donothing | Self::Stepvector => 0,
+            Self::Donothing | Self::Trap | Self::Stepvector => 0,
             Self::FloatMath(math) => math.arity(),
             Self::Ctpop
             | Self::Assume
@@ -476,6 +479,7 @@ impl LlvmIntrinsic {
         match self {
             Self::Donothing
             | Self::Assume
+            | Self::Trap
             | Self::X86Avx512MaskScalefPs512
             | Self::X86Ssse3PshufB128 => &[],
             Self::VectorReduce(_) | Self::VectorDeinterleave2 | Self::IsFpclass => {
@@ -693,7 +697,7 @@ impl LlvmIntrinsic {
             ))
         };
         match self {
-            Self::Donothing => {
+            Self::Donothing | Self::Trap => {
                 return (!matches!(result.kind(), TyKind::None))
                     .then(mismatch)
                     .flatten();
@@ -886,7 +890,8 @@ impl LlvmIntrinsic {
     /// float intrinsics [`FloatMath::folds`] refuses, the float reductions, `vector.insert`,
     /// the splices, `llvm.stepvector`, and the target-specific `scalef`,
     /// `pshuf.b.128`, and `tbl1`, and it types no struct result, which leaves out
-    /// `vector.deinterleave2`.
+    /// `vector.deinterleave2`. It runs `llvm.trap`, whose trap fails the
+    /// evaluation.
     pub fn compile_time_error(self) -> Option<String> {
         if self.result_elements() > 1 {
             return Some("LLVM intrinsic has unknown result type".to_string());

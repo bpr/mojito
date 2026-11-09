@@ -283,7 +283,9 @@ point, as upstream's toolchain does.
   bytes, `mkdir`/`makedirs`, `remove`/`unlink`, `rmdir`/`removedirs`, and
   `abort(message)` — the uncatchable trap crossing to the VM through the
   compiler-private `_mojito_abort` primitive, which stdlib-internal trap sites
-  call directly to avoid import cycles), `env.mojo` (`getenv`/`setenv`/
+  call directly to avoid import cycles, and upstream's `_abort_base() -> Never`
+  over ``__mlir_op.`llvm.intr.trap`()``, which the `paramfor_*` stubs call),
+  `env.mojo` (`getenv`/`setenv`/
   `unsetenv`), `pathlike.mojo` (re-exports the `PathLike` trait declared beside
   `String`), `_linux_x86.mojo` (the scalar-only `_c_stat` record glibc's
   `__xstat`/`__lxstat` fill), and `path/path.mojo` (`exists`, `lexists`,

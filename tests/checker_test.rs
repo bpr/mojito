@@ -9204,6 +9204,20 @@ fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
 }
 
 #[test]
+fn llvm_intr_trap_is_a_zero_operand_statement() {
+    // The LLVM dialect's `llvm.intr.trap` takes nothing and gives nothing,
+    // so a `-> Never` body follows it with a loop, as `_abort_base` does.
+    ok_std(
+        "def die() -> Never:\n    __mlir_op.`llvm.intr.trap`()\n    while True:\n        pass\n\n\ndef main():\n    die()\n",
+    );
+    let error = err_std("def main():\n    __mlir_op.`llvm.intr.trap`(Int(1).__mlir_index__())\n");
+    assert!(
+        error.to_string().contains("op requires zero operands"),
+        "{error}"
+    );
+}
+
+#[test]
 fn param_list_address_outside_the_bundled_variadics_is_rejected() {
     // The static address of a parameter list's elements is the bundled
     // `ParameterList.get_span`'s private stand-in for upstream's

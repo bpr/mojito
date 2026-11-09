@@ -121,7 +121,8 @@ mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_des
 # the attributes `pred`,
 # `fastmathFlags`, and `_type`, and `pop.call_llvm_intrinsic`, with the
 # compile-time expression attributes `intrin` (`"llvm.ctpop".value`),
-# `_type`, and `hasSideEffects` (`False.__mlir_i1__()`); every other name is
+# `_type`, and `hasSideEffects` (`False.__mlir_i1__()`), and the LLVM
+# dialect's `llvm.intr.trap`, which takes nothing; every other name is
 # rejected.
 mlir_op_expr: '__mlir_op' '.' NAME ['[' mlir_op_attr (',' mlir_op_attr)* ']'] '(' [expression (',' expression)*] ')'
 mlir_op_attr: NAME '=' (mlir_attr | type | expression)

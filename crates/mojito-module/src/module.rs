@@ -1005,12 +1005,14 @@ impl<'p> Linker<'p> {
         };
         // The compiler-called stubs (a sequence pattern's length test, a
         // `comptime for`'s iterator steps) are known by module path, as
-        // upstream's `getBuiltinFunction` finds them: linked first, every
-        // module may reach them.
+        // upstream's `getBuiltinFunction` finds them: linked with the
+        // prelude, every module may reach them. The prelude links its own
+        // dependencies first, so the stubs' imports (`std.os.os`'s
+        // `_abort_base`) load in the prelude's order.
+        self.load_module(&prelude)?;
         if let Some(stubs) = self.bundled_module(STUBS_MODULE) {
             self.load_module(&stubs)?;
         }
-        self.load_module(&prelude)?;
         let exports = self
             .exports
             .get(&prelude.key)

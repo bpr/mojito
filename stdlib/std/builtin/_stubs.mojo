@@ -12,11 +12,10 @@
 # - The `where conforms_to(IteratorType.Element, Movable & Deinitable)`
 #   clause is absent, since `conforms_to` takes neither a projection nor a
 #   composition yet (R792).
-# - An exhausted iterator traps through `_mojito_abort` rather than
-#   `_abort_base()`, which is not bundled yet (R799).
 
 from std.builtin.len import Sized
 from std.iter import Iterator
+from std.os.os import _abort_base
 
 # ===-----------------------------------------------------------------------===#
 # List pattern implementation details
@@ -70,7 +69,7 @@ def paramfor_next_iter[
         _ = elem^
         return result.copy()
     except:
-        _mojito_abort("paramfor_next_iter: the iterator is exhausted")
+        _abort_base()
 
 
 def paramfor_next_value[
@@ -83,4 +82,4 @@ def paramfor_next_value[
         var result = it.copy()
         return result.__next__()
     except:
-        _mojito_abort("paramfor_next_value: the iterator is exhausted")
+        _abort_base()

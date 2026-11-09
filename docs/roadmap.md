@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2059**.
+Next free ID: **R2060**.
 
 ## Ordered Work
 
@@ -1180,6 +1180,29 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Probe: `Float16(1.5) + Float16(2.0)` lowers through `double`, where the
     pin writes `fadd half`.
   - Found while landing R1600 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2059 A run-time `llvm.trap` has no outcome in the native
+  runtime-error contract**
+
+  A program reaching ``__mlir_op.`llvm.intr.trap`()`` (upstream's
+  `_abort_base`) crashes at the pin with "execution crashed". The VM reports
+  it as `RuntimeError::Abort("trap")`, while the native program dies by
+  LLVM's trap signal, so no `assets/runtime_error` fixture can pin it.
+  - The parity sweep (`tests/heavy/main.rs`) maps a VM `Abort` to
+    `TrapCategory::Abort` and asserts that category's exit code and
+    message, but a signal leaves no exit code.
+  - `TrapCategory` (`crates/mojito-pliron/src/lib.rs`) and
+    `docs/native-abi.md` have no hardware-trap outcome, and `RuntimeError`
+    no variant for one.
+  - Fix: give the VM a trap error, the contract a signal-terminated
+    category the sweep accepts, then add the fixture with its parity and
+    `assets-mojo-errors.tsv` (`trap agree`) rows.
+  - Probe: `from std.os.os import _abort_base`, a `pick(n: Int) -> Int`
+    returning `n` when positive and ending in `_abort_base()`, and `main`
+    printing `pick(2)` then `pick(0)`.
+  - Found while landing R799 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5765,16 +5788,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     as `2`.
   - `PluginSelector._find` and `TargetPluginSelector._find` recurse this
     way (R1694).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1701 `__mlir_op.`llvm.intr.trap`` is outside the subset**
-
-  `__mlir_op.`llvm.intr.trap`()` in `main` stops with "is outside the
-  subset", where the pin traps at run time and fails the evaluation when
-  compile-time evaluation reaches it.
-  - Lever: map it to the abort the VM and Pliron already lower.
-  - `TargetPluginSelector._find` traps past the list's end (R1694).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10576,16 +10589,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Movable)`, which the bundled `Iterator` does not refine yet (R669).
   - Drop `& Deinitable` from the three stubs once it does.
   - Depends on R669.
-  - Model: Opus, Not Planned.
-
-- [ ] **R799 The bundled `paramfor_*` stubs trap through `_mojito_abort`**
-
-  Problem: `paramfor_next_iter` and `paramfor_next_value` in
-  `stdlib/std/builtin/_stubs.mojo` end their `except` arm in
-  `_mojito_abort(...)`, where upstream calls `_abort_base()`, a `-> Never`
-  function.
-  - Swap in `_abort_base()` and give `std.os` its declaration.
-  - Depends on R50.
   - Model: Opus, Not Planned.
 
 - [ ] **R894 Bundled modules loaded while the prelude bootstraps do not see
