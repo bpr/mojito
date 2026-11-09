@@ -13088,19 +13088,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1982 `MojoVersion` and `MOJO_VERSION` are not bundled**
-
-  `std.sys.defines.MojoVersion` reads the compiler's version through the
-  `lit.mojo.version.major`/`minor`/`patch` ops, which the checker does not
-  admit.
-  - Admit the three ops as constant `index` values of the pin's version,
-    then port `MojoVersion` and `MOJO_VERSION` verbatim.
-  - Probe: `from std.sys.defines import MOJO_VERSION` then
-    `print(MOJO_VERSION.major)` prints the pin's major version.
-  - Found while landing R1598 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2011 The bundled `Error` omits upstream's `StackTrace` and its
   `_stack_trace` field**
 

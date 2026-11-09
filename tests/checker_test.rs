@@ -9218,6 +9218,22 @@ fn llvm_intr_trap_is_a_zero_operand_statement() {
 }
 
 #[test]
+fn lit_mojo_version_ops_are_zero_operand_index_constants() {
+    // `lit.mojo.version.major`/`minor`/`patch` fold to the pin's version
+    // components as `index` values, which `MojoVersion` wraps in `Int`.
+    ok_std(
+        "def main():\n    comptime major = Int(mlir_value=__mlir_op.`lit.mojo.version.major`())\n    print(major)\n",
+    );
+    let error = err_std(
+        "def main():\n    _ = __mlir_op.`lit.mojo.version.minor`(Int(1).__mlir_index__())\n",
+    );
+    assert!(
+        error.to_string().contains("op requires zero operands"),
+        "{error}"
+    );
+}
+
+#[test]
 fn param_list_address_outside_the_bundled_variadics_is_rejected() {
     // The static address of a parameter list's elements is the bundled
     // `ParameterList.get_span`'s private stand-in for upstream's

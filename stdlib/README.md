@@ -323,8 +323,9 @@ point, as upstream's toolchain does.
   what is still omitted and the roadmap entries that own it.
 - `std/sys/defines.mojo` and `std/sys/_build.mojo` — upstream's
   compile-time define reads (`is_defined`, `get_defined_bool`,
-  `get_defined_int`, `get_defined_string`) over
-  `#kgen.param.expr<get_env>`, and `is_debug_build`/`is_release_build`.
+  `get_defined_int`, `get_defined_string`, `get_defined_dtype`) over
+  `#kgen.param.expr<get_env>`, `MojoVersion` and `MOJO_VERSION` over the
+  `lit.mojo.version` ops, and `is_debug_build`/`is_release_build`.
   The compiler takes no `-D` yet, so every define is absent.
 - `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
   `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`

@@ -1,10 +1,7 @@
-# Upstream's `std/sys/defines.mojo`, in part: `is_defined`,
-# `_is_bool_like`, `get_defined_bool`, both `get_defined_int`s, and both
-# `get_defined_string`s, and `get_defined_dtype`, verbatim, over
-# `#kgen.param.expr<get_env>`. The compiler takes no `-D` yet (R1981), so no
-# name is defined, as under a `mojo run` given none.
-# Omitted: `MojoVersion` with `MOJO_VERSION`, over the `lit.mojo.version`
-# ops (R1982).
+# Upstream's `std/sys/defines.mojo`, verbatim: the define reads over
+# `#kgen.param.expr<get_env>`, and `MojoVersion` with `MOJO_VERSION` over the
+# `lit.mojo.version` ops. The compiler takes no `-D` yet (R1981), so no name
+# is defined, as under a `mojo run` given none.
 
 """Implements functions for retrieving compile-time defines.
 
@@ -217,3 +214,26 @@ def get_defined_dtype[name: StaticString, default: DType]() -> DType:
         return parsed.value()
     else:
         return default
+
+
+struct MojoVersion(ImplicitlyCopyable, TrivialRegisterPassable):
+    """Represents the Mojo version as major, minor, and patch numbers."""
+
+    var major: Int
+    """The major version number."""
+    var minor: Int
+    """The minor version number."""
+    var patch: Int
+    """The patch version number."""
+
+    @inline(.nodebug)
+    def __init__(out self):
+        """Initializes the version by reading it from the compiler at compile time.
+        """
+        self.major = Int(mlir_value=__mlir_op.`lit.mojo.version.major`())
+        self.minor = Int(mlir_value=__mlir_op.`lit.mojo.version.minor`())
+        self.patch = Int(mlir_value=__mlir_op.`lit.mojo.version.patch`())
+
+
+comptime MOJO_VERSION = MojoVersion()
+"""The version of the Mojo language used for the current compilation, available at compile time."""

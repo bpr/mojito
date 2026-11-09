@@ -7,7 +7,8 @@
 //! reductions), the `index` ops over `__mlir_type.index`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and its `!kgen.scalar<index>` storage and between `i1` and its
-//! `!kgen.scalar<bool>` storage, with the
+//! `!kgen.scalar<bool>` storage, and the `lit.mojo.version` ops that fold
+//! to the language version ([`MojoVersionOp`]), with the
 //! `__mlir_attr` spellings their attributes take. The checker verifies an op's operands
 //! as upstream's op verifier does and records the [`MlirOp`]. MIR lowering
 //! reads [`MlirOp::lowering`], and the backends compute a [`PopOp`] lane by
@@ -689,6 +690,44 @@ impl FastMathFlags {
         self.0 & other.0 == other.0
     }
 }
+
+/// One of upstream's `lit.mojo.version.major`, `.minor`, and `.patch` ops.
+///
+/// Each takes no operands or attributes and folds to that component of the
+/// Mojo language version the compilation follows, an `index`
+/// ([`MOJO_VERSION`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MojoVersionOp {
+    Major,
+    Minor,
+    Patch,
+}
+
+impl MojoVersionOp {
+    /// The op spelled `name`, if it is one of the three.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "lit.mojo.version.major" => Some(Self::Major),
+            "lit.mojo.version.minor" => Some(Self::Minor),
+            "lit.mojo.version.patch" => Some(Self::Patch),
+            _ => None,
+        }
+    }
+
+    /// The version component the op folds to.
+    pub const fn value(self) -> i64 {
+        let (major, minor, patch) = MOJO_VERSION;
+        match self {
+            Self::Major => major,
+            Self::Minor => minor,
+            Self::Patch => patch,
+        }
+    }
+}
+
+/// The Mojo language version Mojito follows, as `(major, minor, patch)`:
+/// the pinned build's (`conformance/parity.tsv`'s `reference-version`).
+pub const MOJO_VERSION: (i64, i64, i64) = (1, 3, 0);
 
 /// The spelling every `#pop.fmf<flag>` attribute starts with.
 pub const FASTMATH_ATTRIBUTE_PREFIX: &str = "#pop.fmf<";

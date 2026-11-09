@@ -122,8 +122,9 @@ mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_des
 # `fastmathFlags`, and `_type`, and `pop.call_llvm_intrinsic`, with the
 # compile-time expression attributes `intrin` (`"llvm.ctpop".value`),
 # `_type`, and `hasSideEffects` (`False.__mlir_i1__()`), and the LLVM
-# dialect's `llvm.intr.trap`, which takes nothing; every other name is
-# rejected.
+# dialect's `llvm.intr.trap`, which takes nothing, and
+# `lit.mojo.version.major`/`minor`/`patch`, which take nothing and give the
+# language version's `index` component; every other name is rejected.
 mlir_op_expr: '__mlir_op' '.' NAME ['[' mlir_op_attr (',' mlir_op_attr)* ']'] '(' [expression (',' expression)*] ')'
 mlir_op_attr: NAME '=' (mlir_attr | type | expression)
 # A bracketed attribute is one application of its pieces in any expression

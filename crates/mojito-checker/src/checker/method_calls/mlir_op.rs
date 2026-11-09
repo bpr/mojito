@@ -5,6 +5,7 @@
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
 //! `kgen.source_loc` of the call site an inline chain was entered from,
+//! `lit.mojo.version.major`, `.minor`, and `.patch` of the language version,
 //! `lit.ref.pack.extract` of an element reference of a reference pack,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
 //! `pop.array` ops of `pop_array_ops.rs`, the
@@ -28,7 +29,8 @@ impl Checker {
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// the LLVM dialect's trap ([`Self::infer_llvm_trap_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
-    /// source location ([`Self::infer_kgen_source_loc_op`]), a
+    /// source location ([`Self::infer_kgen_source_loc_op`]), a language
+    /// version component ([`Self::infer_mojo_version_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a lane gather
     /// ([`Self::infer_simd_shuffle_op`]), or a
     /// `pop` or `index` op ([`Self::infer_pop_op`]). The
@@ -64,6 +66,9 @@ impl Checker {
         }
         if method == SOURCE_LOC {
             return self.infer_kgen_source_loc_op(span, method, call);
+        }
+        if let Some(op) = mojito_types::mlir::MojoVersionOp::parse(method) {
+            return self.infer_mojo_version_op(span, method, op, call);
         }
         if matches!(
             method,
@@ -350,6 +355,54 @@ impl Checker {
             },
         ));
         Ok(result)
+    }
+
+    /// Type ``__mlir_op.`lit.mojo.version.major`()`` (or `.minor`,
+    /// `.patch`), which upstream's `MojoVersion` spells: no attributes or
+    /// operands, and an `index` result the op folds to, the component of
+    /// [`mojito_types::mlir::MOJO_VERSION`]. It records that constant as
+    /// the parameter value MIR lowers.
+    fn infer_mojo_version_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        op: mojito_types::mlir::MojoVersionOp,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: String| TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        };
+        if let Some(argument) = param_args.first() {
+            let attribute = match argument {
+                mojito_ast::ast::ParamArg::Named { name, .. } => name.as_str(),
+                _ => "",
+            };
+            return Err(invalid(format!(
+                "attribute '{attribute}' is not an inherent attribute of '{name}'"
+            )));
+        }
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(invalid("op requires zero operands".to_string()));
+        }
+        let value = self
+            .param_context
+            .constant(CtValue::Index(op.value()))
+            .map_err(|error| TypeError::Unsupported(error.to_string()))?;
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value,
+                materialized: None,
+                literal_target: None,
+            },
+        ));
+        Ok(TyKind::Index.into())
     }
 
     /// Type ``__mlir_op.`pop.string.size`(s)`` or

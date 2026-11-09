@@ -1298,6 +1298,7 @@ assets/ok/subscript_store_setter_by_element_type.mojo	-	ineligible	no-scalar-ent
 assets/ok/subscript_write_back.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/subscript_write_back_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/sys_defines_mojo_version.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_defines_undefined.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_info_layout_queries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sys_intrinsics_assume.mojo	-	ineligible	no-scalar-entry-shape

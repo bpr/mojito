@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.sys.defines` bundles upstream's `MojoVersion` and `MOJO_VERSION`,
+  verbatim, over the `lit.mojo.version.major`/`minor`/`patch` ops, which
+  the checker now admits as the pin's version components, so
+  `MOJO_VERSION` reads 1.3.0 as at the pin (R1982).
 - `std.sys` bundles upstream's `get_defined_dtype`, verbatim over
   `DType._from_str`; with no `-D` it gives its default, as at the pin
   (R1978).

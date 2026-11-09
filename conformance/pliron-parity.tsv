@@ -1298,6 +1298,7 @@ assets/ok/subscript_store_setter_by_element_type.mojo	main	exe-differential	sani
 assets/ok/subscript_write_back.mojo	main	exe-differential	sanitized
 assets/ok/subscript_write_back_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
+assets/ok/sys_defines_mojo_version.mojo	main	exe-differential	sanitized
 assets/ok/sys_defines_undefined.mojo	main	exe-differential	sanitized
 assets/ok/sys_info_layout_queries.mojo	main	exe-differential	sanitized
 assets/ok/sys_intrinsics_assume.mojo	main	exe-differential	sanitized
