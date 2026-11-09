@@ -500,22 +500,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1347 A callee returning a reference through a local `ref` slot
-  keeps its `nodebug` call**
-
-  `returns_bound_place` admits a returned reference made to a place-bound
-  parameter, a pointee, or a static origin, but not one made through a
-  local `ref` slot an inner reference-returning call fills, which names
-  the caller's place only through that call's result.
-  - Probe: `Dict.setdefault` returning `ref.make $local.value`, `$local`
-    holding an inner `List.__getitem__` result, keeps its call in
-    `assets/ok/dict_methods_growth.mojo`.
-  - Lever: follow the local slot's one store to the reference it holds,
-    and admit the slot's place when that reference is itself admitted.
-  - Found while landing R1099 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1452 `inline_cost` prices a callee as `mem-2-reg` leaves it, where
   the pin measures it right after splicing its own callees**
 

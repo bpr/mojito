@@ -286,9 +286,9 @@ folds the operators over it (R840);
    through a reference the block made or a reference register included,
    or a fresh slot for an owned, scalar, or trivially copied one, or one
    the caller lends its owned temporary through. What still keeps a call:
-   a copy- or move-capturing body a sibling captures (R1104), a raising
-   `deinit` callee passed a field, which takes a copy of it (R1106),
-   and a reference returned through a local `ref` slot (R1347); a small plain `@always_inline` callee inlines too
+   a copy- or move-capturing body a sibling captures (R1104) and a
+   raising `deinit` callee passed a field, which takes a copy of it
+   (R1106); a small plain `@always_inline` callee inlines too
    (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps as
    calls) and R925 (a recursive `@always_inline` function, an error on the
    pin). The

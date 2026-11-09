@@ -152,6 +152,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` follows a reference a callee returns through a local
+  `ref` slot to the reference that slot's one store holds, so
+  `Dict.setdefault`, returning `self.entries[i].value`, inlines instead
+  of keeping its `nodebug` call (R1347).
 - `inline-parametric` binds a `read` argument read through a pointer
   register to that pointer, as upstream passes a pointer's value as its
   pointee's address, so `len(self.src[])` in the `Set`, `Dict`, and

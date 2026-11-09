@@ -120,10 +120,10 @@
 //! materializes.
 //! A callee returning a reference binds a `read` parameter to the place the
 //! call retains for it too, so the reference its body makes is to the
-//! caller's place; one returned to a fresh slot keeps the call, and so does
-//! one returned through a local `ref` slot (R1347), while a reference to a
-//! pointee or of static origin, or one an `if` or a loop merges from such
-//! references, inlines. A
+//! caller's place; one returned to a fresh slot keeps the call, while a
+//! reference to a pointee or of static origin, one an `if` or a loop merges
+//! from such references, or one made through a local `ref` slot whose one
+//! store holds such a reference, inlines. A
 //! place-bound parameter the callee names as a place's root composes the
 //! caller's place; one it copies whole loads the caller's place and copies
 //! the value, naming the copy constructor its instantiated type has; one it
@@ -2741,7 +2741,10 @@ fn is_owned_parameter(callee: &MirFunction, param: usize) -> bool {
 /// initializes keeps the call, as the caller's loan names the argument's
 /// place, not that slot. A reference to a pointee, an element a pointer
 /// addresses (`elements[unsafe_offset=i][]`, `self._data[idx]`), and one
-/// of static origin name no slot of the body at all.
+/// of static origin name no slot of the body at all. A reference made
+/// through a local `ref` slot (`self.entries[i].value`) names what the
+/// slot's one whole store holds, so that stored reference is checked in
+/// its place.
 fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     let place_bound = |var: VarId| {
         matches!(
@@ -2775,15 +2778,59 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     let mut made = HashMap::new();
     let mut returned = Vec::new();
     references_and_returns(&callee.blocks, &mut made, &mut returned);
-    let merged = carried_values(&mut blocks, &mut returned);
+    let mut stores = HashMap::new();
+    whole_stores(&callee.blocks, &mut stores);
+    let held = |value: &Reg| {
+        made.get(&value.0).and_then(|place: &&MirPlace| {
+            let slot = place.root;
+            (place.through == Some(slot) && slot >= callee.n_params as VarId)
+                .then(|| stores.get(&slot))
+                .flatten()
+                .and_then(|held: &Vec<Reg>| match held.as_slice() {
+                    [held] => Some(*held),
+                    _ => None,
+                })
+        })
+    };
+    let mut merged = HashSet::new();
+    loop {
+        let before = returned.len();
+        let through: Vec<Reg> = returned.iter().filter_map(held).collect();
+        returned.extend(through);
+        merged.extend(carried_values(&mut blocks, &mut returned));
+        let mut seen = HashSet::new();
+        returned.retain(|value| seen.insert(value.0));
+        if returned.len() == before {
+            break;
+        }
+    }
     returned.iter().all(|value| {
         merged.contains(&value.0)
             || is_static(value)
+            || held(value).is_some()
             || made.get(&value.0).is_some_and(|place: &&MirPlace| {
                 pointee(place)
                     || place.through.is_none_or(|var| var == place.root) && place_bound(place.root)
             })
     })
+}
+
+/// Add to `stores` each register `blocks` and their regions store whole
+/// into a slot (`var.store`, or a `place.store` of the whole slot), by
+/// that slot.
+fn whole_stores(blocks: &[MirBlock], stores: &mut HashMap<VarId, Vec<Reg>>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for region in instruction_regions(instruction) {
+            whole_stores(region, stores);
+        }
+        match instruction {
+            MirInstr::DefVar { var, src, .. } => stores.entry(*var).or_default().push(*src),
+            MirInstr::Store { place, src } if place.proj.is_empty() && place.through.is_none() => {
+                stores.entry(place.root).or_default().push(*src);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Add to `made` the place each reference `blocks` and their regions make
