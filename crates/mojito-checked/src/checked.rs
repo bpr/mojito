@@ -4003,8 +4003,9 @@ impl CheckedTables {
     /// `continue`, or `raise`, a `comptime assert` whose condition folds to
     /// `False`, an expression statement whose value is `Never`
     /// ([`Self::never_returns`]), a scope whose own live statements end that
-    /// way, or an `if` or `comptime if` with an `else` every arm of which
-    /// ends that way. The rest is dead, and lowering erases it as `LowerSemanticCF`'s
+    /// way, an `if` with an `else` every arm of which ends that way, or a
+    /// `comptime if` every arm of which some instance can take
+    /// ([`Self::comptime_arms_taken`]) ends that way. The rest is dead, and lowering erases it as `LowerSemanticCF`'s
     /// `eraseOpToEndOfBlock` erases the ops after a terminator, before an
     /// instance judges its assertions. A `while True` with no `break` of
     /// its own ends the block, as does a `with` whose body does and a
@@ -4014,6 +4015,29 @@ impl CheckedTables {
         body.iter()
             .position(|id| self.ends_block(*id))
             .map_or(body, |last| &body[..=last])
+    }
+
+    /// Which arms of a `comptime if` over `branches` some instance can take,
+    /// each branch's in order and then the else arm's. A condition the check
+    /// closed decides its arm before lowering, as `LowerSemanticCF`'s
+    /// `markRegionDeadDueToConstantCond` does: one closed `False` is dead,
+    /// and one closed `True` leaves every later arm dead. An arm over open
+    /// conditions stays for the elaborator.
+    pub fn comptime_arms_taken(
+        &self,
+        branches: &[(CheckedCondition, Vec<CheckedStmtId>)],
+    ) -> (Vec<bool>, bool) {
+        let mut decided = false;
+        let taken = branches
+            .iter()
+            .map(|(cond, _)| {
+                let closed = self.closed_comptime_condition(cond);
+                let taken = !decided && closed != Some(false);
+                decided |= closed == Some(true);
+                taken
+            })
+            .collect();
+        (taken, !decided)
     }
 
     /// Whether statement `id` is an expression statement whose checked
@@ -4293,14 +4317,34 @@ impl CheckedTables {
                                 .as_ref()
                                 .is_none_or(|(_, handler)| self.body_ends_block(handler)))
                 }
-                CheckedStmtOp::If { branches, orelse }
-                | CheckedStmtOp::ComptimeIf { branches, orelse } => {
-                    orelse.as_deref().is_some_and(|orelse| {
-                        self.body_ends_block(orelse)
-                            && branches.iter().all(|(_, body)| self.body_ends_block(body))
-                    })
+                CheckedStmtOp::If { branches, orelse } => orelse.as_deref().is_some_and(|orelse| {
+                    self.body_ends_block(orelse)
+                        && branches.iter().all(|(_, body)| self.body_ends_block(body))
+                }),
+                CheckedStmtOp::ComptimeIf { branches, orelse } => {
+                    let (taken, orelse_taken) = self.comptime_arms_taken(branches);
+                    branches
+                        .iter()
+                        .zip(taken)
+                        .all(|((_, body), taken)| !taken || self.body_ends_block(body))
+                        && (!orelse_taken
+                            || orelse
+                                .as_deref()
+                                .is_some_and(|orelse| self.body_ends_block(orelse)))
                 }
                 _ => false,
+            })
+    }
+
+    /// The `Bool` a `comptime if` condition folds to over no parameter, read
+    /// from the value the check recorded on it.
+    fn closed_comptime_condition(&self, cond: &CheckedCondition) -> Option<bool> {
+        self.expression(cond.boolean()?)?
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                SemanticAdjustment::ComptimeCondition { value } => value.as_bool(),
+                _ => None,
             })
     }
 

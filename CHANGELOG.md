@@ -4252,6 +4252,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime if` whose condition the check closes now decides its arms
+  before the ownership checks, as upstream's `LowerSemanticCF` does: a dead
+  arm keeps no value alive, and the statements after a live `return`,
+  `raise`, `break`, or `continue` arm are erased, so a value only they read
+  dies right after its definition, as at the pin (R1289).
+
 - A store through a handle that names no owner place destroys the value
   it replaces first, as the pin does (R1216): `q[] = Inner(2)` over a
   reassigned, cast, or destructured `Pointer`, `t[0] = v` over a tuple,

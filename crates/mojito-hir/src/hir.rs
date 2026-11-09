@@ -1606,7 +1606,10 @@ impl Lower {
     }
 
     /// `comptime if`/`elif`/`else` as `hlcf.comptime.if`: every condition
-    /// first, as the op's attributes, then one region per arm.
+    /// first, as the op's attributes, then one region per arm. An arm a
+    /// closed condition rules out is a bare `unreachable`, as
+    /// `markRegionDeadDueToConstantCond` leaves it, so the ownership checks
+    /// never see its body ([`CheckedTables::comptime_arms_taken`]).
     fn comptime_if(
         &mut self,
         id: CheckedStmtId,
@@ -1622,11 +1625,13 @@ impl Lower {
             return;
         };
         let conds = conds.into_iter().map(|cond| self.expr(cond)).collect();
+        let (taken, orelse_taken) = self.checked.comptime_arms_taken(branches);
         let arms = branches
             .iter()
-            .map(|(_, body)| self.comptime_arm(Some(body)))
+            .zip(taken)
+            .map(|((_, body), taken)| self.taken_comptime_arm(taken, Some(body)))
             .collect();
-        let orelse = self.comptime_arm(orelse);
+        let orelse = self.taken_comptime_arm(orelse_taken, orelse);
         self.push(HirInstr::ComptimeIf {
             conds,
             arms,
@@ -1696,6 +1701,16 @@ impl Lower {
             self.block(declarations);
         }
         self.block(&case.body);
+    }
+
+    /// A `comptime if` arm some instance can take, as [`Self::comptime_arm`],
+    /// else a bare `unreachable`.
+    fn taken_comptime_arm(&mut self, taken: bool, body: Option<&[CheckedStmtId]>) -> HirRegion {
+        if taken {
+            self.comptime_arm(body)
+        } else {
+            self.region(|_| Terminator::Unreachable)
+        }
     }
 
     /// A `comptime if` arm: `body` in its own scope, then `comptime.yield`.

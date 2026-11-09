@@ -212,6 +212,7 @@ assets/ok/comptime_headers_and_local_aliases.mojo	main	exe-differential	sanitize
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_abstract_body_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_arm_destroy_joins.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_closed_arm_decides_drops.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_condition_applies_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_condition_reads_index.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized

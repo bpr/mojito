@@ -1694,25 +1694,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1289 A closed `comptime if`'s dead arm keeps values alive through
-  drop elaboration**
-
-  Upstream's `LowerSemanticCF` marks a constant-dead `comptime if` arm
-  `unreachable`, and erases the code after a live arm that never falls
-  through, before `CheckLifetimes` runs; Mojito keeps both until
-  `canonicalize` folds the op, after drop elaboration.
-  - Probe: `var b = Thing("b")`, `print("start")`, then `comptime if FLAG:
-    return` and `print("after", b.s)`, over a module `comptime FLAG =
-    True`: the pin prints `del b`, `start`, and Mojito `start`, `del b`.
-    A `raise Error("boom")` in the arm differs the same way.
-  - Lever: decide a closed condition before the ownership checks, as
-    `markRegionDeadDueToConstantCond` does, the way `hir::Lower` already
-    erases the statements after a `return` or `raise`
-    (`CheckedTables::live_statements`).
-  - Found while landing R906 (2026-10-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1497 An associated projection's abandonment is not asked of its
   bound**
 
