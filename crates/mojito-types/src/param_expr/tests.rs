@@ -21,6 +21,12 @@ fn infix(context: &ParamContext, op: InfixOp, left: &ParamExpr, right: &ParamExp
         .expect("well-typed operands build")
 }
 
+/// `Bool` parameters `b`, `c`, and `d` of one signature.
+fn bool_params(context: &ParamContext) -> [ParamExpr; 3] {
+    [(0, "b"), (1, "c"), (2, "d")]
+        .map(|(slot, name)| context.register(ParamId::new("f", slot), name, MetaTy::bool()))
+}
+
 fn hash_of(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
@@ -1627,14 +1633,27 @@ fn compare(
         .expect("two storages compare")
 }
 
+/// The `Bool` a `SIMD` comparison body creates from a reduction of `mask`,
+/// `Bool(mlir_value=pop.simd.reduce_and(mask))`: the reduction is a
+/// `!kgen.scalar<bool>`.
 fn reduce(
     context: &ParamContext,
     reduction: crate::mlir::SimdReduction,
     mask: &ParamExpr,
 ) -> ParamExpr {
-    context
+    let storage = context
         .simd_reduce(reduction, mask)
-        .expect("a mask reduces")
+        .expect("a mask reduces");
+    assert_eq!(storage.meta(), &BoolDomain::Storage.meta());
+    let spelling = context.apply(
+        "Bool.__init__",
+        std::slice::from_ref(&storage),
+        MetaTy::bool(),
+    );
+    context.struct_value(
+        &[(crate::ct::MLIR_VALUE_FIELD.to_string(), storage)],
+        &spelling,
+    )
 }
 
 /// `pop.cmp` normalizes `gt`/`ge` to `lt`/`le` over swapped operands and
@@ -1699,7 +1718,10 @@ fn vector_reductions_keep_other_shapes() {
         infix(&context, InfixOp::Eq, &v, &w)
     );
     assert!(matches!(
-        reduce(&context, SimdReduction::Or, &equal).kind(),
+        context
+            .simd_reduce(SimdReduction::Or, &equal)
+            .expect("a mask reduces")
+            .kind(),
         ParamKind::Op {
             op: ParamOp::SimdReduceOr,
             ..
@@ -1849,4 +1871,99 @@ fn integer_literal_beside_a_vector_converts() {
             infix(&context, InfixOp::Add, &v, &one)
         );
     }
+}
+
+/// `Bool`'s `&`, `|`, and `^` (with `~b` and `not b` as `b ^ True`) are one
+/// canonical form over a `Bool` and over its `!kgen.scalar<bool>` storage,
+/// with the identities the pin folds and none it keeps: `b ^ b`, `b | ~b`,
+/// and `b & c` against `b and c` stay apart.
+#[test]
+fn bool_operators_canonicalize_in_both_bool_domains() {
+    let context = ParamContext::new();
+    let bools = bool_params(&context);
+    let storages = bools.clone().map(|b| {
+        context
+            .field(&b, crate::ct::MLIR_VALUE_FIELD, BoolDomain::Storage.meta())
+            .expect("a Bool's storage")
+    });
+    for ([b, c, d], domain) in [
+        (bools.clone(), BoolDomain::Bool),
+        (storages.clone(), BoolDomain::Storage),
+    ] {
+        let op = |op, operands: &[ParamExpr]| context.op(op, operands).expect("Bool operands");
+        let truth = |value| context.bool_constant(domain, value).expect("a constant");
+        let not = |x: &ParamExpr| op(ParamOp::BitXor, &[x.clone(), truth(true)]);
+        let and = |x: &ParamExpr, y: &ParamExpr| op(ParamOp::BitAnd, &[x.clone(), y.clone()]);
+        let or = |x: &ParamExpr, y: &ParamExpr| op(ParamOp::BitOr, &[x.clone(), y.clone()]);
+        let xor = |x: &ParamExpr, y: &ParamExpr| op(ParamOp::BitXor, &[x.clone(), y.clone()]);
+        assert_eq!(and(&b, &c), and(&c, &b));
+        assert_eq!(or(&b, &c), or(&c, &b));
+        assert_eq!(xor(&b, &c), xor(&c, &b));
+        assert_eq!(and(&b, &and(&c, &d)), and(&and(&b, &c), &d));
+        assert_eq!(xor(&xor(&b, &c), &d), xor(&d, &xor(&c, &b)));
+        assert_eq!(and(&b, &b), b);
+        assert_eq!(or(&b, &b), b);
+        assert_eq!(and(&b, &truth(true)), b);
+        assert_eq!(or(&b, &truth(false)), b);
+        assert_eq!(and(&b, &truth(false)), truth(false));
+        assert_eq!(or(&b, &truth(true)), truth(true));
+        assert_eq!(not(&not(&b)), b);
+        assert_eq!(and(&b, &not(&b)), truth(false));
+        assert_eq!(and(&and(&b, &c), &not(&b)), truth(false));
+        assert_ne!(or(&b, &not(&b)), truth(true));
+        assert_ne!(xor(&b, &b), truth(false));
+        assert_eq!(b.meta(), &domain.meta());
+        assert_eq!(and(&b, &c).meta(), &domain.meta());
+    }
+    let [b, c, _] = &bools;
+    assert_ne!(
+        context
+            .op(ParamOp::BitAnd, &[b.clone(), c.clone()])
+            .expect("&"),
+        context.infix(InfixOp::And, b, c).expect("and"),
+    );
+}
+
+/// A `Bool`'s `_mlir_value` (`struct.extract`) and the `Bool` created from
+/// a storage (`struct.create`) map `&`, `|`, `^`, and a `Cond`'s arms node
+/// by node and are inverse: `pop.simd.and(b._mlir_value, c._mlir_value)`
+/// created as a `Bool` is `b & c`, and a closed `Bool`'s storage is its
+/// `#kgen.simd` constant.
+#[test]
+fn bool_storage_extract_and_create_are_inverse() {
+    let context = ParamContext::new();
+    let [b, c, d] = bool_params(&context);
+    let extract = |x: &ParamExpr| {
+        context
+            .field(x, crate::ct::MLIR_VALUE_FIELD, BoolDomain::Storage.meta())
+            .expect("a Bool's storage")
+    };
+    let create = |s: &ParamExpr| {
+        let spelling = context.apply("Bool.__init__", std::slice::from_ref(s), MetaTy::bool());
+        context.struct_value(
+            &[(crate::ct::MLIR_VALUE_FIELD.to_string(), s.clone())],
+            &spelling,
+        )
+    };
+    let and = context
+        .op(ParamOp::BitAnd, &[b.clone(), c.clone()])
+        .expect("&");
+    let inverted = context.not(&b).expect("not");
+    let selected = context
+        .op(ParamOp::Cond, &[c.clone(), b.clone(), d.clone()])
+        .expect("cond");
+    let connective = context.infix(InfixOp::And, &b, &c).expect("and");
+    for value in [&b, &and, &inverted, &selected, &connective] {
+        assert_eq!(&create(&extract(value)), value);
+        assert_eq!(extract(value).meta(), &BoolDomain::Storage.meta());
+    }
+    let storage_and = context
+        .op(ParamOp::BitAnd, &[extract(&b), extract(&c)])
+        .expect("pop.simd.and");
+    assert_eq!(create(&storage_and), and);
+    assert_eq!(extract(&and), storage_and);
+    let truth = extract(&context.boolean(true));
+    assert_eq!(BoolDomain::truth(&truth), Some(true));
+    assert_eq!(truth.meta(), &BoolDomain::Storage.meta());
+    assert_eq!(create(&truth), context.boolean(true));
 }

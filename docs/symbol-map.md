@@ -2349,10 +2349,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method's receiver as its first runtime argument. `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
   `MlirOp::lowering`), a vector's or scalar's `_mlir_value` (a
-  `ParamKind::Field` at its `!kgen.simd` storage; a `Bool`'s is still the
-  `Bool`, R1955), and `Int(mlir_value=)` (`ParamContext::int_of_index`
-  over an `index`, `ParamContext::scalar_from_storage` over a storage),
-  and `constraint_operand`
+  `ParamKind::Field` at its `!kgen.simd` storage; a `Bool`'s through
+  `ParamContext::field`), and `Int(mlir_value=)`
+  (`ParamContext::int_of_index` over an `index`,
+  `ParamContext::scalar_from_storage` over a storage); `Bool(mlir_value=)`
+  is its initializer's application, which `ParamContext::struct_value`
+  creates. A `Bool` and its `!kgen.scalar<bool>` storage share one
+  canonical form (`param_expr::BoolDomain`): `ParamContext::op` builds
+  `&`/`|` over either with `build_bool_lattice` and `^` (with `~` and
+  `not`) with `build_xor`, and `build_bool_image` maps it node by node
+  between them as `struct.extract` and `struct.create`. A symbolic `Bool`
+  operand's operator applies its builtin dunder (`Checker::infix_value`,
+  `Checker::inverted_value`), and `builtin_fold`'s `builtin_value`
+  converts a body's returned storage through the result type's
+  `@implicit` initializer. `constraint_operand`
   takes a folded call as a `where` operand. The typed
   ``__mlir_op.`pop.simd.splat` `` and ``__mlir_op.`pop.cast` ``
   (`builtin_fold::typed_lane_op`) build `ParamOp::SimdSplat` and

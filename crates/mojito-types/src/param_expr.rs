@@ -338,7 +338,8 @@ impl ParamContext {
     }
 
     /// ``__mlir_op.`pop.simd.reduce_and`(mask)`` or `reduce_or` over a
-    /// `bool` mask's storage, a `Bool` ([`ParamOp::SimdReduceAnd`]).
+    /// `bool` mask's storage, a `!kgen.scalar<bool>`
+    /// ([`ParamOp::SimdReduceAnd`]).
     pub fn simd_reduce(
         &self,
         reduction: crate::mlir::SimdReduction,
@@ -373,6 +374,12 @@ impl ParamContext {
             ParamOp::Shl => self.build_shift(operands),
             ParamOp::BoolAnd | ParamOp::BoolOr => self.build_connective(op, operands),
             ParamOp::BoolXor => self.build_xor(operands),
+            ParamOp::BitAnd | ParamOp::BitOr
+                if let Some(domain) = shared_bool_domain(&operands) =>
+            {
+                self.build_bool_lattice(op, domain, operands)
+            }
+            ParamOp::BitXor if shared_bool_domain(&operands).is_some() => self.build_xor(operands),
             ParamOp::Eq | ParamOp::Lt | ParamOp::Le => self.build_comparison(op, &operands),
             ParamOp::Cond => self.build_cond(operands),
             ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
@@ -907,6 +914,11 @@ impl ParamContext {
         {
             return self.constant(slot.clone());
         }
+        if name == crate::ct::MLIR_VALUE_FIELD
+            && BoolDomain::of(base.meta()) == Some(BoolDomain::Bool)
+        {
+            return self.build_bool_image(BoolDomain::Bool, base, None);
+        }
         if let Some(value) = base.as_constant() {
             // A constant `SIMD`'s storage, an `Int`'s or a `UInt`'s among
             // them, is that constant at the storage type (upstream's
@@ -1166,6 +1178,14 @@ impl ParamContext {
     /// `SIMD.__add__` body `Self(mlir_value=pop.add(a._mlir_value,
     /// b._mlir_value))` is `a + b`.
     pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
+        if let [(field, storage)] = fields
+            && field == crate::ct::MLIR_VALUE_FIELD
+            && BoolDomain::of(spelling.meta()) == Some(BoolDomain::Bool)
+            && BoolDomain::of(storage.meta()) == Some(BoolDomain::Storage)
+            && let Ok(created) = self.build_bool_image(BoolDomain::Storage, storage, Some(spelling))
+        {
+            return created;
+        }
         if let [(field, storage)] = fields
             && field == crate::ct::MLIR_VALUE_FIELD
             && let Some(scalar @ (IntDomain::Int | IntDomain::UInt)) =
@@ -2578,15 +2598,17 @@ impl ParamContext {
         })
     }
 
-    /// Exclusive-or, which also carries negation: constants fold into one
-    /// parity bit and a repeated operand cancels.
+    /// Exclusive-or over `Bool`s or their storages, which also carries
+    /// negation (`~b` and `not b` are `b ^ True`): nested ones flatten and
+    /// constants fold into one parity bit, as the pin folds them. A
+    /// repeated operand does not cancel: the pin keeps `b ^ b`.
     fn build_xor(&self, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        let domain = require_bool_domain(ParamOp::BoolXor, &operands)?;
         let mut parity = false;
         let mut flat: Vec<ParamExpr> = Vec::new();
         let mut pending = operands;
         while let Some(operand) = pending.pop() {
-            require_bool(ParamOp::BoolXor, &operand)?;
-            if let Some(value) = operand.as_bool() {
+            if let Some(value) = BoolDomain::truth(&operand) {
                 parity ^= value;
             } else if let ParamKind::Op {
                 op: ParamOp::BoolXor,
@@ -2594,29 +2616,175 @@ impl ParamContext {
             } = operand.kind()
             {
                 pending.extend(operands.iter().cloned());
-            } else if let Some(position) = flat.iter().position(|existing| *existing == operand) {
-                flat.remove(position);
             } else {
                 flat.push(operand);
             }
         }
         flat.sort();
         if flat.is_empty() {
-            return Ok(self.boolean(parity));
+            return self.bool_constant(domain, parity);
         }
         if parity {
-            flat.push(self.boolean(true));
+            flat.push(self.bool_constant(domain, true)?);
         }
         Ok(match flat.len() {
             1 => flat.remove(0),
             _ => self.make(
-                MetaTy::bool(),
+                domain.meta(),
                 ParamKind::Op {
                     op: ParamOp::BoolXor,
                     operands: flat,
                 },
             ),
         })
+    }
+
+    /// `&` or `|` over `Bool`s or their storages, `pop.simd.and` and
+    /// `pop.simd.or` as `Bool.__and__` and `__or__` fold: nested ones of
+    /// the same operator flatten, the dominating constant wins, the
+    /// identity drops, and the operands sort without repeats. An `&` holding
+    /// an operand and its inversion is `False`; the pin finds no such
+    /// complement under `|`, so `b | ~b` stays a node.
+    fn build_bool_lattice(
+        &self,
+        op: ParamOp,
+        domain: BoolDomain,
+        operands: Vec<ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let dominating = op == ParamOp::BitOr;
+        let mut flat = Vec::new();
+        let mut pending = operands;
+        while let Some(operand) = pending.pop() {
+            match (operand.kind(), BoolDomain::truth(&operand)) {
+                (_, Some(value)) if value == dominating => {
+                    return self.bool_constant(domain, dominating);
+                }
+                (_, Some(_)) => {}
+                (
+                    ParamKind::Op {
+                        op: inner,
+                        operands,
+                    },
+                    None,
+                ) if *inner == op => pending.extend(operands.iter().cloned()),
+                (_, None) => flat.push(operand),
+            }
+        }
+        flat.sort();
+        flat.dedup();
+        let complemented = |operand: &ParamExpr| match operand.kind() {
+            ParamKind::Op {
+                op: ParamOp::BoolXor,
+                operands,
+            } if let [inverted, one] = operands.as_slice() => {
+                BoolDomain::truth(one) == Some(true) && flat.contains(inverted)
+            }
+            _ => false,
+        };
+        if op == ParamOp::BitAnd && flat.iter().any(complemented) {
+            return self.bool_constant(domain, false);
+        }
+        match flat.len() {
+            0 => self.bool_constant(domain, !dominating),
+            1 => Ok(flat.remove(0)),
+            _ => Ok(self.make(domain.meta(), ParamKind::Op { op, operands: flat })),
+        }
+    }
+
+    /// The constant `value` of the `Bool` domain `domain`.
+    fn bool_constant(&self, domain: BoolDomain, value: bool) -> Result<ParamExpr, ParamError> {
+        match domain {
+            BoolDomain::Bool => Ok(self.boolean(value)),
+            BoolDomain::Storage => self.typed_constant(
+                domain.constant(value),
+                &crate::types::kgen_simd_ty(Dtype::Bool, 1),
+            ),
+        }
+    }
+
+    /// `expr`, a value of the `Bool` domain `from`, mapped node by node into
+    /// the other: a `Bool`'s `_mlir_value` (`struct.extract`) or the `Bool`
+    /// created from a storage (`struct.create`, `Bool(mlir_value=s)`).
+    /// `&`, `|`, `^`, and a `Cond`'s arms map to the same operator over the
+    /// images, a constant to the other domain's, a `Bool` created from a
+    /// storage to that storage and a `Bool`'s field to that `Bool`; any
+    /// other node (a parameter, `and`, a comparison, an application) is
+    /// one atom, its field or the `Bool` created from it, spelled
+    /// `spelling` when it is the whole storage. So the folded
+    /// `Bool.__and__` body `pop.simd.and(b._mlir_value, c._mlir_value)`
+    /// is `b & c`, and `(b & c)._mlir_value` the `pop.simd.and` again.
+    fn build_bool_image(
+        &self,
+        from: BoolDomain,
+        expr: &ParamExpr,
+        spelling: Option<&ParamExpr>,
+    ) -> Result<ParamExpr, ParamError> {
+        let to = from.image();
+        if let Some(value) = BoolDomain::truth(expr) {
+            return self.bool_constant(to, value);
+        }
+        let image = |operand: &ParamExpr| self.build_bool_image(from, operand, None);
+        match expr.kind() {
+            ParamKind::Op {
+                op: op @ (ParamOp::BitAnd | ParamOp::BitOr | ParamOp::BoolXor),
+                operands,
+            } => self.op(
+                *op,
+                &operands.iter().map(image).collect::<Result<Vec<_>, _>>()?,
+            ),
+            ParamKind::Op {
+                op: ParamOp::Cond,
+                operands,
+            } => self.op(
+                ParamOp::Cond,
+                &[
+                    operands[0].clone(),
+                    image(&operands[1])?,
+                    image(&operands[2])?,
+                ],
+            ),
+            ParamKind::StructValue { fields, .. }
+                if from == BoolDomain::Bool
+                    && let [(name, storage)] = fields.as_slice()
+                    && name == crate::ct::MLIR_VALUE_FIELD
+                    && BoolDomain::of(storage.meta()) == Some(to) =>
+            {
+                Ok(storage.clone())
+            }
+            ParamKind::Field { base, name }
+                if from == BoolDomain::Storage
+                    && name == crate::ct::MLIR_VALUE_FIELD
+                    && BoolDomain::of(base.meta()) == Some(to) =>
+            {
+                Ok(base.clone())
+            }
+            _ => Ok(match from {
+                BoolDomain::Bool => self.make(
+                    to.meta(),
+                    ParamKind::Field {
+                        base: self.intern(expr),
+                        name: crate::ct::MLIR_VALUE_FIELD.to_string(),
+                    },
+                ),
+                BoolDomain::Storage => {
+                    let spelling = match spelling {
+                        Some(spelling) => self.intern(spelling),
+                        None => self.apply(
+                            SCALAR_FROM_STORAGE_FUNCTION,
+                            std::slice::from_ref(expr),
+                            to.meta(),
+                        ),
+                    };
+                    self.make(
+                        to.meta(),
+                        ParamKind::StructValue {
+                            fields: vec![(crate::ct::MLIR_VALUE_FIELD.to_string(), expr.clone())],
+                            spelling: Spelling(spelling),
+                        },
+                    )
+                }
+            }),
+        }
     }
 
     /// Numeric comparison. Constants fold; identical operands prove `==`,
@@ -2785,8 +2953,9 @@ impl ParamContext {
         Ok(self.make(MetaTy::value(mask), ParamKind::Op { op, operands }))
     }
 
-    /// A reduction of a `bool` mask, as the pin's simplifier folds the
-    /// `SIMD` comparison dunders' bodies: a closed mask reduces; any lane
+    /// A reduction of a `bool` mask, a `!kgen.scalar<bool>`, as the pin's
+    /// simplifier folds the `SIMD` comparison dunders' bodies: a closed
+    /// mask reduces; a source comparison is that `Bool`'s storage; any lane
     /// count's `reduce_and(x.eq(y))` is `x == y`, and its
     /// `reduce_or(x.lt(y).ne(0))` (`__lt__`'s `self.lt(rhs).__bool__()`)
     /// is `x < y`, `le` likewise. Over one lane both reductions read
@@ -2809,18 +2978,18 @@ impl ParamContext {
             }
         };
         if let Some(value) = mask.as_constant()
-            && let Ok(value) = fold_primitive(op, &[value])
+            && let Ok(CtValue::Bool(value)) = fold_primitive(op, &[value])
         {
             self.count_fold();
-            return self.constant(value);
+            return self.bool_constant(BoolDomain::Storage, value);
         }
         let one_lane = matches!(width, crate::types::SimdWidth::Known(1));
         if let Some(compared) = self.reduced_comparison(op, mask, one_lane)? {
-            return Ok(compared);
+            return self.build_bool_image(BoolDomain::Bool, &compared, None);
         }
         let op = if one_lane { ParamOp::SimdReduceAnd } else { op };
         Ok(self.make(
-            MetaTy::bool(),
+            BoolDomain::Storage.meta(),
             ParamKind::Op {
                 op,
                 operands: vec![mask.clone()],
@@ -3996,8 +4165,8 @@ pub enum ParamOp {
     /// swapped operands.
     SimdCmpLe,
     /// `pop.simd.reduce_and` over a `bool` mask: whether every lane is set,
-    /// a `Bool` as `Bool(mlir_value=…)` reads its `!kgen.scalar<bool>`
-    /// result (R1955).
+    /// a `!kgen.scalar<bool>` that `Bool(mlir_value=…)` creates its `Bool`
+    /// from.
     SimdReduceAnd,
     /// `pop.simd.reduce_or` over a `bool` mask: whether some lane is set.
     /// Over one lane it is [`Self::SimdReduceAnd`], its canonical spelling.
@@ -4190,7 +4359,13 @@ impl ParamOp {
             | Self::SimdReduceAnd
             | Self::SimdReduceOr => arity == 1,
             Self::Cond => arity == 3,
-            Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
+            Self::Add
+            | Self::Mul
+            | Self::BoolAnd
+            | Self::BoolOr
+            | Self::BoolXor
+            | Self::BitAnd
+            | Self::BitOr => arity >= 2,
             _ => arity == 2,
         }
     }
@@ -5391,6 +5566,67 @@ impl IntDomain {
     }
 }
 
+/// A `Bool` or its `!kgen.scalar<bool>` storage: the two domains of
+/// `Bool`'s operators, whose builtin bodies apply `pop.simd.and`, `or`, and
+/// `xor` to the storages and create the `Bool` back. One canonical form
+/// serves both, and `struct.extract` and `struct.create` map it node by
+/// node ([`ParamContext::build_bool_image`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoolDomain {
+    Bool,
+    Storage,
+}
+
+impl BoolDomain {
+    fn of(meta: &MetaTy) -> Option<Self> {
+        let ty = meta.as_value()?;
+        if ty.kind().is_bool() {
+            return Some(Self::Bool);
+        }
+        (*ty == crate::types::kgen_simd_ty(Dtype::Bool, 1)).then_some(Self::Storage)
+    }
+
+    fn meta(self) -> MetaTy {
+        match self {
+            Self::Bool => MetaTy::bool(),
+            Self::Storage => MetaTy::value(crate::types::kgen_simd_ty(Dtype::Bool, 1)),
+        }
+    }
+
+    /// The other domain: a `Bool`'s storage, or the `Bool` a storage creates.
+    const fn image(self) -> Self {
+        match self {
+            Self::Bool => Self::Storage,
+            Self::Storage => Self::Bool,
+        }
+    }
+
+    fn constant(self, value: bool) -> CtValue {
+        match self {
+            Self::Bool => CtValue::Bool(value),
+            Self::Storage => CtValue::Simd {
+                dtype: Dtype::Bool,
+                lanes: vec![crate::ct::CtLane::Bool(value)],
+            },
+        }
+    }
+
+    /// The truth a closed value of either domain holds.
+    fn truth(expr: &ParamExpr) -> Option<bool> {
+        match expr.as_constant()? {
+            CtValue::Bool(value) => Some(*value),
+            CtValue::Simd {
+                dtype: Dtype::Bool,
+                lanes,
+            } => match lanes.as_slice() {
+                [crate::ct::CtLane::Bool(value)] => Some(*value),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 /// A canonical sum of products: monomial (sorted atoms, with repetition) →
 /// coefficient. The empty monomial is the constant term.
 struct Polynomial {
@@ -5621,6 +5857,34 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
             found: operands.len(),
         }),
     }
+}
+
+/// The one `Bool` domain every operand of `op` is in.
+fn require_bool_domain(op: ParamOp, operands: &[ParamExpr]) -> Result<BoolDomain, ParamError> {
+    let domain = operands
+        .first()
+        .and_then(|first| BoolDomain::of(first.meta()))
+        .unwrap_or(BoolDomain::Bool);
+    match operands
+        .iter()
+        .find(|operand| BoolDomain::of(operand.meta()) != Some(domain))
+    {
+        None => Ok(domain),
+        Some(operand) => Err(ParamError::TypeMismatch {
+            operation: op.name().to_string(),
+            expected: domain.meta().to_string(),
+            found: operand.meta().to_string(),
+        }),
+    }
+}
+
+/// The one `Bool` domain every operand is in, if any.
+fn shared_bool_domain(operands: &[ParamExpr]) -> Option<BoolDomain> {
+    let domain = BoolDomain::of(operands.first()?.meta())?;
+    operands
+        .iter()
+        .all(|operand| BoolDomain::of(operand.meta()) == Some(domain))
+        .then_some(domain)
 }
 
 fn require_bool(op: ParamOp, operand: &ParamExpr) -> Result<(), ParamError> {
@@ -6275,18 +6539,19 @@ fn bound_generator_params(
         .collect()
 }
 
-/// The storage a scalar struct value holds, when `expr` is an `Int` or a
-/// `UInt` created from its `_mlir_value` ([`ParamContext::struct_value`]).
+/// The storage a scalar struct value holds, when `expr` is an `Int`, a
+/// `UInt`, or a `Bool` created from its `_mlir_value`
+/// ([`ParamContext::struct_value`]).
 fn scalar_storage_field(expr: &ParamExpr) -> Option<&ParamExpr> {
     let ParamKind::StructValue { fields, .. } = expr.kind() else {
         return None;
     };
-    match (fields.as_slice(), IntDomain::of(expr.meta())) {
-        ([(name, field)], Some(IntDomain::Int | IntDomain::UInt))
-            if name == crate::ct::MLIR_VALUE_FIELD =>
-        {
-            Some(field)
-        }
+    let scalar = matches!(
+        IntDomain::of(expr.meta()),
+        Some(IntDomain::Int | IntDomain::UInt)
+    ) || BoolDomain::of(expr.meta()) == Some(BoolDomain::Bool);
+    match fields.as_slice() {
+        [(name, field)] if scalar && name == crate::ct::MLIR_VALUE_FIELD => Some(field),
         _ => None,
     }
 }

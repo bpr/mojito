@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2068**.
+Next free ID: **R2072**.
 
 ## Ordered Work
 
@@ -6703,6 +6703,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `assets/type_error/shell_default_alias_bad_construction.mojo`
     (the same construction in a module alias a struct parameter's default
     names) can then pin the wording with `# expect:`.
+  - Probe: `assets/type_error/bool_mlir_value_of_bool.mojo`
+    (`Tag[Bool(mlir_value=b)]` over `b: Bool`) can then pin "no matching
+    function in initialization" with `# expect:`.
   - Found while landing R1788 (2026-11-02).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7464,6 +7467,43 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     both, since `Int.__bool__` computes a new value.
   - Only the diagnostic's wording differs: both reject the program.
   - Found while landing R1548 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2068 A closed scalar storage passed to a storage-typed value
+  parameter is typed as its `SIMD`**
+
+  `B[True._mlir_value]()` over `struct B[v: __mlir_type.`!kgen.scalar<bool>`]`
+  fails with "type mismatch for value parameter 'v': expected
+  `!kgen.scalar<bool>`, found SIMD[DType.bool, 1]", where the pin runs it.
+  - Cause: the value-argument path of `Checker::resolve_param_arg`
+    (`checker/type_resolution.rs`) evaluates a closed argument to a
+    `CtValue` through `eval_associated_ct`, and `Checker::ct_value_ty`
+    types a `CtValue::Simd` as its vector. The storage type the parameter
+    expression carried (`ParamContext::typed_constant`) is lost.
+  - Typing every `CtValue::Simd` at a storage slot as the storage is
+    wrong: the pin rejects `B[SIMD[DType.bool, 1](True)]()`, which must
+    stay rejected.
+  - Probe: `S[Int(3)._mlir_value]()` over `S[v:
+    __mlir_type.`!kgen.scalar<index>`]` fails the same way.
+  - Probe: `comptime t = True._mlir_value` then `B[t]()` fails the same
+    way.
+  - Probe: `stored[True](Storage[True._mlir_value]())` can then join
+    `assets/ok/bool_storage_parameter_fold.mojo`.
+  - Found while landing R1955 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2069 A compile-time conditional with equal arms is not its arm**
+
+  `Tag[b if c else b]` is not `Tag[b]`, where the pin folds the
+  selection to `b`.
+  - Cause: `ParamContext::build_cond` (`param_expr.rs`) folds only a
+    constant condition.
+  - Lever: return the arm when both arms are the same node.
+  - Probe: `def f[b: Bool, c: Bool](x: Tag[b if c else b]) -> Tag[b]:
+    return x` fails with a type mismatch, where the pin runs it.
+  - Found while landing R1955 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9368,6 +9408,48 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2070 A compile-time `and` or `or` over `Bool`s commutes, where
+  the pin's is a selection**
+
+  Mojito accepts `Tag[b and c]` as `Tag[c and b]`, where the pin rejects
+  it: upstream's `and`/`or` is `POC::Cond`, `c if b else b` and `b if b
+  else c`, which neither commutes nor flattens.
+  - Cause: `ParamContext::infix` (`param_expr.rs`) builds `and`/`or` as
+    `ParamOp::BoolAnd`/`BoolOr` (`build_connective`), which flatten, sort,
+    and drop constants. `ParamContext::short_circuit` already builds the
+    pin's `Cond`.
+  - The connective nodes also carry Mojito's own propositions: dtype
+    predicates, `conforms_to` conjunctions, `conjuncts`
+    (`checker/constraints.rs`), and `Specializer::decide_comptime_value`
+    read them. Those readers must take the selection, or keep a
+    proposition connective apart from the value operator.
+  - Probe: `Tag[b or c]` as `Tag[c or b]`, `(b and c) and d` as `b and (c
+    and d)`, and `b and True` as `b` are accepted, where the pin rejects
+    each.
+  - Probe: `True and b` as `b` and `b and b` as `b` stay accepted, as at
+    the pin; the second needs R2069.
+  - Found while landing R1955 (2026-11-09).
+  - Depends on R2069.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2071 An `__mlir_op` application in a `comptime` initializer is a
+  compile-time value, where the pin's is dynamic**
+
+  `comptime n = __mlir_op.`index.add`(__mlir_attr.`1 : index`,
+  __mlir_attr.`2 : index`)` binds `3`, where the pin rejects it: "cannot
+  use a dynamic value in comptime initializer".
+  - Cause: `Checker::scalar_storage_expression`
+    (`checker/constraints.rs`) reads an `__mlir_op` call through
+    `builtin_fold::mlir_op_operator` and `mask_op` in every compile-time
+    position. The pin folds an MLIR op only inside an
+    `@always_inline("builtin")` body.
+  - Probe: `comptime t = Bool(mlir_value=__mlir_op.`pop.simd.and`(s,
+    False._mlir_value))` over `comptime s = True._mlir_value` prints
+    `False`, where the pin rejects it at the `__mlir_op`.
+  - Found while landing R1955 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -11147,33 +11229,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1955 The parameter domain reads a `Bool`'s `_mlir_value` as the
-  `Bool`, where upstream's is its `!kgen.scalar<bool>` storage**
-
-  A vector's or other scalar's `_mlir_value` read is a `struct.extract`
-  at its storage, but a `Bool`'s is still the `Bool` itself.
-  - `Checker::scalar_storage_expression` (`checker/constraints.rs`) keeps
-    a short-circuit for a `Bool` object's `_mlir_value`, and its
-    `Bool(mlir_value=s)` arm reads a `Bool`-typed `s` as the `Bool`.
-  - The connectives (`BoolAnd`, `BoolOr`, `BoolXor`, `Cond`) have no
-    storage counterpart, so `struct.extract` and `struct.create` between
-    a `Bool` and its storage must map them node by node, as
-    `ParamContext::build_extract`/`build_create` map the integers'
-    polynomial.
-  - Probe: `def f[b: Bool](x: Tag[Bool(mlir_value=b._mlir_value)])`
-    fails to check ("not a compile-time Int constant: not an associated
-    comptime expression"), where `Tag[b]` runs.
-  - Probe: with the short-circuit gone, std still packages and
-    `assets/ok/bool_storage_primitives.mojo` and
-    `assets/ok/mlir_pop_select.mojo` run.
-  - Probe: `def g[b: Bool]()` building
-    `Tag[Bool(mlir_value=b._mlir_value)]()` and passing it to
-    `use[b](x: Tag[b])` fails to elaborate ("keeps the parameter constant
-    `b._mlir_value` in elaborated MIR"), where the pin runs it.
-  - Found while landing R1835 (2026-11-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1957 The parameter domain does not fold `Bool(value=i)` or
   `b.__mlir_i1__()`, where upstream's are the `i1` builtin casts beside
   `Bool`'s storage**
@@ -11188,9 +11243,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `!kgen.scalar<bool>` pair.
   - `Checker::scalar_storage_expression`'s `Bool(value=b)` arm
     (`checker/constraints.rs`) reads a closed `i1` as the `Bool`. Replace
-    it with the cast plus R1955's `struct.create`, as the
-    `Int(mlir_value=…)` arm uses `int_of_index`.
-  - Build `b.__mlir_i1__()` as R1955's `struct.extract` plus
+    it with the cast plus `ParamContext::build_bool_image`'s
+    `struct.create`, as the `Int(mlir_value=…)` arm uses `int_of_index`.
+  - Build `b.__mlir_i1__()` as `build_bool_image`'s `struct.extract` plus
     `cast_to_builtin`, as the `__mlir_index__` arm does.
   - Probe: `def f[b: Bool]()` building
     `Tag[Bool(value=b.__mlir_i1__())]()` and passing it to

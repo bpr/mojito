@@ -152,6 +152,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time `Bool`'s `_mlir_value` is its `!kgen.scalar<bool>`
+  storage, and `Bool(mlir_value=s)` takes only a storage, so
+  `Tag[Bool(mlir_value=b)]` over `b: Bool` is rejected, as at the pin. A
+  symbolic `Bool`'s `&`, `|`, `^`, `~`, and comparisons apply their
+  builtin dunders over that storage, folding as the pin folds them:
+  `b & c` is `c & b`, `~b` and `not b` are `b ^ True`, `b == c` is
+  `~(b ^ c)`, and `b & ~b` is `False`, while `b ^ b` stays apart from
+  `False` and `b & c` from `b and c`. `pop.simd.reduce_and`/`reduce_or`
+  there give the storage too (R1955).
 - `StringLiteral[v]()`, `Self()` in its members, a brace `{}`, and
   `type_of(x)()` at a string literal type run the declared empty
   `__init__`, and `StringLiteral[v](copy=x)` the declared copy, rather than

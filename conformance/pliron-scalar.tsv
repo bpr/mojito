@@ -79,6 +79,7 @@ assets/ok/bool_declared_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_declared_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_declared_writable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_shadowed.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bool_storage_parameter_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_storage_primitives.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_bound_not.mojo	-	ineligible	no-scalar-entry-shape

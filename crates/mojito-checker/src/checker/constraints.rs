@@ -2273,8 +2273,9 @@ impl Checker {
 
     /// The parameter expression of `~operand`, the inversion `expr` spells:
     /// a closed operand folds, a struct one applies its `__invert__`
-    /// ([`Self::struct_operator_value`]), and any other is `operand ^ -1`,
-    /// `SIMD.__invert__`'s builtin body as upstream folds it.
+    /// ([`Self::struct_operator_value`]), a `Bool` one applies its
+    /// `__invert__`, and any other is `operand ^ -1`, `SIMD.__invert__`'s
+    /// builtin body as upstream folds it.
     fn inverted_value(
         &self,
         expr: &Expr,
@@ -2293,6 +2294,19 @@ impl Checker {
             return mojito_types::param_expr::fold::fold_invert(value)
                 .map_err(param_error)
                 .and_then(|value| self.ct_param(value));
+        }
+        // A `Bool`'s is its `__invert__`, whose builtin body xors the
+        // storage with `True`; a body that does not fold yet is that xor.
+        if bool_valued(&built) {
+            return match self.operator_application(&dunder_call(
+                expr,
+                operand,
+                PrefixOp::Invert.dunder(),
+                None,
+            )) {
+                Some((application, false)) => Ok(application),
+                _ => self.param_context.not(&built).map_err(param_error),
+            };
         }
         let minus_one = self.ct_param(CtValue::IntLiteral(
             mojito_common::literal::IntLiteral::from(-1i64),
@@ -2356,14 +2370,15 @@ impl Checker {
         };
         let struct_operand =
             |built: &ParamExpr| struct_valued(built) || literal_construction(built);
-        // A `SIMD` operand applies its dunder too, as the pin spells `v < w`
-        // as `v.__lt__(w)`. Closed operands fold through the shared folder,
+        // A `SIMD` or `Bool` operand applies its dunder too, as the pin
+        // spells `v < w` as `v.__lt__(w)` and `b & c` as `b.__and__(c)`. Closed operands fold through the shared folder,
         // the value the dunder's application evaluates to; a converted
         // `SIMDLength` operand is its image, which no spelled receiver is.
         let simd_dunder = !converted
             && (left_built.as_constant().is_none() || right_built.as_constant().is_none());
-        let dunder_operand =
-            |built: &ParamExpr| struct_operand(built) || (simd_dunder && simd_valued(built));
+        let dunder_operand = |built: &ParamExpr| {
+            struct_operand(built) || (simd_dunder && (simd_valued(built) || bool_valued(built)))
+        };
         if dunder_operand(&left_built) || dunder_operand(&right_built) {
             let mut candidates = Vec::new();
             if dunder_operand(&left_built)
@@ -2376,17 +2391,21 @@ impl Checker {
             {
                 candidates.push((right, dunder, Some(left)));
             }
-            // A `SIMD` operator is its dunder's application: a builtin
+            // A `SIMD` or `Bool` operator is its dunder's application: a builtin
             // dunder's folded body, the node the shared folder builds
             // (`v < w`, `v + w`), and any other dunder's call (`v // w`). A
             // builtin body that does not fold over the operands yet (a
             // signature `SIMD`'s own module checks before its bodies fold)
-            // and a dunder no call applies keep the folder's node.
+            // and a dunder no call applies keep the folder's node. A
+            // `Bool` builtin dunder not folded yet stays its application,
+            // so a builtin body over it (`__eq__`'s `~(self != rhs)`)
+            // folds after it does.
             if !struct_operand(&left_built) && !struct_operand(&right_built) {
+                let bools = bool_valued(&left_built) && bool_valued(&right_built);
                 return match candidates.iter().find_map(|(receiver, dunder, operand)| {
                     self.operator_application(&dunder_call(expr, receiver, dunder, *operand))
                 }) {
-                    Some((application, false)) => Ok(application),
+                    Some((application, unfolded)) if !unfolded || bools => Ok(application),
                     _ => self.fold_infix(op, &left_built, &right_built),
                 };
             }
@@ -2620,8 +2639,7 @@ impl Checker {
     /// The parameter expression of a compile-time scalar's storage read, as
     /// an `@always_inline("builtin")` body spells its arithmetic: a
     /// vector's or scalar's `_mlir_value` is the field at its `!kgen.simd`
-    /// storage (`struct.extract`), a `Bool`'s still the `Bool` itself
-    /// (R1955), `Int(mlir_value=s)` the `Int` created from its storage `s`
+    /// storage (`struct.extract`), `Int(mlir_value=s)` the `Int` created from its storage `s`
     /// (`struct.create`), `Bool(value=b)` over the `i1` an `index.cmp` folds to its
     /// `Bool`, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]), ``__mlir_op.`pop.cmp` ``
@@ -2640,11 +2658,6 @@ impl Checker {
         expr: &Expr,
         recording: Recording,
     ) -> Option<Result<ParamExpr, TypeError>> {
-        let scalar = |operand: &Expr| {
-            self.build_ct(operand, recording)
-                .ok()
-                .filter(is_scalar_value)
-        };
         match &expr.kind {
             _ if let Some((op, ty, operand)) = super::builtin_fold::typed_lane_op(expr) => {
                 let ty = self.lane_op_storage(ty)?;
@@ -2678,14 +2691,6 @@ impl Checker {
                 Some(self.build_ct(&operator, recording))
             }
             ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
-                if let Some(scalar) = scalar(object).filter(|scalar| {
-                    scalar
-                        .meta()
-                        .as_value()
-                        .is_some_and(|ty| ty.kind().is_bool())
-                }) {
-                    return Some(Ok(scalar));
-                }
                 let value = self.build_ct(object, recording).ok()?;
                 let storage = mojito_types::types::simd_storage(value.meta().as_value()?)?;
                 Some(
@@ -2750,9 +2755,14 @@ impl Checker {
                                 .map_err(param_error)
                         });
                 }
+                // `Bool(value=b)` over the `i1` an `index.cmp` folds to is
+                // that `Bool`; `Bool(mlir_value=s)` is its initializer's
+                // application, which takes only a storage.
                 Some(value)
                     .filter(|value| {
-                        is_scalar_value(value) && value.meta().as_value() == Some(&target)
+                        (storage.name == "value" || !target.kind().is_bool())
+                            && is_scalar_value(value)
+                            && value.meta().as_value() == Some(&target)
                     })
                     .map(Ok)
             }
@@ -6273,6 +6283,15 @@ fn simd_valued(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(|ty| ty.kind().is_simd())
+}
+
+/// Whether `value` is a `Bool`, whose operators are its builtin dunders
+/// over its `!kgen.scalar<bool>` storage.
+fn bool_valued(value: &ParamExpr) -> bool {
+    value
+        .meta()
+        .as_value()
+        .is_some_and(|ty| ty.kind().is_bool())
 }
 
 fn is_simd_length_value(value: &ParamExpr) -> bool {

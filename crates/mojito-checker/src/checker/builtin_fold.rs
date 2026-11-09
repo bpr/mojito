@@ -1135,7 +1135,10 @@ impl Checker {
     /// closed one materialized at it. A closed value of type `!kgen.simd`
     /// is the `SIMD` value whose storage it is, as the parameter domain
     /// holds a vector's storage, and a symbolic one is typed at the
-    /// storage.
+    /// storage. A symbolic value of another type converts through `ty`'s
+    /// `@implicit` initializer, as the returned `pop.simd.and` storage of
+    /// `Bool.__and__` becomes its `Bool`; a conversion whose initializer
+    /// has not folded yet folds nothing, and the body waits for it.
     fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
         let vector = mojito_types::types::storage_value_ty(ty);
         let value = self.builtin_operand(value)?;
@@ -1144,7 +1147,14 @@ impl Checker {
                 .param_context
                 .typed_constant(closed.clone().materialize_as(&vector)?, ty)
                 .ok()?,
-            None => value,
+            None => match value.meta().as_value() {
+                Some(found) if found != ty => self
+                    .implicit_parameter_application(&found.clone(), ty, |_| Some(value.clone()))
+                    .ok()
+                    .flatten()
+                    .filter(|converted| !matches!(converted.kind(), ParamKind::Apply { .. }))?,
+                _ => value,
+            },
         };
         value
             .meta()

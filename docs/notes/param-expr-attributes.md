@@ -128,13 +128,26 @@ Rules the constructors keep:
    cancellation must not erase.
 3. Expansion is budgeted at `MAX_MONOMIALS` (4,096). Past it the constructor
    returns `ParamError::Budget`; no half-normalized node exists.
-4. `and`/`or` flatten, fold constants, drop duplicates, and sort. `not x` is
-   `x ^ True`, so double negation cancels. `!=` is `not ==`; `>`/`>=` swap.
-5. Numeric `==` of identical total operands is `True`; an integer `==` whose
+4. `and`/`or` flatten, fold constants, drop duplicates, and sort (where the
+   pin's are a selection, R2070). `not x` is `x ^ True`, so double negation
+   cancels. `!=` is `not ==`; `>`/`>=` swap.
+5. A `Bool`'s `&`, `|`, and `^` are its builtin dunders over its
+   `!kgen.scalar<bool>` storage (`pop.simd.and`/`or`/`xor`), and one
+   canonical form (`BoolDomain`) serves the `Bool` and its storage, which
+   `struct.extract` and `struct.create` map node by node
+   (`build_bool_image`). `&`/`|` flatten, sort, drop repeats and the
+   identity constant, and fold the dominating one; `^` folds its constants
+   into one parity bit, so `~b`, `not b`, and `b ^ True` are one node. The
+   pin's `Mojo 1.3.0.dev2026110105` probes (2026-11-09) bound the rules:
+   it folds `b & ~b` to `False` but keeps `b | ~b`, keeps `b ^ b` (no
+   repeated operand cancels), applies no De Morgan or distribution, and
+   keeps `b & c` apart from `b and c`. `assets/ok/bool_storage_parameter_fold.mojo`
+   and `assets/type_error/bool_param_*.mojo` pin both columns.
+6. Numeric `==` of identical total operands is `True`; an integer `==` whose
    difference is a nonzero constant is `False`. Anything else is residual.
-6. Machine floats are never reassociated; outside the integers an operator
+7. Machine floats are never reassociated; outside the integers an operator
    folds constants and is otherwise opaque with its operand order kept.
-7. A closed operator whose fold fails (a division by zero) stays a node, so an
+8. A closed operator whose fold fails (a division by zero) stays a node, so an
    untaken branch retains it unevaluated and `require_constant` reports it.
 
 Different nodes mean **not established equal**, never *proved unequal*.
