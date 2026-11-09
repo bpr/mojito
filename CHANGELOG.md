@@ -152,6 +152,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `mem-2-reg` no longer asks how often a stored register is read, as
+  upstream's `canPromote` does not, so a closure or function-typed slot is
+  judged as a trivially copyable one already was (R1350). No program's
+  output or MIR changes; two locals initialized from one uniqued constant
+  already promoted.
 - A `def` declared in a `comptime for` that calls a sibling declared in
   the same loop now reads the loop binder through that call when the
   sibling kept it, as upstream's `RemoveUnusedParams` reads a call of a

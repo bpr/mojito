@@ -663,27 +663,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
-  instruction also reads**
-
-  A slot stays in memory when the register a `var.store` stores is read
-  anywhere else, where upstream's `canPromote` has no such test and its
-  `Mem2Reg` promotes every store of one SSA value.
-  - `Facts::candidate` (`analysis/mem2reg.rs`) requires each stored
-    register to be defined once and read only by the store.
-  - `canonicalize` uniques equal constants, so two locals initialized
-    from the same literal share one register and both keep their slots.
-  - Probe: `main` calling `print(outer(4))` and `print(bumped(4))`, over
-    `nodebug` nested `def`s `get() {imm y}` and `bump() {mut c}` (each
-    local a copy of the argument), keeps `var.store`s of one `const 4`
-    into two slots in concrete `main`. Without the rule `main` folds to
-    `print(5)` and `print(10)`, as at the pin.
-  - Lever: drop the read-count test for a type whose copy is the
-    identity, and check what the closure-of-references case still needs.
-  - Found while landing R1105 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1939 Concrete `eliminate-dead-symbols` keeps every method of a
   live struct, where upstream removes any symbol nothing references**
 
@@ -9400,6 +9379,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ref` root type, where the rewrite leaves `through: absent`, which
     Pliron reads as the referent itself (native SIGSEGV on
     `assets/extensions/ok/ref_field_written_nodebug_init.mojo`).
+  - Probe (from R1350): `print(outer(4))` and `print(bumped(4))`, over
+    `var y = x` with `@always_inline("nodebug") def get() {imm y}` and
+    `var c = x` with `bump() {mut c}`, keep `y` and `c` in memory: the
+    closure storage's `ref` field stays whole and its `place.store_ref`
+    takes the slot's address. The pin promotes both, and `main` folds to
+    `print(5)` and `print(10)`. Splitting the field leaves a `ref` slot
+    whose `place.store_ref` and `through` reads `mem-2-reg` must forward.
   - Probe (from R1396): a one-field `TrivialRegisterPassable` struct whose
     field is a reference or a pointer stays a boxed `Value::Struct` in the
     VM (`build_structs`), where the pin holds it as the pointer. Held as

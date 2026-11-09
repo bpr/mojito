@@ -296,7 +296,6 @@ struct Census {
 /// The register facts a candidate's mentions are judged by.
 struct Facts {
     definitions: Vec<u32>,
-    reads: Vec<u32>,
     /// The registers defined by a `closure.make`.
     closures: HashSet<u32>,
     uses: Uses,
@@ -329,7 +328,6 @@ impl Facts {
             .collect();
         Self {
             definitions,
-            reads,
             closures,
             uses: Uses { addresses, callees },
         }
@@ -338,9 +336,9 @@ impl Facts {
     /// Whether `var`, whose census is `entry`, may be promoted: a local (or
     /// one of the `entry_stored` parameters) of a promotable type or a
     /// function type, or one every store of which is a closure, kept by no
-    /// mention, whose stores each store a register defined once, and read
-    /// only there unless the slot's copy is the identity, as upstream's
-    /// stored SSA value is read anywhere, and whose reads read its type. A
+    /// mention, whose stores each store a register defined once, wherever
+    /// else that register is read, as upstream's `canPromote` asks nothing
+    /// of a stored SSA value, and whose reads read its type. A
     /// call through the slot leaves only a slot of a function type, or a
     /// local some store of which gives it a closure: a function value is a
     /// thin function or a struct of pointers, carrying no storage it lends.
@@ -381,9 +379,7 @@ impl Facts {
             && (function_typed || stores_closures || identity)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
-                    slot_typed(&src)
-                        && self.definitions.get(src.0 as usize) == Some(&1)
-                        && (identity || self.reads.get(src.0 as usize) == Some(&1))
+                    slot_typed(&src) && self.definitions.get(src.0 as usize) == Some(&1)
                 }
                 Mention::Read { dest } => slot_typed(&dest),
                 Mention::CalleeRead { dest } => {
