@@ -295,11 +295,10 @@ fn import(
             &package.declarations,
         ))),
         declarations: package.declarations,
-        bodies: package.bodies.finishing(if pre_elaboration {
-            crate::analysis::finish_package_body
-        } else {
-            crate::analysis::finish_package_body_without_pipeline
-        }),
+        bodies: package.bodies.finishing(
+            crate::analysis::finish_package_drops,
+            pre_elaboration.then_some(crate::analysis::finish_package_body as _),
+        ),
     })
 }
 
@@ -856,9 +855,10 @@ mod tests {
     #[test]
     fn a_package_body_whose_lowering_reaches_an_undecodable_declaration_names_it() {
         let (package, _) = undecodable_declaration("List");
-        let bodies = package
-            .bodies
-            .finishing(crate::analysis::finish_package_body);
+        let bodies = package.bodies.finishing(
+            crate::analysis::finish_package_drops,
+            Some(crate::analysis::finish_package_body),
+        );
         let undecodable = "package declaration `List` does not decode";
         // `List.__len__` verifies clean without its struct's parameters;
         // `List.clear` carries the symptoms too.
@@ -881,9 +881,10 @@ mod tests {
     fn the_elaboration_refuses_a_package_body_whose_materialization_reached_an_undecodable_declaration()
      {
         let (package, _) = undecodable_declaration("List");
-        let bodies = package
-            .bodies
-            .finishing(crate::analysis::finish_package_body);
+        let bodies = package.bodies.finishing(
+            crate::analysis::finish_package_drops,
+            Some(crate::analysis::finish_package_body),
+        );
         // The program's own view links the process's clean package, so only
         // a body's verdict names the record.
         let compiled = Compiler::default()
@@ -976,7 +977,7 @@ mod tests {
         read_package(bytes, &LibraryRoot::new(&root))
             .expect("the cached package reads")
             .bodies
-            .finishing(failing)
+            .finishing(crate::analysis::finish_package_drops, Some(failing))
     }
 
     fn elaborate_against(

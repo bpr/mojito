@@ -62,8 +62,8 @@ pub use post_elaboration::{
 };
 pub use pre_elaboration::{
     BodyPass, CallGraphPass, Callees, Cycles, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,
-    finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
-    pre_elaborate_program, run_pipeline,
+    finish_package_body, finish_package_drops, pass_named, pass_names, pre_elaborate_program,
+    run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use receiver_drops::*;

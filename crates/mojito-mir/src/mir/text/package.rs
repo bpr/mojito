@@ -110,11 +110,23 @@ pub struct PackageBodies {
     /// Whether each row's function lies on a cycle of the calls
     /// [`Self::on_cycle`] was asked about, once answered.
     cycles: Mutex<HashMap<usize, bool>>,
+    /// Each row's callees [`Self::on_cycle`] follows, by its drop-elaborated
+    /// body, once listed.
+    edges: Mutex<HashMap<usize, Arc<[String]>>>,
+    drops: Option<BodyDrops>,
     finish: Option<BodyFinish>,
 }
 
-/// What an importer does to a lowered body before using it: insert its
-/// drops and run the pre-elaboration pipeline.
+/// What an importer does to a lowered body first: insert its drops and
+/// erase its lifetime-only markers, as upstream's importer inserts
+/// destructors in every body it materializes.
+///
+/// It is given the body's name and the package's declarations. A plain
+/// function, since the phase it runs sits above MIR.
+pub type BodyDrops = fn(&str, MirFunction, &MirDeclarations) -> MirFunction;
+
+/// What an importer does to a body whose drops are inserted before using
+/// it: run the pre-elaboration pipeline.
 ///
 /// It is given the body's name, the package's declarations, and the
 /// package's bodies, whose finished callees a pass may read, and pushes the
@@ -154,9 +166,12 @@ impl PackageBodies {
     }
 
     /// Whether this thread is finishing the body of `name`: a pass reading
-    /// it from inside that finish reached it again around a cycle, one a
-    /// drop elaboration closed, which the lowered bodies
-    /// [`Self::on_cycle`] walks do not show.
+    /// it from inside that finish reached it again around a cycle that no
+    /// unfinished body holds, closed by a call a pass's rewrite added (a
+    /// folded witness, a spliced callee's own rewrite), which the
+    /// drop-elaborated bodies [`Self::on_cycle`] walks do not show. Where
+    /// MLIR's inliner refreshes its components for such a call, the lazy
+    /// package seam answers the reentry as a cycle.
     pub fn finishing_body(&self, name: &str) -> bool {
         self.package.body_row(name).is_some_and(|row| {
             FINISHING.with(|finishing| finishing.borrow().contains(&(self.identity(), row)))
@@ -179,25 +194,30 @@ impl PackageBodies {
         }
     }
 
-    /// Finish every body with `finish` as it is lowered, and verify it.
+    /// Insert every body's drops with `drops` as it is lowered, then
+    /// finish it with `finish`, if any, and verify it.
     #[must_use]
-    pub fn finishing(mut self, finish: BodyFinish) -> Self {
-        self.finish = Some(finish);
+    pub fn finishing(mut self, drops: BodyDrops, finish: Option<BodyFinish>) -> Self {
+        self.drops = Some(drops);
+        self.finish = finish;
         self
     }
 
     /// Whether the function `name` reaches itself through the calls
-    /// `successors` lists of each body by its name, as its unit lowers to it, and so
-    /// lies on a cycle of them; memoized by row.
+    /// `successors` lists of each body by its name and the package's
+    /// declarations, and so lies on a cycle of them; memoized by row, and
+    /// each body's list too.
     ///
-    /// It reads lowered bodies, never finished ones, so the answer is the
-    /// same whichever body finishes first, and a finishing hook may ask it
-    /// of a callee before finishing that callee: a callee on no cycle never
-    /// reaches the body being finished.
+    /// It reads drop-elaborated bodies, as the program seam's components
+    /// are, so a cycle a destructor call closes is one; and never finished
+    /// ones, so the answer is the same whichever body finishes first, and a
+    /// finishing hook may ask it of a callee before finishing that callee: a
+    /// callee on no cycle never reaches the body being finished. A body's
+    /// walk notes no declaration it reached: its own finish reports those.
     pub fn on_cycle(
         &self,
         name: &str,
-        successors: &dyn Fn(&str, &MirFunction) -> Vec<String>,
+        successors: &dyn Fn(&str, &MirFunction, &MirDeclarations) -> Vec<String>,
     ) -> bool {
         let Some(row) = self.package.body_row(name) else {
             return false;
@@ -214,17 +234,17 @@ impl PackageBodies {
         let mut pending = vec![name.to_string()];
         let mut cyclic = false;
         while let Some(next) = pending.pop() {
-            let Ok(function) = self.lowered(&next) else {
+            let Some(callees) = self.callees(&next, successors) else {
                 continue;
             };
-            for callee in successors(&next, &function) {
+            for callee in callees.iter() {
                 if callee == name {
                     cyclic = true;
                     pending.clear();
                     break;
                 }
-                if self.contains(&callee) && seen.insert(callee.clone()) {
-                    pending.push(callee);
+                if self.contains(callee) && seen.insert(callee.clone()) {
+                    pending.push(callee.clone());
                 }
             }
         }
@@ -307,6 +327,33 @@ impl PackageBodies {
         }))
     }
 
+    /// The callees `successors` lists of the drop-elaborated body of
+    /// `name`, memoized by row; `None` when it does not lower.
+    fn callees(
+        &self,
+        name: &str,
+        successors: &dyn Fn(&str, &MirFunction, &MirDeclarations) -> Vec<String>,
+    ) -> Option<Arc<[String]>> {
+        let row = self.package.body_row(name)?;
+        let edges = || {
+            self.edges
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(callees) = edges().get(&row) {
+            return Some(Arc::clone(callees));
+        }
+        let function = self.lowered(name).ok()?;
+        let view = self.view();
+        let function = match self.drops {
+            Some(drops) => drops(name, function, &view.declarations),
+            None => function,
+        };
+        let callees: Arc<[String]> = successors(name, &function, &view.declarations).into();
+        edges().insert(row, Arc::clone(&callees));
+        Some(callees)
+    }
+
     /// This package's address, which tells its rows from another's in
     /// [`FINISHING`].
     fn identity(&self) -> usize {
@@ -331,12 +378,22 @@ impl PackageBodies {
             }
         };
         let mut findings = Vec::new();
-        let function = match self.finish {
-            Some(finish) => {
+        let function = match (self.drops, self.finish) {
+            (None, None) => function,
+            (drops, finish) => {
                 let view = self.view();
                 let function = {
                     let _finish = timing::span("package.body.finish");
-                    finish(name, function, &view.declarations, self, &mut findings)
+                    let function = match drops {
+                        Some(drops) => drops(name, function, &view.declarations),
+                        None => function,
+                    };
+                    match finish {
+                        Some(finish) => {
+                            finish(name, function, &view.declarations, self, &mut findings)
+                        }
+                        None => function,
+                    }
                 };
                 let _verify = timing::span("package.body.verify");
                 findings.extend(crate::mir::verify::verify_function_in(
@@ -351,7 +408,6 @@ impl PackageBodies {
                 }
                 function
             }
-            None => function,
         };
         FinishedBody {
             function: Some(function),
@@ -704,7 +760,9 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             modules,
             units: Mutex::new(HashMap::new()),
             cycles: Mutex::new(HashMap::new()),
+            edges: Mutex::new(HashMap::new()),
             package: declarations,
+            drops: None,
             finish: None,
         },
     })

@@ -287,7 +287,7 @@ None of these unblocks another entry. Run them whenever they are useful.
 - **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341, R1452
   (the pin measures a callee before cleaning what it spliced in), and
   R1809 (`SIMD.reduce_add` stays an out-of-line call).
-- **Bugs**: R1112, R1035, R1289.
+- **Bugs**: R1112, R1289.
 - **Hygiene**: R944, R868, R1276.
 - **Library ports**: R1411 (`std.iter.map`), R1839 (`Set`'s `List`
   initializer), R1866 (upstream's string iterators), and R1906 (the owned
@@ -300,7 +300,7 @@ None of these unblocks another entry. Run them whenever they are useful.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1346 --only R1347 --only R1350 \
-  --only R1339 --only R1340 --only R1341 --only R1452 --only R1809 --only R1112 --only R1035 --only R1289 -n 0
+  --only R1339 --only R1340 --only R1341 --only R1452 --only R1809 --only R1112 --only R1289 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R944 --only R868 --only R1276 \
   --only R896 --only R897 --only R924 --only R1255 --only R1256 -n 0
 scripts/claude_loop.py --model opus --only R1411 --only R1839 --only R1866 --only R1906 --only R1413 -n 0

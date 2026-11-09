@@ -591,25 +591,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1035 A package body's cycle check misses the calls its drops
-  add**
-
-  `PackageBodies::on_cycle` walks the lowered bodies, before drop
-  elaboration, so a cycle closed by a destructor call
-  (`FileHandle.close` dropping a `FileHandle` whose `__deinit__` calls
-  `close`) is not seen.
-  - Finishing such a body reached itself again and deadlocked once
-    `remove-unused-params` followed every callee with an argument (R1013).
-  - `PackageBodies::finishing_body` now answers such a reentry as a cycle,
-    so the member finished first still reads the other's removals, where
-    upstream's call graph puts both in one strongly connected component.
-  - The walk should follow the lifecycle members each body's drops will
-    run, as the program seam's `bottom_up_order` does over drop-elaborated
-    bodies.
-  - Found while landing R1013 (2026-10-15).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1112 A `def` declared in a `comptime for` cannot call a sibling
   whose argument is a struct over the loop binder**
 

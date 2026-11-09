@@ -152,6 +152,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package body's cycle check walks its callees' drop-elaborated bodies,
+  as the program seam's call graph does, so a cycle a destructor call
+  closes is one, and the package seam's drops hook
+  (`analysis::finish_package_drops`) runs apart from its pipeline hook
+  (R1035). No std body has such a cycle today; output is unchanged.
+
 - `inline-parametric` prices a callee whose own callees it spliced since
   its last `mem-2-reg` as the pin measures it, before any cleanup: the
   spliced bodies' wrapper loops and breaks, constants, `comptime assert`s,

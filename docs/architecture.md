@@ -6539,7 +6539,7 @@ no op) goes, with its marker register's type and span. Mojito's lifetime
 check is the ownership analysis plus drop elaboration, which both read the
 markers, so they end right after `elaborate_drops_function`:
 `CompiledProgram::elaborated_mir` runs `lower_lit_program` over every body,
-`__toplevel__` included, and `finish_package_body` runs `lower_lit` on each
+`__toplevel__` included, and `finish_package_drops` runs `lower_lit` on each
 package body. Below it concrete verification and both backends refuse any
 of the three. No loan op defines a binding: a `ref` binding whose reads
 lowering substitutes by its place (`ref r = x.a[i]`) still stores that
@@ -7023,8 +7023,9 @@ point where a slot declared in a loop is uninitialized again.
   never expanded. A callee on a cycle of followed calls is never inlined: at
   the program seam the cycles are the strongly connected components of the
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
-  decides one from lowered bodies, memoized by row, so a finishing hook
-  never re-enters the body it finishes.
+  decides one from drop-elaborated bodies, as the program seam's components
+  are, memoized by row, so a finishing hook never re-enters the body it
+  finishes around a cycle a destructor call closes.
 - **`sroa` runs before each round's `mem-2-reg`** (`analysis::SROA`,
   `analysis/sroa.rs`, R928), upstream's `SROA` (`ReplaceStructs`), which
   replaces a struct allocation by one allocation per element when every
@@ -7554,8 +7555,10 @@ point where a slot declared in a loop is uninitialized again.
   passing no operand for them, and erases what only computed one
   (`mir::erase_removed_operands`). At the package seam a body whose finish
   reaches itself again lies on a cycle (`PackageBodies::finishing_body`):
-  `PackageBodies::on_cycle` walks the bodies before drop elaboration,
-  which misses a cycle a destructor call closes (R1035).
+  a call a pass's rewrite added (a folded witness, a spliced callee's own
+  rewrite) is in no drop-elaborated body `PackageBodies::on_cycle` walks,
+  and where MLIR's inliner refreshes its components for such a call, the
+  lazy package seam answers the reentry as a cycle.
   An instance takes a struct type whose argument names a removed
   parameter with that argument erased, as upstream's generator spells it
   `_REMOVED_ARG` (R976): `Bindings::removed` holds the template's removed
@@ -7604,8 +7607,9 @@ point where a slot declared in a loop is uninitialized again.
   `pre_elaborate_program` over the program's own bodies after
   `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
   imported package's finishing hook (`finish_package_body`, a
-  `mir::text::package::BodyFinish`) runs it after `elaborate_drops_function`
-  as each body is first materialized. The pipeline runs once per generator,
+  `mir::text::package::BodyFinish`) runs it after its drops hook
+  (`finish_package_drops`, a `BodyDrops`: `elaborate_drops_function`, then
+  `lower_lit`) as each body is first materialized. The pipeline runs once per generator,
   never per instance. At the program seam a call-graph pass runs over the
   program's bodies in the bottom-up order of the strongly connected
   components of the calls it follows (`run_call_graph_pass`), each callee
@@ -7616,7 +7620,7 @@ point where a slot declared in a loop is uninitialized again.
   body never calls a program body, so no cycle crosses the seam. Finishing
   a package body runs every call-graph pass, so a package callee's cycle
   check (`PackageBodies::on_cycle`, memoized by row) follows the calls any
-  `PIPELINE` call-graph pass follows: a cycle mixing two passes' edges
+  `PIPELINE` call-graph pass follows in each body the drops hook made: a cycle mixing two passes' edges
   would otherwise re-enter a body still being finished.
 - **Where it does not run.** A package build serializes pre-drop MIR, so it
   never reaches the program seam; its bodies get the body and call-graph

@@ -7,8 +7,8 @@
 //! ([`pre_elaborate_program`]), where a [`ProgramPass`] runs once over the
 //! whole program, a [`BodyPass`] over each body, and a [`CallGraphPass`]
 //! over each body callees first, and over each imported package body as it
-//! is finished ([`finish_package_body`]), where the body and call-graph
-//! passes run. Never per instance.
+//! is finished ([`finish_package_drops`], then [`finish_package_body`]),
+//! where the body and call-graph passes run. Never per instance.
 
 use super::automatic_inline::AUTOMATIC_INLINE;
 use super::canonicalize::CANONICALIZE;
@@ -113,7 +113,7 @@ impl Callees<'_> {
     /// edges would otherwise reach the body being finished, and the
     /// package's cycle memo, by row, would answer one pass for another. A
     /// callee whose finish is under way on this thread lies on a cycle too,
-    /// one a drop elaboration closed ([`PackageBodies::finishing_body`]).
+    /// one a pass's rewrite closed ([`PackageBodies::finishing_body`]).
     pub fn body(&self, name: &str) -> Option<&MirFunction> {
         if let Some(program) = &self.program
             && let Some(&row) = program.rows.get(name)
@@ -136,8 +136,7 @@ impl Callees<'_> {
         {
             return None;
         }
-        let declarations = self.declarations;
-        if package.on_cycle(name, &|caller, function| {
+        if package.on_cycle(name, &|caller, function, declarations| {
             followed_callees(caller, function, declarations, |callee| {
                 declarations.function(callee).is_some_and(|declaration| {
                     followed_by_a_call_graph_pass(declaration, declarations)
@@ -343,33 +342,35 @@ pub fn pre_elaborate_program(
     }
 }
 
-/// The package seam's finishing hook: [`elaborate_drops_function`], then
-/// [`lower_lit`], then [`run_pipeline`].
+/// The package seam's finishing hook: [`run_pipeline`] over a body
+/// [`finish_package_drops`] made.
 ///
 /// The body keeps its structured control flow, which the elaborator
 /// instantiates as it is.
 pub fn finish_package_body(
     name: &str,
-    function: MirFunction,
+    mut function: MirFunction,
     declarations: &MirDeclarations,
     bodies: &PackageBodies,
     findings: &mut Vec<String>,
 ) -> MirFunction {
-    let mut function = finish_drops(name, function, declarations);
     run_pipeline(name, &mut function, declarations, bodies, findings);
     function
 }
 
-/// [`finish_package_body`] with the pipeline switched off: drops and
-/// [`lower_lit`] only.
-pub fn finish_package_body_without_pipeline(
+/// The package seam's drops hook: a lowered body's drops inserted and its
+/// lifetime-only markers erased.
+///
+/// It runs [`elaborate_drops_function`], then [`lower_lit`]; the pipeline
+/// and [`PackageBodies::on_cycle`]'s walk both read the body it makes.
+pub fn finish_package_drops(
     name: &str,
     function: MirFunction,
     declarations: &MirDeclarations,
-    _bodies: &PackageBodies,
-    _findings: &mut Vec<String>,
 ) -> MirFunction {
-    finish_drops(name, function, declarations)
+    let mut function = elaborate_drops_function(name, function, declarations);
+    lower_lit(name, &mut function, declarations);
+    function
 }
 
 /// A verifier finding after the pass `pass` ran, naming the pass.
@@ -667,14 +668,6 @@ fn bottom_up_order(
     }
 }
 
-/// A package body's drops inserted and its lifetime-only markers erased:
-/// what each package-seam hook runs before the pipeline.
-fn finish_drops(name: &str, function: MirFunction, declarations: &MirDeclarations) -> MirFunction {
-    let mut function = elaborate_drops_function(name, function, declarations);
-    lower_lit(name, &mut function, declarations);
-    function
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +693,34 @@ mod tests {
         assert!(pass_named("eliminate-duplicate-functions").is_some());
         assert!(pass_named("automatic-inline").is_some());
         assert!(pass_named("no-such-pass").is_none());
+    }
+
+    #[test]
+    fn a_package_cycle_walk_follows_the_destructor_a_drop_runs() {
+        let input = include_bytes!(
+            "../../../../tests/mir_passes/elaborate-drops/destructor_closes_cycle.mir"
+        );
+        let program = mojito_mir::mir::text::load_artifact(input, "destructor_closes_cycle.mir")
+            .expect("the case loads")
+            .program;
+        let declarations = &program.declarations;
+        let lowered = |name: &str| {
+            program
+                .functions
+                .iter()
+                .find(|(function, _)| function == name)
+                .map(|(_, function)| function.clone())
+                .expect("the case holds the function")
+        };
+        let callees = |name: &str, function: &MirFunction| {
+            followed_callees(name, function, declarations, |_| true)
+        };
+        // `touch`'s lowered body names no destructor: its drop of `s` does.
+        assert!(!callees("touch", &lowered("touch")).contains(&"S.__deinit__".to_string()));
+        let dropped = finish_package_drops("touch", lowered("touch"), declarations);
+        assert!(callees("touch", &dropped).contains(&"S.__deinit__".to_string()));
+        let destructor =
+            finish_package_drops("S.__deinit__", lowered("S.__deinit__"), declarations);
+        assert!(callees("S.__deinit__", &destructor).contains(&"touch".to_string()));
     }
 }
