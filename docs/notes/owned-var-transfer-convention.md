@@ -34,8 +34,9 @@ draws it for the syntactic place rule too.
 - `bump(mut x: String, var y: String)` called as `bump(s, s)`: **accepts**.
 - `f(mut a: List[String], var b: String)` called as `f(x, x[1])`: **accepts**.
 - `self.items[i] = self.items[j]` over a `List[String]` field: **accepts**,
-  and a self-store (`i == j`) keeps the value, because `List.__setitem__`
-  takes `var value: Self.T` (`assets/ok/element_store_from_same_list.mojo`).
+  and a self-store (`i == j`) keeps the value, because the store
+  through `__getitem__`'s reference copies the source before it destroys the
+  element it replaces (`assets/ok/element_store_from_same_list.mojo`).
 
 ## Where the decision lives
 

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled `List` no longer declares a `__setitem__`, as upstream's
+  does not, so `l[Int32(0)] = 7` over a `List[Int]` stores through the
+  reference `__getitem__(ref self, idx: Some[Indexer])` returns instead of
+  matching no overload, and every `Int` store goes through the getter's
+  reference too (R1985).
 - A compile-time operator over a symbolic `SIMD` operand is its dunder's
   call, as Mojo's parser spells it (R1994): `T[v // w]` and `T[v % w]`
   are `T[v.__floordiv__(w)]` and `T[v.__mod__(w)]` over `Int32`, and

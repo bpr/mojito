@@ -310,7 +310,6 @@ pub(super) fn seeded_transfer_effects()
     HashMap::from([
         ("List.append".to_string(), effect(0)),
         ("List.insert".to_string(), effect(1)),
-        ("List.__setitem__".to_string(), effect(1)),
     ])
 }
 

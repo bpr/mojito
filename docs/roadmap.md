@@ -12879,26 +12879,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1985 The bundled `List` declares a `__setitem__` upstream's does
-  not, so a store at an `Indexer` index is rejected**
-
-  `l[Int32(0)] = 7` over a `List[Int]` is rejected ("no overload matches
-  the supplied arguments"), where the pin stores through the reference
-  `__getitem__(ref self, idx: Some[Indexer])` returns.
-  - Upstream's `List` has no `__setitem__`; the bundled one keeps an
-    `Int`-only `__setitem__` (`stdlib/std/collections/list.mojo`), which
-    every subscript store selects.
-  - Dropping it, as upstream, runs `l[Int32(0)] = 7` and every `Int` store
-    through the getter's reference, but one gap then shows.
-  - The replaced element is never destroyed (R1216):
-    `assets/ok/subscript_write_back_lifecycle.mojo` loses its `del` lines.
-  - When it lands, drop the `List.__setitem__` row from
-    `seeded_transfer_effects` (`checker/overload_support.rs`) and the
-    sentence on it in `docs/features.md`'s argument-exclusivity row.
-  - Found while landing R1564 (2026-11-07).
-  - Depends on R1216, R1986.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1663 `SIMD.write_padded` is missing**
 
   `SIMD[DType.int32, 4](1, -22, 333, 4).write_padded(t, 4)` stops with

@@ -402,16 +402,6 @@ struct List[T: AnyType](
             length = end - start,
         }
 
-    # Upstream's `List` has no `__setitem__`: `xs[i] = v` stores through the
-    # reference `__getitem__` returns, which is declared read-only over nested
-    # origins, so this store is declared alike.
-    @__unsafe_nested_origins_read_only
-    def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
-        Self.T, Deinitable
-    ) and conforms_to(Self.T, Movable):
-        self._storage._alloc._ptr.unsafe_offset(index).unsafe_deinit_pointee()
-        self._storage._alloc._ptr[index] = value^
-
     # Unchecked element access: out-of-range indices are undefined behavior
     # (the VM still diagnoses them deterministically).
     @__unsafe_nested_origins_read_only
