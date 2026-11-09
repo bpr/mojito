@@ -6778,9 +6778,12 @@ point where a slot declared in a loop is uninitialized again.
   (`loaded_slot_across_regions`: a temporary receiver loaded before a later
   argument's inlined body), composed into each of the callee's places
   rooted at it, as upstream substitutes the borrowed address. One read
-  through a `ref`-typed register (`read_through_register`, only shallow
-  reads between) binds that register as its handle, as below; one read
-  through a pointer keeps the call (R1346). A `mut` or `ref` parameter
+  through a `ref`- or pointer-typed register (`read_through_register`,
+  only shallow reads between) binds that register as its handle, as below,
+  a pointer's value being the address upstream passes for its pointee
+  (`len(self.src[])`): a pointer-typed root read `through` itself
+  designates its pointee, in `verify::place_base_ty`, the VM's
+  `hold_register_fields`, and Pliron's place walker. A `mut` or `ref` parameter
   is the caller's place the call passes, except a `ref` field reached
   directly (a projected place of a `ref` type with no `through`), whose
   address is the handle the field stores: the parameter is then its own

@@ -235,14 +235,18 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
 /// place, which is physically rooted in a hidden `ref T` slot while its
 /// projections address the referent. Ordinary substituted local aliases may
 /// instead keep an owned root plus analytical `through` metadata, so only an
-/// actually reference-typed root is unwrapped.
+/// actually reference-typed root is unwrapped. A pointer-typed root read
+/// through itself designates its pointee, as a pointer's value is the
+/// address upstream passes for it.
 pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
+    let through_handle = place.through.is_some()
+        && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref());
     match place.root_ty.as_ref().map(Ty::kind) {
-        Some(TyKind::Ref(reference))
-            if place.through.is_some()
-                && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref()) =>
+        Some(TyKind::Ref(reference)) if through_handle => Some(&reference.referent),
+        Some(TyKind::Pointer { element, .. })
+            if through_handle && place.through == Some(place.root) =>
         {
-            Some(&reference.referent)
+            Some(element)
         }
         _ => place.root_ty.as_ref(),
     }

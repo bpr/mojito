@@ -75,8 +75,10 @@ impl FnLowering<'_> {
             .get(&through_var)
             .cloned()
             .unwrap_or_else(|| root_ty.clone());
+        // A pointer root read through itself designates its pointee.
         let designated_ty = match root_ty.kind() {
             TyKind::Ref(reference) => reference.referent.clone(),
+            TyKind::Pointer { element, .. } if place.through == Some(place.root) => element.clone(),
             _ => root_ty.clone(),
         };
         let ref_param_root = (through_var as usize) < self.func.n_params

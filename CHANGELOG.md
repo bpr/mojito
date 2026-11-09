@@ -152,6 +152,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` binds a `read` argument read through a pointer
+  register to that pointer, as upstream passes a pointer's value as its
+  pointee's address, so `len(self.src[])` in the `Set`, `Dict`, and
+  `VariadicList` iterators inlines; a pointer-typed place root read
+  through itself designates its pointee in the MIR verifier, the VM, and
+  Pliron (R1346).
+
 - `automatic-inline`'s function pipeline runs upstream's `StackReuse`
   (`stack-reuse`) after its second `mem-2-reg` (R1341): a local slot that
   does not escape, every read of which finds a more dominating slot

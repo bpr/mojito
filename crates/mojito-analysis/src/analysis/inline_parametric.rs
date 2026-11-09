@@ -111,13 +111,13 @@
 //! the argument was loaded from, directly, past region ops that never name
 //! it (a later argument's inlined body), or through a reference the same
 //! block made (`self.copy()` reading `self` through a `ref.make`), or a
-//! fresh `ref` slot holding the reference register the argument is read
-//! through, as upstream's inliner substitutes the argument's address for
-//! the callee's. A `read` argument with none of these, an owned register
+//! fresh slot holding the reference or pointer register the argument is
+//! read through (`len(self.src[])`), as upstream's inliner substitutes the
+//! argument's address for the callee's. A `read` argument with none of these, an owned register
 //! the call's block made, such as a call's result, is lent: a fresh slot
 //! it initializes, whose value the caller takes back forwarded after the
 //! body, as upstream passes the address of the temporary its caller
-//! materializes. One read through a pointer keeps the call (R1346).
+//! materializes.
 //! A callee returning a reference binds a `read` parameter to the place the
 //! call retains for it too, so the reference its body makes is to the
 //! caller's place; one returned to a fresh slot keeps the call, and so does
@@ -469,9 +469,10 @@ enum Binding {
     /// call's consumption of it is the body's end of the parameter.
     Part { place: MirPlace, argument: Reg },
     /// A `mut` or `ref` parameter whose caller's place is a `ref` field,
-    /// or a `read` one read through a reference register: a fresh `ref`
-    /// slot initialized with the handle, the address the call passes, and
-    /// every body place on the parameter goes through the slot
+    /// or a `read` one read through a reference or pointer register: a
+    /// fresh slot of the handle's type initialized with it, the address the
+    /// call passes, and every body place on the parameter goes through the
+    /// slot
     /// ([`handle_place`]).
     Handle(HandleSource),
     /// A constructor's `out self`: a fresh slot the body initializes and
@@ -487,12 +488,12 @@ enum Binding {
 enum HandleSource {
     /// The `ref` field storing it.
     Field(MirPlace),
-    /// A register of the caller holding it, of its `ref` type.
+    /// A register of the caller holding it, of its `ref` or pointer type.
     Register(Reg, Ty),
 }
 
 impl HandleSource {
-    /// The handle's `ref` type.
+    /// The handle's `ref` or pointer type.
     const fn ty(&self) -> Option<&Ty> {
         match self {
             Self::Field(field) => field.ty.as_ref(),
@@ -2466,10 +2467,13 @@ fn stores_handle(place: &MirPlace) -> bool {
 
 /// The place a [`Binding::Handle`] parameter's slot `slot`, holding a
 /// handle of type `handle_ty`, binds the body's places to: the referent of
-/// the handle, read through it, as a `ref` binding's place is.
+/// the handle, read through it, as a `ref` binding's place is, or the
+/// pointee of a pointer handle, which a pointer root read through itself
+/// designates.
 fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
     let referent = match handle_ty.kind() {
         TyKind::Ref(reference) => Some(reference.referent.clone()),
+        TyKind::Pointer { element, .. } => Some(element.clone()),
         _ => None,
     };
     MirPlace {
@@ -2482,11 +2486,12 @@ fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
     }
 }
 
-/// The reference register, of its `ref` type, the register `argument` is
-/// read through in `block` before the call at `index`, in its run
+/// The reference or pointer register, of its type, the register `argument`
+/// is read through in `block` before the call at `index`, in its run
 /// ([`run_start`]), when only shallow reads and constants lie between the
 /// read and the call, so nothing writes the referent: the address
-/// upstream passes for a `read` argument reached through a reference.
+/// upstream passes for a `read` argument reached through a reference, or
+/// through a pointer (`len(self.src[])`), whose value is that address.
 fn read_through_register<'f>(
     caller: &'f MirFunction,
     block: &MirBlock,
@@ -2505,7 +2510,7 @@ fn read_through_register<'f>(
                 _ => None,
             })?;
     let ty = caller.reg_types.get(&reference.0)?;
-    (matches!(ty.kind(), TyKind::Ref(_))
+    (matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
         && block.instrs[read + 1..index].iter().all(|instruction| {
             matches!(
                 instruction,

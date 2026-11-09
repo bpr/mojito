@@ -500,33 +500,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1346 A `read` argument read through a pointer register keeps
-  its `nodebug` call**
-
-  A pointer's value is the address upstream passes for its pointee, but a
-  MIR place cannot root at a pointer register, so `inline-parametric`
-  has no address to bind the parameter to.
-  - Probe: `len(self.src[])` in `_SetIter.__len__`, `_SetIter.__next__`,
-    `_DictEntryIter.__next__`, and `_VariadicListIter.__next__` keeps its
-    `len` call (`ref.read` of the pointer `self.src` loads).
-  - Binding the parameter through a fresh pointer-typed slot fails
-    verification: `place_base_ty` (`mir/verify/places.rs`) unwraps only a
-    `ref` through-root, so a pointer root reports "place terminal type
-    List[Int] does not match projected type Pointer[List[Int], …]".
-  - Lever: a pointer-typed through-root designates its pointee, in
-    `place_base_ty` and in the VM's and Pliron's place walkers; then
-    `read_through_register` (`analysis/inline_parametric.rs`) admits a
-    pointer register too.
-  - Regression set: `assets/ok/pointer_field_deref_index.mojo`,
-    `pointer_field_view_for_temporary.mojo`,
-    `pointer_field_view_ref_yield.mojo`,
-    `pointer_origin_cast_reads_pointee.mojo`,
-    `pointer_field_wrapper_iterator_protocol.mojo`, and
-    `template_served_loan_carrying_instance.mojo`.
-  - Found while landing R1099 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1347 A callee returning a reference through a local `ref` slot
   keeps its `nodebug` call**
 

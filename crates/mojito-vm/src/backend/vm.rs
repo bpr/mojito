@@ -887,7 +887,7 @@ fn hold_register_fields(structs: &HashMap<String, StructDef>, blocks: &mut [MirB
             for place in mojito_mir::mir::verify::instruction_places_mut(instruction) {
                 for position in 0..place.proj.len() {
                     let base = match position {
-                        0 => place.root_ty.as_ref(),
+                        0 => mojito_mir::mir::verify::place_base_ty(place),
                         _ => place.projection_tys.get(position - 1),
                     };
                     if matches!(place.proj[position], Proj::Field(_))
