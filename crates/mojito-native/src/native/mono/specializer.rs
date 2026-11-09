@@ -2711,6 +2711,18 @@ impl<'a> Specializer<'a> {
             .then_some(resolved)
     }
 
+    /// Whether a prefix operator on `ty` calls its declared `dunder`. A
+    /// numeric literal's calls it only where the bundled library declares
+    /// it: `IntLiteral.__neg__` and `__invert__` are not ported yet (R1853),
+    /// so `-3` keeps the compiler's operator.
+    fn declares_prefix_dunder(&self, ty: &Ty, dunder: &str) -> bool {
+        declared_operator_receiver(ty)
+            && (!ty.is_numeric_literal()
+                || mojito_types::types::nominal_parts(ty).is_some_and(|(name, _)| {
+                    self.declarations.contains_key(&format!("{name}.{dunder}"))
+                }))
+    }
+
     /// Whether the instance `name` is of a method taking a receiver.
     fn takes_receiver(&self, name: &str) -> bool {
         self.instance_names
@@ -2851,7 +2863,7 @@ impl<'a> Specializer<'a> {
                         .reg_types
                         .get(&a.0)
                         .map(peel_refs)
-                        .is_some_and(declared_operator_receiver)
+                        .is_some_and(|ty| self.declares_prefix_dunder(ty, op.dunder()))
                 {
                     let raises = raises.take();
                     *instruction =
