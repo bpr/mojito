@@ -1932,6 +1932,11 @@ impl Checker {
             if index == m.receiver_index {
                 self.bind_method_receiver(self_ty, m, self_writable)?;
             }
+            let slot = if m.has_self && index >= m.receiver_index {
+                index + 1
+            } else {
+                index
+            };
             // Parameter annotations follow the initialized-local rule
             // (pin-attested): a bare origin-slotted generic infers per call,
             // a partial application that omits an origin slot rejects, and a
@@ -1970,6 +1975,7 @@ impl Checker {
                 writable,
                 binder,
             )?;
+            self.register_reference_binder(&p.name, p.convention, p.origin.as_deref(), slot);
         }
         if m.receiver_index >= m.params.len() {
             self.bind_method_receiver(self_ty, m, self_writable)?;
@@ -2291,7 +2297,14 @@ impl Checker {
             }
             _ => self_ty.clone(),
         };
-        self.bind_receiver(&receiver, writable)
+        self.bind_receiver(&receiver, writable)?;
+        self.register_reference_binder(
+            "self",
+            m.self_convention,
+            m.self_origin.as_deref(),
+            m.receiver_index,
+        );
+        Ok(())
     }
 
     /// A construction is its `__init__`'s call: its arguments bind and

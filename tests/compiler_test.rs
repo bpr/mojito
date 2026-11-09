@@ -5105,3 +5105,52 @@ fn automatic_inline_inlines_an_undecorated_capturing_nested_def() {
     assert_eq!(callees(""), Vec::<String>::new());
     assert_eq!(callees("@no_inline\n    ").len(), 3);
 }
+
+#[test]
+fn a_reference_reached_through_a_bare_ref_parameter_carries_its_binder() {
+    // Upstream's bare `ref` parameter infers an `Origin[mut=m]` binder; a
+    // reference reached through it is `mut=m`, which a call binds, not
+    // `immutable`. A read receiver's reference stays `immutable`.
+    use mojito::origin::{Mutability, OriginParamId};
+    let src = "struct T:\n    var entries: List[Int]\n\n    def __init__(out self):\n        self.entries = [1, 2]\n\n    \
+               def at(ref self, i: Int) -> ref[self.entries[0]] Int:\n        return self.entries[i]\n\n    \
+               def peek(self, i: Int) -> ref[self.entries[0]] Int:\n        return self.entries[i]\n\n\
+               def pick(ref x: Int) -> ref[x] Int:\n    return x\n\n\
+               def through(k: Int, ref x: Int) -> ref[x] Int:\n    return pick(x)\n\n\
+               def main():\n    var t = T()\n    t.at(0) = 5\n    var y = 1\n    through(0, y) += 3\n    print(t.peek(0), y)\n";
+    let compiled = Compiler::default()
+        .compile_source(src, std::path::Path::new("compiler_test.mojo"))
+        .expect("compile");
+    let mir = compiled.mir();
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let returned = |name: &str| {
+        let function = &mir
+            .functions
+            .iter()
+            .find(|(lowered, _)| lowered == name)
+            .unwrap_or_else(|| panic!("{name} MIR"))
+            .1;
+        let Some(mojito::mir::MirTerm::Return(Some(register))) =
+            function.blocks.last().map(|block| &block.term)
+        else {
+            panic!("{name} returns a register: {function:#?}");
+        };
+        match function.reg_types.get(&register.0).map(Ty::kind) {
+            Some(mojito::types::TyKind::Ref(reference)) => reference.mutability,
+            other => panic!("{name} returns a reference, not {other:?}"),
+        }
+    };
+    assert_eq!(
+        returned("T.at"),
+        Mutability::Param(OriginParamId::reference_binder(0))
+    );
+    assert_eq!(returned("T.peek"), Mutability::Immutable);
+    assert_eq!(
+        returned("through"),
+        Mutability::Param(OriginParamId::reference_binder(1))
+    );
+}

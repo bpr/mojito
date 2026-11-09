@@ -152,6 +152,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference reached through a bare `ref` parameter or receiver carries
+  that parameter's inferred mutability binder, as upstream's
+  `Origin[mut=m]` does, where the checker had typed it `immutable`;
+  `automatic-inline` binds it (and a pointer's `origin_of(self)` binder)
+  to the call's mutability, so `t.at(0) = 5` over a `ref self` accessor
+  returning `self.entries[i]`, `d["x"]` on a `Dict`,
+  `Optional.unsafe_value()`, and a `ref x` forwarder now inline at a
+  mutable caller. No program's output changes (R1339).
 - The parameter domain casts between `i1` and a `Bool`'s
   `!kgen.scalar<bool>` storage, as upstream's `pop.cast_to_builtin` and
   `pop.cast_from_builtin` do, so `b.__mlir_i1__()` and `Bool(value=i)` fold

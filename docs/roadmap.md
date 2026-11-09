@@ -312,38 +312,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1339 A `ref self` body types a reference reached through `self`
-  as `immutable`, so `automatic-inline` keeps a mutable caller's call**
-
-  Inside a `ref self` method, MIR spells the reference a subscript or
-  field of `self` yields at `immutable`, where upstream's carries the
-  receiver's mutability parameter (`origin_of(self)`'s `mut`).
-  - The body still returns it as the method's `ref` result, which a
-    mutable caller writes through, so no program's output changes.
-  - `automatic-inline` keeps such a call, since splicing the body would
-    raise the reference's permission (`grants_call_permission`), where
-    upstream's `AutomaticInline` inlines it.
-  - Probe: `def at(ref self, i: Int) -> ref[self.entries[0]] Int`
-    returning `self.entries[i]` over `var entries: List[Int]`: emitted MIR
-    types its subscript result `immutable`, and `t.at(0) = 5` stays a call
-    in concrete MIR.
-  - Probe: `d["x"]` on a `var d: Dict[String, Int]` keeps its
-    `Dict.__getitem__` call (`assets/ok/template_method_element_field_result.mojo`).
-  - Probe: a `ref` parameter passed on has the same cause:
-    `through(ref x) -> ref [x] Int` returning `pick(x)` types the result
-    `immutable`, so `through(y) += 3` keeps its call in
-    `assets/ok/always_inline_nodebug_reference_results.mojo`.
-  - Probe: `Optional.unsafe_value(ref self)` returning
-    `self._unsafe_unchecked_value()` keeps its call at a mutable caller.
-  - `tests/mir_passes/automatic-inline/ref_result_immutable_kept_for_mut_call.mir`
-    pins the rule; a body spelling the receiver's parameter inlines
-    (`ref_result_param_mutability_inlined.mir`).
-  - Lever: type a reference reached through a `ref` receiver at the
-    receiver's mutability parameter, which the splice binds at the call.
-  - Found while landing R1271 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1340 The `automatic-inline` function pipeline has no
   `HoistTrivialInvariants`**
 

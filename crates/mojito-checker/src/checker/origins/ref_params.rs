@@ -42,6 +42,53 @@ impl Checker {
         );
     }
 
+    /// Record the inferred mutability binder of the parameter `name` bound
+    /// at `slot` (the receiver counted), when it is a `ref` parameter with
+    /// no origin clause, which upstream gives an inferred
+    /// `Origin[mut=m]` binder: a reference reached through it carries `m`
+    /// ([`Checker::reference_actual`]).
+    pub(in crate::checker) fn register_reference_binder(
+        &mut self,
+        name: &str,
+        convention: Option<ArgConvention>,
+        origin: Option<&[Expr]>,
+        slot: usize,
+    ) {
+        if convention != Some(ArgConvention::Ref) || origin.is_some() {
+            return;
+        }
+        let (Some(owner), Ok(slot)) = (self.lookup_owner(name), u32::try_from(slot)) else {
+            return;
+        };
+        let binder = mojito_types::origin::Mutability::Param(
+            mojito_types::origin::OriginParamId::reference_binder(slot),
+        );
+        self.reference_parameter_mutabilities.insert(owner, binder);
+        if let Some(handle) = self
+            .binding_scope(name)
+            .and_then(|scope| self.reference_parameter_scopes[scope].get_mut(name))
+            && handle.mutability == mojito_types::origin::Mutability::Immutable
+        {
+            handle.mutability = binder;
+        }
+    }
+
+    /// The mutability of a reference rooted at `owner`: mutable over
+    /// writable storage, a bare `ref` parameter's inferred binder
+    /// ([`Self::register_reference_binder`]), immutable otherwise.
+    pub(in crate::checker) fn owner_reference_mutability(
+        &self,
+        owner: mojito_types::origin::OwnerId,
+    ) -> mojito_types::origin::Mutability {
+        if self.owner_is_mutable(owner) {
+            return mojito_types::origin::Mutability::Mutable;
+        }
+        self.reference_parameter_mutabilities
+            .get(&owner)
+            .copied()
+            .unwrap_or(mojito_types::origin::Mutability::Immutable)
+    }
+
     /// The enclosing struct's origin binder a `ref` parameter's clause names
     /// (`ref[Self.o] xs`, or the bare binder in a ref field annotation's
     /// position), as the pointer origin a `Pointer[T, Self.o]` field declares

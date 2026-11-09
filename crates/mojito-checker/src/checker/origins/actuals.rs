@@ -211,11 +211,7 @@ impl Checker {
         }
 
         let place = self.origin_place(expr)?;
-        let mutability = if self.owner_is_mutable(place.root) {
-            Mutability::Mutable
-        } else {
-            Mutability::Immutable
-        };
+        let mutability = self.owner_reference_mutability(place.root);
         Ok(RefTy {
             referent: self.infer(expr)?,
             origin: Origin::Place(place),

@@ -238,6 +238,10 @@ impl Checker {
         let mut effective = conventions.to_vec();
         let mut origins = vec![None; slots.len()];
         let mut mutable = vec![false; slots.len()];
+        // The inferred binder of a bare `ref` parameter an argument is
+        // reached through, which an `Infer` result inherits when no
+        // contributing argument is mutable.
+        let mut symbolic = vec![None; slots.len()];
         // The declaration convention, not the effective alias-checking
         // convention below, determines whether execution needs the caller's
         // place. An immutable `ref` becomes a shared read for conflict
@@ -275,6 +279,14 @@ impl Checker {
                 ));
             }
             origins[index] = Some(actual.origin);
+            if let Mutability::Param(parameter) = actual.mutability
+                && matches!(
+                    signature.mutability,
+                    SigMutability::BoolParam(_) | SigMutability::Infer
+                )
+            {
+                symbolic[index] = Some(Mutability::Param(parameter));
+            }
             mutable[index] = match signature.mutability {
                 SigMutability::Immutable => false,
                 SigMutability::Mutable => true,
@@ -410,30 +422,41 @@ impl Checker {
         }
         let returned = return_signature.map(|signature| {
             let origin = substitute_sig_origin(&signature.origin, &origins);
-            let is_mutable = match &signature.mutability {
-                SigMutability::Immutable => false,
-                SigMutability::Mutable => true,
-                SigMutability::BoolParam(parameter) => {
-                    signatures.iter().enumerate().any(|(i, sig)| {
-                    sig.as_ref().is_some_and(|sig| {
-                            matches!(sig.mutability, SigMutability::BoolParam(other) if other == *parameter)
-                            && mutable[i]
-                    })
-                    })
+            let contributes = |i: usize| {
+                match &signature.mutability {
+                SigMutability::Immutable | SigMutability::Mutable => false,
+                SigMutability::BoolParam(parameter) => signatures[i].as_ref().is_some_and(|sig| {
+                    matches!(sig.mutability, SigMutability::BoolParam(other) if other == *parameter)
+                }),
+                SigMutability::Infer => origins[i].is_some(),
+            }
+            };
+            let mutability = match &signature.mutability {
+                SigMutability::Immutable => Mutability::Immutable,
+                SigMutability::Mutable => Mutability::Mutable,
+                SigMutability::BoolParam(_) | SigMutability::Infer => {
+                    if (0..slots.len()).any(|i| contributes(i) && mutable[i]) {
+                        Mutability::Mutable
+                    } else {
+                        // Every contributing argument reached through one
+                        // bare `ref` parameter carries its binder, as
+                        // upstream's result binds `mut` to the argument's.
+                        let mut binders = (0..slots.len())
+                            .filter(|&i| contributes(i))
+                            .map(|i| symbolic[i]);
+                        match binders.next() {
+                            Some(Some(binder)) if binders.all(|other| other == Some(binder)) => {
+                                binder
+                            }
+                            _ => Mutability::Immutable,
+                        }
+                    }
                 }
-                SigMutability::Infer => origins
-                    .iter()
-                    .enumerate()
-                    .any(|(i, o)| o.is_some() && mutable[i]),
             };
             RefTy {
                 referent: Ty::none(), // replaced by the caller's declared return type
                 origin,
-                mutability: if is_mutable {
-                    Mutability::Mutable
-                } else {
-                    Mutability::Immutable
-                },
+                mutability,
             }
         });
         let mut bool_bindings = HashMap::new();

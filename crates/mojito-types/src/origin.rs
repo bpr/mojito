@@ -59,6 +59,22 @@ pub fn encoding_packaged_owners<R>(f: impl FnOnce() -> R) -> R {
 )]
 pub struct OriginParamId(pub u32);
 
+impl OriginParamId {
+    /// The first id of the mutability binders a callable infers for its
+    /// bare `ref` parameters, above every declared binder's index.
+    const REFERENCE_BINDER_BASE: u32 = 1 << 16;
+
+    /// The `mut` binder upstream infers for the bare `ref` parameter at
+    /// `slot` (the receiver counted), as `ref self` is
+    /// `self: ref[origin_of(self)] Self` over an inferred
+    /// `Origin[mut=self_mut]`: a reference reached through the parameter
+    /// carries it, and a call binds it to its argument's mutability.
+    #[must_use]
+    pub const fn reference_binder(slot: u32) -> Self {
+        Self(Self::REFERENCE_BINDER_BASE + slot)
+    }
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]

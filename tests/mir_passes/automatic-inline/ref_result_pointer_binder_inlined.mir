@@ -1,0 +1,82 @@
+mojito-mir 1.183
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Box, fields: [field { name: n, type: Int }], mut_self_methods: [get], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "ptr" }
+  ],
+  decls: [
+    decl { lowered_name: "Box.get", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(ref), param_conventions: [], return_type: Int, returns_reference: true, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: total, param_names: [k, b], param_types: [Int, struct_type { name: Box, arguments: [] }], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, present(ref)], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, true], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "Box.get",
+        registers: 7,
+        vars: 3,
+        var_names: [self, p, "$mat_r3"],
+        params: 1,
+        param_types: [struct_type { name: Box, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: true,
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: kgen_pointer { element: Int } }, var_type { var: $v2, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: pointer { element: Int, origin: pointer_place { place: origin_place { root: $v316, path: [field(n)] }, mutable: false } } }, reg_type { reg: %r1, type: kgen_pointer { element: Int } }, reg_type { reg: %r2, type: kgen_pointer { element: Int } }, reg_type { reg: %r3, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }, reg_type { reg: %r4, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutability_param(0) } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 132, end: 150, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 132, end: 170, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 230, end: 231, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 186, end: 232, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 186, end: 232, origin: present($v2) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 233, end: 234, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 186, end: 234, origin: present($v2) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              pointer.convert { dest: %r1, value: %r0 },
+              var.store { var: $v1, src: %r1, binding_type: present(kgen_pointer { element: Int }), in_place: false },
+              var.use { dest: %r2, var: $v1, mode: move },
+              pointer.convert { dest: %r3, value: %r2 },
+              var.store { var: $v2, src: %r3, binding_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), in_place: false },
+              place.load { dest: %r4, place: place { root: $v2, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), projections: [], type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), through: absent } },
+              const { dest: %r5, value: int(0) },
+              ref.make { dest: %r6, place: place { root: $v2, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), projections: [projection { op: index(%r5), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v2 }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      },
+      fn {
+        name: total,
+        registers: 6,
+        vars: 3,
+        var_names: [k, b, "$call_ref_r1"],
+        params: 2,
+        param_types: [Int, struct_type { name: Box, arguments: [] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 286, end: 287, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 286, end: 293, origin: absent }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 286, end: 293, origin: present($v2) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 296, end: 297, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 286, end: 297, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: get, resolved: present("Box.get"), raises: absent, reference_result: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: present(imm), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              var.store { var: $v2, src: %r1, binding_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), in_place: false },
+              place.load { dest: %r3, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), projections: [], type: present(Int), through: present($v2) } },
+              drop.var { var: $v2 }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
+}

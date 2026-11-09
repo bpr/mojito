@@ -462,6 +462,12 @@ pub struct Checker {
     /// `Pointer[T, Self.o]` field) instead of the parameter slot's place.
     reference_parameter_binders:
         HashMap<mojito_types::origin::OwnerId, mojito_types::origin::PointerOrigin>,
+    /// The inferred mutability binder of each bare `ref` parameter (the
+    /// receiver included), by the parameter's owner: a reference reached
+    /// through it carries the binder rather than `immutable`
+    /// ([`mojito_types::origin::OriginParamId::reference_binder`]).
+    reference_parameter_mutabilities:
+        HashMap<mojito_types::origin::OwnerId, mojito_types::origin::Mutability>,
     /// Origin-parameter declarations for callable values, parallel to the
     /// lexical value scopes. The outer vector stored per name has one entry per
     /// overload declaration. Each entry also retains the original compile-time
@@ -1061,6 +1067,7 @@ impl Checker {
             call_result_origins: RefCell::new(FactMap::default()),
             reference_parameter_scopes: vec![HashMap::new()],
             reference_parameter_binders: HashMap::new(),
+            reference_parameter_mutabilities: HashMap::new(),
             callable_origin_scopes: vec![HashMap::new()],
             next_owner: std::cell::Cell::new(0),
             fresh_owner_cursor: std::cell::Cell::new(0),

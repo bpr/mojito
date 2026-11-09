@@ -201,7 +201,7 @@ use mojito_mir::mir::{
     with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::origin::{Mutability, Origin, OriginParamId, RefTy};
+use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin, RefTy};
 use mojito_types::param_expr::{
     MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
 };
@@ -2967,6 +2967,36 @@ impl BoundMutabilities {
 
 impl TyRewrite for BoundMutabilities {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        // A pointer the body derives from the parameter (`origin_of(self)`)
+        // carries its binder as a reference does.
+        if let TyKind::Pointer {
+            element,
+            origin:
+                origin @ (PointerOrigin::Param {
+                    mutability: Mutability::Param(id),
+                    ..
+                }
+                | PointerOrigin::SelfPlace {
+                    mutability: Mutability::Param(id),
+                    ..
+                }),
+        } = ty.kind()
+        {
+            let bound = *self.0.get(id)?;
+            let mut origin = origin.clone();
+            if let PointerOrigin::Param { mutability, .. }
+            | PointerOrigin::SelfPlace { mutability, .. } = &mut origin
+            {
+                *mutability = bound;
+            }
+            return Some(
+                TyKind::Pointer {
+                    element: rewrite_ty(element, self).ok()?,
+                    origin,
+                }
+                .into(),
+            );
+        }
         let TyKind::Ref(reference) = ty.kind() else {
             return None;
         };

@@ -5130,6 +5130,16 @@ capability into a reference result, but the body cannot assume write access.
 Writing requires an explicit `ref[origin]` whose `Origin` is mutable (or the
 ordinary `mut` convention). Call solving rejects any attempt to pass an
 immutable reference to that mutable contract, so capability cannot be escalated.
+That parametric mutability is upstream's inferred `Origin[mut=m]` binder, and
+the checker spells it as one: binding a bare `ref` parameter records
+`Mutability::Param(OriginParamId::reference_binder(slot))` for its owner
+(`register_reference_binder`, the receiver counted in `slot`, ids above every
+declared binder's index), so a reference reached through it (`self.n`,
+`self.entries[i]`, `pick(x)`, `self._unsafe_unchecked_value()`) carries the
+binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
+result whose contributing arguments all carry one binder). A write through it
+is refused as through any function-own binder (`require_writable_reference`),
+and `automatic-inline`'s splice binds it to the call's mutability (R1339).
 
 ### Cross-call transfer effects
 
@@ -7722,10 +7732,13 @@ inlined anything or not, as upstream's `completeFunctionProcessing` does:
 - **References.** A callee returning a reference returns it in the
   caller's reference type. Its body spells the reference's mutability as a
   parameter of its own (a `ref self` receiver's), which the splice binds
-  to the call's (`BoundMutabilities`) through the body's types and the
-  reference results its calls and subscripts record; a body spelling it
+  to the call's (`BoundMutabilities`) through the body's types (a
+  pointer origin's mutability, such as `origin_of(self)`'s, included) and
+  the reference results its calls and subscripts record; a body spelling it
   `immutable` keeps a call reading it as `mut`
-  (`grants_call_permission`, R1339).
+  (`grants_call_permission`); a reference reached through a bare `ref`
+  parameter carries that parameter's inferred binder, so a `ref self`
+  accessor inlines at a mutable caller (R1339).
 - **Backends.** An inlined reference reached through a handle a slot
   stores (a `to=` pointer or `ref` field) outlives that slot: the VM roots
   a `ref.make` at the handle's referent as it makes it

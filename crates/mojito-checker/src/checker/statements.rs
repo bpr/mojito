@@ -3208,7 +3208,12 @@ impl Checker {
         } else {
             result = self.declare_value_parameters(&decls);
             if result.is_ok() {
-                for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
+                for (slot, ((param, ty), opaque)) in params
+                    .iter()
+                    .zip(&param_tys)
+                    .zip(&opaque_params)
+                    .enumerate()
+                {
                     let bind_ty = match param.kind {
                         mojito_ast::ast::ParamKind::Variadic => {
                             mojito_types::types::variadic_collector_type(
@@ -3248,6 +3253,12 @@ impl Checker {
                             bind_ty.clone(),
                             ref_parameter_is_writable(param, type_params),
                             binder,
+                        );
+                        self.register_reference_binder(
+                            &param.name,
+                            param.convention,
+                            param.origin.as_deref(),
+                            slot,
                         );
                     }
                     if result.is_ok()
