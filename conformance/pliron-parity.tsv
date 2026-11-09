@@ -7,6 +7,8 @@
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron parity_exe_manifest
+assets/ok/abort_ends_a_returning_body.mojo	main	exe-differential	sanitized
+assets/ok/abort_ends_out_self_initializer.mojo	main	exe-differential	sanitized
 assets/ok/abs_scalar_aliases.mojo	main	exe-differential	sanitized
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sanitized
 assets/ok/access_beside_live_ref_binding.mojo	main	exe-differential	sanitized
@@ -723,6 +725,7 @@ assets/ok/nested_origin_binder_not_captured.mojo	main	exe-differential	sanitized
 assets/ok/nested_origins_read_only_decorator.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nested_unread_enclosing_instances.mojo	main	exe-differential	sanitized
+assets/ok/never_call_ends_returning_path.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
@@ -1659,6 +1662,7 @@ assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ok/writable_string_writer_type.mojo	main	exe-differential	sanitized
 assets/ok/writable_trait_library.mojo	main	exe-differential	sanitized
 assets/ok/writer_write_override.mojo	main	exe-differential	sanitized
+assets/ownership_ok/abort_after_mut_parameter_move.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_break_continue.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_loop_carried_refill.mojo	main	exe-differential	sanitized
@@ -1751,6 +1755,7 @@ assets/extensions/ownership_ok/origin_delegated_multi_binder_source_write.mojo	m
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
+assets/runtime_error/abort_arm_reads_live_values.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
 assets/runtime_error/debug_assert_safe_mode_fails.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/file_open_invalid_mode.mojo	main,__toplevel__	error-differential	category=UnhandledError

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1130
+# swept-count	1134
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -154,6 +154,7 @@ assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'rea
 assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
+assets/runtime_error/abort_arm_reads_live_values.mojo	trap	agree	error: execution crashed
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
 assets/runtime_error/debug_assert_safe_mode_fails.mojo	trap	agree	At: assets/runtime_error/debug_assert_safe_mode_fails.mojo:8:37: Assert Error: safe boom 3
 assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
@@ -330,6 +331,7 @@ assets/type_error/comptime_dtype_binding_scope.mojo	compile-reject	agree	error: 
 assets/type_error/comptime_explicit_getitem_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Array[__literal_size__=Int(2)](Int(2), Int(1), __list_literal__=NoneType(None))[Int(0)])]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_field_names_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[StringSpan[ImmStaticOrigin], Int(len(#kgen.struct_field_types<:trait<@std::@traits::@anytype::@AnyType> T>))]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_display_not_copyable.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/comptime_for_ends_returning_body.mojo	compile-reject	agree	error: return expected at end of function with results
 assets/type_error/comptime_for_non_copyable_iterator.mojo	compile-reject	agree	error: 'paramfor_has_next' parameter 'IteratorType' has 'Iterator & Copyable' type, but value has type 'AnyStruct[Once]'
 assets/type_error/comptime_for_runtime_iterator.mojo	compile-reject	agree	error: cannot use a dynamic value in 'for' iterator expression
 assets/type_error/comptime_for_runtime_pack_length.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
@@ -761,6 +763,8 @@ assets/type_error/mut_untracked_origin_local.mojo	compile-reject	agree	error: in
 assets/type_error/nested_def_calls_later_nested_def.mojo	compile-reject	agree	error: use of unknown declaration 'q'
 assets/type_error/nested_def_recursive_reference.mojo	compile-reject	agree	error: recursive references to nested functions are not supported; define 'walk' at file scope
 assets/type_error/nested_omitted_origin_parameter.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/type_error/never_body_falls_through.mojo	compile-reject	agree	error: return expected at end of function with results
+assets/type_error/never_value_converts_to_int.mojo	compile-reject	agree	error: cannot implicitly convert 'Never' value to 'Int'
 assets/type_error/nominal_string_codepoint_arithmetic.mojo	compile-reject	agree	error: invalid call to '__add__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'StringSpan[rhs.origin]', it depends on an unresolved parameter 'origin_of(rhs.origin)'
 assets/type_error/nominal_string_default_rebind.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringLiteral[_]'
 assets/type_error/nominal_string_positional_index.mojo	compile-reject	agree	error: String does not support direct positional indexing like `s[i]` because Mojo strings are UTF-8 encoded, and the same position can mean three different things. Use one of: `s[byte=i]` for a raw UTF-8 byte, `s[codepoint=i]` for a Unicode code point, or `s[grapheme=i]` for a user-visible character (grapheme cluster).

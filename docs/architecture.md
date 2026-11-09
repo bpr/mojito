@@ -3312,7 +3312,10 @@ kind: its from-end elements and its slice are reads of ordinary subscripts
 No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
 lowers only a body's live statements (`CheckedTables::live_statements`):
 the statements after a `return`, `break`, `continue`, `raise`, a `comptime
-assert` that folds to `False`, an `if` or `comptime if` with an `else`
+assert` that folds to `False`, an expression statement whose value is
+`Never` (a call that never returns, `CheckedTables::never_returns`, after
+which HIR seals the block with `Terminator::Unreachable`), an `if` or
+`comptime if` with an `else`
 whose every arm ends that way, a `while True` with no `break` of its own,
 or a `try` whose `finally`, or whose normal path and every handler, end
 that way are erased before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
@@ -6169,7 +6172,11 @@ declaration order gets its own range, and the level's whole-object bit
 comes last. One more bit is upstream's sentinel slot, set where a path
 reaches an exit, so a live set without it — a loop's first continue set, an
 arm ending in `unreachable` — is unreached, and the join takes the other
-side over it. A `Store`
+side over it. A block ending in `unreachable` right after a call whose
+result is `Never` (`ends_in_never_call`) is the exception: it sets the
+sentinel, so what it reads stays live into it, and it destroys nothing,
+neither on arrival nor after a last use, as the trap abandons what is alive
+there. A `Store`
 into a laid-out part is a definition of that part alone, so the value it
 replaces dies at its own last use, as a whole variable's does before its
 redefining `DefVar`; a use drills into a level only while the level's

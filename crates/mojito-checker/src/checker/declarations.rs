@@ -140,13 +140,8 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> StmtReach) -> b
         // A `raise` diverges (it never falls through to the end), so for
         // reachability it behaves like a `return`.
         StmtKind::Raise(_) => true,
-        // The runtime trap never returns, so a body ending in it has no
-        // fall-through path either (the shape of an unspecialized generic
-        // template method's stub body).
-        StmtKind::Expr(Expr {
-            kind: ExprKind::Call { name, .. },
-            ..
-        }) if is_diverging_intrinsic(name) => true,
+        // A call whose result is `Never` never returns.
+        StmtKind::Expr(_) => reach(stmt).diverges,
         // A `comptime assert` whose condition folded to `False` fails in
         // every instance that reaches it.
         StmtKind::ComptimeAssert { .. } => reach(stmt).fails,
@@ -168,11 +163,10 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> StmtReach) -> b
                     .reachable(cases)
                     .all(|case| definitely_returns(&case.body, reach))
         }
-        // A `comptime for` reaches here only under source validation. How
-        // often it unrolls, and which of its `comptime if` arms survive, is
-        // each instantiation's fact, so a loop holding a `return` leaves the
-        // fall-through verdict to the executable check of the unrolled clone.
-        StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
+        // A `comptime for` reaches here only under source validation, where
+        // it may unroll zero times: the pin judges the source body before
+        // unrolling, so a loop never concludes one.
+        StmtKind::ComptimeFor { .. } => false,
         // `while True:` leaves only through a `break` of its own; a
         // `return` or `raise` in its body leaves the function.
         StmtKind::While {
@@ -293,12 +287,9 @@ pub(super) fn definitely_initializes_named_result(
                 initialized = true;
             }
             StmtKind::Return(Some(_)) | StmtKind::Raise(_) => return true,
-            // The runtime trap of an unspecialized template's stub never
-            // completes, so it produces no result to initialize.
-            StmtKind::Expr(Expr {
-                kind: ExprKind::Call { name, .. },
-                ..
-            }) if is_diverging_intrinsic(name) => return true,
+            // A call whose result is `Never` never completes, so it
+            // produces no result to initialize.
+            StmtKind::Expr(_) if reach(stmt).diverges => return true,
             StmtKind::ComptimeAssert { .. } if reach(stmt).fails => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
@@ -390,12 +381,6 @@ impl Collectors {
             keyword_only: effective_keyword_only_index(params, keyword_only, variadic_idx),
         }
     }
-}
-
-/// Whether the call `name` is a compiler-private intrinsic that never
-/// returns: the runtime trap.
-fn is_diverging_intrinsic(name: &str) -> bool {
-    name == "_mojito_abort"
 }
 
 /// Why a construction selected no constructor: the availability clause of a
@@ -519,6 +504,13 @@ fn init_field_flow(
                 };
             }
             StmtKind::ComptimeAssert { .. } if reach(stmt).fails => {
+                return InitFieldFlow {
+                    normal: None,
+                    valid,
+                };
+            }
+            // A call whose result is `Never` never completes.
+            StmtKind::Expr(_) if reach(stmt).diverges => {
                 return InitFieldFlow {
                     normal: None,
                     valid,
@@ -1900,13 +1892,6 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
-        // A constructor whose body is the runtime trap (an unspecialized
-        // generic template's stub) never completes, so it initializes nothing.
-        if body.first().is_some_and(|statement| {
-            matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) if is_diverging_intrinsic(name))
-        }) {
-            return Ok(());
-        }
         for (field, _) in &info.fields {
             if !definitely_initializes_self_field(body, field, &|stmt| self.stmt_reach(stmt)) {
                 return Err(TypeError::UninitializedField {
@@ -5357,20 +5342,6 @@ fn forwards_pack(actual: &Ty) -> bool {
 /// collected element leaves behind rather than a forward of another pack.
 fn binds_pack_itself(bound: &Ty, id: &mojito_types::param_expr::ParamId) -> bool {
     matches!(bound.kind(), TyKind::Param { binder, .. } if binder.id == *id)
-}
-
-/// Whether a `return` occurs anywhere below. A nested function's own
-/// `return` counts too, which only defers more to the executable check.
-fn block_holds_return(body: &[Stmt]) -> bool {
-    struct Finder(bool);
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_stmt(&mut self, stmt: &Stmt) {
-            self.0 |= matches!(stmt.kind, StmtKind::Return(_));
-        }
-    }
-    let mut finder = Finder(false);
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.0
 }
 
 /// A fieldwise construction's arguments in field order, keywords bound to the

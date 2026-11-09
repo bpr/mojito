@@ -7,6 +7,8 @@
 #         ineligible (no zero-arg value-returning `compute` entry)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron scalar_capability_manifest
+assets/ok/abort_ends_a_returning_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/abort_ends_out_self_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/abs_scalar_aliases.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/access_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
@@ -723,6 +725,7 @@ assets/ok/nested_origin_binder_not_captured.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/nested_origins_read_only_decorator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_recursive_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_unread_enclosing_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/never_call_ends_returning_path.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_affix.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_atof_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_basics.mojo	-	ineligible	no-scalar-entry-shape
@@ -1728,6 +1731,7 @@ assets/extensions/ok/subtree_pointer_generic_return_deref.mojo	-	ineligible	no-s
 assets/extensions/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/template_served_iterable_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/abort_arm_reads_live_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/debug_assert_safe_mode_fails.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/file_open_invalid_mode.mojo	-	ineligible	no-scalar-entry-shape

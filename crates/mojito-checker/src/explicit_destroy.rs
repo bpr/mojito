@@ -599,11 +599,6 @@ fn abandoned_on_raise(var: &str, linear: &Linear) -> TypeError {
     }
 }
 
-/// Whether `expr` is the compiler's diverging runtime trap call.
-fn is_runtime_trap(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::Call { name, .. } if name == "_mojito_abort")
-}
-
 fn obligation_place(expr: &Expr, env: &Env) -> Option<(usize, Vec<String>)> {
     match &expr.kind {
         ExprKind::Identifier(name) => env.lookup(name).map(|id| (id, Vec::new())),
@@ -1047,9 +1042,13 @@ fn check_stmt(
         StmtKind::Expr(expr) => {
             check_expr(expr, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
-            // The runtime trap (the body of an unspecialized generic template
-            // stub) never returns: nothing past it is abandoned.
-            if is_runtime_trap(expr) {
+            // A call whose result is `Never` never returns: nothing past it
+            // is abandoned.
+            if node_facts
+                .get(&expr.source_span())
+                .and_then(|facts| facts.ty.as_ref())
+                .is_some_and(|ty| *ty == mojito_types::types::TyKind::Never)
+            {
                 return Ok(None);
             }
         }

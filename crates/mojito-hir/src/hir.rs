@@ -347,7 +347,7 @@ pub enum Terminator {
     /// `hlcf.unreachable`: no execution reaches the region's end — a case
     /// earlier ones cover, the fall-through of a `match` whose cases cover
     /// its subject, or the rest of a block after a `comptime assert` whose
-    /// condition folds to `False`.
+    /// condition folds to `False` or after a call whose result is `Never`.
     Unreachable,
 }
 
@@ -1080,6 +1080,9 @@ impl Lower {
             CheckedStmtOp::Expr(e) => {
                 let e = self.expr(*e);
                 self.push(HirInstr::Eval(e));
+                if checked.never_returns(id) {
+                    self.seal(Terminator::Unreachable);
+                }
             }
 
             CheckedStmtOp::Try {

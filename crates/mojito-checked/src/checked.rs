@@ -4007,9 +4007,10 @@ impl CheckedTables {
     /// The live prefix of statement list `body`: its statements up to and
     /// including the first that ends the block — a `return`, `break`,
     /// `continue`, or `raise`, a `comptime assert` whose condition folds to
-    /// `False`, a scope whose own live statements end that way, or an `if`
-    /// or `comptime if` with an `else` every arm of which ends that way.
-    /// The rest is dead, and lowering erases it as `LowerSemanticCF`'s
+    /// `False`, an expression statement whose value is `Never`
+    /// ([`Self::never_returns`]), a scope whose own live statements end that
+    /// way, or an `if` or `comptime if` with an `else` every arm of which
+    /// ends that way. The rest is dead, and lowering erases it as `LowerSemanticCF`'s
     /// `eraseOpToEndOfBlock` erases the ops after a terminator, before an
     /// instance judges its assertions. A `while True` with no `break` of
     /// its own ends the block, as does a `with` whose body does and a
@@ -4019,6 +4020,19 @@ impl CheckedTables {
         body.iter()
             .position(|id| self.ends_block(*id))
             .map_or(body, |last| &body[..=last])
+    }
+
+    /// Whether statement `id` is an expression statement whose checked
+    /// value is `Never`: a call whose callee never returns, which ends its
+    /// block as the pin's `!kgen.never` call does.
+    pub fn never_returns(&self, id: CheckedStmtId) -> bool {
+        self.statement(id)
+            .and_then(|statement| match &statement.op {
+                CheckedStmtOp::Expr(node) => self.expression(*node),
+                _ => None,
+            })
+            .and_then(|node| node.ty.as_ref())
+            .is_some_and(|ty| *ty == mojito_types::types::TyKind::Never)
     }
 
     /// The tables of one lowering unit: the statement `root` and every node
@@ -4255,6 +4269,7 @@ impl CheckedTables {
                 | CheckedStmtOp::Continue
                 | CheckedStmtOp::Raise(_) => true,
                 CheckedStmtOp::ComptimeAssert { fails, .. } => *fails,
+                CheckedStmtOp::Expr(_) => self.never_returns(id),
                 CheckedStmtOp::Scope(body) | CheckedStmtOp::With { body, .. } => {
                     self.body_ends_block(body)
                 }

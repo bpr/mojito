@@ -377,6 +377,13 @@ pub fn declare_function(
     } else if func.raises {
         // A raising function returns `void` through a prepended outcome
         // out-pointer; its ok payload (any kind) lives inline in the outcome.
+        // A `raises -> Never` function's ok arm is never taken: it has the
+        // `raises -> None` outcome.
+        let ret_ty = if *ret_ty == TyKind::Never {
+            &mojito_types::types::Ty::none()
+        } else {
+            ret_ty
+        };
         let ok = lower_ty(name, ret_ty, layout, declarations, None)?;
         let composed = layout.outcome_layout(ret_ty).map_err(|error| PlironError {
             function: Some(name.to_string()),

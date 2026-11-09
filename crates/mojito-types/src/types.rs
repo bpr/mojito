@@ -4465,9 +4465,6 @@ pub fn default_literal(ty: &Ty) -> Ty {
 /// Panics if the `Tuple` guard above admits a type without element types,
 /// which the type lattice forbids.
 pub fn coerces(from: &Ty, to: &Ty) -> bool {
-    if *from == TyKind::Never {
-        return true;
-    }
     if from == to {
         return true;
     }

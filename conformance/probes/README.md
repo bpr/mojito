@@ -129,7 +129,6 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `pack_contains_marker.mojo` | Are both arms of `comptime if Self.Ts.contains[T]()` checked with `T` symbolic? | reject (the untaken arm's type error) |
 | `pack_mixed_spread.mojo` | `Tuple[Int, *Self.Ts]`: a spread beside a fixed argument. | reject |
 | `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
-| `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `equatable_witness_of_another_type.mojo` | Which `__eq__` serves `==` through an `Equatable` bound when the struct's own takes another type? | **differs**: the pin takes `Equatable`'s fieldwise default and prints `True`, Mojito names the declared `__eq__` and stops in elaboration — `docs/roadmap.md` R113 |
 | `consuming_conversion_copies_parameter.mojo` | May an `@implicit` conversion through a consuming constructor copy a place of a `Copyable` parameter type? | **differs**: the pin rejects the declaration ("value of type 'T' cannot be implicitly copied"), Mojito prints `7` twice — `docs/roadmap.md` R114 |
 
@@ -201,7 +200,6 @@ runs where the pin rejects (`c2`, `c4`, `c5`, `l1`, `l3`) are also
 | `rebind_layout_identical_struct.mojo` | Does `rebind` accept a distinct struct of the same lowered layout, by reference and by value? | **differs**: the pin prints `4`, `9`, `4`, comparing lowered types; Mojito judges nominally and fails the instance ("rebind input type 'U' does not match result type 'S'"). Roadmap R514. |
 | `rebind_assignment_without_deinitable_bound.mojo` | Is `rebind[S](x) = S(9)` accepted when `x: T` is bound by `Copyable` alone? | **differs**: the pin prints `9`, destroying the old value as an `S`; Mojito rewrites it to `x = S(9)` and rejects it at `T` ("abandoned without being explicitly destroyed"). Roadmap R515. |
 | `loop_never_breaks_mut_parameter.mojo` | Is a `mut` parameter moved before `while True: pass` uninitialized at the function's exit? | **differs**: the pin prints `x`, the loop's exit being dead; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R1242. |
-| `abort_after_mut_parameter_move.mojo` | Is a `mut` parameter moved before `abort(...)` uninitialized at the function's exit? | **differs**: the pin prints `x`; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R50. |
 
 ## `finally` copies (2026-10-22, re-run at every re-pin)
 

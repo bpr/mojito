@@ -167,8 +167,9 @@ pub fn lower_ty(
         | TyKind::KgenPointer(_)
         | TyKind::LitRef { .. }
         | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
-        // A `!kgen.generator` is a trivial register type that holds nothing.
-        TyKind::None | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
+        // A `!kgen.generator` is a trivial register type that holds nothing,
+        // and a `Never` register is never written: its call ends the block.
+        TyKind::None | TyKind::Never | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
         // A `!kgen.string`'s storage is the borrowed `MjStrDesc` descriptor.
         // A retained callable is the two-word `{ invoke, env }` value. A
         // vector of addresses is its `width` pointers.

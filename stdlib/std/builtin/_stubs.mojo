@@ -13,7 +13,7 @@
 #   clause is absent, since `conforms_to` takes neither a projection nor a
 #   composition yet (R792).
 # - An exhausted iterator traps through `_mojito_abort` rather than
-#   `_abort_base()`, since a `-> Never` call ends no path yet (R50, R799).
+#   `_abort_base()`, which is not bundled yet (R799).
 
 from std.builtin.len import Sized
 from std.iter import Iterator

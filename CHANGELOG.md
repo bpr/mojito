@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call whose result is `Never` ends its path, as at the pin (R50):
+  `std.os.abort` now returns `Never`, so a value-returning body, a named
+  result, or an `out self` field left unset on an aborting path is
+  accepted, and a `mut` parameter moved before `abort(...)` is not
+  uninitialized at exit. The block ends in `hlcf.unreachable` on both
+  backends, statements after the call are erased, and nothing is destroyed
+  on that path while what it reads stays alive into it. A `Never` value no
+  longer converts implicitly to a value type, and a value-returning body
+  that ends in a `comptime for` is rejected, as the pin rejects both.
 - `std.reflection` bundles upstream's `SourceLocation`,
   `source_location()`, and `call_location[inline_count=]()` over
   `kgen.source_loc`, and `debug_assert` takes upstream's `location:

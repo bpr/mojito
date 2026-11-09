@@ -260,13 +260,13 @@ impl Checker {
                     // A literal message avoids an os-module import cycle
                     // for stdlib-internal trap sites; the VM reads either
                     // spelling.
-                    kind if kind.is_string_literal() => Ok(Ty::none()),
+                    kind if kind.is_string_literal() => Ok(Ty::never()),
                     struct_ty
                         if let Some((name, targs)) = struct_ty.as_non_simd_struct()
                             && targs.is_empty()
                             && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
                     {
-                        Ok(Ty::none())
+                        Ok(Ty::never())
                     }
                     other => Err(TypeError::TypeMismatch {
                         expected: "String".to_string(),

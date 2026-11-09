@@ -59,10 +59,14 @@ def listdir[PathLike: stdPathLike](path: PathLike) raises -> List[String]:
     return dir.list()
 
 
-# Mojito's abort: an uncatchable trap carrying the message (the compiler
-# crossing `_mojito_abort`).
+# Mojito's abort: an uncatchable trap carrying the message, returning
+# `Never` as upstream's does, so a call to it ends its path. It differs
+# from upstream's in lacking the `prefix` and `location` parameters, the
+# `TString` overload, and the no-argument `abort()`, and in trapping
+# through the compiler crossing `_mojito_abort` rather than `_abort_base()`
+# (R799, R1980).
 @inline(.always)
-def abort(message: String):
+def abort(message: String) -> Never:
     _mojito_abort(message)
 
 

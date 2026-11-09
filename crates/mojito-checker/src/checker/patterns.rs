@@ -226,9 +226,21 @@ impl Checker {
     /// What the check proved of how control leaves `stmt`: for a `match`,
     /// whether its cases cover every value of its subject, so that nothing
     /// falls through it, and which cases earlier ones already cover; for a
-    /// `comptime assert`, whether its condition folded to `False`.
+    /// `comptime assert`, whether its condition folded to `False`; for an
+    /// expression statement, whether its value is `Never`.
     pub(super) fn stmt_reach(&self, stmt: &Stmt) -> StmtReach {
         let facts = self.node_facts.borrow();
+        if let StmtKind::Expr(expr) = &stmt.kind
+            && expr.kgen_param_assert().is_none()
+        {
+            return StmtReach {
+                diverges: facts
+                    .get(&expr.source_span())
+                    .and_then(|facts| facts.ty.as_ref())
+                    .is_some_and(|ty| *ty == TyKind::Never),
+                ..StmtReach::default()
+            };
+        }
         if let StmtKind::ComptimeAssert { cond, .. } = &stmt.kind {
             return StmtReach {
                 fails: facts
@@ -243,7 +255,7 @@ impl Checker {
             .map(|plan| StmtReach {
                 concluded: plan.concluded,
                 unreachable: plan.unreachable.clone(),
-                fails: false,
+                ..StmtReach::default()
             })
             .unwrap_or_default()
     }
@@ -1504,6 +1516,9 @@ pub(super) struct StmtReach {
     pub(super) concluded: bool,
     pub(super) unreachable: Vec<bool>,
     pub(super) fails: bool,
+    /// An expression statement whose checked value is `Never`: the callee
+    /// never returns, as the pin's `!kgen.never` call ends its block.
+    pub(super) diverges: bool,
 }
 
 impl StmtReach {

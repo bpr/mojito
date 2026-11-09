@@ -487,7 +487,7 @@ impl Checker {
     /// by being of it.
     pub(super) fn converts_implicitly(&self, from: &Ty, to: &Ty) -> Result<bool, TypeError> {
         if matches!(to.kind(), TyKind::Param { .. }) {
-            return Ok(from == to || *from == TyKind::Never);
+            return Ok(from == to);
         }
         Ok(self.value_coerces(from, to) || self.implicit_conversion_target(from, to)?.is_some())
     }

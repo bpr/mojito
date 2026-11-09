@@ -2921,10 +2921,18 @@ fn rejects_an_error_that_differs_from_the_declared_type() {
 }
 
 #[test]
-fn never_is_a_bottom_type_and_raises_never_is_nonraising() {
-    ok(
-        "def stop() raises -> Never:\n    raise \"stop\"\n\ndef choose() raises -> Int:\n    return stop()\n\ndef safe() raises Never -> Int:\n    return 7\n\ndef caller() -> Int:\n    return safe()\n",
+fn a_never_call_ends_its_path_and_raises_never_is_nonraising() {
+    ok_std(
+        "def stop() raises -> Never:\n    raise Error(\"stop\")\n\ndef choose() raises -> Int:\n    stop()\n\ndef safe() raises Never -> Int:\n    return 7\n\ndef caller() -> Int:\n    return safe()\n",
     );
+}
+
+#[test]
+fn a_never_value_does_not_convert_to_a_value_type() {
+    let e = err_std(
+        "def stop() raises -> Never:\n    raise Error(\"stop\")\n\ndef choose() raises -> Int:\n    return stop()\n",
+    );
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]

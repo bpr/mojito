@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2058**.
+Next free ID: **R2059**.
 
 ## Ordered Work
 
@@ -1788,6 +1788,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2058 A value not read on a path ending in a never-returning call
+  dies at its last use, where the pin keeps it alive to the call**
+
+  Problem: with `var m = Loud(7)` last read before `if n > 0:
+  print(l.n); abort("x")`, the path that skips the `if` prints `del 7`
+  at `m`'s last use, and the pin prints it at the `else` entry, after
+  `del 0`.
+  - The pin's trap uses every value initialized where it stands, so the
+    join before the `if` keeps them all live.
+  - Drop elaboration (`drops.rs`) has backward liveness only: an arm ending
+    in a `Never` call (`ends_in_never_call`) keeps live what it reads, but
+    it cannot name the values initialized there, so the rest die early.
+  - The lever is the forward initialization state at the call, marked
+    live at that terminator instead of the sentinel alone.
+  - Probe: the program above, run as `g(0)`, natively and on the pin.
+  - Found while landing R50 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1289 A closed `comptime if`'s dead arm keeps values alive through
   drop elaboration**
 
@@ -3060,8 +3079,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1242 Dead regions after an always-completing case or condition do
-  not warn**
+- [ ] **R1242 Dead regions after an always-completing case, condition, or
+  never-returning call do not warn**
 
   Problem: the pin warns `unreachable code after match case that always
   completes`, `unreachable code after match that always completes`, and
@@ -3091,6 +3110,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `mut` parameter moved before `while True: pass`, is rejected as
     uninitialized at return, where the pin prints `x` (found while landing
     R875, 2026-10-21).
+  - Probe: `abort("no")` followed by `print("dead")` warns `unreachable
+    code after function that never returns` at the `print`, where Mojito
+    erases the dead statement silently (`CheckedTables::live_statements`,
+    found while landing R50, 2026-11-08).
   - Found while landing R1134 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3544,28 +3567,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/bound_call_result_converted_at_binding.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R50 A value-returning body that ends in `abort(...)` is rejected**
-
-  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
-  at the pin, while Mojito reports "'f' does not return a value on every
-  path".
-  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
-  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
-    syntactic. It knows `return`, `raise`, and the compiler crossing
-    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
-  - Under source validation a `comptime for` that holds a `return` defers the
-    verdict to the unrolled clone for the same reason: `Bag.get` in
-    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
-    can tighten once this is fixed.
-  - A `mut` parameter moved before `abort("no")` is rejected as
-    uninitialized at return, the ownership face of the same missing fact:
-    `conformance/probes/abort_after_mut_parameter_move.mojo`.
-  - The lever is a checked fact that a callee never returns, read where the
-    call resolves, not a name test.
-  - The plan must say where the fact lives and what MIR emits after such a call.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R52 A binder is not inferred through a converting argument**
 
@@ -10583,9 +10584,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `stdlib/std/builtin/_stubs.mojo` end their `except` arm in
   `_mojito_abort(...)`, where upstream calls `_abort_base()`, a `-> Never`
   function.
-  - A call of a `-> Never` function does not end a path for return
-    analysis yet (R50).
-  - Swap in `_abort_base()` and give `std.os` its declaration once it does.
+  - Swap in `_abort_base()` and give `std.os` its declaration.
   - Depends on R50.
   - Model: Opus, Not Planned.
 
@@ -12965,10 +12964,6 @@ residue found inside a task moves to the task that owns its fix.
 
   `comptime EDEADLK = platform_map["EDEADLK", linux=35, macos=11]()`
   fails, where the pin's value is `35` on Linux.
-  - Its `else` arm ends in the `-> Never` call
-    `CompilationTarget.unsupported_target_error[operation=operation]()`,
-    which Mojito reports as "does not return a value on every path"
-    (R50).
   - Its string-literal `operation` argument binds an `Optional[String]`
     parameter, which needs R1864.
   - Probe `platform_type_map` (`downcast`, a type-level conditional,

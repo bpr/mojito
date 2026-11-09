@@ -85,7 +85,7 @@ impl FnLowering<'_> {
             return Ok(Some(LowerTy::Scalar(ScalarTy::Ptr)));
         }
         match self.func.ret_ty.as_ref() {
-            Some(ty) if *ty != TyKind::None => Ok(Some(lower_ty(
+            Some(ty) if *ty != TyKind::None && *ty != TyKind::Never => Ok(Some(lower_ty(
                 self.name,
                 ty,
                 &self.layout,

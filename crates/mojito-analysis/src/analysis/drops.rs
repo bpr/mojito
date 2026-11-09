@@ -72,6 +72,7 @@ pub(super) fn elaborate_drops(
     );
     let mut plan = DropPlan::default();
     let liveness = DropLiveness {
+        f: &function,
         facts: &facts,
         loan_roots: &loan_roots,
         values,
@@ -264,6 +265,7 @@ impl BackwardRecorder<DenseSet> for DropPlan {
 /// receiver, the value it returns, and every exit a split `mut` parameter
 /// and a split `deinit` parameter's whole-object bit.
 struct DropLiveness<'a> {
+    f: &'a MirFunction,
     facts: &'a DropFacts,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     values: &'a DropValues,
@@ -296,6 +298,11 @@ impl BackwardScan for DropLiveness<'_> {
             self.values.mark_ref(live, *part);
         }
         self.demands.at_exit(self.values, live, &block.term);
+        // A path ending in a call that never returns joins its siblings as a
+        // reached path, so the values it reads stay live into it.
+        if ends_in_never_call(block, self.f) {
+            self.values.mark_reached(live);
+        }
     }
 
     fn op_defines(&self, live: &mut DenseSet, op: &MirInstr) {
@@ -599,6 +606,9 @@ impl Splice<'_> {
                 self.op(instr);
             }
         }
+        if ends_in_never_call(block, self.f) {
+            return;
+        }
         let replay = BlockReplay {
             instrs: std::mem::take(&mut block.instrs),
             steps,
@@ -624,7 +634,8 @@ impl Splice<'_> {
     /// it does not, as `destroyValuesAtEntryIfNeeded` does; a `try`'s
     /// handler destroys its unread error binding on arrival; and a region
     /// destroys on arrival each owned argument its entry defines that it
-    /// never reads.
+    /// never reads. A region ending in a call that never returns destroys
+    /// nothing on arrival ([`ends_in_never_call`]).
     fn op(&self, instr: &mut MirInstr) {
         if matches!(instr, MirInstr::Try { .. }) {
             self.try_op(instr);
@@ -646,6 +657,13 @@ impl Splice<'_> {
             _ => vec![Vec::new(); regions.len()],
         };
         for (drops, (region, args)) in entries.iter_mut().zip(regions.iter().zip(&arguments)) {
+            if region
+                .first()
+                .is_some_and(|block| ends_in_never_call(block, self.f))
+            {
+                drops.clear();
+                continue;
+            }
             drops.retain(|death| !defined.contains(&death.root));
             drops.extend(self.unread_arguments(region, args));
         }
@@ -1097,6 +1115,24 @@ fn loan_extras(
             return extras;
         }
     }
+}
+
+/// Whether `block` ends in `hlcf.unreachable` right after a call whose
+/// result is `Never`, as upstream's trap abandons the values alive there:
+/// the block destroys nothing, and the values it reads stay live into it.
+fn ends_in_never_call(block: &MirBlock, f: &MirFunction) -> bool {
+    if !matches!(block.term, MirTerm::Unreachable) {
+        return false;
+    }
+    block.instrs.last().is_some_and(|instr| {
+        let mut results = Vec::new();
+        mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
+        results.iter().any(|reg| {
+            f.reg_types
+                .get(&reg.0)
+                .is_some_and(|ty| *ty == mojito_types::types::TyKind::Never)
+        })
+    })
 }
 
 /// Push drops in drop order ([`order_deaths`]) onto a block being built
