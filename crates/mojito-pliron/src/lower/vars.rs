@@ -31,6 +31,18 @@ impl FnLowering<'_> {
         }
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(scalar) => {
+                if constructor.is_some()
+                    && self
+                        .func
+                        .var_tys
+                        .get(&var)
+                        .is_some_and(|ty| ty.kind().as_non_simd_struct().is_some())
+                {
+                    return Err(self.unsupported_reg(
+                        "copy or move of a held struct naming its constructor".into(),
+                        dest,
+                    ));
+                }
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, self.var_slots[var as usize], handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
@@ -144,6 +156,12 @@ impl FnLowering<'_> {
             self.reg_span(dest),
         )? {
             LowerTy::Scalar(scalar) => {
+                if constructor.is_some() && ty.kind().as_non_simd_struct().is_some() {
+                    return Err(self.unsupported_reg(
+                        "copy of a held struct naming its constructor".into(),
+                        dest,
+                    ));
+                }
                 let copied = self.reg_value(ctx, value, scalar)?;
                 self.reg_values.insert(dest.0, copied);
                 Ok(())

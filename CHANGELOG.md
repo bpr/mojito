@@ -104,6 +104,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A one-field struct declaring `RegisterPassable` unconditionally is held
+  as its field in both backends even when it owns a destructor or a copy
+  constructor, as the pin passes it as `i64` (R1984). Pliron passes a held
+  struct to its destructor and as a copy or move constructor's source by
+  value, every initializer's `out self` is the caller's storage, and a
+  consumed `deinit self` writes nothing back; the VM's owned `VariadicList`
+  loop reads a held list by its slot's type.
 - A store through the reference a `__getitem__` returns is rejected
   when the origin's mutability is unknown in the generic body, as at the
   pin: `p[][0] = 9` over a `Pointer[Box, o]` parameter or a

@@ -1065,6 +1065,7 @@ fn lifecycle_event_traces_match_the_vm() {
         "assets/ok/pliron_struct_drop_order.mojo",
         "assets/ok/pliron_iter_drop_order.mojo",
         "assets/ok/closure_storage_drop_order.mojo",
+        "assets/ok/register_passable_one_field_lifecycle.mojo",
         // pliron_list_core stays out of this lane: generic-collection
         // copy/consume events differ structurally (compiled destructor
         // chains trace element drops the VM's arena never performs).

@@ -224,7 +224,7 @@ impl FnLowering<'_> {
                             d.mut_self_methods.contains(resolved)
                                 || d.mut_self_methods.contains(method)
                         });
-                    is_mut || deinit_receiver
+                    is_mut || (deinit_receiver && matches!(params[0], LowerTy::Aggregate { .. }))
                 }
                 _ => false,
             };

@@ -4405,47 +4405,49 @@ mod tests {
     }
 
     #[test]
-    fn register_field_answers_a_one_field_trivial_declaration() {
+    fn register_field_answers_a_one_field_register_passable_declaration() {
         use mojito_checked::checked::StructConformance;
         let structure =
-            |name: &str, fields: usize, trait_name: &str, conditions| MirStructDeclaration {
-                name: name.into(),
-                module: String::new(),
-                fields: (0..fields)
-                    .map(|at| (format!("f{at}"), Ty::int()))
-                    .collect(),
-                mut_self_methods: HashSet::new(),
-                fieldwise_init: true,
-                param_decls: Vec::new(),
-                explicit_destructors: HashMap::new(),
-                explicit_destroy: None,
-                conformances: Vec::new(),
-                declared: vec![StructConformance {
-                    trait_name: trait_name.into(),
-                    conditions,
-                }],
-                register_passable: false,
-                associated_types: Vec::new(),
-                origin_params: Vec::new(),
-                parameterized_associated_types: Vec::new(),
-                associated_values: Vec::new(),
-                parameterized_associated_values: Vec::new(),
-                witness_tables: Vec::new(),
-                members: Vec::new(),
+            |name: &str, fields: usize, trait_name: &str, conditions, register_passable: bool| {
+                MirStructDeclaration {
+                    name: name.into(),
+                    module: String::new(),
+                    fields: (0..fields)
+                        .map(|at| (format!("f{at}"), Ty::int()))
+                        .collect(),
+                    mut_self_methods: HashSet::new(),
+                    fieldwise_init: true,
+                    param_decls: Vec::new(),
+                    explicit_destructors: HashMap::new(),
+                    explicit_destroy: None,
+                    conformances: Vec::new(),
+                    declared: vec![StructConformance {
+                        trait_name: trait_name.into(),
+                        conditions,
+                    }],
+                    register_passable,
+                    associated_types: Vec::new(),
+                    origin_params: Vec::new(),
+                    parameterized_associated_types: Vec::new(),
+                    associated_values: Vec::new(),
+                    parameterized_associated_values: Vec::new(),
+                    witness_tables: Vec::new(),
+                    members: Vec::new(),
+                }
             };
         let unconditional = || vec![GenericConstraint::Bool(true)];
         let trivial = "TrivialRegisterPassable";
-        let mut destroyed = structure("Destroyed", 1, trivial, unconditional());
+        let mut destroyed = structure("Destroyed", 1, "RegisterPassable", unconditional(), true);
         destroyed.members.push(MirStructMember {
             member: "__deinit__".into(),
             symbol: "Destroyed.__deinit__".into(),
         });
         let declarations = MirDeclarations {
             structs: vec![
-                structure("Held", 1, trivial, unconditional()),
-                structure("Pair", 2, trivial, unconditional()),
-                structure("Copied", 1, "Copyable", unconditional()),
-                structure("Passed", 1, "RegisterPassable", unconditional()),
+                structure("Held", 1, trivial, unconditional(), true),
+                structure("Pair", 2, trivial, unconditional(), true),
+                structure("Copied", 1, "Copyable", unconditional(), false),
+                structure("Passed", 1, "RegisterPassable", unconditional(), true),
                 structure(
                     "Conditional",
                     1,
@@ -4456,23 +4458,20 @@ mod tests {
                         ),
                         trait_name: trivial.into(),
                     }],
+                    false,
                 ),
                 destroyed,
             ],
             ..MirDeclarations::default()
         };
-        assert_eq!(
-            declarations.register_field("Held"),
-            Some(&("f0".to_string(), Ty::int()))
-        );
-        for boxed in [
-            "Pair",
-            "Copied",
-            "Passed",
-            "Conditional",
-            "Destroyed",
-            "Absent",
-        ] {
+        for held in ["Held", "Passed", "Destroyed"] {
+            assert_eq!(
+                declarations.register_field(held),
+                Some(&("f0".to_string(), Ty::int())),
+                "{held}"
+            );
+        }
+        for boxed in ["Pair", "Copied", "Conditional", "Absent"] {
             assert_eq!(declarations.register_field(boxed), None, "{boxed}");
         }
     }

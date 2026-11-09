@@ -426,8 +426,7 @@ pub fn declare_function(
     let mut ref_params = func.ref_params.clone();
     // An `out self` receiver held as a scalar (a `SIMD`) is the caller's
     // result storage, as an aggregate one is: its writes reach the caller.
-    let out_receiver = mojito_symbol::symbol::lifecycle_constructor(name)
-        .is_some_and(|(_, member)| member == "__init__")
+    let out_receiver = mojito_symbol::symbol::lifecycle_constructor(name).is_some()
         && declaration.is_some_and(|declaration| {
             declaration.has_receiver && declaration.receiver_convention == Some(ArgConvention::Out)
         });

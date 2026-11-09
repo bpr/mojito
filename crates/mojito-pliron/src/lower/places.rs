@@ -433,27 +433,9 @@ impl FnLowering<'_> {
         moveinit: &str,
         layout: Layout,
     ) -> Result<(), PlironError> {
-        let Some(signature) = self.signatures.get(moveinit) else {
-            return Err(self.unsupported_reg(format!("move via the uncompiled `{moveinit}`"), dest));
-        };
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{moveinit}`"), dest));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
         let src = self.var_slots[var as usize];
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            func_ty,
-            vec![storage, src],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
+        self.emit_constructor_call(ctx, moveinit, storage, src, dest)?;
         self.reg_values.insert(dest.0, storage);
         Ok(())
     }

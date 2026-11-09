@@ -1990,8 +1990,10 @@ impl VmBackend {
                 // tuple), an owned `VariadicList`, which `for var v in xs^`
                 // consumes, and a CTFE compile-time list iterate without a
                 // nominal `__next__`; public Tuple values are nominal structs
-                // and cannot reach this fallback.
-                if let Some((_, length)) = variadic_list_span(&vars[*iter as usize]) {
+                // and cannot reach this fallback. A held list is recognized
+                // by its slot's type, as it is its `Span`.
+                let held = held_variadic_list(prog, function, *iter);
+                if let Some((_, length)) = variadic_list_span(&vars[*iter as usize], held) {
                     regs[dest.0 as usize] = Value::Bool(length > 0);
                     return Ok(());
                 }
@@ -2013,14 +2015,15 @@ impl VmBackend {
                 // An owned `VariadicList` hands on its first element and
                 // narrows its span past it, so its destructor reaches only
                 // the elements the loop has not taken.
-                if let Some((elements, length)) = variadic_list_span(&vars[*iter as usize]) {
+                let held = held_variadic_list(prog, function, *iter);
+                if let Some((elements, length)) = variadic_list_span(&vars[*iter as usize], held) {
                     let element = self.read_reference(&elements, frame_id, vars)?;
                     regs[dest.0 as usize] = self.read_reference(&element, frame_id, vars)?;
                     let rest = (
                         super::references::offset_place_handle(elements, 1)?,
                         Value::Int(length - 1),
                     );
-                    set_variadic_list_span(&mut vars[*iter as usize], rest);
+                    set_variadic_list_span(&mut vars[*iter as usize], rest, held);
                     return Ok(());
                 }
                 let value = &mut vars[*iter as usize];
@@ -2280,18 +2283,48 @@ fn concrete_simd_slots(
     }
 }
 
+/// Whether the slot `var` of `function` is a `VariadicList` by its static
+/// type, which holds the list as its one `Span` field.
+fn held_variadic_list(prog: &Prog, function: usize, var: u32) -> bool {
+    prog.mir.functions[function]
+        .1
+        .var_tys
+        .get(&var)
+        .and_then(|ty| ty.kind().as_non_simd_struct())
+        .is_some_and(|(name, _)| {
+            mojito_types::types::struct_template(name)
+                == mojito_types::types::VARIADIC_LIST_TYPE_NAME
+        })
+}
+
 /// The span of the `VariadicList` an owned loop over a `var` collector
 /// consumes, which the builtin `HasNext`/`Next` step: the pointer to its
-/// first element pointer and its length.
-fn variadic_list_span(value: &Value) -> Option<(Value, i64)> {
+/// first element pointer and its length. A `held` list is the `Span`
+/// itself; any other is the boxed struct around it.
+fn variadic_list_span(value: &Value, held: bool) -> Option<(Value, i64)> {
+    if held
+        && let Value::Struct { fields, .. } = value
+        && let [(_, elements), (_, Value::Int(length))] = fields.as_slice()
+    {
+        return Some((elements.clone(), *length));
+    }
     match variadic_list_span_fields(value)? {
         [(_, elements), (_, Value::Int(length))] => Some((elements.clone(), *length)),
         _ => None,
     }
 }
 
-/// Narrow the span of the `VariadicList` `value` to `(elements, length)`.
-fn set_variadic_list_span(value: &mut Value, (elements, length): (Value, Value)) {
+/// Narrow the span of the `VariadicList` `value`, `held` as its `Span` or
+/// boxed, to `(elements, length)`.
+fn set_variadic_list_span(value: &mut Value, (elements, length): (Value, Value), held: bool) {
+    if held
+        && let Value::Struct { fields, .. } = value
+        && let [(_, data), (_, size)] = fields.as_mut_slice()
+    {
+        *data = elements;
+        *size = length;
+        return;
+    }
     if let Value::Struct { fields, .. } = value
         && let [(_, Value::Struct { fields: span, .. })] = fields.as_mut_slice()
         && let [(_, data), (_, size)] = span.as_mut_slice()

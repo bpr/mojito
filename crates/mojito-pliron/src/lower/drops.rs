@@ -34,8 +34,9 @@ impl<'a> FnLowering<'a> {
             .filter(|(_, symbol)| self.declarations.contains_key(*symbol))
     }
 
-    /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
-    /// call `destructor`, the compiled `__deinit__` the drop names (its body
+    /// `DropVar` — the VM's `drop_named`: nothing for scalars other than a
+    /// held struct (a one-field register-passable one, held as its field),
+    /// which drops as an aggregate does; for aggregates call `destructor`, the compiled `__deinit__` the drop names (its body
     /// consumes the receiver's fields), else destroy the fields in
     /// declaration order. The slot holds its value on every path reaching
     /// the drop, and every part of it (`mir::verify`'s slot-end rule), so
@@ -50,7 +51,14 @@ impl<'a> FnLowering<'a> {
             return self.drop_function_error(ctx);
         }
         match self.var_lower_ty(var)? {
-            LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
+            LowerTy::ZeroSized => Ok(()),
+            LowerTy::Scalar(_) => match self.func.var_tys.get(&var).cloned() {
+                Some(ty) if self.held_struct_needs_drop(&ty, destructor) => {
+                    let ptr = self.var_slots[var as usize];
+                    self.emit_drop(ctx, ptr, &ty, destructor)
+                }
+                _ => Ok(()),
+            },
             LowerTy::Aggregate { ty, .. } => {
                 if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
@@ -82,7 +90,22 @@ impl<'a> FnLowering<'a> {
             self.mir_declarations,
             self.reg_span(reg),
         )? {
-            LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
+            LowerTy::ZeroSized => Ok(()),
+            LowerTy::Scalar(scalar) => {
+                if !self.held_struct_needs_drop(&ty, destructor) {
+                    return Ok(());
+                }
+                // The held value spills to storage, the address the drop
+                // destroys at, as an aggregate register's storage is.
+                let value = self.reg_value(ctx, reg, scalar)?;
+                let layout = self.layout.layout_of(&ty).map_err(|err| {
+                    self.unsupported_reg(format!("layout of held `{ty}`: {err}"), reg)
+                })?;
+                let ptr = self.entry_alloca(ctx, layout.size, layout.align);
+                let store = StoreOp::new(ctx, value, ptr);
+                self.append(ctx, store.get_operation(), None);
+                self.emit_drop(ctx, ptr, &ty, destructor)
+            }
             LowerTy::Aggregate { ty, .. } => {
                 if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
@@ -110,9 +133,10 @@ impl<'a> FnLowering<'a> {
         ctx: &mut Context,
         var: u32,
     ) -> Result<(), PlironError> {
-        if let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)?
-            && self.trace_lifecycle
+        if self.trace_lifecycle
+            && !matches!(self.var_lower_ty(var)?, LowerTy::ZeroSized)
             && !self.synthesized_body()
+            && let Some(ty) = self.func.var_tys.get(&var).cloned()
             && let Some((name, _)) = ty.kind().as_non_simd_struct()
         {
             let name = name.clone();
@@ -200,7 +224,17 @@ impl<'a> FnLowering<'a> {
                         .try_into()
                         .expect("mangled names are identifier-safe");
                     let func_ty = signature.func_ty;
-                    let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![ptr]);
+                    let operand = match signature.params.first() {
+                        Some(LowerTy::Scalar(scalar)) => {
+                            let handle = scalar.handle(ctx);
+                            let load = LoadOp::new(ctx, ptr, handle);
+                            self.append(ctx, load.get_operation(), None);
+                            load.get_result(ctx)
+                        }
+                        _ => ptr,
+                    };
+                    let call =
+                        CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![operand]);
                     self.append(ctx, call.get_operation(), None);
                     return Ok(());
                 }
@@ -279,6 +313,13 @@ impl<'a> FnLowering<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Whether a drop of `ty` held as a scalar destroys anything: `ty` is a
+    /// held struct, a one-field register-passable one, whose drop names its
+    /// destructor or whose field needs one.
+    pub(super) fn held_struct_needs_drop(&self, ty: &Ty, destructor: Option<&str>) -> bool {
+        ty.kind().as_non_simd_struct().is_some() && self.needs_named_drop(ty, destructor)
     }
 
     /// [`Self::needs_drop`] for a drop naming `destructor` as `ty`'s own.

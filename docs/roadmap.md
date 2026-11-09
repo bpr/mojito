@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2053**.
+Next free ID: **R2054**.
 
 ## Ordered Work
 
@@ -1152,6 +1152,31 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Confirm at the pin which `@export` spellings it accepts, then accept
     those, record the flag on the function's declaration, and root the
     pass at it as well as at the compilation's exports.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2053 An initializer's `out self` over a held scalar passes as a
+  pointer to caller storage natively, where the pin returns the value**
+
+  The pin's unoptimized LLVM defines a held struct's copy constructor as
+  `i64 @"C::__init__(copy:C)"(i64)`: it takes the source by value and
+  returns the result. Pliron's `FnSignature::out_receiver` instead passes
+  the caller's result storage as a pointer parameter and reads it back.
+  - The output is right; only the generated-code calling convention
+    differs from Mojo's.
+  - Every scalar `out self` takes this path: a one-lane `SIMD`'s
+    `__init__` and a held struct's `__init__`, `__copyinit__`, and
+    `__moveinit__` (`declare_function` in `lower/module_env.rs`).
+  - Lever: declare a scalar-held initializer to return its scalar, with
+    `out self` as a local slot, and have `lower_call`'s `out self` path
+    (`lower/calls.rs`), `emit_constructor_call` (`lower/pointers.rs`),
+    and function values of an initializer (`lower/support.rs`) take the
+    returned value, then update `docs/native-abi.md` §Calling convention.
+  - Probe: `mojito compile --backend pliron --emit ll` over
+    `assets/ok/register_passable_one_field_lifecycle.mojo` defines
+    `C.__copyinit__` as `void (ptr, i64)`, where the pin's is
+    `i64 (i64)`.
+  - Found while landing R1984 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10971,52 +10996,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1521 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1984 A one-field struct declaring `RegisterPassable` with a
-  lifecycle member is boxed in both backends, where the pin holds it as
-  its field**
-
-  The pin passes `R(Movable, RegisterPassable){v: Int}` with a
-  `__deinit__` as `i64`, as it does a trivial one, but
-  `MirDeclarations::register_field` still answers only a struct declaring
-  `TrivialRegisterPassable` with no lifecycle member.
-  - The fact is in place: `StructDeclaration::register_passable` records
-    the template's unconditional `RegisterPassable`/`TrivialRegisterPassable`
-    row, which every instance keeps (R1524).
-  - The VM is ready: its drops, copies, and moves run by static type and
-    box a held value (`dispatch::{holds_unboxed, static_struct_value}`).
-    With `register_field` reading `register_passable`, the VM prints the
-    pin's output for the probes below.
-  - Cause: Pliron's lifecycle call sites assume aggregate storage.
-    `lower_drop_var`/`lower_drop_reg` (`lower/drops.rs`) return early for
-    `LowerTy::Scalar`, `emit_drop` passes the value's address,
-    `emit_constructor_call` (`lower/pointers.rs`) passes `(dst, src)`
-    pointers, `UseVar` copy/move (`lower/vars.rs`) runs a constructor only
-    for an aggregate, and a `deinit`/`mut self` receiver's write-back
-    (`lower/methods.rs`) rejects a scalar receiver.
-  - Lever: pass a lifecycle operand per the callee's `FnSignature` (load a
-    scalar parameter, keep an aggregate's pointer), then widen
-    `register_field` to `[field] if declaration.register_passable` and
-    update its unit test, `build_structs`' doc, and
-    `docs/native-abi.md`'s unwrap rule. `VariadicList`, `VariadicPack`,
-    and `FastMathFlag` become held too.
-  - A conditional row never counts: `Tuple[Int, Int]`, `Optional[Int]`,
-    and `B[T](RegisterPassable where conforms_to(T, RegisterPassable))`
-    stay aggregates at the pin.
-  - Probe: `W(Movable, RegisterPassable){r: R}` over that `R`, with
-    `print(take(R(1)))` over `take(var r: R)` and `var w = W(R(2));
-    print(w.r.v)`: the pin prints `del R 1`, `1`, `2`, `del R 2`; with
-    the widening alone, Pliron fails "unsupported mutating method on a
-    scalar receiver".
-  - Fixture to add with it: `assets/ok/register_passable_one_field_lifecycle.mojo`,
-    covering drop through a `var` parameter, a held field of a held
-    struct, a tuple element, a `List` element, an `Optional` payload, and
-    `.copy()` of a held struct with a user copy constructor and of a
-    memory-only struct holding one (the plan file's `fx.mojo` without its
-    move constructor).
-  - Found while landing R1524 (2026-11-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2040 An absent `fastmathFlags` on `pop.add`, `pop.sub`, or
   `pop.mul` writes no flags natively, where the pin's default is `contract`**

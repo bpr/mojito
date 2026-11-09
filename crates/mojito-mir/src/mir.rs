@@ -531,16 +531,18 @@ impl MirDeclarations {
     /// waist, as upstream's `LowerKGENToLLVM` lowers a register-passable
     /// `!kgen.struct` of one element to that element: the pin's
     /// unoptimized LLVM passes `L(TrivialRegisterPassable){v: Int}` as
-    /// `i64`. The struct declares `TrivialRegisterPassable` unconditionally
-    /// ([`Self::copy_is_identity`]'s declaration half) and has exactly one
-    /// field; the trait already requires that field to conform, and the
-    /// answer is the declaration's, so every instance of a template, erased
-    /// ones included, agrees. A struct with a lifecycle member is held
-    /// boxed.
+    /// `i64`, and `R(Movable, RegisterPassable){v: Int}` with a
+    /// `__deinit__` as `i64` too. The struct declares `RegisterPassable` or
+    /// `TrivialRegisterPassable` unconditionally
+    /// ([`MirStructDeclaration::register_passable`], decided on the
+    /// template) and has exactly one field; the trait already requires that
+    /// field to conform, and the answer is the declaration's, so every
+    /// instance of a template, erased ones included, agrees. A lifecycle
+    /// member runs on the held value, taking and returning it as its field.
     pub fn register_field(&self, name: &str) -> Option<&(String, Ty)> {
         let declaration = self.structure(name)?;
         match declaration.fields.as_slice() {
-            [field] if self.declares_trivial_register_passable(declaration) => Some(field),
+            [field] if declaration.register_passable => Some(field),
             _ => None,
         }
     }

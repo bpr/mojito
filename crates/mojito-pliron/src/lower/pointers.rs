@@ -437,11 +437,21 @@ impl FnLowering<'_> {
             .as_str()
             .try_into()
             .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let source = match (signature.params.get(1), signature.ref_params.get(1)) {
+            (Some(LowerTy::Scalar(scalar)), by_ref) if !by_ref.copied().unwrap_or(false) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, src, handle);
+                self.append(ctx, load.get_operation(), Some(span));
+                load.get_result(ctx)
+            }
+            _ => src,
+        };
         let call = CallOp::new(
             ctx,
             CallOpCallable::Direct(callee),
-            signature.func_ty,
-            vec![dst, src],
+            func_ty,
+            vec![dst, source],
         );
         self.append(ctx, call.get_operation(), Some(span));
         Ok(())

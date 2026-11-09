@@ -1292,7 +1292,9 @@ struct StructDef {
     /// The lifecycle members the struct owns, with their symbols.
     members: Vec<(String, String)>,
     /// The one field a value of the struct is held as
-    /// ([`mojito_mir::mir::MirDeclarations::register_field`]), but for a
+    /// ([`mojito_mir::mir::MirDeclarations::register_field`]: one field and
+    /// an unconditional `RegisterPassable` or `TrivialRegisterPassable`
+    /// declaration, lifecycle members or not), but for a
     /// reference or pointer field: a reference, and a pointer to a place,
     /// are a [`Value::Ref`], which a frame slot holds only as a reference
     /// alias to the VM, so a struct holding one stays boxed.
@@ -1544,10 +1546,11 @@ fn edge_errors(blocks: &[MirBlock], errors: &mut HashSet<u32>) {
 }
 
 /// Build the VM registry from declaration metadata carried by MIR. Every
-/// instance of a template is held or none is: an erased instance
+/// instance of a template is held or none is: each has the template's
+/// unconditional register-passability, so instances disagree only through
+/// the reference/pointer field filter, and an erased instance
 /// (`B$mono$V$REMOVED$ARG`) lays out as every instance agreeing on its
-/// kept arguments, though a conditional `TrivialRegisterPassable` row it
-/// cannot decide drops from its declaration.
+/// kept arguments.
 fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String, StructDef> {
     let mut structs: HashMap<String, StructDef> = declarations
         .structs

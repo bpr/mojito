@@ -196,8 +196,9 @@ Rules:
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types. A struct `MirDeclarations::translated_type` unwraps
-  (one field, declaring `TrivialRegisterPassable` unconditionally) lays out
-  as its field, which is the same size, alignment, and offset 0.
+  (one field, declaring `RegisterPassable` or `TrivialRegisterPassable`
+  unconditionally, lifecycle members or not) lays out as its field, which
+  is the same size, alignment, and offset 0.
 - A `!pop.array<n, T>` (MIR's `pop_array`) is `n` elements of `T` at its
   stride, aligned like one element. Its size is closed before layout: a
   parameter size is an elaboration-time value, and layout rejects one left
@@ -205,7 +206,8 @@ Rules:
 - A homogeneous run-time collector is the bundled `VariadicList[T,
   is_owned]`, an ordinary struct whose one field is upstream's
   `Span[Pointer[T, origin], ImmUntrackedOrigin]`: `{ data: ptr to [len x
-  ptr], size: Int }` (16/8), passed as an aggregate parameter. The call
+  ptr], size: Int }` (16/8). It declares `RegisterPassable`, so it is held
+  as that `Span`, the same layout, and passed as an aggregate parameter. The call
   builds it in MIR: each element is the caller's own place for a `read`
   collector, or a caller slot the element is moved into, and `data` points
   at the caller's `__passed_varargs__` slot, the `!pop.array` of their
@@ -215,7 +217,7 @@ Rules:
   last to first, through their addresses.
 - A `read` heterogeneous collector is the bundled `VariadicPack`, an
   ordinary struct whose one field is upstream's `!lit.ref.pack`: one
-  target pointer per element, in order (`8 × n`/8). The call builds it
+  target pointer per element, in order (`8 × n`/8), held as that field. The call builds it
   in MIR over the caller's own places, or caller slots it binds an rvalue
   element to and destroys after the call.
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
@@ -354,10 +356,14 @@ Rules:
 - Scalars pass and return by value (`Bool` as i1 in SSA, byte-sized at ABI
   boundaries as above).
 - A struct `MirDeclarations::translated_type` unwraps (one field, declaring
-  `TrivialRegisterPassable` unconditionally) passes and returns as its field
-  type would, as upstream's `LowerKGENToLLVM` lowers a one-element
-  register-passable struct to its element: `struct L { var v: Int }` is an
-  `i64` by value. The rules below apply to every other struct.
+  `RegisterPassable` or `TrivialRegisterPassable` unconditionally) passes
+  and returns as its field type would, as upstream's `LowerKGENToLLVM`
+  lowers a one-element register-passable struct to its element: `struct L
+  { var v: Int }` is an `i64` by value. A conditional row (`Optional[Int]`,
+  `Tuple[Int, Int]`) never unwraps. Such a struct's lifecycle members take
+  it as its field too: a `__deinit__`'s `deinit self` and a copy or move
+  constructor's source are the field's value, and nothing is written back
+  for a consumed receiver. The rules below apply to every other struct.
 - Aggregates pass **by reference** and return through an sret-style out
   pointer — deterministic and target-independent by construction; the ABI
   deliberately does not adopt SysV register classification for aggregates.
@@ -370,9 +376,10 @@ Rules:
   as upstream passes such a value by value: the caller's storage is a
   register's value, which other readers may share. Every other owned
   aggregate parameter binds the caller's storage.
-- An `__init__`'s `out self` receiver is a pointer to the caller's result
-  storage, a scalar one (a one-lane `SIMD`) included: the caller allocates
-  it, and reads a scalar result back after the call.
+- An initializer's `out self` receiver (`__init__`, `__copyinit__`,
+  `__moveinit__`) is a pointer to the caller's result storage, a scalar one
+  (a one-lane `SIMD`, a held struct) included: the caller allocates it, and
+  reads a scalar result back after the call.
 - The synthesized executable wrapper is the plain C `main() -> i32`: it calls
   `mjrt_version`, then the mangled `__toplevel__` (when present), then the
   mangled `main`, then returns 0.
