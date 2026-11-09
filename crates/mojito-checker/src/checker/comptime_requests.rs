@@ -177,7 +177,8 @@ fn is_literal(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     }
 }
 
-/// The checker's view: a name a local binding shadows applies nothing.
+/// The checker's view: a name a local binding shadows applies nothing, and
+/// a struct's `Self` constructs that struct.
 impl CalleeOracle for super::Checker {
     fn callee(&self, name: &str) -> Callee {
         let shadowed = self.binding_scope(name).is_some_and(|scope| scope != 0);
@@ -194,7 +195,9 @@ impl CalleeOracle for super::Checker {
             Callee::Other
         } else if function {
             Callee::Function
-        } else if self.structs.contains_key(name) {
+        } else if self.structs.contains_key(name)
+            || (name == "Self" && self.self_instance_spelling().is_some())
+        {
             Callee::Struct
         } else {
             Callee::Other

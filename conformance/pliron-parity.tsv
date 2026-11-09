@@ -253,6 +253,7 @@ assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	s
 assets/ok/comptime_module_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_pow_applies_dunder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_scalar_constant_method_call.mojo	main	exe-differential	sanitized
+assets/ok/comptime_self_construction_argument.mojo	main	exe-differential	sanitized
 assets/ok/comptime_self_member_applied.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_simd_initializer_applications.mojo	main	exe-differential	sanitized
@@ -1248,6 +1249,7 @@ assets/ok/string_format_declared.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_construction_copy.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_dunders.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_generic_instances.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized

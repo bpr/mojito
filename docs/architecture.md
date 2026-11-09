@@ -5292,8 +5292,8 @@ and closes to the concatenated text. The elaborator still keeps a
 literal's type under its template name, so a literal receiver carries its
 per-text instance in its slots, as a `SIMD`'s does (R2065);
 `MirDeclarations::field_types`
-(R1971) still leaves it out, and `StringLiteral[v]()` is still built by
-rule (R1973). There is no value-less
+(R1971) still leaves it out. `StringLiteral[v]()` and its copy run the
+declared `__init__` and copy. There is no value-less
 string literal type: a literal's members are the struct's, never a
 compiler rule, a compile-time string's meta is the literal type of its
 text, and a bare run-time `s: StringLiteral` argument auto-parameterizes as

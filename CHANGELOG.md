@@ -152,6 +152,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `StringLiteral[v]()`, `Self()` in its members, a brace `{}`, and
+  `type_of(x)()` at a string literal type run the declared empty
+  `__init__`, and `StringLiteral[v](copy=x)` the declared copy, rather than
+  checker and MIR construction rules, so the bundled `format` binds its
+  template as `StaticString(Self())`. A struct's `Self(...)` is a
+  constructor in a `comptime` binding, lifted over the struct's
+  parameters, so `comptime w = H(Self())` through a type alias is a
+  parameter argument, as at the pin (R1973).
 - A `StringLiteral[v]` application is an ordinary struct to the struct
   rules (`as_non_simd_struct`), and its register passability is its
   declared `TrivialRegisterPassable`. A builtin body's `return {}` folds as

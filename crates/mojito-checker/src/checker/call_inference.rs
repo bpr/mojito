@@ -105,11 +105,6 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            _ if let Some(constructed) =
-                self.literal_construction(&span, name, param_args, args, kwargs) =>
-            {
-                constructed
-            }
             _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args)?;
@@ -326,63 +321,6 @@ impl Checker {
         }
     }
 
-    /// A construction of a `StringLiteral[value]` instance (`Self` in its
-    /// own members), or `None` for any other call. Upstream's struct has no
-    /// fields, so its default initializer and its copy each build the one
-    /// value the type names: the elaborator writes the closed type's
-    /// default construction, the literal of its value, while the declared
-    /// `__init__` is not yet its construction (R1973).
-    fn literal_construction(
-        &self,
-        span: &SourceSpan,
-        name: &str,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Ty, TypeError>> {
-        let copy = matches!(kwargs, [keyword] if keyword.name == "copy");
-        if !args.is_empty() || !(kwargs.is_empty() || copy) {
-            return None;
-        }
-        let spelled = name == mojito_types::types::STRING_LITERAL_TYPE_NAME
-            && !param_args.is_empty()
-            && self.structs.contains_key(name);
-        let instance = match name {
-            "Self" if param_args.is_empty() && self.lookup(name).is_none() => self.self_ty.clone(),
-            _ if spelled => self
-                .probe(|| self.infer_construction(span, name, param_args, &[], &[]))
-                .ok(),
-            _ => None,
-        }
-        .filter(|ty| ty.kind().string_literal_value().is_some())?;
-        let construct = || {
-            // The application's arguments are typed as the instance's.
-            if spelled {
-                self.infer_construction(span, name, param_args, &[], &[])?;
-            }
-            if copy {
-                self.infer_builtin_copy_construction(span.clone(), name, &instance, &kwargs[0])?;
-            } else {
-                // A use's materialization supersedes the construction, so
-                // re-inferring the argument keeps it.
-                let mut record = self.record_at(span.clone());
-                if !matches!(
-                    record.adjustment.as_deref(),
-                    Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
-                ) {
-                    record.adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::ConstructType {
-                            ty: instance.clone(),
-                        },
-                    ));
-                }
-            }
-            self.type_runtime_param_args(param_args)?;
-            Ok(instance.clone())
-        };
-        Some(construct())
-    }
-
     /// A construction the checker spelled for a type with no source
     /// spelling, bound to `instance`: a struct's `__init__` overloads solve
     /// its parameters against the instance, a `SIMD`'s as an alias's do.
@@ -394,27 +332,6 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
-            // A string literal's default construction is the literal of its
-            // value, symbolic until the instance is elaborated
-            // (`StringLiteral.__add__`'s `{}`). A use's materialization
-            // supersedes it, as at a spelled literal construction.
-            kind if kind.string_literal_value().is_some()
-                && args.is_empty()
-                && kwargs.is_empty() =>
-            {
-                let mut record = self.record_at(span.clone());
-                if !matches!(
-                    record.adjustment.as_deref(),
-                    Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
-                ) {
-                    record.adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::ConstructType {
-                            ty: instance.clone(),
-                        },
-                    ));
-                }
-                Ok(instance.clone())
-            }
             // A numeric literal's construction is its declared struct's.
             TyKind::Struct(name, _) if instance.is_numeric_literal() => {
                 self.infer_construction_of(span, name, Some(instance), &[], args, kwargs)
@@ -790,22 +707,6 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                 param: binder.clone(),
             },
-        ));
-        Ok(ty.clone())
-    }
-
-    /// `Name(copy=x)` on a built-in value type: its `Copyable` initializer,
-    /// which borrows a value of the type and copies it by the value read.
-    pub(super) fn infer_builtin_copy_construction(
-        &self,
-        span: SourceSpan,
-        name: &str,
-        ty: &Ty,
-        source: &mojito_ast::ast::KwArg,
-    ) -> Result<Ty, TypeError> {
-        self.copy_argument(name, ty, source)?;
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
         ));
         Ok(ty.clone())
     }

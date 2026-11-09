@@ -697,7 +697,6 @@ impl RewriteTypes for SemanticAdjustment {
             Self::ResolveCallable(_)
             | Self::ConstructTypeParam { param: _ }
             | Self::ConstructPackElement { pack: _ }
-            | Self::BuiltinCopyConstruction
             | Self::ConvertedArgument
             | Self::ScalarCast(_)
             | Self::IndexNormalization { target: _ }

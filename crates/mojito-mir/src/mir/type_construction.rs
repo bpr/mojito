@@ -218,14 +218,9 @@ fn default_construction(
     declarations: &MirDeclarations,
 ) -> Result<Vec<MirInstr>, TypeConstructionError> {
     let zero = match ty.kind() {
-        // A string literal's type names its one value, as upstream's empty
-        // `StringLiteral[value]` struct does.
         kind if kind.is_int() || kind.is_uint() => Some(Const::Int(0)),
         kind if kind.is_bool() => Some(Const::Bool(false)),
         kind if kind.is_float64() => Some(Const::Float(0.0)),
-        kind if kind.is_string_literal() => Some(Const::Str(
-            kind.string_literal_text().unwrap_or_default().to_string(),
-        )),
         TyKind::None => Some(Const::None),
         _ => None,
     };

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2066**.
+Next free ID: **R2068**.
 
 ## Ordered Work
 
@@ -4721,8 +4721,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     associated comptime expression".
   - Probe: upstream's `StringLiteral.format` body passes
     `_FormatUtils.format_to_comptime[StaticString(Self())]`; the bundled
-    one binds the template to a local `comptime template` first (found
-    while landing R1655).
+    one binds `StaticString(Self())` to a local `comptime template` first
+    (found while landing R1655).
+  - Probe: `show[StaticString(StringLiteral["st".value]())]()` over `def
+    show[s: StaticString]()` fails with "not an associated comptime
+    expression", where the pin prints `st` (found while landing R1973).
   - Probe: `f[Int32(n)]()` and `f[Int32(from_int=n)]()` in `def g[n:
     Int]()`, over `def f[v: Int32]()`, print `7` for `g[7]()` at the pin.
     Mojito fails with "a SIMD[DType.int32, 1] lane needs a compile-time
@@ -4743,8 +4746,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `comptime_requests.rs`'s `CalleeOracle::callee` answers `Other` for a
     call through any struct alias (`P(2)` over `comptime P = Pt`,
     `Int32(5)`), so `applies_callable` never lifts it; it must resolve a
-    type alias to its struct too, as `SIMD[...](x)` and `Pt(1)` already
-    lift (found while landing R1791).
+    type alias to its struct too, as `SIMD[...](x)`, `Pt(1)`, and a
+    struct's `Self(...)` already lift (found while landing R1791).
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7382,6 +7385,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The planning session saw the same struct run as a user module (`-I`);
     the first step is to find why the lifted thunk keeps the struct's
     parameter unbound only there.
+  - R1973 made `Checker::binders_read` bind the struct's binders for a
+    `Self` callee (`Self()`), which was the same message's cause in
+    `StringLiteral.format`; re-run the probe first.
   - Probe: port `_is_nvidia_gpu_any`, the `_is_sm_8x` … `_is_sm_121x`
     methods, `_is_sm_110x_or_newer`, `_is_sm_120x_or_newer`, the free
     `_SM_*X_ARCHS` lists, and the free `_is_sm_9x`, `_is_sm_100x`,
@@ -9328,6 +9334,40 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2066 A generic `T()` at a string literal type prints the
+  literal's text, where the pin prints an empty string**
+
+  `mk[StringLiteral["gen".value]]()` over `def mk[T: Defaultable &
+  Writable]() -> T: return T()` prints `gen`, where the pin prints an empty
+  line; a direct `StringLiteral["gen".value]()` prints `gen` on both.
+  - The pin's generic body appears to lose the instance's `value` when it
+    writes the default-constructed literal, which looks like a pin defect:
+    re-check at each re-pin and decide whether to follow it.
+  - Probe: the program above, and `byte_length()` of the result, `3` here
+    and `0` at the pin.
+  - Found while landing R1973 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2067 A static call whose only candidate fails generic
+  instantiation reports its struct as an undefined variable**
+
+  `S.f[k]()` over `@staticmethod def f[n: Int]()` and a run-time `k`
+  fails with "Undefined variable 'S'", where the pin reports "invalid call
+  to 'f': cannot use a dynamic value in a parameter list".
+  - Cause: `Checker::infer_struct_name_call`
+    (`checker/method_calls/type_receivers.rs`) drops a candidate whose
+    `instantiate_method_generics` fails, and with none left the call falls
+    back to reading the struct's name as a variable.
+  - Lever: keep the rejected candidate's error and report it when no
+    candidate survives.
+  - Probe: a `comptime` binding the check does not lift, passed to
+    `_FormatUtils.format_to_comptime[…]`, reports "Undefined variable
+    '__module$std$string$_FormatUtils'".
+  - Found while landing R1973 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -10888,27 +10928,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     arm name the instance and delete the three arms above.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1973 `StringLiteral[v]()` is built by a compiler rule, not the
-  declared `__init__`**
-
-  The checker constructs a string literal by rule (`literal_construction`
-  and `infer_instance_construction`, `checker/call_inference.rs`), and
-  MIR's `default_construction` writes the text (`type_construction.rs`),
-  where upstream runs the struct's empty `__init__(out self)`.
-  - Lever: delete the string halves of both checker rules and the MIR arm,
-    so `Self()`, `StringLiteral[v]()`, and `{}` reach the declared
-    `__init__` and `Self(copy=x)` the synthesized copy.
-  - Probe: `comptime template = StaticString(Self())` in
-    `StringLiteral.format` fails to package the bundled library ("Undefined
-    variable '__module$std$string$_FormatUtils'"; rebuild after the stdlib
-    edit, as the package is cached per build), so the bundled body spells
-    `StringLiteral[Self.value]()`.
-  - Probe: `comptime w = Self()` in a user struct's method runs.
-  - Done when the rule is gone and the bundled `format` spells
-    `StaticString(Self())`.
-  - Depends on R1972.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1959 A literal reaches an implicit constructor's parameter
   through a second conversion, where upstream converts once**

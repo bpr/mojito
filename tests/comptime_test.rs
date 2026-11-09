@@ -1877,3 +1877,22 @@ fn a_comptime_alias_of_a_parametric_function_type_is_a_type_argument() {
     let error = run(unbound).unwrap_err();
     assert!(error.contains("Undefined variable 'e'"), "{error}");
 }
+
+#[test]
+fn a_self_construction_under_an_alias_is_a_compile_time_application() {
+    // `S(Self())` over `comptime S = Sized[Self.n]` lifts over the struct's
+    // binders, so the binding is a parameter argument, as at the pin.
+    let src = "struct Sized[n: Int](Copyable, ImplicitlyCopyable):\n    var k: Int\n\n    def __init__(out self, q: Q[Self.n]):\n        self.k = Self.n\n\n\ndef show_sized[m: Int, //, s: Sized[m]]():\n    print(s.k)\n\n\nstruct Q[n: Int](Copyable, Defaultable, ImplicitlyCopyable):\n    def __init__(out self):\n        pass\n\n    def get(self):\n        comptime S = Sized[Self.n]\n        comptime w = S(Self())\n        show_sized[w]()\n\n\ndef main():\n    Q[7]().get()\n";
+    assert_eq!(run(src).unwrap(), "7\n");
+}
+
+#[test]
+fn a_self_construction_over_a_runtime_argument_is_not_compile_time() {
+    // `H(Self(), n)` reads the run-time `n`, which the pin rejects too.
+    let src = "struct Holder(Copyable, ImplicitlyCopyable):\n    var k: Int\n\n    def __init__(out self, q: Plain, k: Int):\n        self.k = k\n\n\ncomptime H = Holder\n\n\ndef show[h: Holder]():\n    print(h.k)\n\n\nstruct Plain(Copyable, Defaultable, ImplicitlyCopyable):\n    def __init__(out self):\n        pass\n\n    def get(self, n: Int):\n        comptime w = H(Self(), n)\n        show[w]()\n\n\ndef main():\n    Plain().get(3)\n";
+    let err = run(src).unwrap_err();
+    assert!(
+        err.contains("cannot use a dynamic value in comptime initializer"),
+        "got: {err}"
+    );
+}

@@ -133,17 +133,6 @@ impl<'a> Flatten<'a> {
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
-                mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction
-            )
-        }) {
-            let (_, value) = kwargs
-                .first()
-                .expect("checked built-in copy construction has a keyword argument");
-            return Some(self.expr(*value));
-        }
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
                 mojito_checked::checked::SemanticAdjustment::ConvertedArgument
             )
         }) {

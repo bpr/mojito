@@ -101,11 +101,12 @@ and 11-04 (*Measure*), so the size steps still matter.
    - Numeric literals: R2064 (the struct rules see its application). Their
      construction, copy, and conformances are the declared struct's (R1968,
      R1969, landed 11-08).
-   - `StringLiteral`: R1973 (its construction rule). The struct rules see
-     its application (R1972, landed 11-08).
+   - `StringLiteral`: the struct rules see its application (R1972,
+     landed 11-08), and its construction is the declared `__init__`
+     (R1973, landed 11-09).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1957 --task R2064 --task R1973 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1957 --task R2064 -n 0
    ```
 
 6. **Gap H's and I's residues** (partial and slight size).
@@ -263,7 +264,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 5 (R1955 → R1957, R2064, R1973), R1936 | R1408, R1019, R1352, R851, R171, R427, R1681 (`Pointer`) |
+| Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 5 (R1955 → R1957, R2064), R1936 | R1408, R1019, R1352, R851, R171, R427, R1681 (`Pointer`) |
 | `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
