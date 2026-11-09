@@ -7710,8 +7710,8 @@ its admitted callees, then runs `AUTOMATIC_INLINE_PIPELINE` whether it
 inlined anything or not, as upstream's `completeFunctionProcessing` does:
 `simplify-cf`, `sroa`, `mem-2-reg`, `canonicalize`, `cse`,
 `hoist-trivial-invariants`, `canonicalize`, `simplify-cf`, `sroa`,
-`mem-2-reg`, `cse`, then `canonicalize`, which is upstream's nested
-pipeline without `StackReuse` (R1341).
+`mem-2-reg`, `stack-reuse`, `cse`, then `canonicalize`, which is
+upstream's nested pipeline.
 - **Hoisting invariants.** `hoist-trivial-invariants`
   (`analysis/hoist_trivial_invariants.rs`) is upstream's
   `HoistTrivialInvariants`: walking outside in, each instruction directly
@@ -7726,6 +7726,23 @@ pipeline without `StackReuse` (R1341).
   speculatable op; as in `cse`, the result and each operand must have
   one definition and the result be a register-passable trivial value or
   a reference.
+- **Reusing slots.** `stack-reuse` (`analysis/stack_reuse.rs`) is
+  upstream's `StackReuse`: a local slot no mention lets escape (loads,
+  stores, and lifetime markers only, a projection naming an owned part
+  being a view of it) carries a potential value through the body in
+  order, the register a whole store stored or, through a whole load's
+  register, the loaded slot's value; a store to a view, a marker, and a
+  write inside a region op give a fresh opaque value. A slot every load
+  of which finds a more dominating slot holding its value is elided: its
+  loads read that slot, its stores and markers go. MIR's moving
+  `var.use` ends its slot, where upstream's `pop.load` does not, so a
+  redirected moving load becomes a `place.load`, a relocation (a moving
+  load only a store into an elided slot reads) goes with that store, and
+  a moving load that stays gives its slot a fresh value; a forwarding
+  `var.use` of a memory-only type hands over storage, as upstream's
+  `owned_in_mem` argument passes an address, and escapes.
+  `optimizeReadOnlyMemory` (R2073) and views through `ref.make` (R2074)
+  are not ported.
 - **Which callees.** A callee in the caller's own component has no body
   to read (`Cycles::CallerComponent`, upstream's `canInlineCallee`), so a
   recursive callee inlines once into a caller outside its cycle and keeps

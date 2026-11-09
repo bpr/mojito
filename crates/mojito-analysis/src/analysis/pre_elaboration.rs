@@ -23,6 +23,7 @@ use super::mem2reg::{IMM_ARGUMENTS, LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
 use super::simplify_cf::SIMPLIFY_CF;
 use super::sroa::SROA;
+use super::stack_reuse::STACK_REUSE;
 use super::unused_params::REMOVE_UNUSED_PARAMS;
 use mojito_common::timing;
 use mojito_mir::mir::text::package::PackageBodies;
@@ -457,6 +458,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(LOWER_ARG_CONVENTIONS),
     Pass::Body(SIMPLIFY_CF),
     Pass::Body(HOIST_TRIVIAL_INVARIANTS),
+    Pass::Body(STACK_REUSE),
     Pass::CallGraph(AUTOMATIC_INLINE),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];

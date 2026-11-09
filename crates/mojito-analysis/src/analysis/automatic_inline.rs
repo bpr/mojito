@@ -25,6 +25,7 @@ use super::mem2reg::MEM_2_REG;
 use super::pre_elaboration::{BodyPass, CallGraphPass, Callees, Cycles};
 use super::simplify_cf::SIMPLIFY_CF;
 use super::sroa::SROA;
+use super::stack_reuse::STACK_REUSE;
 use mojito_mir::mir::{MirDeclarations, MirFunction};
 
 pub const AUTOMATIC_INLINE: CallGraphPass = CallGraphPass {
@@ -51,8 +52,7 @@ pub const AUTOMATIC_INLINE_SIZE_BOUND: usize = 47;
 ///
 /// It is `SimplifyCF`, `SROA`, `Mem2Reg`, `Canonicalizer`, `CSEPass`,
 /// `HoistTrivialInvariants`, `Canonicalizer`, `SimplifyCF`, `SROA`,
-/// `Mem2Reg`, `CSEPass`, and `Canonicalizer`. Upstream's `StackReuse`,
-/// before the second `CSEPass` (R1341), is not ported.
+/// `Mem2Reg`, `StackReuse`, `CSEPass`, and `Canonicalizer`.
 pub const AUTOMATIC_INLINE_PIPELINE: &[BodyPass] = &[
     SIMPLIFY_CF,
     SROA,
@@ -64,6 +64,7 @@ pub const AUTOMATIC_INLINE_PIPELINE: &[BodyPass] = &[
     SIMPLIFY_CF,
     SROA,
     MEM_2_REG,
+    STACK_REUSE,
     CSE,
     CANONICALIZE,
 ];

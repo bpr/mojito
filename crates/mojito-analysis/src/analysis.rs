@@ -76,6 +76,7 @@ use scan::*;
 pub use sccp::{SCCP, sccp};
 pub use simplify_cf::{SIMPLIFY_CF, simplify_cf};
 pub use sroa::{SROA, sroa};
+pub use stack_reuse::{STACK_REUSE, stack_reuse};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use store_drops::*;
@@ -321,6 +322,7 @@ mod scan;
 mod sccp;
 mod simplify_cf;
 mod sroa;
+mod stack_reuse;
 mod store_drops;
 mod unused_params;
 

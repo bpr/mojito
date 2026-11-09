@@ -152,6 +152,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `automatic-inline`'s function pipeline runs upstream's `StackReuse`
+  (`stack-reuse`) after its second `mem-2-reg` (R1341): a local slot that
+  does not escape, every read of which finds a more dominating slot
+  holding the same value (an inlined argument's copy of a local, say),
+  is removed and its reads go to that slot. No program's output changes.
 - `automatic-inline`'s function pipeline runs upstream's
   `HoistTrivialInvariants` (`hoist-trivial-invariants`) after its first
   `cse` (R1340): a pure, region-free instruction in a `loop`, `if`, or

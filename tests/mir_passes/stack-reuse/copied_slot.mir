@@ -1,0 +1,47 @@
+mojito-mir 1.183
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: Bool, fields: [field { name: _mlir_value, type: kgen_simd { dtype: bool, width: 1 } }], mut_self_methods: [__iand__, __ior__, __ixor__, _unsafe_get_enum_payload], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Boolable, conditions: [constraint_bool(true)] }, conformance { trait: Comparable, conditions: [constraint_bool(true)] }, conformance { trait: Defaultable, conditions: [constraint_bool(true)] }, conformance { trait: "__module$std$builtin$enum$like$EnumLike", conditions: [constraint_bool(true)] }, conformance { trait: Floatable, conditions: [constraint_bool(true)] }, conformance { trait: Hashable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Intable, conditions: [constraint_bool(true)] }, conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }, conformance { trait: Writable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [parameterized_associated_type { name: _enum_elt_type_for_case, params: [value_param(id)], type: None }], associated_values: [associated_value { name: MAX, value: param_constant(ct_bool(true)) }, associated_value { name: MIN, value: param_constant(ct_bool(false)) }, associated_value { name: __copy_ctor_is_trivial, value: param_constant(ct_bool(true)) }, associated_value { name: __del__is_trivial, value: param_constant(ct_bool(true)) }, associated_value { name: __move_ctor_is_trivial, value: param_constant(ct_bool(true)) }, associated_value { name: _enum_case_names, value: param_constant(ct_tuple([ct_kgen_string("False"), ct_kgen_string("True")])) }, associated_value { name: _enum_case_types, value: param_constant(ct_tuple([ct_type(None), ct_type(None)])) }, associated_value { name: _enum_is_exhaustive, value: param_constant(ct_bool(true)) }], register_passable: true, module: "std.builtin.bool", witness_tables: [witness_table { trait: Boolable, witnesses: [witness { requirement: "__trait_dispatch.__bool__$ov$", member: "Bool.__bool__" }] }, witness_table { trait: Comparable, witnesses: [witness { requirement: "__trait_dispatch.__eq__$ov$Self", member: "Bool.__eq__" }, witness { requirement: "__trait_dispatch.__ge__$ov$Self", member: "Bool.__ge__" }, witness { requirement: "__trait_dispatch.__gt__$ov$Self", member: "Bool.__gt__" }, witness { requirement: "__trait_dispatch.__le__$ov$Self", member: "Bool.__le__" }, witness { requirement: "__trait_dispatch.__lt__$ov$Self", member: "Bool.__lt__" }, witness { requirement: "__trait_dispatch.__ne__$ov$Self", member: "Bool.__ne__" }] }, witness_table { trait: Copyable, witnesses: [witness { requirement: "__trait_dispatch.copy$ov$", member: "Bool.copy" }] }, witness_table { trait: Defaultable, witnesses: [witness { requirement: "__trait_dispatch.__init__$ov$", member: "Bool.__init__$ov$" }] }, witness_table { trait: Floatable, witnesses: [witness { requirement: "__trait_dispatch.__float__$ov$", member: "Bool.__float__" }] }, witness_table { trait: Hashable, witnesses: [witness { requirement: "__trait_dispatch.__hash__$ov$Some$u5B$$u5F$$u5F$module$u24$std$u24$hash$u24$hasher$u24$Hasher$u5D$$$u5F$$u5F$module$u24$std$u24$hash$u24$hasher$u24$Hasher", member: "Bool.__hash__" }] }, witness_table { trait: Intable, witnesses: [witness { requirement: "__trait_dispatch.__int__$ov$", member: "Bool.__int__" }] }, witness_table { trait: Writable, witnesses: [witness { requirement: "__trait_dispatch.write_repr_to$ov$Some$u5B$Writer$u5D$$Writer", member: "Bool.write_repr_to" }, witness { requirement: "__trait_dispatch.write_to$ov$Some$u5B$Writer$u5D$$Writer", member: "Bool.write_to" }] }, witness_table { trait: "__module$std$builtin$enum$like$EnumLike", witnesses: [witness { requirement: "__trait_dispatch._get_enum_discriminant$ov$", member: "Bool._get_enum_discriminant" }, witness { requirement: "__trait_dispatch._unsafe_get_enum_payload$ov$$ct$id", member: "Bool._unsafe_get_enum_payload" }] }] }
+  ],
+  decls: [
+    decl { lowered_name: copied_slot, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: copied_slot,
+        registers: 5,
+        vars: 3,
+        var_names: [x, a, b],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v2, src: %r1, binding_type: present(Int), in_place: false },
+              var.use { dest: %r2, var: $v2, mode: copy },
+              var.use { dest: %r3, var: $v1, mode: copy },
+              binary { op: add, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}

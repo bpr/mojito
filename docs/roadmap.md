@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2073**.
+Next free ID: **R2075**.
 
 ## Ordered Work
 
@@ -312,19 +312,35 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1341 The `automatic-inline` function pipeline has no
-  `StackReuse`**
+- [ ] **R2074 `stack-reuse` counts a `ref.make` of a slot as an escape**
 
-  Upstream's `AutomaticInline` nests `StackReuse` before its second
-  `CSEPass`, and Mojito's `AUTOMATIC_INLINE_PIPELINE` skips it.
-  - Upstream removes a stack allocation whose value, wherever it is read,
-    equals another live allocation's (`lib/Transforms/StackReuse.cpp`),
-    tracking each allocation's potential value.
-  - Probe: a slot stored from another slot's value and only read before
-    either is written again, as an inlined body's argument slot is, stays
-    a separate slot in concrete MIR.
-  - Port it as a body pass over slots, and list it in
-    `AUTOMATIC_INLINE_PIPELINE`.
+  Upstream's `StackReuse` follows a stack allocation's views
+  (`kgen.struct.gep`, `pop.array_gep`, `pop.offset`, `pop.pointer.bitcast`)
+  and counts a load or store through one as the allocation's own, but
+  Mojito's `stack-reuse` treats any `ref.make` of a slot as an escape.
+  - A `ref.make` whose register only `ref.read` and `ref.write` take is
+    such a view; `mem-2-reg` already reads it so (`slot_use`'s
+    `Mention::Address`).
+  - The rewrite must clone the `ref.make` onto the reused slot at each
+    redirected read, as upstream's `processRegion` clones the GEP chain.
+  - Probe: an inlined `ref self` accessor reading a field of a
+    memory-only local copied from another keeps both slots in concrete
+    MIR.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2073 `stack-reuse` has no `optimizeReadOnlyMemory`**
+
+  Upstream's `StackReuse` ends by promoting a non-escaping stack
+  allocation stored once from a `pop.array` parameter constant of scalar
+  elements, at least `kgen-stack-reuse-promote-to-global-threshold` bytes,
+  to a `pop.global_constant`, but MIR has no global constant a slot's
+  readers could load from.
+  - The gap is the representation: `MirInstr::ParamListAddress` is the
+    only program-wide constant array, and only a parameter list's.
+  - Probe: a function storing a large compile-time `InlineArray` of
+    `Int` into a local and only reading it keeps the slot and its store
+    in concrete MIR.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
