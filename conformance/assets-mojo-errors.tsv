@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1127
+# swept-count	1130
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -592,6 +592,7 @@ assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	er
 assets/type_error/keyword_subscript_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/keyword_subscript_unknown_keyword.mojo	compile-reject	agree	error: invalid call to '__getitem__': missing required argument: 'byte'
 assets/type_error/kgen_param_assert_op.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/kgen_source_loc_not_inherent.mojo	compile-reject	agree	error: attribute 'inline_count' is not an inherent attribute of 'kgen.source_loc'
 assets/type_error/kgen_string_argument_string_literal.mojo	compile-reject	agree	error: invalid call to 'bind': 'bind' parameter 's' has 'KGENString' type, but value has type 'StringLiteral["a"]'
 assets/type_error/kgen_string_from_string_literal.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["a"]' value to 'KGENString' in comptime initializer
 assets/type_error/kgen_string_no_concatenation.mojo	compile-reject	agree	error: '__mlir_type.`!kgen.string`' does not implement the '__add__' method

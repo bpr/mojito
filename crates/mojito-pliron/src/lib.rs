@@ -758,7 +758,7 @@ impl PlironError {
         let span = self.location.as_ref()?;
         let name = span.source.as_deref()?;
         let rendered = if let Some((_, text)) = sources.iter().find(|(n, _)| n == name)
-            && let Some((line, column)) = line_column(text, span.span.0)
+            && let Some((line, column)) = mojito_common::token::line_column(text, span.span.0)
         {
             format!("{name}:{line}:{column}")
         } else {
@@ -1241,19 +1241,6 @@ fn check_invariants(program: &MirProgram) -> Result<(), PlironError> {
         kind: PlironErrorKind::InvariantViolations(program.invariant_errors.clone()),
         location: None,
     })
-}
-
-/// Byte offset -> 1-based (line, column) in `text`.
-fn line_column(text: &str, byte: usize) -> Option<(usize, usize)> {
-    if byte > text.len() {
-        return None;
-    }
-    let prefix = &text[..byte];
-    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
-    let column = prefix
-        .rfind('\n')
-        .map_or(byte + 1, |newline| byte - newline);
-    Some((line, column))
 }
 
 #[cfg(test)]

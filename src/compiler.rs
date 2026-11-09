@@ -18,6 +18,7 @@ use crate::timing;
 use crate::{Stmt, ast::StmtKind, parse};
 use std::fmt;
 
+use crate::locations::SourceTexts;
 use crate::package::ImportedPackage;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -50,6 +51,8 @@ pub struct CompiledProgram {
     pre_elaboration: bool,
     /// The symbols the compilation exports beside its entry roots.
     exports: Vec<String>,
+    /// The texts its `kgen.source_loc` sites are placed against.
+    sources: Arc<SourceTexts>,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
@@ -174,7 +177,14 @@ impl CompiledProgram {
                             )
                         })
                         .and_then(|concrete| {
-                            concrete.rewritten(crate::analysis::post_elaborate_program)
+                            concrete.rewritten(|functions, declarations| {
+                                let mut changed = crate::analysis::post_elaborate_program(
+                                    functions,
+                                    declarations,
+                                );
+                                changed.extend(self.sources.resolve(functions));
+                                changed
+                            })
                         })
                         .and_then(|concrete: SpecializedProgram| {
                             let _pass = timing::span("eliminate-dead-symbols");
@@ -185,7 +195,9 @@ impl CompiledProgram {
                         })
                         .and_then(SpecializedProgram::translated)
                 } else {
-                    concrete
+                    concrete.and_then(|concrete| {
+                        concrete.rewritten(|functions, _| self.sources.resolve(functions))
+                    })
                 };
                 if let Ok(concrete) = &concrete {
                     timing::count(
@@ -501,14 +513,16 @@ impl Compiler {
         source: &str,
         entry: &Path,
     ) -> Result<CompiledProgram, CompilerError> {
-        self.compile_linking(|package| match package {
+        let mut program = self.compile_linking(|package| match package {
             Some(package) => {
                 link_source_with_package(source, entry, self.link_options.clone(), &package.modules)
             }
             None => {
                 link_source_with_options(source, entry, self.link_options.clone()).map(from_source)
             }
-        })
+        })?;
+        program.sources = Arc::new(SourceTexts::with_entry(entry.display().to_string(), source));
+        Ok(program)
     }
     /// Compile source without a module base, as used for standard input.
     pub fn compile_unlinked(&self, source: &str) -> Result<CompiledProgram, CompilerError> {
@@ -679,6 +693,7 @@ impl Compiler {
             package,
             pre_elaboration: self.pre_elaboration(),
             exports: self.exports.clone(),
+            sources: Arc::default(),
         })
     }
 

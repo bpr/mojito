@@ -36,7 +36,14 @@ pub fn run_artifact(
         crate::native::target::NativeTarget::host().as_ref(),
     )
     .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_elaborated_symbols))
-    .and_then(|concrete| concrete.rewritten(crate::analysis::post_elaborate_program))
+    .and_then(|concrete| {
+        let sources = crate::locations::SourceTexts::default();
+        concrete.rewritten(|functions, declarations| {
+            let mut changed = crate::analysis::post_elaborate_program(functions, declarations);
+            changed.extend(sources.resolve(functions));
+            changed
+        })
+    })
     .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_dead_concrete_symbols))
     .map_err(ArtifactRunError::Elaborate)?;
     backend

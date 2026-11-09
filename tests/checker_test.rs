@@ -8908,6 +8908,26 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
 }
 
 #[test]
+fn kgen_source_loc_types_its_location_tuple() {
+    // Upstream's `source_location` and `call_location` spell
+    // `kgen.source_loc` with a compile-time `inlineCount` and the
+    // `(index, index, !kgen.string)` tuple as its `_type`; any other result
+    // type is rejected.
+    ok_std(
+        "def main():\n    var line, col, file_name = __mlir_op.`kgen.source_loc`[inlineCount=Int(0).__mlir_index__(), _type=Tuple[__mlir_type.index, __mlir_type.index, __mlir_type.`!kgen.string`]]()\n    print(Int(SIMDLength(mlir_value=line)))\n",
+    );
+    let error = err_std(
+        "def main():\n    var t = __mlir_op.`kgen.source_loc`[inlineCount=Int(0).__mlir_index__(), _type=Tuple[Int, Int]]()\n",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("result type must be 'Tuple[index, index, !kgen.string]'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn reference_pack_type_and_extract_resolve() {
     // Upstream's `VariadicPack._mlir_type` spelling is a reference pack over
     // the struct's type pack and origin, and `lit.ref.pack.extract` reads an

@@ -952,6 +952,10 @@ impl FnLowering<'_> {
                 };
                 self.lower_variant_set(ctx, *dest, place, index, *value, members)
             }
+            MirInstr::SourceLoc { .. } => Err(self.unsupported(
+                "a `kgen.source_loc` the driver did not resolve".to_string(),
+                None,
+            )),
             MirInstr::Unsupported(message) => {
                 Err(self.unsupported(format!("lowering-marked construct: {message}"), None))
             }

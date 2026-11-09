@@ -652,6 +652,9 @@ impl RewriteTypes for SemanticAdjustment {
             Self::KgenStructExtract { index } => {
                 index.rewrite_types(rewrite);
             }
+            Self::KgenSourceLoc { inline_count } => {
+                inline_count.rewrite_types(rewrite);
+            }
             Self::MlirOp { op: _, fastmath } => {
                 fastmath.rewrite_types(rewrite);
             }

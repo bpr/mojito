@@ -1,16 +1,12 @@
 # Upstream's `std/builtin/debug_assert.mojo`, verbatim, except:
-# - No `debug_assert` overload takes upstream's `location:
-#   Optional[SourceLocation]`, and nothing calls `call_location()`, since
-#   neither is bundled (R1979); a failure reports no `At: <location>: `.
 # - `_debug_assert_fail_format` writes into a `String` rather than the
 #   unbundled `_FixedWriteBuffer` (R1980), and passes the `String`'s own
 #   pointer, since one read through its `as_bytes()` span does not keep it
 #   alive through the call (R1155).
-# - `_debug_assert_msg` takes no location and omits the
-#   `CurrentPlugin._handles_debug_assert` arm (R1698). Its fallback prints
-#   `Assert Error: <message>` through `print` rather than `_printf`, and
-#   traps through the bundled `abort(message)` rather than `abort()`
-#   (R1980).
+# - `_debug_assert_msg` omits the `CurrentPlugin._handles_debug_assert`
+#   arm (R1698). Its fallback prints `At: <location>: Assert Error:
+#   <message>` through `print` rather than `_printf`, and traps through
+#   the bundled `abort(message)` rather than `abort()` (R1980).
 """Implements run-time assertions.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -28,6 +24,7 @@ from std.collections.string.string_span import _get_kgen_string
 from std.format import Writable
 from std.io.io import print
 from std.range import range
+from std.reflection import SourceLocation, call_location
 from std.span import Span
 from std.string import StaticString, String, StringSlice
 
@@ -86,23 +83,27 @@ def _assert_enabled[assert_mode: StaticString, cpu_only: Bool]() -> Bool:
 
 
 @inline(.never)
-def _debug_assert_fail_format[*Ts: Writable](*messages: *Ts):
+def _debug_assert_fail_format[
+    *Ts: Writable
+](location: SourceLocation, *messages: *Ts):
     var message = String()
 
     comptime for i in range(messages.__len__()):
         messages[i].write_to(message)
 
-    _debug_assert_msg(message.unsafe_ptr(), message.byte_length() + 1)
+    _debug_assert_msg(message.unsafe_ptr(), message.byte_length() + 1, location)
 
 
 @inline(.always)
-def _debug_assert_fail[*Ts: Writable](*messages: *Ts):
+def _debug_assert_fail[*Ts: Writable](*messages: *Ts, location: SourceLocation):
     """Reports a failed assertion, formatting the message if there is one."""
 
     comptime if messages.__len__() == 0:
-        _debug_assert_msg(_NO_MESSAGE.ptr(), _NO_MESSAGE.byte_length() + 1)
+        _debug_assert_msg(
+            _NO_MESSAGE.ptr(), _NO_MESSAGE.byte_length() + 1, location
+        )
     else:
-        _debug_assert_fail_format(*messages)
+        _debug_assert_fail_format(location, *messages)
 
 
 @inline(.always)
@@ -111,7 +112,7 @@ def debug_assert[
     assert_mode: StaticString = "none",
     *Ts: Writable,
     cpu_only: Bool = False,
-](cond: Cond, *messages: *Ts):
+](cond: Cond, *messages: *Ts, location: Optional[SourceLocation] = None):
     """Asserts that the condition is true at run time.
 
     If the condition is false, the assertion displays the given message and
@@ -204,6 +205,7 @@ def debug_assert[
         cond: The closure to invoke to check if the assertion holds.
         messages: A set of [`Writable`](/docs/std/format/Writable/)
             arguments to convert to a `String` message.
+        location: Source location to report on assertion failure.
     """
 
     comptime if _assert_enabled[assert_mode, cpu_only]():
@@ -213,7 +215,12 @@ def debug_assert[
         # `debug_assert` is used a lot, so its body must generate short, concise
         # code. Avoid standard library functions that contain error/abort code
         # inside; those cause code bloat at every call site.
-        _debug_assert_fail(*messages)
+        #
+        # `call_location()` must be resolved here rather than in the callee, so
+        # that the reported location stays at this assert's own caller.
+        _debug_assert_fail(
+            *messages, location=location.or_else(call_location())
+        )
 
 
 @inline(.always)
@@ -222,7 +229,7 @@ def debug_assert[
     *Ts: Writable,
     cpu_only: Bool = False,
     _use_compiler_assume: Bool = False,
-](cond: Bool, *messages: *Ts):
+](cond: Bool, *messages: *Ts, location: Optional[SourceLocation] = None):
     """Asserts that the condition is true at run time.
 
     If the condition is false, the assertion displays the given message and
@@ -317,6 +324,7 @@ def debug_assert[
         cond: The bool value to assert.
         messages: A set of [`Writable`](/docs/std/format/Writable/)
             arguments to convert to a `String` message.
+        location: Source location to report on assertion failure.
     """
 
     comptime if _assert_enabled[assert_mode, cpu_only]():
@@ -324,8 +332,10 @@ def debug_assert[
             return
 
         # See the sibling overload: avoid stdlib functions carrying error/abort
-        # code.
-        _debug_assert_fail(*messages)
+        # code, and resolve `call_location()` here rather than in the callee.
+        _debug_assert_fail(
+            *messages, location=location.or_else(call_location())
+        )
 
     elif _use_compiler_assume:
         assume(cond)
@@ -369,7 +379,7 @@ def debug_assert[
         if cond():
             return
 
-        _debug_assert_fail()
+        _debug_assert_fail(location=call_location())
 
 
 @inline(.always)
@@ -402,7 +412,7 @@ def debug_assert[
         if cond:
             return
 
-        _debug_assert_fail()
+        _debug_assert_fail(location=call_location())
     elif _use_compiler_assume:
         assume(cond)
 
@@ -514,14 +524,17 @@ def debug_assert[
             message.ptr(),
             # include StringLiteral null terminator for printf statements
             message.byte_length() + 1,
+            call_location(),
         )
     elif _use_compiler_assume:
         assume(cond)
 
 
 @inline(.never)
-def _debug_assert_msg(message: ImmPointer[Byte, _], length: Int):
-    """Aborts with (or prints) the given message.
+def _debug_assert_msg(
+    message: ImmPointer[Byte, _], length: Int, loc: SourceLocation
+):
+    """Aborts with (or prints) the given message and location.
 
     This function is intentionally marked as no_inline to reduce binary size.
 
@@ -534,13 +547,13 @@ def _debug_assert_msg(message: ImmPointer[Byte, _], length: Int):
         unsafe_from_utf8=Span(unsafe_ptr=message, length=length - 1)
     )
     if __is_run_in_comptime_interpreter:
-        print("Assert Error: ", text, sep="")
+        print("At: ", loc, ": Assert Error: ", text, sep="")
 
         comptime if ASSERT_MODE != "warn":
             abort(String(text))
         return
 
-    print("Assert Error: ", text, sep="")
+    print("At: ", loc, ": Assert Error: ", text, sep="")
 
     comptime if ASSERT_MODE != "warn":
         abort(String(text))

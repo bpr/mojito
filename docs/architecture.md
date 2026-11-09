@@ -61,6 +61,7 @@ Vec<Stmt>
   -> pre-elaboration pipeline
   -> elaboration to concrete MIR (native::mono)
   -> post-elaboration pipeline
+  -> source-location resolution
   -> register VM
 ```
 
@@ -7863,6 +7864,21 @@ concrete verifier rejects a reference slot read as its handle.
   counters read `elaborate.post_elaboration.sccp.folded_constants` and so
   on. `native::mono` does not depend on `mojito-analysis`: the driver hands
   the pipeline to `SpecializedProgram::rewritten`, which knows no pass.
+- **Source locations.** Upstream's `kgen.source_loc` (`MirInstr::SourceLoc`)
+  carries its own call-site chain, innermost first: lowering starts it at
+  the op's span, and each splice of `inline-parametric` or
+  `automatic-inline` relocates it as MLIR's inliner relocates an op, an
+  `@always_inline` or automatic callee's sites gaining the call as their
+  next frame, a `nodebug` or `builtin` callee's taking the call's location
+  alone. In the same rewrite as the post-elaboration pipeline, the driver
+  resolves each op to the `(line, column, file)` constants of the site its
+  `inline_count` names, saturating at the outermost
+  (`mir::resolve_source_locations` against `locations::SourceTexts`). It
+  sits in the driver because only the driver holds source text: a span is
+  a byte range, and the entry compiled from memory exists nowhere else.
+  The VM evaluates an op a compile-time application meets to the pin's
+  `<unknown location in parameter context>:0:0`, and `translated` refuses
+  one left for Pliron.
 - **Re-admission and recount.** Each `BodyPass` returns whether it changed
   the body, `false` being MLIR's `markAllAnalysesPreserved`, and
   `post_elaborate_program` returns the indices of the functions some pass

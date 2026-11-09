@@ -7,6 +7,10 @@
 //! The callee's body is its finished one, drops already inserted, so its
 //! drops come with it. Every register it brings takes the call's location,
 //! which is what `nodebug` asks for: the inlined code steps as the call.
+//! A `kgen.source_loc` keeps its own call-site chain instead, as MLIR's
+//! inliner relocates an op: a plain `@always_inline` or automatic splice
+//! appends the call, and a `nodebug` or `builtin` one replaces the chain
+//! by the call ([`extend_source_locations`]).
 //! The pin inlines a `nodebug` or `builtin` callee at any size and a plain
 //! `@always_inline` one below a size bound ([`INLINE_SIZE_BOUND`] over
 //! [`inline_cost`]), and refuses one that lies on a cycle of such calls.
@@ -418,13 +422,17 @@ struct CallSite {
 }
 
 /// A call [`Inliner::inlinable`] inlines: the register it defines, its
-/// callee instantiated at it, the binding of each parameter, whether it
+/// callee instantiated at it and how it is declared inlined, the binding
+/// of each parameter, whether it
 /// passed an operand its inlined body does not take
 /// ([`Inliner::dropped_operands`]), and each callable binder's
 /// slot of the callee bound to a caller's closure register.
 struct Inlinable<'c> {
     dest: Reg,
     callee: Cow<'c, MirFunction>,
+    /// How the callee is declared inlined, which decides what its
+    /// `kgen.source_loc` sites report ([`extend_source_locations`]).
+    inline: InlineLevel,
     bindings: Vec<Binding>,
     dropped: bool,
     closures: Vec<(VarId, Reg)>,
@@ -872,12 +880,13 @@ impl<'c> Inliner<'_, 'c> {
                     && let Some(Inlinable {
                         dest,
                         mut callee,
+                        inline,
                         mut bindings,
                         dropped,
                         closures,
                     }) = self.inlinable(caller, index)
                     && callee.blocks.len() == 1
-                    && let Some(blocks) =
+                    && let Some(mut blocks) =
                         self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
                             demote_parts(&mut bindings)
                                 .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
@@ -905,6 +914,8 @@ impl<'c> Inliner<'_, 'c> {
                     // it was processed, and a recursive callee's call inside
                     // its own body would inline again without end.
                     let resumed = matches!(self.admission, Admission::Automatic { .. });
+                    let call_span = self.function.spans.0.get(&dest.0).map(|(span, _)| span);
+                    extend_source_locations(&mut blocks, inline, call_span);
                     index = usize::from(resumed)
                         + self.splice(
                             caller,
@@ -1354,6 +1365,7 @@ impl<'c> Inliner<'_, 'c> {
         Some(Inlinable {
             dest,
             callee,
+            inline: declaration.inline,
             bindings,
             dropped,
             closures,
@@ -2015,6 +2027,35 @@ impl<'c> Inliner<'_, 'c> {
             self.closures.slots.insert(var, closure.0);
         }
         splice_region(function, caller, blocks, resumed, &exit)
+    }
+}
+
+/// Extend the call-site chain of every `kgen.source_loc` of `blocks`, a
+/// body inlined at a call located at `call`, as MLIR's inliner relocates
+/// an inlined op: an `@always_inline` callee's sites gain the call as
+/// their next frame out, `callsite(op at call)`, and a `nodebug` or
+/// `builtin` callee's take the call's own location, so the inlined code
+/// reports as the call.
+fn extend_source_locations(
+    blocks: &mut [MirBlock],
+    inline: InlineLevel,
+    call: Option<&SourceSpan>,
+) {
+    let Some(call) = call else {
+        return;
+    };
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for region in instruction_regions_mut(instruction) {
+            extend_source_locations(region, inline, Some(call));
+        }
+        if let MirInstr::SourceLoc { location, .. } = instruction {
+            match inline {
+                InlineLevel::NoDebug | InlineLevel::Builtin => *location = vec![call.clone()],
+                InlineLevel::Always | InlineLevel::Automatic | InlineLevel::Never => {
+                    location.push(call.clone());
+                }
+            }
+        }
     }
 }
 

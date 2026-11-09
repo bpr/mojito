@@ -3,6 +3,7 @@
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
 //! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
 //! `kgen.struct.extract`, lowered to a tuple-storage element read,
+//! `kgen.source_loc`, lowered to `kgen.source_loc` at the op's own site,
 //! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`,
 //! `pop.array.repeat`, `pop.array.get`, `pop.array.replace`, and
 //! `pop.array.gep`, lowered to `array.repeat`, `array.get`,
@@ -60,6 +61,39 @@ impl<'a> Flatten<'a> {
                 }
                 _ => None,
             })
+    }
+
+    /// The inline count the checker recorded on `call`, if it is a
+    /// `kgen.source_loc` `__mlir_op`.
+    pub(super) fn checked_kgen_source_loc(call: Node<'a>) -> Option<&'a ParamExpr> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::KgenSourceLoc { inline_count } => {
+                    Some(inline_count)
+                }
+                _ => None,
+            })
+    }
+
+    /// Lower the checked `kgen.source_loc` `call` to `kgen.source_loc`,
+    /// its call-site chain the op's own location. A closed count is a
+    /// value constant; a template's stays a parameter constant the
+    /// elaborator closes.
+    pub(super) fn lower_kgen_source_loc(&mut self, call: Node<'a>, count: &ParamExpr) -> Reg {
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let location = call.location().without_syntax();
+        let dest = self.fresh_typed(location.clone(), None, ty);
+        let inline_count = count.as_constant().map_or_else(
+            || Const::Param(count.clone()),
+            |closed| Const::Value(closed.clone()),
+        );
+        self.emit(MirInstr::SourceLoc {
+            dest,
+            inline_count,
+            location: vec![location],
+        });
+        dest
     }
 
     /// The lane mask the checker recorded on `call`, if it is a

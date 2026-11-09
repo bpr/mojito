@@ -417,6 +417,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         } => errors.push(format!(
             "{head} keeps the parameter array index `{index}` in elaborated MIR"
         )),
+        MirInstr::SourceLoc {
+            inline_count: Const::Param(count),
+            ..
+        } => errors.push(format!(
+            "{head} keeps the parameter inline count `{count}` in elaborated MIR"
+        )),
         MirInstr::SimdShuffle { mask, .. } if mask.is_symbolic() => {
             errors.push(format!(
                 "{head} keeps the symbolic lane mask `{mask}` in elaborated MIR"
@@ -723,6 +729,13 @@ fn translation_blocks(
         for instruction in &block.instrs {
             for region in crate::mir::instruction_regions(instruction) {
                 translation_blocks(function, region, constants, errors);
+            }
+            if let MirInstr::SourceLoc { dest, .. } = instruction {
+                errors.push(format!(
+                    "r{}: a `kgen.source_loc` the driver did not resolve",
+                    dest.0
+                ));
+                continue;
             }
             let MirInstr::CallLlvmIntrinsic {
                 dest,

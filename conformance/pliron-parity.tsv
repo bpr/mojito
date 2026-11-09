@@ -1063,6 +1063,7 @@ assets/ok/reflection_homogeneous_field_type.mojo	main	exe-differential	sanitized
 assets/ok/reflection_list_materialized_whole.mojo	main	exe-differential	sanitized
 assets/ok/reflection_module_and_member_handles.mojo	main	exe-differential	sanitized
 assets/ok/reflection_runtime_query.mojo	main	exe-differential	sanitized
+assets/ok/reflection_source_location.mojo	main	exe-differential	sanitized
 assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/reflection_template_served.mojo	main	exe-differential	sanitized
 assets/ok/reflection_type_name.mojo	main	exe-differential	sanitized

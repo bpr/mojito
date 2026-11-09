@@ -404,6 +404,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_pop_array(call) {
             return self.lower_pop_array_op(call, op, args);
         }
+        if let Some(count) = Self::checked_kgen_source_loc(call) {
+            return self.lower_kgen_source_loc(call, count);
+        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

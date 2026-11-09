@@ -457,6 +457,15 @@ impl VmBackend {
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());
             }
+            // Only a compile-time application still holds one: the driver
+            // resolved every run-time op to constants.
+            MirInstr::SourceLoc { dest, .. } => {
+                regs[dest.0 as usize] = self.thaw(
+                    prog,
+                    &mojito_mir::mir::unknown_source_location(),
+                    prog.mir.functions[function].1.reg_types.get(&dest.0),
+                )?;
+            }
             MirInstr::Pop {
                 dest,
                 op,

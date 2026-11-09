@@ -386,7 +386,12 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visitor.visit_constant(intrinsic)?;
             visitor.visit_constant(has_side_effect)
         }
-        I::ArrayGet { index, .. } | I::ArrayReplace { index, .. } => visitor.visit_constant(index),
+        I::ArrayGet { index, .. }
+        | I::ArrayReplace { index, .. }
+        | I::SourceLoc {
+            inline_count: index,
+            ..
+        } => visitor.visit_constant(index),
         I::ComptimeIf { values, .. } => values
             .iter_mut()
             .try_for_each(|value| visitor.visit_constant(value)),

@@ -1203,6 +1203,13 @@ pub enum SemanticAdjustment {
     KgenStructExtract {
         index: mojito_types::param_expr::ParamExpr,
     },
+    /// ``__mlir_op.`kgen.source_loc`[inlineCount=n.__mlir_index__(), _type=…]()``:
+    /// the `(line, column, file)` of the call site `inline_count` (the
+    /// compile-time `Int` the attribute casts) inlined frames out from the
+    /// op. MIR keeps it as `MirInstr::SourceLoc`.
+    KgenSourceLoc {
+        inline_count: mojito_types::param_expr::ParamExpr,
+    },
     /// ``__mlir_op.`pop.simd.shuffle`[mask=…, _type=…](a, b)``: the lanes
     /// of `a` followed by those of `b`, gathered by the `mask` attribute's
     /// indices into the `_type` vector: known, or a template's attribute

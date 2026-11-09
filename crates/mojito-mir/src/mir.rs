@@ -105,6 +105,11 @@ mod struct_reads;
 pub use struct_reads::{
     LIFECYCLE_MEMBERS, LayoutReads, StructReads, struct_layout_reads, table_member,
 };
+mod source_locations;
+pub use source_locations::{
+    PARAMETER_CONTEXT_FILE, SourcePoint, UNKNOWN_LOCATION_FILE, resolve_source_locations,
+    unknown_source_location,
+};
 mod symbols;
 pub use symbols::{SymbolTable, replace_symbol_uses};
 mod try_finally;

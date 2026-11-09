@@ -451,6 +451,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::GetIter { .. } => "GetIter",
         MirInstr::HasNext { .. } => "HasNext",
         MirInstr::Next { .. } => "Next",
+        MirInstr::SourceLoc { .. } => "SourceLoc",
         MirInstr::Unsupported(_) => "Unsupported",
     }
 }

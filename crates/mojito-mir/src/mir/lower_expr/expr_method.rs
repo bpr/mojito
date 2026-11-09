@@ -33,6 +33,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_pop_array(call) {
             return self.lower_pop_array_op(call, op, args);
         }
+        if let Some(count) = Self::checked_kgen_source_loc(call) {
+            return self.lower_kgen_source_loc(call, count);
+        }
         if let Some(dest) = self.method_call_value_form(call, object, method, args, kwargs) {
             return dest;
         }

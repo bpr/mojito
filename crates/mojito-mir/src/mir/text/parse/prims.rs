@@ -63,6 +63,31 @@ impl Decoder {
         SpanTable(output)
     }
 
+    /// A `kgen.source_loc`'s call-site chain, each site naming its file by
+    /// path.
+    pub(super) fn sites(&mut self, value: &Value) -> Option<Vec<SourceSpan>> {
+        let values = self.list(value).ok()?;
+        let mut sites = Vec::with_capacity(values.len());
+        for value in values {
+            let fields = self.record(value, "site").ok()?;
+            let path = self.required(value, fields, "path")?;
+            let source = match self.option_value(Some(path)) {
+                Some(path) => Some(self.string(path)?),
+                None => None,
+            };
+            let start = self.required(value, fields, "start")?;
+            let start = self.uint(start)?;
+            let end = self.required(value, fields, "end")?;
+            let end = self.uint(end)?;
+            if start > end {
+                self.error(value.span, "source span start exceeds end");
+                return None;
+            }
+            sites.push(SourceSpan::new(source, (start, end)));
+        }
+        Some(sites)
+    }
+
     pub(super) fn type_map(
         &mut self,
         value: &Value,

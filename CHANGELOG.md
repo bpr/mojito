@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.reflection` bundles upstream's `SourceLocation`,
+  `source_location()`, and `call_location[inline_count=]()` over
+  `kgen.source_loc`, and `debug_assert` takes upstream's `location:
+  Optional[SourceLocation] = None`, so a failed safe assertion prints the
+  pin's `At: <file>:<line>:<col>: Assert Error: …` natively. The inliner
+  keeps each op's call-site chain and the driver resolves it to the call's
+  `(` after the post-elaboration pipeline (R1979).
 - The bundled `List` no longer declares a `__setitem__`, as upstream's
   does not, so `l[Int32(0)] = 7` over a `List[Int]` stores through the
   reference `__getitem__(ref self, idx: Some[Indexer])` returns instead of

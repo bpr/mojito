@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.182
+mojito-mir 1.183
 ```
 
-The writer emits 1.182. The reader accepts 1.0 through 1.182; *Schema 1.0*
+The writer emits 1.183. The reader accepts 1.0 through 1.183; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,16 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.183 adds the instruction `kgen.source_loc { dest, inline_count,
+location }` (R1979), upstream's `kgen.source_loc{inlineCount}`: the
+`(line, column, file)` `Tuple` of the call site `inline_count` frames out
+along `location`, its call-site chain, innermost first, each a `site {
+path, start, end }` naming its file by path. `inline_count` is a constant,
+a parameter constant in a template body. The inliner extends the chain;
+the driver resolves each op to constants after the post-elaboration
+pipeline, so a run-time body holds none. The package format moves to
+`mojito-package 207`.
+
 Schema 1.182 adds the parameter-expression operator `load_from_mem`
 (R1990), upstream's `load_from_mem`: the value its operand, a reference
 into compile-time memory, designates. A compile-time call of a callable
@@ -2165,6 +2175,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
+| `SourceLoc` | `kgen.source_loc { dest, inline_count, location: [site {...}] }` (schema 1.183): the `(line, column, file)` `Tuple` of the call site `inline_count` frames out along the call-site chain `location`; resolved to constants by the driver after the post-elaboration pipeline |
 | `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`, or `dtype.to_ui8` or `dtype.from_ui8` (schema 1.164), converting one `kgen_dtype` operand to its `ui8` code or one `ui8` code to its `kgen_dtype`; an integer division by zero traps; schema 1.181 adds an optional `fastmath` constant, a `pop.fma`'s `fastmathFlags` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |

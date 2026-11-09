@@ -934,6 +934,18 @@ fn instruction_value(instruction: &MirInstr) -> String {
             record(tag, &[("dest", reg_value(*dest)), ("src", reg_value(*src))])
         }
         MirInstr::IsRunInComptimeInterpreter { dest } => record(tag, &[("dest", reg_value(*dest))]),
+        MirInstr::SourceLoc {
+            dest,
+            inline_count,
+            location,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("inline_count", const_value(inline_count)),
+                ("location", list(location.iter().map(site_value))),
+            ],
+        ),
         MirInstr::ConstructType { dest, ty } => {
             record(tag, &[("dest", reg_value(*dest)), ("type", ty_value(ty))])
         }
@@ -3304,6 +3316,19 @@ fn kwargs_value(values: &[(String, Reg)]) -> String {
 }
 fn places_option(values: &[Option<MirPlace>]) -> String {
     list(values.iter().map(|v| option(v.as_ref().map(place_value))))
+}
+/// A call site of a `kgen.source_loc` chain, its file spelled as a path
+/// rather than an index of the file table, which only register locations
+/// fill.
+fn site_value(site: &SourceSpan) -> String {
+    record(
+        "site",
+        &[
+            ("path", option(site.source.as_deref().map(quote))),
+            ("start", site.span.0.to_string()),
+            ("end", site.span.1.to_string()),
+        ],
+    )
 }
 fn option(value: Option<String>) -> String {
     value.map_or_else(|| "absent".into(), |value| format!("present({value})"))

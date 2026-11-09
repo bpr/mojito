@@ -6,6 +6,17 @@
 /// MIR (whose `SpanTable` maps each temporary back to its origin span).
 pub type Span = (usize, usize);
 
+/// The 1-based line and byte column of the byte offset `byte` in `text`,
+/// as an MLIR file location counts them.
+pub fn line_column(text: &str, byte: usize) -> Option<(usize, usize)> {
+    let prefix = text.get(..byte)?;
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let column = prefix
+        .rfind('\n')
+        .map_or(byte + 1, |newline| byte - newline);
+    Some((line, column))
+}
+
 /// Identity of one concrete syntax occurrence in a checked program.
 ///
 /// Byte spans are provenance, not identity: compile-time elaboration can clone

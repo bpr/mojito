@@ -815,6 +815,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::ConstructType { dest, .. }
         | MirInstr::ParamListAddress { dest, .. }
         | MirInstr::IsRunInComptimeInterpreter { dest }
+        | MirInstr::SourceLoc { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. }
@@ -2147,6 +2148,27 @@ pub enum MirInstr {
     IsRunInComptimeInterpreter {
         dest: Reg,
     },
+    /// Upstream's `kgen.source_loc{inlineCount}`: the `(line, column,
+    /// file)` tuple (`index`, `index`, `!kgen.string`) of the call site
+    /// `inline_count` frames out along `location`, the call-site chain
+    /// the inliner built, innermost first, as MLIR's `callsite(callee at
+    /// caller)` location nests it. Lowering starts it at the op's own
+    /// span; an `@always_inline` splice appends the call's site, and a
+    /// `nodebug` or `builtin` one replaces it by the call's, so the walk
+    /// past the last frame stays at the outermost site.
+    /// `inline_count` is a closed `index` constant, or a template's
+    /// parameter constant the elaborator closes. The driver resolves each
+    /// one to constants after the post-elaboration pipeline; the VM
+    /// answers one it meets in a compile-time application with the pin's
+    /// parameter-context placeholder.
+    SourceLoc {
+        dest: Reg,
+        inline_count: Const,
+        /// Not encoded, as [`MirFunction::spans`]: a decoded op answers
+        /// its register's span.
+        #[serde(skip)]
+        location: Vec<SourceSpan>,
+    },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     /// `constructor` names the `__copyinit__` a copy runs or the
     /// `__moveinit__` a move runs, as upstream's copy/move insertion names it
@@ -3127,6 +3149,7 @@ impl MirInstr {
             | Self::BuiltinCast { .. }
             | Self::PointerConvert { .. }
             | Self::IsRunInComptimeInterpreter { .. }
+            | Self::SourceLoc { .. }
             | Self::ParamListAddress { .. }
             | Self::GetField { .. }
             | Self::ReadRef { .. }

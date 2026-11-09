@@ -4,6 +4,7 @@
 //! storage through pointers or lane by lane and after moving it out through
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
+//! `kgen.source_loc` of the call site an inline chain was entered from,
 //! `lit.ref.pack.extract` of an element reference of a reference pack,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
 //! `pop.array` ops of `pop_array_ops.rs`, the
@@ -26,6 +27,7 @@ impl Checker {
     /// self` element by element. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
+    /// source location ([`Self::infer_kgen_source_loc_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a lane gather
     /// ([`Self::infer_simd_shuffle_op`]), or a
     /// `pop` or `index` op ([`Self::infer_pop_op`]). The
@@ -45,6 +47,7 @@ impl Checker {
         const SIMD_SHUFFLE: &str = "pop.simd.shuffle";
         const STRING_SIZE: &str = "pop.string.size";
         const STRING_ADDRESS: &str = "pop.string.address";
+        const SOURCE_LOC: &str = "kgen.source_loc";
         if method == LLVM_INTRINSIC {
             return self.infer_llvm_intrinsic_op(span, method, call);
         }
@@ -53,6 +56,9 @@ impl Checker {
         }
         if method == SIMD_SHUFFLE {
             return self.infer_simd_shuffle_op(span, method, call);
+        }
+        if method == SOURCE_LOC {
+            return self.infer_kgen_source_loc_op(span, method, call);
         }
         if matches!(
             method,
@@ -234,6 +240,109 @@ impl Checker {
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::KgenStructExtract { index: built },
+        ));
+        Ok(result)
+    }
+
+    /// Type ``__mlir_op.`kgen.source_loc`[inlineCount=n.__mlir_index__(),
+    /// _type=Tuple[index, index, !kgen.string]]()``, recording it as
+    /// `SemanticAdjustment::KgenSourceLoc`: the line, column, and file of
+    /// the call site `n` inlined frames out from the op, as upstream's
+    /// `source_location` and `call_location` spell it. `inlineCount` is a
+    /// compile-time `Int`'s `__mlir_index__()`, and `_type` must name that
+    /// tuple, the op's only result type.
+    fn infer_kgen_source_loc_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: &str| TypeError::BadCall {
+            func: name.to_string(),
+            reason: reason.to_string(),
+        };
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(invalid(&format!(
+                "op takes 0 operand(s), got {}",
+                args.len() + kwargs.len()
+            )));
+        }
+        let (mut count, mut result) = (None, None);
+        for argument in param_args {
+            match argument {
+                mojito_ast::ast::ParamArg::Named {
+                    name: attribute,
+                    value,
+                } if attribute == "inlineCount" => count = Some(value.as_ref()),
+                mojito_ast::ast::ParamArg::Named {
+                    name: attribute,
+                    value,
+                } if attribute == "_type" => result = Some(value.as_ref()),
+                mojito_ast::ast::ParamArg::Named {
+                    name: attribute, ..
+                } => {
+                    return Err(invalid(&format!(
+                        "attribute '{attribute}' is not an inherent attribute of '{name}'"
+                    )));
+                }
+                _ => return Err(invalid("op attributes are named")),
+            }
+        }
+        let count = match count {
+            Some(mojito_ast::ast::ParamArg::Value(Expr {
+                kind:
+                    ExprKind::MethodCall {
+                        object,
+                        method,
+                        args,
+                        kwargs,
+                    },
+                ..
+            })) if method == "__mlir_index__" && args.is_empty() && kwargs.is_empty() => object,
+            Some(_) => {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' takes its 'inlineCount' attribute as a compile-time \
+                     'Int.__mlir_index__()'"
+                )));
+            }
+            None => return Err(invalid("op requires attribute 'inlineCount'")),
+        };
+        let Some(result) = result else {
+            return Err(invalid("op requires attribute '_type'"));
+        };
+        let result = self.mlir_result_type(result)?;
+        let is_location =
+            mojito_types::types::tuple_elements(result.kind()).is_some_and(|elements| {
+                matches!(
+                    elements
+                        .iter()
+                        .map(|ty| ty.kind())
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    [TyKind::Index, TyKind::Index, TyKind::KgenString]
+                )
+            });
+        if !is_location {
+            return Err(invalid(&format!(
+                "result type must be 'Tuple[index, index, !kgen.string]', but got '{result}'"
+            )));
+        }
+        let built = self.compile_dependent_ct_expr(count)?;
+        if !built.meta().as_value().is_some_and(|ty| ty.is_int()) {
+            return Err(invalid(
+                "attribute 'inlineCount' takes a compile-time 'Int'",
+            ));
+        }
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::KgenSourceLoc {
+                inline_count: built,
+            },
         ));
         Ok(result)
     }

@@ -2106,9 +2106,14 @@ impl<'a> Specializer<'a> {
                         Err(_) => {}
                     }
                 }
-                // A `pop.array` op's index attribute is the instance's.
-                if let MirInstr::ArrayGet { index, .. } | MirInstr::ArrayReplace { index, .. } =
-                    &mut instruction
+                // A `pop.array` op's index attribute is the instance's, and so
+                // is a `kgen.source_loc`'s inline count.
+                if let MirInstr::ArrayGet { index, .. }
+                | MirInstr::ArrayReplace { index, .. }
+                | MirInstr::SourceLoc {
+                    inline_count: index,
+                    ..
+                } = &mut instruction
                     && let Const::Param(value) = index
                 {
                     let value = self.applied(template, value, bindings)?;

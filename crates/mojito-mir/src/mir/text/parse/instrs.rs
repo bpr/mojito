@@ -383,6 +383,11 @@ impl Decoder {
             "is_run_in_comptime_interpreter" => Some(MirInstr::IsRunInComptimeInterpreter {
                 dest: self.req(value, fields, "dest", Self::reg)?,
             }),
+            "kgen.source_loc" => Some(MirInstr::SourceLoc {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                inline_count: self.req(value, fields, "inline_count", Self::constant)?,
+                location: self.req(value, fields, "location", Self::sites)?,
+            }),
             "type.construct_expr" => Some(MirInstr::ConstructType {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,

@@ -464,6 +464,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::ParamListAddress { .. }
         | MirInstr::StoreToMem { .. }
         | MirInstr::IsRunInComptimeInterpreter { .. }
+        | MirInstr::SourceLoc { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
         | MirInstr::MaterializeLiteral { .. }

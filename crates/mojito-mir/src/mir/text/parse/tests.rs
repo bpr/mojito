@@ -1347,6 +1347,14 @@ fn instruction_families_reprint_byte_identically() {
             ))),
         },
         MirInstr::IsRunInComptimeInterpreter { dest: Reg(35) },
+        MirInstr::SourceLoc {
+            dest: Reg(35),
+            inline_count: Const::Value(mojito_types::ct::CtValue::Index(1)),
+            location: vec![
+                mojito_common::token::SourceSpan::new(Some("/lib/f.mojo".into()), (4, 19)),
+                mojito_common::token::SourceSpan::new(None, (30, 42)),
+            ],
+        },
         MirInstr::Pop {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Max,

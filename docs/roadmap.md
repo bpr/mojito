@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2055**.
+Next free ID: **R2058**.
 
 ## Ordered Work
 
@@ -586,6 +586,26 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2057 `automatic-inline` prices `String(call_location())` far
+  above the pin's bound, so it keeps a call the pin inlines**
+
+  An undecorated `def notinl() -> String: return
+  String(call_location())` called from `main` reports its own body's
+  `call_location()` here, where the pin's `AutomaticInline` inlines it
+  and reports the call in `main`.
+  - `inline_cost` prices `notinl` at 104 against
+    `AUTOMATIC_INLINE_SIZE_BOUND` 47, the pin's under its threshold of 50.
+  - Of that, the spliced `call_location` costs 32 (a `kgen.source_loc`,
+    three conversions, and `SourceLocation.__init__`), and the bundled
+    `String.__init__(*args: Writable, sep, end)` 45.
+  - A body returning `call_location().line()` costs below the bound and
+    inlines, as at the pin.
+  - Lever: calibrate both against the pin's operation counts after its
+    canonicalizer, as `INLINE_SIZE_BOUND` was.
+  - Found while landing R1979 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1255 `canonicalize` does not turn an `if` into a `select`**
 
   The generator `Canonicalizer` rewrites an `hlcf.if` whose arms only
@@ -1115,6 +1135,9 @@ change that needs a new `MJRT_ABI_VERSION`.
     elaboration at the call too, as `add` called from `main` in
     `tests/mir_passes/automatic-inline/small_recursive_and_no_inline.mir`,
     where upstream's `AutomaticInline` keeps the callee's locations.
+  - `kgen.source_loc` already keeps such a chain, on the instruction
+    (`MirInstr::SourceLoc`'s `location`); a register's inlined-at
+    location would subsume it.
   - Done when `clamp` in `assets/ok/always_inline_small_calls.mojo` steps
     at its own lines natively and the heavy lane's debug premise holds.
   - Found while landing R923 (2026-10-16).
@@ -7414,26 +7437,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1979 `SourceLocation`, `source_location`, and `call_location` are
-  not bundled**
-
-  `std.reflection`'s source-location API is missing, so the bundled
-  `debug_assert` takes no `location=` argument and a failed assertion cannot
-  report where it failed.
-  - Upstream builds all three on `kgen.source_loc`, whose `inline_count`
-    names the call site an `@inline(.always)` chain was entered from.
-  - The pin's `debug_assert[assert_mode="safe"](False, "x")` reports
-    `At: <file>:<line>:<col>:` at the call's condition, through the
-    `@inline(.always)` `debug_assert`.
-  - Once bundled, restore `debug_assert`'s `location: Optional[
-    SourceLocation] = None` parameters and its `call_location()` calls
-    (`stdlib/std/builtin/debug_assert.mojo`'s header note).
-  - Probe: `debug_assert(True, location=None)` matches no overload, where
-    the pin accepts it.
-  - Found while landing R1598 (2026-11-06).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2015 A local non-owned `VariadicPack` variable fails
   elaboration at its destruction**
 
@@ -9228,11 +9231,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1980 A failed `assert` prints no `At: <location>: ` prefix**
+- [ ] **R1980 A failed `assert` reports through `print` and
+  `abort(message)`, not upstream's `_printf` and `abort()`**
 
-  A failing `debug_assert[assert_mode="safe"](False, "boom")` prints
-  `Assert Error: boom` and traps, where the pin prints
-  `At: <file>:<line>:<col>: Assert Error: boom`.
+  A failing `debug_assert[assert_mode="safe"](False, "boom")` prints the
+  pin's `At: <file>:<line>:<col>: Assert Error: boom` natively, but the VM
+  shows only `abort: boom`, since it drops a program's output when it
+  aborts, and the abort carries the message upstream's does not.
   - The bundled `_debug_assert_msg` prints through `print` and traps through
     `abort(message)`, where upstream's calls `_printf` and the no-argument
     `abort() -> Never`.
@@ -9243,7 +9248,29 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (`stdlib/std/builtin/debug_assert.mojo`'s header note).
   - Probe: `assets/runtime_error/debug_assert_safe_mode_fails.mojo`.
   - Found while landing R1598 (2026-11-06).
-  - Depends on R1979 (the location), R50 and R799 (`abort() -> Never`).
+  - Depends on R50 and R799 (`abort() -> Never`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R2056 An operator's call site reports the expression's start,
+  where the pin reports the operator token**
+
+  The pin locates a call at its point, as upstream's AST keeps one `SMLoc`
+  per node: a call's `(`, a subscript's `[`, and an operator's token. A
+  Mojito span is the whole expression, so `src/locations.rs` recovers a
+  call's `(` and a subscript's `[` by lexing the span and reports every
+  other site at its start.
+  - Probe: `print(s   + s)` with an `@always_inline` `__add__` returning
+    `call_location()` reports the `s`, where the pin reports the `+`.
+  - Probe: under `-D ASSERT=all` (R1981), `assert   x == 2, "m"` on line
+    3 fails `At: …:3:16:`, the `==`, at the pin; the linker places the
+    statement's call at its condition, so Mojito will report `3:12`.
+  - Probe: a unary operator (`-x`), a comparison, an augmented assignment
+    (`x += 1`), and a call through a parenthesized callee.
+  - Lever: the parser records each call-like node's point beside its
+    span, the lowering carries it to the call register, and the lexer scan
+    in `src/locations.rs` goes away.
+  - Found while landing R1979 (2026-11-08).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1983 A multi-byte `ascii_rjust` fill character traps where the
@@ -12261,6 +12288,24 @@ residue found inside a task moves to the task that owns its fix.
   - The VM's `descriptor_value` and the Pliron `print` lowering read
     `_value` as an `Int`; a `c_int` reaches them as a `SIMD` scalar.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2055 `SourceLocation` is not `UnsafeSingleNicheable`, so
+  `Optional[SourceLocation]` carries its own tag**
+
+  Upstream's `SourceLocation` conforms to `UnsafeSingleNicheable` with
+  `-1` in `_line` as its niche, so `Optional[SourceLocation]` is the
+  struct's three words; the bundled one omits the conformance and its
+  `_LineNiche`, `_LineByteOffset`, `write_niche`, and `isa_niche`
+  (`stdlib/std/reflection/location.mojo`'s header note).
+  - `std.utils._nicheable` is not bundled; its traits declare
+    `@staticmethod` requirements.
+  - `reflect[Self].field_offset[name="_line"]()` fails as "type
+    'reflect[SL]' has no method 'field_offset'", and
+    `MutPointer.unsafe_bitcast[Byte]()` is rejected.
+  - Port `_nicheable` and the four members verbatim once those hold.
+  - Found while landing R1979 (2026-11-08).
+  - Depends on R942.
   - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's

@@ -34,6 +34,7 @@ pub use mojito_vm::runtime;
 pub mod artifact;
 pub mod backend;
 pub mod compiler;
+pub mod locations;
 pub mod package;
 
 // Re-export commonly used types at the crate root for convenience
