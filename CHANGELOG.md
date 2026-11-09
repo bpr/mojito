@@ -152,6 +152,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The parameter domain casts between `i1` and a `Bool`'s
+  `!kgen.scalar<bool>` storage, as upstream's `pop.cast_to_builtin` and
+  `pop.cast_from_builtin` do, so `b.__mlir_i1__()` and `Bool(value=i)` fold
+  over a symbolic `Bool` and `Tag[Bool(value=b.__mlir_i1__())]` is `Tag[b]`
+  (R1957).
 - A compile-time `Bool`'s `_mlir_value` is its `!kgen.scalar<bool>`
   storage, and `Bool(mlir_value=s)` takes only a storage, so
   `Tag[Bool(mlir_value=b)]` over `b: Bool` is rejected, as at the pin. A

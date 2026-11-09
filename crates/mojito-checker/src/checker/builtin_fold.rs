@@ -1182,7 +1182,7 @@ impl Checker {
 /// `s.__mlir_index__()` and `pop.cast_from_builtin` over `i` is
 /// `Int(mlir_value=i)._mlir_value`, the result type its `_type=` names being the one
 /// the check gave the op; at the `bool` pair they are
-/// `Bool(mlir_value=s).__mlir_i1__()` and `Bool(i).__mlir_bool__()`.
+/// `Bool(mlir_value=s).__mlir_i1__()` and `Bool(value=i)._mlir_value`.
 /// `None` for any other expression or op.
 pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     let (callee, param_args, args, kwargs) = match &expr.kind {
@@ -1259,15 +1259,18 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
         (MlirLowering::BuiltinCast, [operand]) if boolean && op == MlirOp::PopCastToBuiltin => {
             method_call(at_call(storage_call("Bool", operand)), "__mlir_i1__")
         }
-        (MlirLowering::BuiltinCast, [operand]) if boolean => method_call(
-            at_call(ExprKind::Call {
+        (MlirLowering::BuiltinCast, [operand]) if boolean => ExprKind::Member {
+            object: Box::new(at_call(ExprKind::Call {
                 name: "Bool".to_string(),
                 param_args: Vec::new(),
-                args: vec![operand.clone()],
-                kwargs: Vec::new(),
-            }),
-            "__mlir_bool__",
-        ),
+                args: Vec::new(),
+                kwargs: vec![mojito_ast::ast::KwArg {
+                    name: "value".to_string(),
+                    value: operand.clone(),
+                }],
+            })),
+            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+        },
         (MlirLowering::BuiltinCast, [operand]) if typed && op == MlirOp::PopCastToBuiltin => {
             method_call(operand.clone(), "__mlir_index__")
         }

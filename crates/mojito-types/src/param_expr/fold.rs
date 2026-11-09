@@ -353,20 +353,31 @@ pub fn comparison_holds(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<
 }
 
 /// `pop.cast_to_builtin` over a concrete value: an `Int`, or a literal
-/// materialized to one first, as the `index` it stores.
+/// materialized to one first, as the `index` it stores, or a `Bool` or its
+/// `!kgen.scalar<bool>` storage as the `i1` it holds.
 pub fn fold_cast_to_builtin(value: &CtValue) -> Result<CtValue, ParamError> {
     match value {
         CtValue::Int(value) => Ok(CtValue::Index(*value)),
+        CtValue::Bool(_) => Ok(value.clone()),
+        CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes,
+        } if let [CtLane::Bool(value)] = lanes.as_slice() => Ok(CtValue::Bool(*value)),
         CtValue::IntLiteral(value) => machine_int(value).map(CtValue::Index),
         _ => Err(unsupported("'__mlir_index__' expects a compile-time 'Int'")),
     }
 }
 
 /// `pop.cast_from_builtin` over a concrete value: an `index` as the `Int`
-/// whose storage it is.
+/// whose storage it is, or an `i1` as a `Bool`'s `!kgen.scalar<bool>`
+/// storage.
 pub fn fold_cast_from_builtin(value: &CtValue) -> Result<CtValue, ParamError> {
     match value {
         CtValue::Index(value) => Ok(CtValue::Int(*value)),
+        CtValue::Bool(value) => Ok(CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes: vec![CtLane::Bool(*value)],
+        }),
         _ => Err(unsupported(&format!(
             "'Int(mlir_value=)' expects a compile-time '{}'",
             crate::types::MLIR_INDEX_TYPE_SPELLING

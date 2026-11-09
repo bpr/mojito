@@ -267,13 +267,15 @@ impl ParamContext {
 
     /// `operand.__mlir_index__()`: an `Int` or its `!kgen.scalar<index>`
     /// storage (or an integer literal, which materializes to an `Int`) as
-    /// an `index`; see [`ParamOp::CastToBuiltin`].
+    /// an `index`, or a `Bool`'s `!kgen.scalar<bool>` storage as an `i1`;
+    /// see [`ParamOp::CastToBuiltin`].
     pub fn cast_to_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.op(ParamOp::CastToBuiltin, std::slice::from_ref(operand))
     }
 
     /// `pop.cast_from_builtin[_type=!kgen.scalar<index>](operand)`: an
-    /// `index` as the `Int` storage it is; see [`ParamOp::CastFromBuiltin`].
+    /// `index` as the `Int` storage it is, or an `i1` as the `Bool`
+    /// storage; see [`ParamOp::CastFromBuiltin`].
     pub fn cast_from_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.op(ParamOp::CastFromBuiltin, std::slice::from_ref(operand))
     }
@@ -285,11 +287,33 @@ impl ParamContext {
         self.scalar_from_storage(&self.cast_from_builtin(operand)?)
     }
 
-    /// The `Int` or `UInt` created from `storage`, a value of its
+    /// `Bool(value=operand)` over an `i1`: upstream's builtin
+    /// `Bool.__init__(out self, value: i1)` folded, the `Bool` created from
+    /// the storage [`Self::cast_from_builtin`] gives.
+    pub fn bool_of_i1(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.scalar_from_storage(&self.cast_from_builtin(operand)?)
+    }
+
+    /// `operand.__mlir_i1__()` over a `Bool`: upstream's builtin
+    /// `Bool.__mlir_i1__` folded, [`Self::cast_to_builtin`] of the `Bool`'s
+    /// `_mlir_value`.
+    pub fn i1_of_bool(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let storage = self.field(
+            operand,
+            crate::ct::MLIR_VALUE_FIELD,
+            BoolDomain::Storage.meta(),
+        )?;
+        self.cast_to_builtin(&storage)
+    }
+
+    /// The `Int`, `UInt`, or `Bool` created from `storage`, a value of its
     /// `!kgen.scalar` storage (`struct.create`, `Int(mlir_value=s)`): a
     /// scalar's own `_mlir_value` is that scalar, and a sum of storages the
     /// sum of the scalars created from them.
     pub fn scalar_from_storage(&self, storage: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        if BoolDomain::of(storage.meta()) == Some(BoolDomain::Storage) {
+            return self.build_bool_image(BoolDomain::Storage, storage, None);
+        }
         let scalar = match IntDomain::of(storage.meta()) {
             Some(IntDomain::IntStorage) => IntDomain::Int,
             Some(IntDomain::UIntStorage) => IntDomain::UInt,
@@ -1974,6 +1998,9 @@ impl ParamContext {
     /// it, and a symbolic `IntLiteral` one casts from the literal domain,
     /// as `IntLiteral.__mlir_index__()` does at the pin.
     fn build_cast(&self, op: ParamOp, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        if let Some(cast) = self.build_bool_cast(op, operand) {
+            return cast;
+        }
         let (from, to, inverse) = if op == ParamOp::CastToBuiltin {
             let from = match IntDomain::of(operand.meta()) {
                 Some(IntDomain::Literal) if operand.as_constant().is_none() => IntDomain::Literal,
@@ -2017,6 +2044,63 @@ impl ParamContext {
                 },
             ),
         })
+    }
+
+    /// A cast between a `Bool`'s `!kgen.scalar<bool>` storage and the MLIR
+    /// builtin `i1`: `Bool.__mlir_i1__()`'s `pop.cast_to_builtin` and the
+    /// `pop.cast_from_builtin` that `Bool(value=i)` creates its storage
+    /// from. A constant casts to the other domain's constant, a cast of the
+    /// inverse cast is its operand, and any other operand is one atom, so a
+    /// round trip is the identity. A `Bool` operand casts its storage, as
+    /// `Bool.__mlir_i1__()` reads it. `None` when `operand` is in neither
+    /// domain of the pair.
+    fn build_bool_cast(
+        &self,
+        op: ParamOp,
+        operand: &ParamExpr,
+    ) -> Option<Result<ParamExpr, ParamError>> {
+        let i1 = MetaTy::value(Ty::i1());
+        let (operand, to, inverse) = if op == ParamOp::CastToBuiltin {
+            let storage = match BoolDomain::of(operand.meta())? {
+                BoolDomain::Bool => self.field(
+                    operand,
+                    crate::ct::MLIR_VALUE_FIELD,
+                    BoolDomain::Storage.meta(),
+                ),
+                BoolDomain::Storage => Ok(operand.clone()),
+            };
+            (storage, i1, ParamOp::CastFromBuiltin)
+        } else if *operand.meta() == i1 {
+            (
+                Ok(operand.clone()),
+                BoolDomain::Storage.meta(),
+                ParamOp::CastToBuiltin,
+            )
+        } else {
+            return None;
+        };
+        Some(operand.map(|operand| {
+            if let Some(value) = BoolDomain::truth(&operand) {
+                let constant = if op == ParamOp::CastToBuiltin {
+                    CtValue::Bool(value)
+                } else {
+                    BoolDomain::Storage.constant(value)
+                };
+                return self.make(to, ParamKind::Constant(constant));
+            }
+            match operand.kind() {
+                ParamKind::Op { op, operands } if *op == inverse && *operands[0].meta() == to => {
+                    operands[0].clone()
+                }
+                _ => self.make(
+                    to,
+                    ParamKind::Op {
+                        op,
+                        operands: vec![operand],
+                    },
+                ),
+            }
+        }))
     }
 
     /// `operand`, of the domain `from`, mapped term by term into `to`: each
@@ -4064,10 +4148,13 @@ pub enum ParamOp {
     /// `pop.cast_to_builtin`, `Int.__mlir_index__()`: an `Int` as the
     /// `index` it stores. A ring isomorphism on the canonical polynomial, as
     /// the pin folds it: the cast of a sum or product is the sum or product
-    /// of the casts, so only an atom is ever cast.
+    /// of the casts, so only an atom is ever cast. At the `bool` pair,
+    /// `Bool.__mlir_i1__()`, a `Bool`'s `!kgen.scalar<bool>` storage as the
+    /// `i1` it holds.
     CastToBuiltin,
     /// `pop.cast_from_builtin`, `Int(mlir_value=i)`: an `index` as the `Int`
-    /// whose storage it is; [`Self::CastToBuiltin`]'s inverse.
+    /// whose storage it is, or an `i1` as a `Bool`'s storage;
+    /// [`Self::CastToBuiltin`]'s inverse.
     CastFromBuiltin,
     /// KGEN's `data_to_str`: the `!kgen.string` whose text is the bytes a
     /// compile-time string view addresses, then those of each view in a
@@ -6137,9 +6224,22 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                 }
                 // An `Int`'s storage cast shows as `Int.__mlir_index__()`,
                 // which reads it.
+                (ParamOp::CastToBuiltin, [operand])
+                    if BoolDomain::of(operand.meta()) == Some(BoolDomain::Storage) =>
+                {
+                    write_expr(f, bool_of_storage(operand).unwrap_or(operand), level)?;
+                    write!(f, ".__mlir_i1__()")?;
+                }
                 (ParamOp::CastToBuiltin, [operand]) => {
                     write_expr(f, scalar_of_storage(operand).unwrap_or(operand), level)?;
                     write!(f, ".__mlir_index__()")?;
+                }
+                (ParamOp::CastFromBuiltin, [operand])
+                    if matches!(operand.meta().as_value().map(Ty::kind), Some(TyKind::I1)) =>
+                {
+                    write!(f, "Bool(value=")?;
+                    write_expr(f, operand, 0)?;
+                    write!(f, ")._mlir_value")?;
                 }
                 (ParamOp::CastFromBuiltin, [operand]) => {
                     write!(f, "Int(mlir_value=")?;
@@ -6492,6 +6592,20 @@ fn scalar_of_storage(expr: &ParamExpr) -> Option<&ParamExpr> {
                     IntDomain::of(base.meta()),
                     Some(IntDomain::Int | IntDomain::UInt)
                 ) =>
+        {
+            Some(base)
+        }
+        _ => None,
+    }
+}
+
+/// The `Bool` whose storage `expr` reads, when it is a `Bool`'s
+/// `_mlir_value`.
+fn bool_of_storage(expr: &ParamExpr) -> Option<&ParamExpr> {
+    match expr.kind() {
+        ParamKind::Field { base, name }
+            if name == crate::ct::MLIR_VALUE_FIELD
+                && BoolDomain::of(base.meta()) == Some(BoolDomain::Bool) =>
         {
             Some(base)
         }

@@ -2640,8 +2640,10 @@ impl Checker {
     /// an `@always_inline("builtin")` body spells its arithmetic: a
     /// vector's or scalar's `_mlir_value` is the field at its `!kgen.simd`
     /// storage (`struct.extract`), `Int(mlir_value=s)` the `Int` created from its storage `s`
-    /// (`struct.create`), `Bool(value=b)` over the `i1` an `index.cmp` folds to its
-    /// `Bool`, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
+    /// (`struct.create`), `Bool(value=i)` over an `i1` the `Bool` created
+    /// from `pop.cast_from_builtin`'s storage (or, over the `i1` an
+    /// `index.cmp` folds to, its `Bool`), `b.__mlir_i1__()` the
+    /// `pop.cast_to_builtin` of `b`'s storage, and ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]), ``__mlir_op.`pop.cmp` ``
     /// and ``__mlir_op.`pop.simd.reduce_and` `` (or `reduce_or`) the lane
     /// compare and mask reduction `SIMD`'s comparison bodies fold over
@@ -2725,6 +2727,36 @@ impl Checker {
                         .map_err(param_error),
                 )
             }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__mlir_i1__" && args.is_empty() && kwargs.is_empty() => {
+                let value = self.build_ct(object, recording).ok()?;
+                value
+                    .meta()
+                    .as_value()?
+                    .is_bool()
+                    .then(|| self.param_context.i1_of_bool(&value).map_err(param_error))
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == mojito_types::types::BOOL_TYPE_NAME
+                && param_args.is_empty()
+                && let Some((value, keyword)) = bool_i1_argument(args, kwargs) =>
+            {
+                let value = self.build_ct(value, recording).ok()?;
+                match value.meta().as_value()?.kind() {
+                    TyKind::I1 => Some(self.param_context.bool_of_i1(&value).map_err(param_error)),
+                    // The `i1` an `index.cmp` folds to is its `Bool`.
+                    kind if keyword && kind.is_bool() => Some(Ok(value)),
+                    _ => None,
+                }
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -2733,9 +2765,7 @@ impl Checker {
             } if param_args.is_empty()
                 && args.is_empty()
                 && let [storage] = kwargs.as_slice()
-                && (storage.name == "mlir_value"
-                    || (storage.name == "value"
-                        && name == mojito_types::types::BOOL_TYPE_NAME)) =>
+                && storage.name == "mlir_value" =>
             {
                 let target = scalar_type_name(name)?;
                 let value = self.build_ct(&storage.value, recording).ok()?;
@@ -2755,12 +2785,11 @@ impl Checker {
                                 .map_err(param_error)
                         });
                 }
-                // `Bool(value=b)` over the `i1` an `index.cmp` folds to is
-                // that `Bool`; `Bool(mlir_value=s)` is its initializer's
-                // application, which takes only a storage.
+                // `Bool(mlir_value=s)` is its initializer's application,
+                // which takes only a storage.
                 Some(value)
                     .filter(|value| {
-                        (storage.name == "value" || !target.kind().is_bool())
+                        !target.kind().is_bool()
                             && is_scalar_value(value)
                             && value.meta().as_value() == Some(&target)
                     })
@@ -6312,6 +6341,20 @@ fn is_scalar_value(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(|ty| ty.is_int() || ty.is_uint() || ty.is_float64() || ty.kind().is_bool())
+}
+
+/// The `i1` operand of a `Bool(value=i)` or `Bool(i)` construction, the
+/// initializer upstream declares over `__mlir_type.i1`, and whether it is
+/// passed by keyword.
+fn bool_i1_argument<'e>(
+    args: &'e [Expr],
+    kwargs: &'e [mojito_ast::ast::KwArg],
+) -> Option<(&'e Expr, bool)> {
+    match (args, kwargs) {
+        ([value], []) => Some((value, false)),
+        ([], [value]) if value.name == "value" => Some((&value.value, true)),
+        _ => None,
+    }
 }
 
 fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {

@@ -2,7 +2,9 @@
 # `!kgen.scalar<bool>` storage: `b & c` is `pop.simd.and(b._mlir_value,
 # c._mlir_value)` created back as a `Bool`, so `&`, `|`, and `^` commute and
 # associate, `~b` and `not b` are `b ^ True`, `==`, `!=`, and `<` are their
-# bodies over them, and `Bool(mlir_value=x._mlir_value)` is `x`. Each
+# bodies over them, and `Bool(mlir_value=x._mlir_value)` is `x`, as is
+# `Bool(value=x.__mlir_i1__())`, the round trip through the `i1` builtin
+# casts. Each
 # parameter type below is therefore the declared one, here and at each
 # instance.
 
@@ -39,6 +41,8 @@ def identities[b: Bool, c: Bool, d: Bool]():
     var equal: Tag[~(b ^ c)] = Tag[b == c]()
     var less: Tag[~b & c] = Tag[b < c]()
     var created: Tag[b & c] = Tag[Bool(mlir_value=(b & c)._mlir_value)]()
+    var cast: Tag[b] = Tag[Bool(value=b.__mlir_i1__())]()
+    var cast_joined: Tag[b & c] = Tag[Bool((c & b).__mlir_i1__())]()
     print(
         show(commuted),
         show(joined),
@@ -53,6 +57,8 @@ def identities[b: Bool, c: Bool, d: Bool]():
         show(equal),
         show(less),
         show(created),
+        show(cast),
+        show(cast_joined),
         stored[b ^ c](Storage[(c ^ b)._mlir_value]()),
     )
 

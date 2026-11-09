@@ -10959,6 +10959,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `rg "dtype_predicate|DTYPE_PREDICATES"` is empty, the std
     package builds, `assets/ok/where_dtype_predicate.mojo` runs, and
     `comptime if DType.float32.is_floating_point()` still folds.
+  - Probe: `Tag[Bool(mlir_value=b.__mlir_bool__())]()` over `b: Bool`
+    passed to `use[b](x: Tag[b])` fails ("expected Tag[b], found
+    Tag[$comptime$k$c0(b)]"), where the pin runs it: `Bool.__mlir_bool__`'s
+    builtin body is never folded.
   - Depends on R2008.
   - Model: Opus, Not Planned.
 
@@ -11229,34 +11233,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1957 The parameter domain does not fold `Bool(value=i)` or
-  `b.__mlir_i1__()`, where upstream's are the `i1` builtin casts beside
-  `Bool`'s storage**
-
-  Upstream's `Bool.__init__(value: i1)` is `pop.cast_from_builtin` into
-  `!kgen.scalar<bool>` then `struct.create`, and `__mlir_i1__` is
-  `struct.extract` then `pop.cast_to_builtin`; Mojito's parameter casts
-  know only the `index` pair.
-  - `ParamOp::CastToBuiltin`/`CastFromBuiltin`
-    (`ParamContext::build_cast`, `param_expr/fold.rs`) cast only between
-    `index` and `!kgen.scalar<index>`. Add the `i1` /
-    `!kgen.scalar<bool>` pair.
-  - `Checker::scalar_storage_expression`'s `Bool(value=b)` arm
-    (`checker/constraints.rs`) reads a closed `i1` as the `Bool`. Replace
-    it with the cast plus `ParamContext::build_bool_image`'s
-    `struct.create`, as the `Int(mlir_value=…)` arm uses `int_of_index`.
-  - Build `b.__mlir_i1__()` as `build_bool_image`'s `struct.extract` plus
-    `cast_to_builtin`, as the `__mlir_index__` arm does.
-  - Probe: `def f[b: Bool]()` building
-    `Tag[Bool(value=b.__mlir_i1__())]()` and passing it to
-    `use[b](x: Tag[b])` fails ("expected Tag[b], found
-    Tag[$comptime$f$c0(b)]"), where the pin runs it.
-  - Probe: `comptime x = Bool(value=True.__mlir_i1__())` still prints
-    `True`, and `assets/ok/bool_storage_primitives.mojo` runs.
-  - Found while landing R1840 (2026-11-06).
-  - Depends on R1955.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2047 An `__mlir_attr` spelled at `: i1` reads as a `Bool`, not
   an `i1`**
 
@@ -11274,8 +11250,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `stdlib/std/builtin/float_literal.mojo`.
   - Typing the read `i1` alone fails the MIR verifier ("argument 0 of
     'Bool.__init__$ov$$$mlir$type$i1' has type Bool"): the value still
-    lowers as a `Bool` register. Build it as R1957's `i1`
-    `cast_to_builtin` of the comparison.
+    lowers as a `Bool` register. Build it as the `i1`
+    `cast_to_builtin` of the comparison (`ParamContext::i1_of_bool`).
+  - The parameter domain's `index.cmp` has the same gap: it folds to the
+    `Bool` comparison, not an `i1`, so `scalar_storage_expression`'s
+    `Bool(value=…)` arm (`checker/constraints.rs`) keeps a fallback that
+    reads a `Bool` operand as itself. Probe: once `index.cmp` builds as
+    `i1_of_bool` of the comparison, that fallback deletes and
+    `assets/ok/simd_length_struct.mojo` still runs.
   - Found while landing R1991 (2026-11-08).
   - Depends on R1957.
   - Model: Opus, Not Planned.
