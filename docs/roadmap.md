@@ -591,26 +591,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1112 A `def` declared in a `comptime for` cannot call a sibling
-  whose argument is a struct over the loop binder**
-
-  `forwards(x)` whose loop declares `leaf(a: Arr[i + 1], y)` and a `mid`
-  calling `leaf(a, y)` fails elaboration with "unresolved value parameter
-  `$iter`", where the pin runs it.
-  - The unrolled copy's own calls are pointed at their instances by
-    `instantiate_region_references`, but `mid`'s instance calls `leaf`
-    through the ordinary call arm, whose `infer_call` unifies `leaf`'s
-    `Arr[$iter + 1]` against the argument from empty bindings and only
-    then inherits the region's binders (`nested_bindings`).
-  - Inherit the enclosing and region binders before unifying, as the
-    generic region path does through `nested_generators`.
-  - Probes: the shape above, with or without `leaf` reading `a`; the
-    vector analog `leaf(y: SIMD[DType.int64, i + 1])` and the plain nested
-    analog over `Arr[n]` already run.
-  - Found while landing R1039 (2026-10-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1414 A display's elements are not bound as its literal
   constructor's arguments**
 

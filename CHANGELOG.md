@@ -152,6 +152,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` declared in a `comptime for` that calls a sibling declared in
+  the same loop now reads the loop binder through that call when the
+  sibling kept it, as upstream's `RemoveUnusedParams` reads a call of a
+  generator with its unused parameters removed. Such a body used to drop
+  the binder and share one instance across indexes, so its sibling call
+  ran the wrong index's instance; `mid(a: Arr[i + 1], y)` calling
+  `leaf(a, y)` now keeps one instance per index exactly when `leaf` does.
+  Fixture `assets/ok/comptime_for_nested_sibling_call_instances.mojo`.
+  This closes R1112.
+
 - A package body's cycle check walks its callees' drop-elaborated bodies,
   as the program seam's call graph does, so a cycle a destructor call
   closes is one, and the package seam's drops hook

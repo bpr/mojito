@@ -44,7 +44,9 @@
 //! application without them. A nested or lifted body whose analysis is not
 //! at hand reads every parameter. A body nested in a `comptime for` is a
 //! generator over the loop's binder as well, which it removes when it
-//! never reads it.
+//! never reads it. A nested body declared beside the function, in a
+//! declaration enclosing it, reads the binders of its scope its own
+//! analysis kept, and all of them when that is not at hand.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
@@ -1911,13 +1913,42 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 Some(removed) => self.nested_removals.push(removed),
                 None => self.reads_all = true,
             },
-            None => {}
+            None => self.sibling_reads(value),
         }
         self.leaf = self
             .owners
             .iter()
             .position(|owner| *owner == value)
             .map_or(Leaf::Other, Leaf::Owner);
+    }
+
+    /// The binders of an owner the body `name`, nested in a declaration
+    /// that encloses the function rather than in the function itself,
+    /// keeps: those of its binder scope ([`candidate_parameters`]) that its
+    /// removals do not hold, or all of them when they are not at hand. A
+    /// sibling declared in the same `comptime for` is a generator over the
+    /// loop's binder as the function is, so a call of it reads the binder
+    /// when the sibling kept it, as upstream's lifted closure reads the
+    /// generator it calls with that generator's unused parameters removed.
+    fn sibling_reads(&mut self, name: &str) {
+        let Some((declarations, declaration)) = self.declarations.and_then(|declarations| {
+            declarations
+                .function(name)
+                .filter(|declaration| declaration.enclosing.is_some())
+                .map(|declaration| (declarations, declaration))
+        }) else {
+            return;
+        };
+        let removed = (self.nested)(name).unwrap_or_default();
+        for id in candidate_parameters(name, declaration, declarations)
+            .into_iter()
+            .map(ParamDecl::id)
+            .filter(|id| !removed.contains(id))
+        {
+            if let Some(owner) = self.owners.iter().position(|owner| **owner == *id.owner) {
+                self.slots.insert((owner, id.slot));
+            }
+        }
     }
 
     /// The binders of an owner the lifted body `name` declares and its

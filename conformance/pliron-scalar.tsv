@@ -193,6 +193,7 @@ assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iterator_aggregate_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_inlined_constructor_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_nested_sibling_call_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unread_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_nested_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_over_chained_reflect_binding.mojo	-	ineligible	no-scalar-entry-shape
