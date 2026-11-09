@@ -2584,10 +2584,28 @@ impl Checker {
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
             .collect::<Option<Vec<_>>>();
+        // The result reads the receiver and the runtime parameters as the
+        // signature's typed names (`StringLiteral.__add__`'s
+        // `StringLiteral[#pop.string_concat<self.value, rhs.value>]`).
+        let receiver = self.self_ty.clone().filter(|_| function.takes_self());
+        let owner = self.self_ty.clone();
         let result = match &function.result {
             _ if function.constructs() => Some(None),
             SourceType::SelfType => Some(None),
-            result => self.ty_from_anno(result).ok().map(Some),
+            result => self
+                .in_signature_scope(receiver.as_ref(), |checker| {
+                    for (param, declared) in function.params.iter().zip(params.iter().flatten()) {
+                        if let Some(ty) = declared
+                            .as_ref()
+                            .or_else(|| param.ty.resolved(owner.as_ref()))
+                        {
+                            checker.declare_signature_parameter(&param.name, ty.clone())?;
+                        }
+                    }
+                    checker.ty_from_anno(result)
+                })
+                .ok()
+                .map(Some),
         };
         let refined_self = match &function.refined_self {
             Some(refined) => self.ty_from_anno(refined).ok().map(Some),
@@ -2678,7 +2696,7 @@ impl Checker {
 
     /// The application of `expr` ([`Self::called_application`]), a
     /// construction of the instance `spelled` when it names one.
-    fn applied_call(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<ParamExpr> {
+    pub(super) fn applied_call(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<ParamExpr> {
         let selected = self.selected_application_at(expr, spelled)?;
         if self.application_constraint_failure(&selected).is_some() {
             return None;

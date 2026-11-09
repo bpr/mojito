@@ -1202,17 +1202,15 @@ impl TyKind {
     }
 
     /// The name and arguments of a struct application other than a `SIMD`
-    /// or a literal one. A rule written for a declared struct reads this
-    /// rather than matching [`TyKind::Struct`], since `SIMD`'s copies and
-    /// lanes are still the compiler's own rules (R1575), a string literal's
-    /// construction and member table are still the compiler's (R1972), and a
-    /// numeric literal's materialization is still the compiler's (R2064),
-    /// though each application is the declared struct.
+    /// or a numeric literal one. A rule written for a declared struct reads
+    /// this rather than matching [`TyKind::Struct`], since `SIMD`'s copies
+    /// and lanes are still the compiler's own rules (R1575) and a numeric
+    /// literal's materialization is still the compiler's (R2064), though
+    /// each application is the declared struct. A `StringLiteral[v]`
+    /// application is the declared struct it names.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
-            Self::Struct(name, arguments)
-                if !self.is_simd() && !self.is_string_literal() && !self.is_numeric_literal() =>
-            {
+            Self::Struct(name, arguments) if !self.is_simd() && !self.is_numeric_literal() => {
                 Some((name, arguments))
             }
             _ => None,
@@ -4776,12 +4774,13 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
 }
 
 /// Whether this compiler-known type is one upstream declares
-/// `TrivialRegisterPassable`: a [`copy_is_identity`] value, a SIMD vector
-/// of any dtype and width, or a `StringLiteral`. Its copy is a bit copy.
+/// `TrivialRegisterPassable`: a [`copy_is_identity`] value or a SIMD vector.
+///
+/// Its copy is a bit copy. A `StringLiteral` is a declared struct, judged
+/// by its declared conformance.
 pub fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
     copy_is_identity(ty)
         || ty.is_simd()
-        || ty.is_string_literal()
         || matches!(ty, TyKind::KgenSimd { .. } | TyKind::KgenAddressSimd { .. })
 }
 

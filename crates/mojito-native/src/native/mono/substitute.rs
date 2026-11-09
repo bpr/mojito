@@ -312,6 +312,16 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 )));
             }
         },
+        // A literal's symbolic value closes as the literal it names, kept
+        // under its template name as every reader of its text expects; one
+        // the bindings do not close stays as spelled, for the concreteness
+        // check to name.
+        kind if let Some(value) = kind
+            .string_literal_value()
+            .or_else(|| kind.numeric_literal_slot()) =>
+        {
+            closed_literal(ty, value, bindings)
+        }
         struct_ty if let Some((name, original)) = struct_ty.as_non_simd_struct() => {
             if original.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves
@@ -574,15 +584,6 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 SimdWidth::Known(_) => width,
             },
         ),
-        // A literal's symbolic value closes as the literal it names; one
-        // the bindings do not close stays as spelled, for the concreteness
-        // check to name.
-        kind if let Some(value) = kind
-            .string_literal_value()
-            .or_else(|| kind.numeric_literal_slot()) =>
-        {
-            closed_literal(ty, value, bindings)
-        }
         // A vector's storage closes as the vector it stores.
         TyKind::KgenSimd { dtype, width } => {
             let vector = substitute_ty(&Ty::simd(dtype.clone(), width.clone()), bindings)?;
@@ -620,7 +621,7 @@ fn closed_literal(ty: &Ty, value: &CtValue, bindings: &Bindings) -> Ty {
         .and_then(|closed| {
             let (name, _) = mojito_types::types::nominal_parts(ty)?;
             let closed = Ty::new(TyKind::Struct(name.to_string(), vec![TyArg::Val(closed)]));
-            (!closed.kind().is_non_simd_struct()).then_some(closed)
+            (closed.is_string_literal() || closed.is_numeric_literal()).then_some(closed)
         })
         .unwrap_or_else(|| ty.clone())
 }

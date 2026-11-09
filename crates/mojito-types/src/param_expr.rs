@@ -1192,6 +1192,22 @@ impl ParamContext {
         {
             return vector;
         }
+        // A field-less value of a string literal of known text is that
+        // text: the literal's type carries everything its value holds.
+        if fields.is_empty()
+            && let Some(Ok(literal)) =
+                spelling
+                    .meta()
+                    .as_value()
+                    .and_then(|ty| match ty.kind().string_literal_value() {
+                        Some(CtValue::KgenString(text)) => {
+                            Some(self.constant(CtValue::Str(text.clone())))
+                        }
+                        _ => None,
+                    })
+        {
+            return literal;
+        }
         match (own_fields_base(fields), fields) {
             (Some(base), _) if base.meta() == spelling.meta() => base.clone(),
             (_, [(field, storage)])

@@ -523,6 +523,7 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver_pattern) = receiver_pattern_for_instance.as_ref()
+            && !carries_instance_in_slots(peel_refs(receiver_pattern))
             && let Some((template, arguments)) =
                 peel_refs(receiver_pattern).kind().as_non_simd_struct()
             && !arguments.is_empty()
@@ -536,6 +537,7 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver) = receiver
+            && !carries_instance_in_slots(peel_refs(reg_ty(caller, receiver, owner)?))
             && let Some((receiver_name, _)) = (peel_refs(reg_ty(caller, receiver, owner)?))
                 .kind()
                 .as_non_simd_struct()
@@ -908,7 +910,8 @@ impl Specializer<'_> {
     }
 
     /// A method of a struct the elaborator mints no instance of (`SIMD`,
-    /// which the compiler's type holds) is a generator over its struct's
+    /// which the compiler's type holds, and a string literal,
+    /// [`carries_instance_in_slots`]) is a generator over its struct's
     /// parameters before its own, as upstream's method generator lists
     /// them: the owner's arguments lead the instance's. Empty for any other
     /// receiver.
@@ -919,13 +922,24 @@ impl Specializer<'_> {
         target: &str,
     ) -> Result<Vec<InstanceArg>, MonoError> {
         match mojito_types::types::nominal_parts(receiver)
-            .filter(|_| !receiver.kind().is_non_simd_struct())
+            .filter(|_| {
+                !receiver.kind().is_non_simd_struct() || carries_instance_in_slots(receiver)
+            })
             .and_then(|(name, _)| self.structs.get(name))
         {
             Some(struct_decl) => self.own_arguments(&struct_decl.param_decls, bindings, target, 0),
             None => Ok(Vec::new()),
         }
     }
+}
+
+/// Whether a receiver of `ty` carries its instance in its slots rather
+/// than as a minted `self_instance`: a `StringLiteral[v]`, whose type the
+/// elaborator keeps under its template name (`substitute_ty`), so its text
+/// names its instance (`Specializer::slot_instance_ty`), as a `SIMD`'s
+/// dtype and width do.
+fn carries_instance_in_slots(ty: &Ty) -> bool {
+    ty.is_string_literal()
 }
 
 /// Bind an enclosing instance's solutions in a nested body's call-site

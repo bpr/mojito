@@ -152,6 +152,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `StringLiteral[v]` application is an ordinary struct to the struct
+  rules (`as_non_simd_struct`), and its register passability is its
+  declared `TrivialRegisterPassable`. A builtin body's `return {}` folds as
+  its result type's `__init__()`, so the declared `StringLiteral.__add__`
+  folds `"buf" + "fer"` in a `comptime` value or a parameter, and a
+  literal's materialization to `String` passes the constructor's solved
+  `value` (R1972).
+
 - A numeric literal answers every trait as its declared `IntLiteral` or
   `FloatLiteral` struct lists it, in the checker and the elaborator: neither
   is `Equatable` or `Comparable` any more, as at the pin. The elaborator

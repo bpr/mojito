@@ -5284,9 +5284,15 @@ run time: the VM keeps the empty `StringLiteral` struct
 reader (a builtin's argument, an operator operand, a compile-time
 crossing, Pliron's `string_constant`) takes the text from the register's
 closed type. The MIR verifier holds a literal to its own type, so two
-texts are two types. Its copy and operators are the declared struct's,
-but `as_non_simd_struct` (R1972) and `MirDeclarations::field_types`
-(R1971) still leave it out, and `StringLiteral[v]()` is still built by
+texts are two types. Its copy, operators, and register passability are
+the declared struct's, and `as_non_simd_struct` answers its application as
+any struct's, so a builtin body's `return {}` at
+`StringLiteral[#pop.string_concat<…>]` folds as that type's `__init__()`
+and closes to the concatenated text. The elaborator still keeps a
+literal's type under its template name, so a literal receiver carries its
+per-text instance in its slots, as a `SIMD`'s does (R2065);
+`MirDeclarations::field_types`
+(R1971) still leaves it out, and `StringLiteral[v]()` is still built by
 rule (R1973). There is no value-less
 string literal type: a literal's members are the struct's, never a
 compiler rule, a compile-time string's meta is the literal type of its

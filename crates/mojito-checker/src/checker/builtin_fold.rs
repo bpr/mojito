@@ -1005,7 +1005,12 @@ impl Checker {
         let StmtKind::Return(Some(value)) = &last.kind else {
             return None;
         };
-        self.builtin_value(value, result)
+        match initializer_call(value, result) {
+            Some(call) => self
+                .applied_call(&call, Some(result))
+                .filter(|value| value.meta().as_value() == Some(result)),
+            None => self.builtin_value(value, result),
+        }
     }
 
     /// The fields a builtin `__init__`'s body stores, in declaration order,
@@ -1456,6 +1461,30 @@ fn call_spellings(body: &[Stmt]) -> Vec<String> {
     let mut spellings = Spellings::default();
     mojito_ast::visit::walk_block(&mut spellings, body);
     spellings.0
+}
+
+/// The construction an initializer list `value` (`{}`, `{a, k=b}`) spells
+/// at the declared result `result`, as upstream's parser reads a `return
+/// {…}`: the call `R(…)` of the struct `result` names, which constructs
+/// `result` itself. `None` for any other value.
+fn initializer_call(value: &Expr, result: &Ty) -> Option<Expr> {
+    let (args, kwargs) = match &value.kind {
+        ExprKind::BraceLit(entries) if entries.is_empty() => (Vec::new(), Vec::new()),
+        ExprKind::InitializerList { args, kwargs } => (args.clone(), kwargs.clone()),
+        _ => return None,
+    };
+    let (name, _) = result.kind().as_non_simd_struct()?;
+    let mut call = Expr::new(
+        ExprKind::Call {
+            name: name.clone(),
+            param_args: Vec::new(),
+            args,
+            kwargs,
+        },
+        value.span,
+    );
+    call.source.clone_from(&value.source);
+    Some(call)
 }
 
 /// A rejection of a builtin body, in the pin's words.

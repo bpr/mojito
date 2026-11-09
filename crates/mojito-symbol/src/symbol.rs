@@ -283,14 +283,12 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 /// struct names its own, a closed `SIMD` type
 /// the `SIMD` instance its dtype and width apply, so a scalar alias and its
 /// `SIMD[dt, 1]` spelling name one table, and a string literal of known
-/// text the `StringLiteral` instance its text applies. `None` for any other
-/// type, a symbolic `SIMD` or literal included.
+/// text the `StringLiteral` instance its text applies, ahead of the struct
+/// a symbolic literal names. `None` for any other type, a symbolic `SIMD`
+/// included.
 /// This is the only mapping from a type to that declaration.
 pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
     match ty.kind() {
-        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-            Some(Cow::Borrowed(name))
-        }
         kind if let Some(value @ mojito_types::ct::CtValue::KgenString(_)) =
             kind.string_literal_value() =>
         {
@@ -298,6 +296,9 @@ pub fn member_table_name(ty: &Ty) -> Option<Cow<'_, str>> {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME,
                 &[InstanceArg::Value(value.clone())],
             )))
+        }
+        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+            Some(Cow::Borrowed(name))
         }
         kind if let Some((dtype, width)) = kind.known_simd() => {
             let canonical = canonical_simd_ty(dtype, width);

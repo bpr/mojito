@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2065**.
+Next free ID: **R2066**.
 
 ## Ordered Work
 
@@ -10840,36 +10840,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2008.
   - Model: Opus, Not Planned.
 
-- [ ] **R1972 `TyKind::as_non_simd_struct` excludes a `StringLiteral[v]`
-  application, so the struct rules never see it**
-
-  `as_non_simd_struct` (`mojito-types/src/types.rs`) answers `None` for a
-  string literal, where upstream's literal is an ordinary struct.
-  - Probe: with the exclusion gone, `assets/ok/comptime_ctfe.mojo` fails
-    ("untyped variable slot $0 ('NAME')" for `comptime NAME = "buf" +
-    "fer"`), and `assets/ok/module_constant_literal_bracket.mojo` fails
-    (`operator '+' over a struct value applies no
-    '@always_inline("builtin")' operator method`): the parameter domain
-    cannot fold `StringLiteral.__add__`'s `return {}`, which the checker
-    builds by rule.
-  - Probe: `assets/ok/string_literal_slice_members.mojo` then loses
-    `String.__init__$ov$StringLiteral$V$value$data`'s `value` binder to
-    `_REMOVED_ARG` if `member_table_name` answers the literal's bare
-    `"StringLiteral"` from its `as_non_simd_struct` arm: the literal's
-    per-text instance arm has to stay ahead of it.
-  - The same exclusion keeps a `ty.is_string_literal()` arm in
-    `trivially_register_passable_leaf` (`mojito-types/src/types.rs`):
-    `MirDeclarations::copy_is_identity`, the checker's `memory_only`, CSE's
-    `built_in`, `call_results`, and the synthesized copy judge a literal
-    without reaching its declared `TrivialRegisterPassable`. Delete the arm
-    with the exclusion.
-  - Lever: the builtin fold folds `return {}` at the declared result type
-    `StringLiteral[#pop.string_concat<…>]`, as upstream's does.
-  - Do not re-add a literal check at one of the call sites without naming
-    the upstream rule it encodes.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2064 `TyKind::as_non_simd_struct` excludes a numeric literal
   application, so the struct rules never see it**
 
@@ -10888,8 +10858,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     packaging, starting with overload matching for a `StaticTuple` value
     parameter, then fold the literal arms above into the struct arm.
   - Do not re-add a literal check at one of the call sites without naming
-    the upstream rule it encodes, as R1972 says.
+    the upstream rule it encodes.
   - Found while landing R1969 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2065 The elaborator keeps a `StringLiteral[v]` type under its
+  template name, where any other struct application names its instance**
+
+  `substitute_ty` (`mono/substitute.rs`) closes a literal's text but keeps
+  the type `StringLiteral[text]`, so its per-text instance is never in the
+  type, as `List$mono$TInt` is for a list. Upstream's type is the instance.
+  - So `infer_call` (`mono/infer.rs`) needs `carries_instance_in_slots` at
+    its two `self_instance` arms and in `uninstanced_owner_arguments`, and
+    `Specializer::{table_owner, slot_instance_ty}` find a literal's member
+    table from its bound text rather than its type.
+  - Probe: without `carries_instance_in_slots`, every text's `__bool__`
+    is one clone, `StringLiteral.__bool__$REMOVED$ARG`, so `print("b" and
+    "c"); print("" or "a")` prints `c` and an empty line
+    (`assets/ok/and_or_left_operand_converts.mojo`,
+    `assets/ok/string_literal_generic_instances.mojo`).
+  - Probe: letting the struct arm of `substitute_ty` rename the type
+    (`StringLiteral$mono$V$22boom$22`) breaks every reader that keys on the
+    `StringLiteral` name (`TyKind::string_literal_value`, the VM's
+    `literal_text_argument`): `abort("boom")` reports "nominal String value
+    is missing its byte buffer".
+  - Lever: read a literal's text from its instance's bound `value` wherever
+    `string_literal_value` matches the template name, then let the struct
+    arm name the instance and delete the three arms above.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

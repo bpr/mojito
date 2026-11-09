@@ -700,14 +700,25 @@ impl Checker {
         else {
             return Ok(ty.clone());
         };
-        let Some((constructor, _)) = self.implicit_conversion_target(ty, &target)? else {
+        let Some(selected) = self.implicit_conversion_constructor(ty, &target)? else {
             return Ok(ty.clone());
         };
+        // The constructor's own parameters solved from the value (`String`'s
+        // `__init__(data: StringLiteral)` binds the literal's `value`) are
+        // its call's arguments, as any conversion passes them.
+        let instantiation =
+            self.conversion_instantiation(&target, &selected.target, selected.own_arguments);
         // A view conversion already recorded at this span supersedes the
         // materialization; re-inferring the expression must not revert it.
-        self.record_at(span)
+        let mut facts = self.record_at(span);
+        if facts
             .implicit_conversion
-            .get_or_insert(constructor);
+            .get_or_insert_with(|| selected.target.clone())
+            == &selected.target
+            && !instantiation.is_empty()
+        {
+            facts.conversion_instantiation.get_or_insert(instantiation);
+        }
         Ok(target)
     }
 
