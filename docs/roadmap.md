@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2054**.
+Next free ID: **R2055**.
 
 ## Ordered Work
 
@@ -978,6 +978,23 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R2054 A `for ref` target assigned in its body has no slot type,
+  so Pliron rejects the loop**
+
+  `for ref x in l: x = x + 10` over a `List[Int]` stops natively with
+  "unsupported untyped variable `x`", where the VM prints `11`.
+  - The loop's alias slot `x` has no `var_tys` entry in concrete MIR, and
+    `var_lower_ty` (`crates/mojito-pliron/src/lower/emit.rs`) needs one
+    for the `ref.make` the assignment writes through.
+  - A read-only `for ref` body runs natively; only the write needs the
+    slot typed.
+  - Probe: the same loop over a `List[Inner]` with `x = Inner(x.v + 10)`
+    destroys each replaced element on the VM (R1216) and fails natively
+    the same way.
+  - Found while landing R1216 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1450 An `Int`-literal constant two inlined instances share
   fails native verification**
 
@@ -1668,34 +1685,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Done when the shorthand is rejected with the pin's message and a
     `type_error` fixture pins it.
   - Found while landing R953 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1216 A store through a pointer read by its handle does not
-  destroy the value it replaces**
-
-  Problem: `var q = Pointer(to=b)`, `q = Pointer(to=b)`, then `q[] =
-  Inner(2)` prints `after 2` / `del 2`, where the pin prints `del 1` /
-  `after 2` / `del 2`.
-  - Cause: `elaborate_store_drops`
-    (`crates/mojito-analysis/src/analysis/store_drops.rs`) recovers a
-    `WriteRef`'s place only from a `MakeRef` handle. A pointer read by
-    `UseVar` names no place, and MIR has no destroy-through-handle
-    instruction for a frame/slot pointer, as upstream's `Pointer.__setitem__`
-    destroys the old pointee before it stores.
-  - Probe: `Pointer(to=h.j).unsafe_origin_cast[origin_of(h)]()` bound to
-    `r`, then `r[] = Inner(31)`, misses the pin's `del 30`.
-  - Probe: a destructured pointer (`var (p, x) = (Pointer(to=a), 1)`) then
-    `p[] = v` over a droppable pointee.
-  - Probe: `t[0] = Inner(62)` over `var t = (Inner(60), Inner(61))`
-    writes through the reference the inlined `Tuple.__getitem__` returns
-    and never destroys `Inner(60)`, where the pin prints `del 60` before
-    the next `print`.
-  - Probe: `b[0] = P(5)` over a struct whose `__getitem__(ref self, i:
-    Int) -> ref[self.v] P` has no `__setitem__`, and `ref r = b[0]` then
-    `r = P(5)`, never destroy `P(1)`, where the pin prints `del 1` at the
-    store.
-  - Found while landing R352 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

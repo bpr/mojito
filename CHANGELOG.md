@@ -4089,6 +4089,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A store through a handle that names no owner place destroys the value
+  it replaces first, as the pin does (R1216): `q[] = Inner(2)` over a
+  reassigned, cast, or destructured `Pointer`, `t[0] = v` over a tuple,
+  `b[0] = v` through a `__getitem__` reference with no `__setitem__`,
+  `r = v` over a `ref` binding of a call result or a `for ref` target, and
+  `o.value() = v` now print the replaced value's `del` at the store.
 - Each existential `Some[Trait]` parameter is now its own anonymous
   `[T: Trait]` binder, as upstream desugars it, so two parameters of one
   trait deduce different types at one call (`two(String("a"), 1)` over

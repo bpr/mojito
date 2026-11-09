@@ -1231,6 +1231,7 @@ assets/ok/std_numerics_fputils.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_numerics_nan_classes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_plugin_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/store_through_handle_destroys_replaced.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_default_construction.mojo	-	ineligible	no-scalar-entry-shape

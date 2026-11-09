@@ -921,6 +921,15 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
                     origin,
                 }) if origin.statically_mutable() != Some(false)
                     && types_compatible(actual, element) => {}
+                // An assignment through a handle destroys its pointee
+                // through the reference itself, an address as a pointer is.
+                Some(TyKind::Ref(reference))
+                    if matches!(instruction, MirInstr::PointerStorageDestroy { .. })
+                        && !matches!(
+                            reference.mutability,
+                            mojito_types::origin::Mutability::Immutable
+                        )
+                        && types_compatible(&reference.referent, element) => {}
                 Some(found) => errors.push(format!(
                     "{prefix}: compiler-private pointer storage operation expects a mutable Pointer[{element}], got {found}"
                 )),

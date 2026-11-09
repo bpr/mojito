@@ -6700,3 +6700,68 @@ fn literal_conversion_binds_the_storage_it_names() {
         "{five:#?}"
     );
 }
+
+#[test]
+fn a_store_through_a_runtime_pointer_handle_destroys_its_droppable_pointee() {
+    let source = r#"
+struct Inner(Movable):
+    var v: Int
+    def __init__(out self, v: Int):
+        self.v = v
+    def __del__(deinit self):
+        print("del", self.v)
+
+def main():
+    var b = Inner(1)
+    var q = Pointer(to=b)
+    q = Pointer(to=b)
+    q[] = Inner(2)
+    var n = 1
+    var m = Pointer(to=n)
+    m = Pointer(to=n)
+    m[] = 2
+    print(b.v, n)
+"#;
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("store_through_handle.mojo"))
+        .expect("compile store through handle");
+    let mir = compiled.mir();
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let writes = instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(at, instruction)| match instruction {
+            MirInstr::WriteRef { reference, .. } => Some((at, *reference)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(inner_at, inner), (int_at, _)] = writes.as_slice() else {
+        panic!("two writes through handles: {instructions:#?}");
+    };
+    assert!(
+        matches!(
+            instructions[inner_at - 1],
+            MirInstr::PointerStorageDestroy { pointer, element, .. }
+                if pointer == inner && element.to_string() == "Inner"
+        ),
+        "the droppable pointee is destroyed before the write: {instructions:#?}"
+    );
+    assert!(
+        !matches!(
+            instructions[int_at - 1],
+            MirInstr::PointerStorageDestroy { .. }
+        ),
+        "a trivial pointee destroys nothing: {instructions:#?}"
+    );
+    assert!(mojito::mir::verify::verify(mir).is_empty());
+}

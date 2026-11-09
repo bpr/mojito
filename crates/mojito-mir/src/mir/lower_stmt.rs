@@ -767,6 +767,7 @@ impl<'a> Flatten<'a> {
         let rhs = self.expr(rhs_expression);
         self.yield_stored_value(rhs_expression, rhs);
         self.emit_interior_invalidations(target, None);
+        self.destroy_pointee(target, handle, &plan.operand_ty);
         self.emit(MirInstr::WriteRef {
             reference: handle,
             value: rhs,
@@ -1502,6 +1503,9 @@ impl<'a> Flatten<'a> {
             if object.is_origin_bearing_pointer() {
                 let reference = self.expr(object);
                 self.emit_interior_invalidations(place, None);
+                if let Some(TyKind::Pointer { element, .. }) = object.ty().as_ref().map(Ty::kind) {
+                    self.destroy_pointee(place, reference, element);
+                }
                 self.emit(MirInstr::WriteRef {
                     reference,
                     value: src,
@@ -1687,6 +1691,27 @@ impl<'a> Flatten<'a> {
     /// indices and bounds from left to right, and a place index is read at
     /// the setter's setup, after its sibling operands. `None` when `target`
     /// stores through no checked setter.
+    /// Destroy the `element` value the handle `handle` addresses, before an
+    /// assignment at `site` writes through it: the handle names no owner
+    /// place drop elaboration could destroy, so the assignment destroys its
+    /// pointee as upstream's `ptr[] = value` does through the `ref` the
+    /// pointer's `__getitem__` returns (`destroy_pointee`, then the store).
+    /// A trivially register-passable element destroys nothing.
+    fn destroy_pointee(&mut self, site: Node<'a>, handle: Reg, element: &Ty) {
+        if mojito_types::types::trivially_register_passable_leaf(element.kind()) {
+            return;
+        }
+        let index = self.constant(site, Const::Int(0));
+        let dest = self.fresh_typed(site.location(), None, Ty::none());
+        self.emit(MirInstr::PointerStorageDestroy {
+            dest,
+            pointer: handle,
+            index,
+            element: element.clone(),
+            destructor: None,
+        });
+    }
+
     fn lower_subscript_setter<R>(
         &mut self,
         target: Node<'a>,
@@ -3565,6 +3590,10 @@ impl<'a> Flatten<'a> {
                     place
                 },
             });
+            if let Some(TyKind::Ref(reference)) = self.var_types.get(&dest).map(Ty::kind) {
+                let referent = reference.referent.clone();
+                self.destroy_pointee(value, handle, &referent);
+            }
             self.emit(MirInstr::WriteRef {
                 reference: handle,
                 value: src,

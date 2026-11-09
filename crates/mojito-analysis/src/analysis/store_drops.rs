@@ -11,7 +11,9 @@
 //! slot, as upstream's indirect `checkDef` destroys it before the write.
 //! Each is emitted only where the move scan's replay says the replaced value
 //! is initialized on every path, so every drop it places is decided, as
-//! upstream's `DestructorInsertion` places it.
+//! upstream's `DestructorInsertion` places it. A write through a runtime
+//! handle that names no place (a reassigned pointer's, a `__getitem__`
+//! reference's) carries its own `pointer.destroy` from MIR lowering.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -178,7 +180,8 @@ fn droppable_static_subplace(place: &MirPlace) -> bool {
 /// be destroyed. Such a write has no redefining `DefVar` to end the old
 /// value's live range: the value lives in the caller's storage (a `mut`
 /// parameter or `mut self` receiver writes through its own handle) or in
-/// another slot (a place pointer's pointee, a whole-variable `ref` binding).
+/// another slot (a place pointer's pointee, a whole-variable `ref` binding,
+/// a `ref` slot holding a call's returned reference).
 /// Only an intact subtree qualifies — dropping a partially moved value whole
 /// would free a hole, and no backend guards a drop at run time.
 fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunction) -> bool {
@@ -187,7 +190,11 @@ fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunctio
     };
     let root = place.root as usize;
     let reference_root = through != place.root
-        || (root < f.n_params && f.ref_params.get(root).copied().unwrap_or(false));
+        || (root < f.n_params && f.ref_params.get(root).copied().unwrap_or(false))
+        || place
+            .root_ty
+            .as_ref()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
     reference_root
         && place
             .ty
