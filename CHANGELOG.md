@@ -152,6 +152,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `automatic-inline`'s function pipeline runs upstream's
+  `HoistTrivialInvariants` (`hoist-trivial-invariants`) after its first
+  `cse` (R1340): a pure, region-free instruction in a `loop`, `if`, or
+  `try` region whose operands are defined outside it moves to the
+  earliest point they allow, so a field read of a loop-invariant value
+  leaves a `while` loop's body; an instruction that may trap stays put.
+  No program's output changes.
 - A reference reached through a bare `ref` parameter or receiver carries
   that parameter's inferred mutability binder, as upstream's
   `Origin[mut=m]` does, where the checker had typed it `immutable`;

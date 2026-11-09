@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2072**.
+Next free ID: **R2073**.
 
 ## Ordered Work
 
@@ -312,21 +312,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1340 The `automatic-inline` function pipeline has no
-  `HoistTrivialInvariants`**
-
-  Upstream's `AutomaticInline` nests `HoistTrivialInvariants` after its
-  first `CSEPass`, and Mojito's `AUTOMATIC_INLINE_PIPELINE` skips it.
-  - Upstream hoists each pure, region-free operation whose operands are
-    all defined outside an `if` or loop to the earliest point its operands
-    allow (`lib/Transforms/HoistTrivialInvariants.cpp`).
-  - Probe: a field read of a loop-invariant struct value inside a `while`
-    loop of an instance stays in the loop body in concrete MIR.
-  - Port it as a body pass over regions, reusing `cse`'s effect-free
-    instruction rule, and list it in `AUTOMATIC_INLINE_PIPELINE`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1341 The `automatic-inline` function pipeline has no
   `StackReuse`**
 
@@ -340,6 +325,25 @@ which names the upstream pass each one follows. Each is measured by the
     a separate slot in concrete MIR.
   - Port it as a body pass over slots, and list it in
     `AUTOMATIC_INLINE_PIPELINE`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2072 `cse`'s effect-free rule leaves out `struct.create`**
+
+  Upstream's `kgen.struct.create` is pure, so MLIR's `CSEPass` merges two
+  identical constructions and `HoistTrivialInvariants` moves an invariant
+  one out of a loop, but `cse::free_of_effects` does not list
+  `MirInstr::MakeStruct`, so neither pass touches one.
+  - Probe: `while i < n: t += use_q(Q(n, 3))`, with `Q` a
+    `TrivialRegisterPassable` struct of two `Int`s and `use_q`
+    `@no_inline`: the `struct.create`s of `n`'s `Int` and of `Q(n, 3)`
+    stay in the loop body of the concrete `scale` instance, after
+    `hoist-trivial-invariants` moved `n`'s storage read out.
+  - Probe: `use_q(Q(n, 3)) + use_q(Q(n, 3))` in one block builds `Q`
+    twice after `cse`.
+  - The lever: list `MakeStruct` of a register-passable trivial result in
+    `free_of_effects`, then check that both backends read a merged or
+    hoisted construction as a value no reader writes.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -99,6 +99,97 @@ pub fn cse(_name: &str, function: &mut MirFunction, declarations: &MirDeclaratio
     true
 }
 
+/// Whether `instruction` reads nothing but its operands, as an op MLIR's
+/// `MemoryEffectOpInterface` declares free of effects does: `cse` merges
+/// such an instruction wherever a dominating one matches it, and
+/// `hoist-trivial-invariants` moves it out of the regions that hold it.
+pub(super) fn free_of_effects(instruction: &MirInstr, reg_types: &HashMap<u32, Ty>) -> bool {
+    match instruction {
+        MirInstr::Const { .. }
+        | MirInstr::MaterializeLiteral { .. }
+        | MirInstr::ScalarCast { .. }
+        | MirInstr::BuiltinCast { .. }
+        | MirInstr::PointerConvert { .. }
+        | MirInstr::Pop { .. }
+        | MirInstr::IsRunInComptimeInterpreter { .. }
+        | MirInstr::ParamListAddress { .. }
+        | MirInstr::VariantIs { .. }
+        | MirInstr::VariantTag { .. }
+        | MirInstr::MakeSimd { .. }
+        | MirInstr::SimdCast { .. }
+        | MirInstr::SimdBitcast { .. }
+        | MirInstr::SimdShuffle { .. }
+        | MirInstr::ArrayRepeat { .. }
+        | MirInstr::ArrayGet { .. }
+        | MirInstr::ArrayReplace { .. }
+        | MirInstr::ArrayGep { .. }
+        | MirInstr::Select { .. }
+        | MirInstr::SimdSelect { .. }
+        | MirInstr::SimdExtract { .. }
+        | MirInstr::SimdInsert { .. }
+        | MirInstr::SimdReduce { .. } => true,
+        // An intrinsic declared without side effects, as MLIR reads
+        // `pop.call_llvm_intrinsic`'s `hasSideEffects`.
+        MirInstr::CallLlvmIntrinsic {
+            has_side_effect, ..
+        } => matches!(
+            has_side_effect,
+            Const::Value(mojito_types::ct::CtValue::Bool(false))
+        ),
+        MirInstr::GetField { base, .. } => reg_types
+            .get(&base.0)
+            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_))),
+        MirInstr::BinOp {
+            a,
+            b,
+            resolved: None,
+            raises: None,
+            ..
+        } => built_in(&[*a, *b], reg_types),
+        MirInstr::UnOp {
+            a, raises: None, ..
+        } => built_in(&[*a], reg_types),
+        _ => false,
+    }
+}
+
+/// The arguments of each region of `instruction`, in
+/// [`instruction_regions`]' order.
+pub(super) fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
+    match instruction {
+        MirInstr::If {
+            elifs, else_args, ..
+        } => std::iter::once(&[][..])
+            .chain(
+                elifs
+                    .iter()
+                    .flat_map(|elif| [&elif.cond_args[..], &elif.then_args[..]]),
+            )
+            .chain(std::iter::once(&else_args[..]))
+            .collect(),
+        MirInstr::Loop { args, .. } => vec![args],
+        MirInstr::ComptimeFor { args, .. } => vec![args, &[]],
+        MirInstr::Match {
+            cases, else_args, ..
+        } => cases
+            .iter()
+            .map(|case| &case.args[..])
+            .chain(std::iter::once(&else_args[..]))
+            .collect(),
+        MirInstr::Try {
+            handler_args,
+            handler,
+            else_args,
+            orelse,
+            ..
+        } => std::iter::once(&[][..])
+            .chain(handler.as_ref().map(|_| &handler_args[..]))
+            .chain(orelse.as_ref().map(|_| &else_args[..]))
+            .collect(),
+        _ => vec![&[]; instruction_regions(instruction).len()],
+    }
+}
+
 /// The scoped table of the instructions available on a dominator-tree walk.
 struct Table<'f> {
     declarations: &'f MirDeclarations,
@@ -248,7 +339,7 @@ impl Table<'_> {
     /// `MemoryEffectOpInterface` declares it.
     fn effect(&self, instruction: &MirInstr) -> Effect {
         let trivial = |ty: Option<&Ty>| ty.is_some_and(|ty| self.declarations.copy_is_identity(ty));
-        if self.free_of_effects(instruction) {
+        if free_of_effects(instruction, self.reg_types) {
             return Effect::Free;
         }
         match instruction {
@@ -276,69 +367,6 @@ impl Table<'_> {
             _ if instruction.would_be_trivially_dead() => Effect::Read,
             _ => Effect::Write,
         }
-    }
-
-    /// Whether `instruction` reads nothing but its operands.
-    fn free_of_effects(&self, instruction: &MirInstr) -> bool {
-        match instruction {
-            MirInstr::Const { .. }
-            | MirInstr::MaterializeLiteral { .. }
-            | MirInstr::ScalarCast { .. }
-            | MirInstr::BuiltinCast { .. }
-            | MirInstr::PointerConvert { .. }
-            | MirInstr::Pop { .. }
-            | MirInstr::IsRunInComptimeInterpreter { .. }
-            | MirInstr::ParamListAddress { .. }
-            | MirInstr::VariantIs { .. }
-            | MirInstr::VariantTag { .. }
-            | MirInstr::MakeSimd { .. }
-            | MirInstr::SimdCast { .. }
-            | MirInstr::SimdBitcast { .. }
-            | MirInstr::SimdShuffle { .. }
-            | MirInstr::ArrayRepeat { .. }
-            | MirInstr::ArrayGet { .. }
-            | MirInstr::ArrayReplace { .. }
-            | MirInstr::ArrayGep { .. }
-            | MirInstr::Select { .. }
-            | MirInstr::SimdSelect { .. }
-            | MirInstr::SimdExtract { .. }
-            | MirInstr::SimdInsert { .. }
-            | MirInstr::SimdReduce { .. } => true,
-            // An intrinsic declared without side effects, as MLIR reads
-            // `pop.call_llvm_intrinsic`'s `hasSideEffects`.
-            MirInstr::CallLlvmIntrinsic {
-                has_side_effect, ..
-            } => matches!(
-                has_side_effect,
-                Const::Value(mojito_types::ct::CtValue::Bool(false))
-            ),
-            MirInstr::GetField { base, .. } => self
-                .reg_types
-                .get(&base.0)
-                .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_))),
-            MirInstr::BinOp {
-                a,
-                b,
-                resolved: None,
-                raises: None,
-                ..
-            } => self.built_in(&[*a, *b]),
-            MirInstr::UnOp {
-                a, raises: None, ..
-            } => self.built_in(&[*a]),
-            _ => false,
-        }
-    }
-
-    /// Whether every one of `regs` has a built-in scalar or SIMD type, so an
-    /// operator over them is the backend's own arithmetic or comparison
-    /// rather than a call of an operator method.
-    fn built_in(&self, regs: &[Reg]) -> bool {
-        regs.iter().all(|reg| {
-            self.reg_types
-                .get(&reg.0)
-                .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
-        })
     }
 
     /// How many times the function defines `reg`.
@@ -390,39 +418,13 @@ enum Effect {
     Nested,
 }
 
-/// The arguments of each region of `instruction`, in
-/// [`instruction_regions`]' order.
-fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
-    match instruction {
-        MirInstr::If {
-            elifs, else_args, ..
-        } => std::iter::once(&[][..])
-            .chain(
-                elifs
-                    .iter()
-                    .flat_map(|elif| [&elif.cond_args[..], &elif.then_args[..]]),
-            )
-            .chain(std::iter::once(&else_args[..]))
-            .collect(),
-        MirInstr::Loop { args, .. } => vec![args],
-        MirInstr::ComptimeFor { args, .. } => vec![args, &[]],
-        MirInstr::Match {
-            cases, else_args, ..
-        } => cases
-            .iter()
-            .map(|case| &case.args[..])
-            .chain(std::iter::once(&else_args[..]))
-            .collect(),
-        MirInstr::Try {
-            handler_args,
-            handler,
-            else_args,
-            orelse,
-            ..
-        } => std::iter::once(&[][..])
-            .chain(handler.as_ref().map(|_| &handler_args[..]))
-            .chain(orelse.as_ref().map(|_| &else_args[..]))
-            .collect(),
-        _ => vec![&[]; instruction_regions(instruction).len()],
-    }
+/// Whether every one of `regs` has a built-in scalar or SIMD type, so an
+/// operator over them is the backend's own arithmetic or comparison
+/// rather than a call of an operator method.
+fn built_in(regs: &[Reg], reg_types: &HashMap<u32, Ty>) -> bool {
+    regs.iter().all(|reg| {
+        reg_types
+            .get(&reg.0)
+            .is_some_and(|ty| trivially_register_passable_leaf(ty.kind()))
+    })
 }

@@ -16,6 +16,7 @@ use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
 use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::elaborate_drops_function;
+use super::hoist_trivial_invariants::HOIST_TRIVIAL_INVARIANTS;
 use super::inline_parametric::INLINE_PARAMETRIC;
 use super::lower_lit::{LOWER_LIT, lower_lit};
 use super::mem2reg::{IMM_ARGUMENTS, LOWER_ARG_CONVENTIONS, MEM_2_REG};
@@ -455,6 +456,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(LOWER_LIT),
     Pass::Body(LOWER_ARG_CONVENTIONS),
     Pass::Body(SIMPLIFY_CF),
+    Pass::Body(HOIST_TRIVIAL_INVARIANTS),
     Pass::CallGraph(AUTOMATIC_INLINE),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];

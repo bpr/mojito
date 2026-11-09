@@ -34,6 +34,7 @@ use drop_values::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};
+pub use hoist_trivial_invariants::{HOIST_TRIVIAL_INVARIANTS, hoist_trivial_invariants};
 pub use inline_parametric::{INLINE_PARAMETRIC, inline_parametric, is_inlined_before_elaboration};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use interior::*;
@@ -303,6 +304,7 @@ mod drop_values;
 mod drops;
 mod duplicate_functions;
 mod fold;
+mod hoist_trivial_invariants;
 mod inline_parametric;
 mod interior;
 mod loans;

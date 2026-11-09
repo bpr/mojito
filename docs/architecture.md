@@ -7709,9 +7709,23 @@ each callee arrives already rewritten. Each function takes the bodies of
 its admitted callees, then runs `AUTOMATIC_INLINE_PIPELINE` whether it
 inlined anything or not, as upstream's `completeFunctionProcessing` does:
 `simplify-cf`, `sroa`, `mem-2-reg`, `canonicalize`, `cse`,
-`canonicalize`, `simplify-cf`, `sroa`, `mem-2-reg`, `cse`, then
-`canonicalize`, which is upstream's nested pipeline without
-`HoistTrivialInvariants` (R1340) and `StackReuse` (R1341).
+`hoist-trivial-invariants`, `canonicalize`, `simplify-cf`, `sroa`,
+`mem-2-reg`, `cse`, then `canonicalize`, which is upstream's nested
+pipeline without `StackReuse` (R1341).
+- **Hoisting invariants.** `hoist-trivial-invariants`
+  (`analysis/hoist_trivial_invariants.rs`) is upstream's
+  `HoistTrivialInvariants`: walking outside in, each instruction directly
+  in a `loop` body, an `if` arm or `elif` condition, or a `try` body,
+  handler, or `else` that is pure and region-free, and whose operands are
+  all defined outside the region's holder, moves to just after the
+  definition of its most dominated operand, to the start of the region
+  whose argument that operand is, or to the function's entry. Pure is
+  `cse`'s free-of-effects rule less what may trap (a division or
+  remainder, an LLVM intrinsic, a bounds-checked element or lane access,
+  a conversion to an integer), as MLIR's `isPure` asks for a
+  speculatable op; as in `cse`, the result and each operand must have
+  one definition and the result be a register-passable trivial value or
+  a reference.
 - **Which callees.** A callee in the caller's own component has no body
   to read (`Cycles::CallerComponent`, upstream's `canInlineCallee`), so a
   recursive callee inlines once into a caller outside its cycle and keeps

@@ -19,6 +19,7 @@
 
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
+use super::hoist_trivial_invariants::HOIST_TRIVIAL_INVARIANTS;
 use super::inline_parametric::{Admission, inline_calls};
 use super::mem2reg::MEM_2_REG;
 use super::pre_elaboration::{BodyPass, CallGraphPass, Callees, Cycles};
@@ -49,16 +50,16 @@ pub const AUTOMATIC_INLINE_SIZE_BOUND: usize = 47;
 /// Mojito adopts it.
 ///
 /// It is `SimplifyCF`, `SROA`, `Mem2Reg`, `Canonicalizer`, `CSEPass`,
-/// `Canonicalizer`, `SimplifyCF`, `SROA`, `Mem2Reg`, `CSEPass`, and
-/// `Canonicalizer`. Upstream's `HoistTrivialInvariants`, after the first
-/// `CSEPass` (R1340), and `StackReuse`, before the second (R1341), are not
-/// ported.
+/// `HoistTrivialInvariants`, `Canonicalizer`, `SimplifyCF`, `SROA`,
+/// `Mem2Reg`, `CSEPass`, and `Canonicalizer`. Upstream's `StackReuse`,
+/// before the second `CSEPass` (R1341), is not ported.
 pub const AUTOMATIC_INLINE_PIPELINE: &[BodyPass] = &[
     SIMPLIFY_CF,
     SROA,
     MEM_2_REG,
     CANONICALIZE,
     CSE,
+    HOIST_TRIVIAL_INVARIANTS,
     CANONICALIZE,
     SIMPLIFY_CF,
     SROA,
