@@ -155,6 +155,7 @@ impl Decoder {
             removed_args,
             callee_removed_args,
             lowered_calls: Vec::new(),
+            fresh_splices: None,
         };
         if legacy_raises {
             upgrade_error_slots(&mut function);

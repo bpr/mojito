@@ -500,37 +500,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1452 `inline_cost` prices a callee as `mem-2-reg` leaves it, where
-  the pin measures it right after splicing its own callees**
-
-  Upstream's `InlineParametric` measures a callee as soon as its own calls
-  are inlined, running no pipeline in between (`onComplete` is empty).
-  - So a callee its spliced bodies push past the bound in the first round
-    inlines only in the second, into a caller the pin then measures with
-    that body and the caller's iterator slot uncleaned, and the caller
-    keeps its call.
-  - Mojito prices every body as its round's `mem-2-reg` would leave it, so
-    it inlines such a caller.
-  - Probe: `@always_inline def f(x: Int) -> Int` holding `var r = R(x)` and
-    `try: s += r.nxt()`, `except: pass`, over an `@always_inline` `nxt(self)
-    raises StopIteration` that raises when `self.end == 3` and otherwise
-    returns `W[1](self.end).get()`, an inlined constructor and method,
-    keeps its call at the pin and inlines here.
-  - Marking that `nxt` `nodebug`, which inlines at any size in the first
-    round, makes `f` cost 10 at the pin, which confirms the cause.
-  - Probe: now that `Int` arithmetic is `SIMD`'s dunders, an
-    `@always_inline` `f(x)` holding `for i in range(x): break` costs 33
-    and keeps its call, as at the pin.
-  - Probe: one holding `var r = range(x)` then `try: s +=
-    Int(r.__next__())` costs 31 and inlines, where the pin keeps it.
-  - The lever: price the slot traffic, wrapper loop, and breaks of a body
-    spliced since the last `mem-2-reg` as the operations the pin counts,
-    calibrated against pin probes.
-  - Done when the first probe keeps its call.
-  - Found while landing R1286 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2057 `automatic-inline` prices `String(call_location())` far
   above the pin's bound, so it keeps a call the pin inlines**
 
@@ -545,6 +514,14 @@ which names the upstream pass each one follows. Each is measured by the
     `String.__init__(*args: Writable, sep, end)` 45.
   - A body returning `call_location().line()` costs below the bound and
     inlines, as at the pin.
+  - The same gap prices `inline-parametric`'s cleaned bodies above the
+    pin's: an `@always_inline` body of 31 `s += x` statements costs 96
+    here once cleaned, each `SIMD` dunder splice leaving its field reads
+    and `struct.create`, where the pin inlines it and keeps one of 32.
+  - Probe: an `@always_inline` `f(x)` holding `var r = R(x)` and `try: s
+    += r.nxt()`, `except: pass`, over an `@always_inline("nodebug")`
+    `nxt(self) raises StopIteration` returning `W[1](self.end).get()`,
+    costs 25 here after cleanup and 10 at the pin.
   - Lever: calibrate both against the pin's operation counts after its
     canonicalizer, as `INLINE_SIZE_BOUND` was.
   - Found while landing R1979 (2026-11-08).

@@ -152,6 +152,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` prices a callee whose own callees it spliced since
+  its last `mem-2-reg` as the pin measures it, before any cleanup: the
+  spliced bodies' wrapper loops and breaks, constants, `comptime assert`s,
+  no-op copies and drops, and slot traffic, the caller's slots they reach
+  included, now count. So a plain `@always_inline` callee its spliced
+  bodies push past the bound waits a round, and a caller measured with
+  it freshly spliced keeps its call, as at the pin (R1452).
+
 - `inline-parametric` follows a reference a callee returns through a local
   `ref` slot to the reference that slot's one store holds, so
   `Dict.setdefault`, returning `self.entries[i].value`, inlines instead

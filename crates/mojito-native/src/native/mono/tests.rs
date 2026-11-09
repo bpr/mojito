@@ -1765,6 +1765,7 @@ fn method_call_spread_passes_the_bound_pack_itself() {
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     };
     let before = format!("{:?}", function.blocks[0].instrs);
     expand_pack_spreads("fwd", &mut function).expect("check the method-call spread");
@@ -1824,6 +1825,7 @@ fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     };
     expand_pack_spreads("llvm_intrinsic", &mut function).expect("expand the intrinsic's spread");
     let instrs = &function.blocks[0].instrs;
@@ -1895,6 +1897,7 @@ fn spread_of_an_unbound_pack_is_the_instance_boundary() {
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     };
     let error = expand_pack_spreads("fwd", &mut function)
         .expect_err("a spread of a pack the bindings leave open is unsupported");

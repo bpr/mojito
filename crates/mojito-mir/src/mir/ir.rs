@@ -3842,6 +3842,34 @@ pub struct MirFunction {
     /// empty once lowering is done.
     #[serde(skip)]
     pub lowered_calls: Vec<LoweredCall>,
+    /// The register and slot counts the body had when `inline-parametric`
+    /// first spliced a callee into it since its last `mem-2-reg`, which
+    /// clears it: the registers and slots from them on are those of bodies
+    /// spliced since, which upstream's `InlineParametric` measures before
+    /// its `Mem2Reg` cleans them. Not encoded: a finished body has had its
+    /// last `mem-2-reg`.
+    #[serde(skip)]
+    pub fresh_splices: Option<FreshSplices>,
+}
+
+/// Where the bodies spliced into a function since its last `mem-2-reg`
+/// begin ([`MirFunction::fresh_splices`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreshSplices {
+    pub regs: u32,
+    pub vars: usize,
+}
+
+impl FreshSplices {
+    /// Whether `reg` was made by a body spliced since.
+    pub const fn reg(self, reg: Reg) -> bool {
+        reg.0 >= self.regs
+    }
+
+    /// Whether `var` is a slot of a body spliced since.
+    pub const fn var(self, var: VarId) -> bool {
+        var as usize >= self.vars
+    }
 }
 
 /// A call lowered from a checked call: the register its result writes, the

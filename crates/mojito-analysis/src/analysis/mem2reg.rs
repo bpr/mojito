@@ -87,7 +87,11 @@ pub const IMM_ARGUMENTS: BodyPass = BodyPass {
 /// Promote each local slot of `function` that upstream's `Mem2Reg` would
 /// promote to registers, and remove it from the function; returns whether
 /// any was.
+///
+/// The bodies spliced into `function` are clean afterwards, so it forgets
+/// them ([`MirFunction::fresh_splices`]).
 pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
+    function.fresh_splices = None;
     let (slots, erased_results, erased) = promote_in_regions(function, declarations);
     if slots.is_empty() {
         return false;

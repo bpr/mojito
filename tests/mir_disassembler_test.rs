@@ -49,6 +49,7 @@ fn identity_program() -> MirProgram {
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     };
     MirProgram {
         functions: vec![("identity".into(), function)],
@@ -138,6 +139,7 @@ fn control_flow_program() -> MirProgram {
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     };
     MirProgram {
         functions: vec![("choose".into(), function)],

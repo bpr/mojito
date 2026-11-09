@@ -94,6 +94,7 @@ impl<'t> SymbolTable<'t> {
             callee_removed_args: _,
             removed_args: _,
             lowered_calls: _,
+            fresh_splices: _,
         } = function;
         let mut uses = self.uses(blocks);
         self.function_list_uses(blocks, reg_types, &mut uses);

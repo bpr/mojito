@@ -6741,9 +6741,19 @@ point where a slot declared in a loop is uninitialized again.
   around its `__next__` call among them), and an `iter.init`, which starts
   compiler-private storage, nothing; each other instruction costs one. A loop's
   `__iter__` and `__next__` are ordinary calls, priced as the bodies this
-  pass splices for them before it measures the caller. Every body is
-  priced as its round's `mem-2-reg` would leave it, where upstream
-  measures a callee right after splicing its own callees (R1452). The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
+  pass splices for them before it measures the caller. Upstream measures
+  a callee right after splicing its own callees, running no pipeline in
+  between, so the bodies spliced since a function's last `mem-2-reg` are
+  priced uncleaned: `inline_calls` records the register and slot counts
+  the function had before its first such splice
+  (`MirFunction::fresh_splices`, `mir::FreshSplices`, not encoded), which
+  `mem-2-reg` clears, and the private `CostWalk` charges each of their
+  wrapper loops and its breaks, each of their constants, `comptime
+  assert`s, and copies and drops running no code, and an alloca and each
+  whole read or write for each of their slots and each caller slot they
+  reach, whose address the call passed, but not the stores binding a
+  parameter to its argument right before the wrapper loop nor the copies
+  read from such a parameter, which the pin substitutes by value. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
   `shouldInline` compares with `getNumOperations`, less three operations
   every body holds there. Every body is placed as upstream's `inlineGeneratorCall`
   places it (the private `splice_region`): in a `loop` labelled

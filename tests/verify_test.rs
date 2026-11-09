@@ -58,6 +58,7 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
         callee_removed_args: Vec::new(),
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
+        fresh_splices: None,
     }
 }
 

@@ -1022,6 +1022,7 @@ mod tests {
             callee_removed_args: Vec::new(),
             removed_args: Vec::new(),
             lowered_calls: Vec::new(),
+            fresh_splices: None,
         }
     }
 
@@ -1308,6 +1309,7 @@ mod tests {
             var_tys: HashMap::from([(0, Ty::int())]),
             removed_args: vec![0],
             lowered_calls: Vec::new(),
+            fresh_splices: None,
             ..function_with(vec![Ty::int()])
         };
         let dropped = with(vec![MirInstr::DropVar {
@@ -1380,6 +1382,7 @@ mod tests {
             var_tys: HashMap::from([(0, Ty::int())]),
             removed_args: vec![0],
             lowered_calls: Vec::new(),
+            fresh_splices: None,
             callee_removed_args: snapshot,
             ..function_with(vec![Ty::int(), Ty::int()])
         };

@@ -740,6 +740,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     callee_removed_args: Vec::new(),
                     removed_args: Vec::new(),
                     lowered_calls: Vec::new(),
+                    fresh_splices: None,
                 },
             )],
             declarations: MirDeclarations::default(),

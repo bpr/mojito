@@ -183,15 +183,17 @@ use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst, CheckedRe
 use mojito_checked::declaration::{InlineLevel, SlotParameter};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
-use mojito_mir::mir::verify::{instruction_places, instruction_places_mut};
+use mojito_mir::mir::verify::{
+    instruction_places, instruction_places_mut, instruction_result_regs,
+};
 use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirClosureCapture,
-    MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace,
-    MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, RegisterEnds,
-    TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
+    Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel, MirBlock, MirCaptureAccess,
+    MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
+    MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame,
+    RegisterEnds, TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
     count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
     has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
     instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
@@ -265,9 +267,15 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// which this pass inlines into the body before measuring it, as the pin
 /// does, and the `GetIter` that starts compiler-private storage calls
 /// nothing.
+///
+/// The pin measures a callee right after splicing its own callees, before
+/// any cleanup, so the bodies spliced into `callee` since its last
+/// `mem-2-reg` ([`MirFunction::fresh_splices`]) are priced as they stand
+/// (the private `CostWalk`).
 pub fn inline_cost(callee: &MirFunction) -> usize {
-    let mut constants = BTreeSet::new();
-    blocks_cost(&callee.blocks, &mut constants)
+    let mut walk = CostWalk::new(&callee.blocks, callee.fresh_splices);
+    walk.allocas()
+        + walk.blocks(&callee.blocks, false)
         + LOOP_COST * structured_back_edges(&callee.blocks)
         + if callee.raises { RAISES_COST } else { 0 }
 }
@@ -342,6 +350,10 @@ pub fn inline_calls(
         owned,
         instances: RefCell::new(HashMap::new()),
     };
+    let unspliced = FreshSplices {
+        regs: inliner.function.n_regs,
+        vars: inliner.function.n_vars,
+    };
     let changed = inliner.block_list(&mut blocks);
     let dropped_operands = inliner.dropped_operands;
     function.blocks = blocks;
@@ -349,6 +361,7 @@ pub fn inline_calls(
         erase_removed_operands(function, declarations, &reads);
     }
     if changed {
+        function.fresh_splices.get_or_insert(unspliced);
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
         lower_copies_and_moves(function, &|name| declarations.function(name));
@@ -3565,65 +3578,6 @@ fn rebind_blocks<'b>(
     Some(())
 }
 
-/// The [`inline_cost`] of `blocks` and their regions but for their back
-/// edges, each constant of `constants` counted once.
-fn blocks_cost(blocks: &[MirBlock], constants: &mut BTreeSet<String>) -> usize {
-    blocks
-        .iter()
-        .map(|block| {
-            let mut loaded = Vec::new();
-            block
-                .instrs
-                .iter()
-                .map(|instruction| instruction_cost(instruction, constants, &mut loaded))
-                .sum::<usize>()
-        })
-        .sum()
-}
-
-/// What `instruction` and its regions cost toward [`inline_cost`], beside
-/// `loaded`, the places its block has read so far.
-fn instruction_cost<'i>(
-    instruction: &'i MirInstr,
-    constants: &mut BTreeSet<String>,
-    loaded: &mut Vec<&'i MirPlace>,
-) -> usize {
-    let regions = |constants: &mut BTreeSet<String>| {
-        instruction_regions(instruction)
-            .into_iter()
-            .map(|region| blocks_cost(region, constants))
-            .sum::<usize>()
-    };
-    match instruction {
-        MirInstr::Const { k, .. } => usize::from(constants.insert(format!("{k:?}"))),
-        MirInstr::UseVar { constructor, .. } => usize::from(constructor.is_some()),
-        MirInstr::DropVar { destructor, .. } | MirInstr::Drop { destructor, .. } => {
-            usize::from(destructor.is_some())
-        }
-        MirInstr::LoadPlace { place, .. } => {
-            loaded.push(place);
-            1 + address_cost(place)
-        }
-        MirInstr::Store { place, .. } => match address_cost(place) {
-            0 => 0,
-            _ if loaded.iter().any(|read| same_part(read, place)) => 1,
-            address => 1 + address,
-        },
-        MirInstr::DefVar { .. }
-        | MirInstr::DeclareVar { .. }
-        | MirInstr::KeepAlive { .. }
-        | MirInstr::ComptimeAssert { .. }
-        | MirInstr::GetIter { .. } => 0,
-        MirInstr::Try { .. } => TRY_COST + regions(constants),
-        MirInstr::If { elifs, .. } => 1 + elifs.len() + regions(constants),
-        MirInstr::Loop { .. }
-        | MirInstr::ComptimeIf { .. }
-        | MirInstr::ComptimeFor { .. }
-        | MirInstr::Match { .. } => regions(constants),
-        _ => 1,
-    }
-}
-
 /// The `struct.gep`s the pin computes `place`'s address with: one per
 /// projection, `rebind` reusing its operand's address.
 fn address_cost(place: &MirPlace) -> usize {
@@ -3632,6 +3586,241 @@ fn address_cost(place: &MirPlace) -> usize {
         .iter()
         .filter(|projection| !matches!(projection, Proj::Rebind))
         .count()
+}
+
+/// The walk [`inline_cost`] prices `blocks` with but for their back edges,
+/// each constant counted once.
+///
+/// The bodies spliced since the last `mem-2-reg` ([`FreshSplices`]) are
+/// priced as the pin measures them before its first round's passes clean
+/// them. Each of their wrapper loops costs one and so does each break
+/// leaving it, and what those passes would erase costs one in them too:
+/// each constant, `comptime assert`, and copy or drop running no code. So
+/// does their slot traffic: an alloca for each of their slots and for each
+/// slot of the caller they reach, whose address the call passed so that
+/// `mem-2-reg` kept it, and each whole read or write of such a slot,
+/// the caller's own included. The stores binding a parameter to an argument
+/// right before the wrapper loop, and the copies read from such a
+/// parameter, stay free: the pin substitutes the argument's value for the
+/// parameter, as its parser passes a register-passable argument.
+struct CostWalk {
+    constants: BTreeSet<String>,
+    fresh: Option<FreshSplices>,
+    /// The parameter slots bound to arguments.
+    bound: HashSet<VarId>,
+    /// The binding stores themselves.
+    bindings: HashSet<*const MirInstr>,
+    /// The slots whose traffic the pin has not promoted yet: the spliced
+    /// bodies' own but the bound ones, and the caller's they reach.
+    unpromoted: HashSet<VarId>,
+}
+
+impl CostWalk {
+    fn new(blocks: &[MirBlock], fresh: Option<FreshSplices>) -> Self {
+        let mut walk = Self {
+            constants: BTreeSet::new(),
+            fresh,
+            bound: HashSet::new(),
+            bindings: HashSet::new(),
+            unpromoted: HashSet::new(),
+        };
+        if let Some(fresh) = fresh {
+            walk.bindings = parameter_bindings(blocks, fresh, &mut walk.bound);
+            unpromoted_slots(blocks, fresh, false, &mut walk.unpromoted);
+            walk.unpromoted.retain(|var| !walk.bound.contains(var));
+        }
+        walk
+    }
+
+    /// The allocas of the slots the pin has not promoted yet.
+    fn allocas(&self) -> usize {
+        self.unpromoted.len()
+    }
+
+    /// The cost of `blocks` and their regions, which lie in a body spliced
+    /// since the last `mem-2-reg` when `spliced` holds.
+    fn blocks(&mut self, blocks: &[MirBlock], spliced: bool) -> usize {
+        blocks
+            .iter()
+            .map(|block| {
+                let mut loaded = Vec::new();
+                block
+                    .instrs
+                    .iter()
+                    .map(|instruction| self.instruction(instruction, spliced, &mut loaded))
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
+    /// What `instruction` and its regions cost, beside `loaded`, the places
+    /// its block has read so far.
+    fn instruction<'i>(
+        &mut self,
+        instruction: &'i MirInstr,
+        spliced: bool,
+        loaded: &mut Vec<&'i MirPlace>,
+    ) -> usize {
+        let unpromoted = |var: &VarId| self.unpromoted.contains(var);
+        let binding = self.bindings.contains(&std::ptr::from_ref(instruction));
+        let own = match instruction {
+            MirInstr::Const { k, .. } => {
+                usize::from(self.constants.insert(format!("{k:?}")) || spliced)
+            }
+            MirInstr::UseVar {
+                var, constructor, ..
+            } => usize::from(constructor.is_some() || unpromoted(var)),
+            MirInstr::DefVar { var, .. } => usize::from(!binding && unpromoted(var)),
+            MirInstr::DropVar { destructor, .. } | MirInstr::Drop { destructor, .. } => {
+                usize::from(destructor.is_some() || spliced)
+            }
+            MirInstr::LoadPlace { place, .. } => {
+                loaded.push(place);
+                1 + address_cost(place)
+            }
+            MirInstr::Store { place, .. } => match address_cost(place) {
+                0 => usize::from(unpromoted(&place.root)),
+                _ if loaded.iter().any(|read| same_part(read, place)) => 1,
+                address => 1 + address,
+            },
+            MirInstr::DeclareVar { .. } | MirInstr::KeepAlive { .. } | MirInstr::GetIter { .. } => {
+                0
+            }
+            MirInstr::ComptimeAssert { .. } => usize::from(spliced),
+            MirInstr::Try { .. } => TRY_COST,
+            MirInstr::If { elifs, .. } => 1 + elifs.len(),
+            MirInstr::Loop { body, .. }
+                if self
+                    .fresh
+                    .is_some_and(|fresh| is_fresh_wrapper(instruction, fresh)) =>
+            {
+                return 1 + wrapper_breaks(body) + self.blocks(body, true);
+            }
+            MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. }
+            | MirInstr::Match { .. } => 0,
+            _ => 1,
+        };
+        own + instruction_regions(instruction)
+            .into_iter()
+            .map(|region| self.blocks(region, spliced))
+            .sum::<usize>()
+    }
+}
+
+/// Gather into `slots` the slots of `blocks` the pin has not promoted
+/// since the last `mem-2-reg`: each a body spliced since names, and each of
+/// the caller's that such a body, inside its wrapper loop (`spliced`),
+/// names as a place or a slot.
+fn unpromoted_slots(
+    blocks: &[MirBlock],
+    fresh: FreshSplices,
+    spliced: bool,
+    slots: &mut HashSet<VarId>,
+) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let named = instruction_slots(instruction).into_iter().chain(
+            instruction_places(instruction)
+                .into_iter()
+                .map(|place| place.root),
+        );
+        slots.extend(named.filter(|var| spliced || fresh.var(*var)));
+        let inner = spliced || is_fresh_wrapper(instruction, fresh);
+        for region in instruction_regions(instruction) {
+            unpromoted_slots(region, fresh, inner, slots);
+        }
+    }
+}
+
+/// The stores of `blocks` binding a parameter of a body spliced since the
+/// last `mem-2-reg` to its argument, each in the run of slot stores right
+/// before that body's wrapper loop, their slots gathered into `bound`.
+fn parameter_bindings(
+    blocks: &[MirBlock],
+    fresh: FreshSplices,
+    bound: &mut HashSet<VarId>,
+) -> HashSet<*const MirInstr> {
+    let mut bindings = HashSet::new();
+    for block in blocks {
+        for (index, instruction) in block.instrs.iter().enumerate() {
+            if is_fresh_wrapper(instruction, fresh) {
+                for binding in block.instrs[..index].iter().rev() {
+                    let MirInstr::DefVar { var, .. } = binding else {
+                        break;
+                    };
+                    if !fresh.var(*var) {
+                        break;
+                    }
+                    bound.insert(*var);
+                    bindings.insert(std::ptr::from_ref(binding));
+                }
+            }
+            for region in instruction_regions(instruction) {
+                bindings.extend(parameter_bindings(region, fresh, bound));
+            }
+        }
+    }
+    bindings
+}
+
+/// Whether `instruction` is the wrapper loop of a body spliced since the
+/// last `mem-2-reg`: a loop labelled [`LoopLabel::INLINED_CF_SCOPE`] one
+/// of whose results, or whose first instruction, is that body's.
+fn is_fresh_wrapper(instruction: &MirInstr, fresh: FreshSplices) -> bool {
+    let MirInstr::Loop {
+        label: Some(LoopLabel::INLINED_CF_SCOPE),
+        results,
+        body,
+        ..
+    } = instruction
+    else {
+        return false;
+    };
+    results.iter().any(|reg| fresh.reg(*reg))
+        || body
+            .first()
+            .and_then(|block| block.instrs.first())
+            .is_some_and(|first| {
+                let mut defined = Vec::new();
+                instruction_result_regs(first, &mut defined);
+                defined.into_iter().any(|reg| fresh.reg(reg))
+                    || instruction_slots(first)
+                        .into_iter()
+                        .any(|var| fresh.var(var))
+            })
+}
+
+/// The breaks in `blocks`, a wrapper loop's body, that leave it: those
+/// labelled [`LoopLabel::INLINED_CF_SCOPE`] outside every wrapper loop it
+/// nests.
+fn wrapper_breaks(blocks: &[MirBlock]) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            usize::from(matches!(
+                block.term,
+                MirTerm::Break {
+                    label: Some(LoopLabel::INLINED_CF_SCOPE),
+                    ..
+                }
+            )) + block
+                .instrs
+                .iter()
+                .filter(|instruction| {
+                    !matches!(
+                        instruction,
+                        MirInstr::Loop {
+                            label: Some(LoopLabel::INLINED_CF_SCOPE),
+                            ..
+                        }
+                    )
+                })
+                .flat_map(instruction_regions)
+                .map(|region| wrapper_breaks(region))
+                .sum::<usize>()
+        })
+        .sum()
 }
 
 /// How many `continue`s of `blocks`, a structured body, are reached, each
@@ -4970,6 +5159,64 @@ mod tests {
             reg_types: HashMap::from([(0, Ty::bool())]),
             ..MirFunction::default()
         }
+    }
+
+    /// A body spliced since the last `mem-2-reg` is priced uncleaned, as
+    /// the pin measures it: its wrapper loop and break, its constant, an
+    /// alloca for the caller's slot it writes and each whole access of
+    /// that slot, the caller's own read included. Its parameter binding
+    /// and the copy read from the parameter stay free.
+    #[test]
+    fn fresh_splices_are_priced_uncleaned() {
+        let wrapper = MirInstr::Loop {
+            label: Some(LoopLabel::INLINED_CF_SCOPE),
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: vec![Reg(1)],
+            body: one(
+                vec![
+                    MirInstr::UseVar {
+                        dest: Reg(2),
+                        var: 1,
+                        mode: UseMode::Copy,
+                        constructor: None,
+                    },
+                    MirInstr::Const {
+                        dest: Reg(3),
+                        k: Const::Int(1),
+                    },
+                    MirInstr::Store {
+                        place: MirPlace::root(0, Some(Ty::int())),
+                        src: Reg(2),
+                    },
+                ],
+                MirTerm::Break {
+                    label: Some(LoopLabel::INLINED_CF_SCOPE),
+                    values: vec![Reg(3)],
+                },
+            ),
+        };
+        let mut function = body(one(
+            vec![
+                MirInstr::DefVar {
+                    var: 1,
+                    src: Reg(0),
+                    binding_ty: None,
+                    in_place: false,
+                },
+                wrapper,
+                MirInstr::UseVar {
+                    dest: Reg(4),
+                    var: 0,
+                    mode: UseMode::Copy,
+                    constructor: None,
+                },
+            ],
+            MirTerm::Return(None),
+        ));
+        assert_eq!(inline_cost(&function), 1);
+        function.fresh_splices = Some(FreshSplices { regs: 1, vars: 1 });
+        assert_eq!(inline_cost(&function), 6);
     }
 
     /// A structured body prices each loop its `continue`s resume as one
