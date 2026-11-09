@@ -4689,10 +4689,10 @@ fn declared_application(ty: &Ty) -> Option<(&String, &Vec<TyArg>)> {
 }
 
 /// Whether an operator on a receiver of `ty` calls its declared dunder: a
-/// struct's, a `SIMD` and a `StringLiteral` application's included. A
-/// numeric literal's operator stays the compiler's (R1969).
+/// struct's, a `SIMD`, a `StringLiteral`, and a numeric literal
+/// application's included.
 fn declared_operator_receiver(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_numeric_literal()
+    matches!(ty.kind(), TyKind::Struct(..))
 }
 
 /// The runtime pack of the type list `elements`, each substituted under

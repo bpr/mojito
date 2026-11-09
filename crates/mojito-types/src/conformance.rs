@@ -233,13 +233,13 @@ pub fn leaf_conforms(
 /// How the compiler-modelled type `ty` conforms to the library trait
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
-/// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`.
-/// The numeric literals list `Equatable` and `Comparable`, and `DType`
-/// lists `Equatable`.
+/// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`,
+/// and `DType` lists `Equatable`.
 ///
-/// The literal structs list `Boolable`; the numeric literals `Intable`;
-/// `FloatLiteral` `Floatable`; `IntLiteral` `Indexer`; none lists
-/// `Identifiable`. `SIMD`'s `Boolable`, `Comparable`, `Equatable`,
+/// `StringLiteral` lists `Boolable` and a `Pointer` `Intable`; none lists
+/// `Identifiable`. A numeric literal answers every trait as its declared
+/// `IntLiteral` or `FloatLiteral` struct lists it, which the checker and
+/// the elaborator read instead. `SIMD`'s `Boolable`, `Comparable`, `Equatable`,
 /// `Intable`, `Indexer`, and `Sized` are its declaration's in `std.simd`,
 /// and `Bool`'s `Boolable`, `Comparable`, `Defaultable`, `Equatable`,
 /// `Floatable`, `Hashable`, and `Intable` its declaration's in
@@ -247,10 +247,7 @@ pub fn leaf_conforms(
 ///
 /// `SIMD` lists every `std.math` operation trait; its `Absable`,
 /// `Ceilable`, `Floorable`, `Roundable`, and `Truncable` are its
-/// declaration's, as are its `DivModable` and `CeilDivable`, and
-/// `IntLiteral` lists `Ceilable`, `Floorable`, and
-/// `Truncable`. A numeric literal answers `DivModable` and `CeilDivable`
-/// through the type it materializes to.
+/// declaration's, as are its `DivModable` and `CeilDivable`.
 ///
 /// `StringLiteral` and `DType` list `Hashable`; none lists `Hasher`.
 ///
@@ -278,15 +275,10 @@ pub fn modelled_conformance(
         .strip_prefix("__module$std$math$math$")
         .unwrap_or(trait_name)
     {
-        "Boolable" => ty.is_string_literal() || ty.is_numeric_literal(),
-        "Intable" => ty.is_numeric_literal() || matches!(ty.kind(), TyKind::Pointer { .. }),
-        "Floatable" => ty.is_float_literal(),
-        "Indexer" => ty.is_int_literal(),
-        "Equatable" => ty.is_numeric_literal(),
-        "Comparable" => ty.is_numeric_literal(),
-        "Ceilable" | "Floorable" | "Truncable" => ty.is_int_literal(),
-        "Absable" | "Roundable" => false,
-        "Hashable" => false,
+        "Boolable" => ty.is_string_literal(),
+        "Intable" => matches!(ty.kind(), TyKind::Pointer { .. }),
+        "Floatable" | "Indexer" | "Equatable" | "Comparable" | "Ceilable" | "Floorable"
+        | "Truncable" | "Absable" | "Roundable" | "Hashable" => false,
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 return every(items, trait_name, element);

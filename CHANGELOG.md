@@ -152,6 +152,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A numeric literal answers every trait as its declared `IntLiteral` or
+  `FloatLiteral` struct lists it, in the checker and the elaborator: neither
+  is `Equatable` or `Comparable` any more, as at the pin. The elaborator
+  dispatches a literal operator to its declared dunder, and a literal pair
+  no dunder takes materializes its left operand, so `2 < 2.5`, `2 == 2.0`,
+  `7 // 2.5`, and `7 % 2.5` are rejected as at the pin (R1969).
+
 - A numeric literal's construction and copy are its declared struct's:
   the elaborator declares the field-less `IntLiteral`/`FloatLiteral` as
   any generic struct, so `IntLiteral[v]()`, `Self()`, `{}`, and a generic

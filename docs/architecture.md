@@ -2233,9 +2233,12 @@ are the declared struct's: the elaborator declares the field-less
 application (`declared_application`), so `MirDeclarations::struct_instance`
 reads it at its value, `IntLiteral[v]()` and `T()` call the declared
 `__init__(out self)`, and a `struct.create` of it is the VM's empty literal
-struct and Pliron's erased register. Its operators and conformances are
-still the compiler's rules, so `as_non_simd_struct` and the elaborator's
-`declared_operator_receiver` leave it out (R1969).
+struct and Pliron's erased register. Its conformances are the declared
+lists (`Checker::conformance`'s literal arm, the elaborator's
+`type_conforms`), and the elaborator dispatches its operators to the
+declared dunders (`declared_operator_receiver`). `as_non_simd_struct`
+still leaves it out (R2064), and the checker's literal rule types the
+operators whose dunders are not ported yet (R1784, R1853, R1854).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`

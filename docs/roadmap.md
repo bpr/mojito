@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2064**.
+Next free ID: **R2065**.
 
 ## Ordered Work
 
@@ -2835,11 +2835,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     case of `Checker::literal_rule` (`checker/operators.rs`).
   - Probe: `print(2 + 2.5, 1 / 2.0, 3 - 0.5, (2.5).__radd__(1.0))` prints
     `4.5 0.5 2.5 3.5` at the pin.
-  - Probe: `print(7 // 2.5)` and `print(7 % 2.5)` fail at the pin with
-    "constraint failed: the SIMD type must be floating point", since no
-    reflected `//` or `%` takes an `IntLiteral` and both operands
-    materialize to `Int`; Mojito's literal rule types them
-    `FloatLiteral[2]` and prints `2.0`.
   - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -3661,6 +3656,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `__mul__` over `rhs: FloatLiteral` and its `__truediv__`, each typed
     `type_of(FloatLiteral(self) OP rhs)`. That deletes the `Div` arm of the
     literal rule in `Checker::infer_infix` for an `IntLiteral` pair.
+  - The parameter folder's `IntLiteral`-left/`FloatLiteral`-right arm
+    (`param_expr::fold::fold_infix`, `+ - * /` only) stands for the same
+    overloads and goes with them.
   - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6823,29 +6821,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1968 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1969 A numeric literal's operators and conformances are compiler
-  rules, where upstream's are `IntLiteral`'s declared dunders and
-  conformance list**
-
-  `TyKind::as_non_simd_struct` and the elaborator's
-  `declared_operator_receiver` (`mono/specializer.rs`) exclude a numeric
-  literal application, so no declared-struct rule reaches it.
-  - The checker's literal rule (`Checker::literal_rule_type`,
-    `operators.rs`) types `/`, unary `-`/`~`, and a mixed
-    `IntLiteral`/`FloatLiteral` pair instead of the declared dunders.
-  - `conformance::modelled_conformance` answers a literal's traits by
-    name: it calls a literal `Comparable` and `Equatable`, which the
-    declared structs do not list.
-  - `scalar_declares_math_trait` (`method_calls/resolution.rs`) answers
-    `Ceilable`/`Floorable`/`Truncable` by name too.
-  - Done when those exclusions and arms are gone and a literal's
-    operators resolve through `infer_literal_operator` alone.
-  - Probe: `print(2 ** 10, -(3), ~5, 1 / 2)` keeps printing
-    `1024 -3 -6 0.5`, through the declared dunders.
-  - Found while landing R1851 (2026-11-06).
-  - Depends on R1855 for the declared `__pow__`.
-  - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
   exponential in its depth**
@@ -10892,6 +10867,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StringLiteral[#pop.string_concat<…>]`, as upstream's does.
   - Do not re-add a literal check at one of the call sites without naming
     the upstream rule it encodes.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2064 `TyKind::as_non_simd_struct` excludes a numeric literal
+  application, so the struct rules never see it**
+
+  `as_non_simd_struct` (`mojito-types/src/types.rs`) answers `None` for an
+  `IntLiteral[v]`/`FloatLiteral[v]`, where upstream's literal is an
+  ordinary struct.
+  - Its conformances (`Checker::conformance`, the elaborator's
+    `type_conforms`) and operator dispatch (`declared_operator_receiver`)
+    already read the declared struct through their own literal arms.
+  - Probe: with `&& !self.is_numeric_literal()` deleted, the bundled
+    library fails to package ("invalid call to '_shuffle_list': no
+    overload matches the supplied arguments", `stdlib/std/simd.mojo`'s
+    `StaticTuple[SIMDLength, …]` mask parameter), so every program fails.
+  - Lever: find which `as_non_simd_struct`/`is_non_simd_struct` reader
+    mistakes an `IntLiteral` argument for a run-time struct during
+    packaging, starting with overload matching for a `StaticTuple` value
+    parameter, then fold the literal arms above into the struct arm.
+  - Do not re-add a literal check at one of the call sites without naming
+    the upstream rule it encodes, as R1972 says.
+  - Found while landing R1969 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

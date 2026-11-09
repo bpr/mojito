@@ -142,7 +142,15 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
         (CtValue::IntLiteral(a), CtValue::Index(b)) => {
             fold_int(op, machine_int(a)?, *b).map(CtValue::Index)
         }
-        (CtValue::IntLiteral(a), CtValue::FloatLiteral(b)) => {
+        // `IntLiteral` takes a `FloatLiteral` right operand only under its
+        // `+ - * /` overloads; any other operator materializes the left
+        // literal, which no literal fold stands for.
+        (CtValue::IntLiteral(a), CtValue::FloatLiteral(b))
+            if matches!(
+                op,
+                InfixOp::Add | InfixOp::Sub | InfixOp::Mul | InfixOp::Div
+            ) =>
+        {
             fold_float_literal(op, &FloatLiteral::from_int(a), b).map(CtValue::FloatLiteral)
         }
         (CtValue::FloatLiteral(a), CtValue::IntLiteral(b)) => {

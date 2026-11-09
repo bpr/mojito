@@ -1206,9 +1206,8 @@ impl TyKind {
     /// rather than matching [`TyKind::Struct`], since `SIMD`'s copies and
     /// lanes are still the compiler's own rules (R1575), a string literal's
     /// construction and member table are still the compiler's (R1972), and a
-    /// numeric literal's operators, conformances, and materialization are
-    /// still the compiler's (R1969), though each application is the
-    /// declared struct.
+    /// numeric literal's materialization is still the compiler's (R2064),
+    /// though each application is the declared struct.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
             Self::Struct(name, arguments)

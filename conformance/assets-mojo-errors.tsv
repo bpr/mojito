@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1133
+# swept-count	1136
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -570,7 +570,9 @@ assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error:
 assets/type_error/instance_method_value_ref_self.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/int_conversion_undeclared_raising.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/int_literal_floordiv_float_literal.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'
+assets/type_error/int_literal_lt_float_literal.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/int_literal_parameter_attribute_type.mojo	compile-reject	agree	error: 'IntLiteral' parameter 'value' has '__mlir_type.`!pop.int_literal`' type, but value has type 'IntLiteral[4]'
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/int_literal_receiver_len.mojo	compile-reject	agree	error: 'IntLiteral[5]' value has no attribute '__len__'
@@ -621,6 +623,7 @@ assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	e
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
 assets/type_error/literal_left_comparison_uint.mojo	compile-reject	agree	error: no matching method in call to '__lt__'
 assets/type_error/literal_pow_simd_exponent.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/literal_type_not_equatable.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'T' has 'Equatable' type, but value has type 'AnyStruct[IntLiteral[3]]'
 assets/type_error/literal_undeclared_dunder.mojo	compile-reject	agree	error: 'IntLiteral[2]' value has no attribute '__abs__'
 assets/type_error/llvm_intrinsic_bswap_odd_bytes.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_deinterleave_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed

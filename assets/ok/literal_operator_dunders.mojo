@@ -1,7 +1,8 @@
 # `IntLiteral` and `FloatLiteral` declare their operator and comparison
 # dunders, so a literal receiver's explicit dunder call resolves, and an
 # operator over two literals is the declared dunder, whose type carries the
-# value its `#pop<int_literal_bin>` attribute folds.
+# value its `#pop<int_literal_bin>` attribute folds. A `FloatLiteral` left
+# operand's dunder takes an `IntLiteral` right one converted.
 def main():
     comptime N = 4
     print((2).__add__(3), (2).__floordiv__(3), (2).__lt__(3), N.__add__(3))
@@ -13,6 +14,7 @@ def main():
     print((0).__bool__(), (3).__bool__(), (0.0).__bool__(), (2.5).__bool__())
     print(2 + 3, 7 // 2, 7 % 3, 1 << 3, 2 < 3, 2 != 3, 5 - 9, 12 & 10)
     print(2.5 + 1.0, 7.0 / 2.0, 2.5 + 2, 7.5 % 2.0, 2.5 >= 2, N + 1, N * N)
+    print(2.5 > 2, 2.0 == 2, 2.5 // 2, 2.5 % 2, 2 + 2.5, 1 / 2)
     var x: type_of(2 + 3) = {}
     var y: type_of(2.5 % 2) = {}
     var z: type_of(N * N) = {}

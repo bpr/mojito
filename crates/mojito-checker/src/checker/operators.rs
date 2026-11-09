@@ -351,6 +351,20 @@ impl Checker {
         if let Some(ty) = self.literal_rule(op, &lt, &rt)? {
             return Ok(ty);
         }
+        // A literal pair no dunder takes (`2 < 2.5`, `7 // 2.5`) materializes
+        // its left operand to its default type and calls that type's dunder,
+        // as upstream's `emitBinOpCall` does once neither the left dunder nor
+        // the reflected one (a comparison has none) applies.
+        if let Some(span) = &span
+            && numeric_literals(&lt, &rt)
+            && self.structs.contains_key("SIMD")
+        {
+            let receiver = mojito_types::types::default_literal(&lt);
+            self.record_literal_materializations(left, &lt, &receiver)?;
+            return self
+                .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
+                .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
+        }
         let result = match op {
             // Two literals concatenate through `StringLiteral.__add__`, except
             // in an unlinked program (a phase test's), whose two texts
@@ -364,7 +378,7 @@ impl Checker {
             // `%` and `/` over concrete operands keep their common type.
             Mod | Div => common,
             // Ordering between numbers.
-            Lt | Gt | Le | Ge if common.is_some() || numeric_literals(&lt, &rt) => Some(Ty::bool()),
+            Lt | Gt | Le | Ge if common.is_some() => Some(Ty::bool()),
             // Equality: between numbers (any common type), or equal non-numeric
             // scalars (`None`, and a `Bool` in an unlinked program, which
             // declares no `Bool`). A string literal compares through
@@ -372,7 +386,6 @@ impl Checker {
             // phase test's), which declares none.
             Eq | Ne
                 if common.is_some()
-                    || numeric_literals(&lt, &rt)
                     || (lt == rt && is_scalar(&lt) && !lt.is_string_literal())
                     || (lt.is_string_literal()
                         && rt.is_string_literal()
@@ -781,25 +794,21 @@ impl Checker {
     }
 
     /// The literal rule's type of `op` over two numeric literals, for an
-    /// operator neither literal's declared dunder took: the literal its
-    /// missing dunder's signature computes, through
-    /// [`Self::literal_rule_type`]. `None` for any other operands, and for
-    /// a comparison, which is a `Bool` below.
+    /// operator whose upstream `IntLiteral` dunder the bundled library does
+    /// not declare yet: the literal that dunder's signature computes,
+    /// through [`Self::literal_rule_type`]. `IntLiteral.__truediv__` (`/`)
+    /// and the `FloatLiteral`-taking `+ - *` overloads are R1784's, the
+    /// reflected `FloatLiteral.__radd__`… R1854's. `None` for any other
+    /// operator or operands, which the declared dunders and the left
+    /// operand's materialization answer.
     fn literal_rule(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Option<Ty>, TypeError> {
-        use InfixOp::{Add, BitAnd, BitOr, BitXor, Div, FloorDiv, Mod, Mul, Shl, Shr, Sub};
-        if !numeric_literals(lt, rt) {
+        use InfixOp::{Add, Div, Mul, Sub};
+        if !numeric_literals(lt, rt) || !lt.is_int_literal() {
             return Ok(None);
         }
-        let float = lt.is_float_literal() || rt.is_float_literal();
         match op {
-            Add | Sub | Mul | FloorDiv | Div => self.literal_rule_type(op, lt, rt).map(Some),
-            // `FloatLiteral.__mod__` is `type_of(self - (self // rhs) * rhs)`.
-            Mod if float => {
-                let quotient = self.literal_rule_type(FloorDiv, lt, rt)?;
-                let product = self.literal_rule_type(Mul, &quotient, rt)?;
-                self.literal_rule_type(Sub, lt, &product).map(Some)
-            }
-            Mod | Shl | Shr | BitAnd | BitOr | BitXor if !float => {
+            Div => self.literal_rule_type(op, lt, rt).map(Some),
+            Add | Sub | Mul if rt.is_float_literal() => {
                 self.literal_rule_type(op, lt, rt).map(Some)
             }
             _ => Ok(None),
