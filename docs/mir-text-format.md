@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.107
+# Mojito Textual MIR Format, Version 1.183
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.107 is implemented end to end for inspection and loading: canonical
+Version 1.183 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -1885,8 +1885,10 @@ read back, a pack element and a reflection query included.
 The complete `Ty` tag set is:
 
 ```text
-Int UInt Bool Float64 None Never Infer
-Self
+Int UInt Bool Float64
+None Never Infer Self
+TypeType KgenString PopIntLiteral PopFloatLiteral KgenDeferred KgenTarget
+index i1 ui8 kgen_dtype
 func { environment, params, names, return_type, required, variadic,
        kw_variadic, positional_only, keyword_only, raises, error_type,
        conventions, ref_params, ref_return, transfers }
@@ -1894,13 +1896,16 @@ generic_func { environment, param_decls, params, names, return_type, required,
                variadic, kw_variadic, positional_only, keyword_only, raises,
                error_type, conventions, ref_params, ref_return, transfers }
 overload([type...])
+generator { params, result }
 param { owner, slot, name, bounds, callable_bound }
 assoc { base, member, arguments }
 dependent_parameter(param-expr)
 struct_type { name, arguments }
 simd { dtype, width }
 kgen_simd { dtype, width }
-comptime_list(type) param_list(type) tuple([type...]) runtime_pack([type...])
+kgen_address_simd { width }
+comptime_list(type) param_list(type) any_trait([trait...]) trait_type([trait...])
+tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
 kgen_pointer { element }
@@ -1908,6 +1913,12 @@ lit_ref { element, origin }
 lit_ref_pack { elements, origin }
 ref { referent, origin, mutability }
 ```
+
+`Int`, `UInt`, `Bool`, and `Float64` are not types of their own: they are
+the compact spellings of the library structs `SIMD[DType.int, 1]`,
+`SIMD[DType.uint, 1]`, `Bool`, and `SIMD[DType.float64, 1]`, and any other
+`SIMD` application keeps the compact `simd { dtype, width }` record. Every
+other library struct is a `struct_type`.
 
 `TyArg` tags are `type_arg`, `value_arg`, and `origin_arg`. DTypes and all AST
 operators/conventions use their lowercase source-independent enum names;

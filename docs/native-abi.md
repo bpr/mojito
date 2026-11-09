@@ -414,24 +414,26 @@ order layout rule above matching glibc's x86-64 `struct stat`.
 
 ## Output
 
+`print` is the bundled library function, compiled like any other code: it
+writes each argument's display text, `sep` between arguments, and `end`
+into a `_FlushingWriteBuffer` (4096 bytes, `std.format._utils`) and flushes
+it through its `RawFileDescriptor`'s `write_bytes`, an
+`external_call["write"]` to libc `write(fd, data, len)` that aborts on a
+short write. The VM runs the same instances, so print parity is structural:
+there is one implementation of the join and of every value's display text,
+not a matched pair. A `SIMD` value's text comes from its declared
+`write_to`/`write_repr_to`; `mjrt_fmt_f64`, behind `_write_float`'s staged
+leaf, still produces the VM's float text (Rust's `{:?}` shortest round
+trip — `3.0`, `1e300`, `NaN`, `inf`). A program's own `write(1, ...)`
+through `external_call` and `print`'s flushes are both unbuffered syscalls in
+program order, so they interleave as on the VM, which appends both to its
+captured stdout in the same order. `print(file=)` changes only the
+descriptor; `flush` is a no-op.
+
 `mjrt_write_stdout(data, len)` writes exactly the given bytes (interrupt
-retries included) and traps on failure — byte-exact output parity with the VM
-is the differential contract. A `SIMD` value's display text comes from its
-declared `write_to`/`write_repr_to` instances, which the VM runs too, so
-there is one implementation rather than a matched pair; `mjrt_fmt_f64`,
-behind `_write_float`'s staged leaf, still produces the VM's float text (Rust's `{:?}` shortest
-round trip — `3.0`, `1e300`, `NaN`, `inf`). Print parity is therefore
-structural rather than re-implemented: `print` lowers to one write per piece — each
-argument's display bytes, a single `" "` between arguments, and a trailing
-`"\n"` — composing the VM's `print` join byte-for-byte. A program's
-own `write(1, ...)` through `external_call` is an unbuffered syscall and
-`mjrt_write_stdout` flushes per call, so the two interleave in program
-order — the VM appends both to its captured stdout in the same order.
-`print(sep=, end=, flush=, file=)` writes `sep` and `end` bytes like
-arguments; with `file=`, every piece of that call goes through libc
-`write(fd, data, len)` on the `RawFileDescriptor`'s value instead of
-`mjrt_write_stdout` (`flush` is a no-op). No runtime symbol or ABI version
-changes for it.
+retries included) and traps (category 4) on failure. Generated code calls it
+only for `input`'s prompt, which it writes before `mjrt_read_line` so the
+prompt lands first even when stdout is piped.
 
 ## The runtime library
 
@@ -452,7 +454,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_free(ptr)` | Consumes any live nonzero `mjrt_alloc` allocation; null and zero-size sentinels are no-ops; a repeated free traps (category 10). |
 | `mjrt_pointer_status(ptr) -> u32` | Borrows pointer identity; returns 0 for live/ordinary, 1 for a dangling sentinel, and 2 for an address within a freed allocation. Generated dereferences map those states to categories 8 and 9. |
 | `mjrt_dealloc(ptr, size, align)` | Consumes a live nonzero `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null and zero-size sentinels are no-ops; a repeated deallocation traps (category 10). |
-| `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
+| `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. Generated code calls it only for `input`'s prompt; `print` writes through libc `write`. |
 | `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. **Unused by generated code** since integer display moved to the stdlib's Mojo bodies; the rows stay until the next `MJRT_ABI_VERSION` bump retires them. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
 | `mjrt_repr_string(data, len, out) -> u64` | Borrows `data` and `out` (≥ `2 * len + 2` bytes); returns the VM's single-quoted, escaped string repr; no NUL. **Unused by generated code** since `repr` of a String moved to the compiled `String.write_repr_to`; the row stays until the next `MJRT_ABI_VERSION` bump retires it. |

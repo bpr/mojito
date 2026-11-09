@@ -59,6 +59,7 @@ def listdir[PathLike: stdPathLike](path: PathLike) raises -> List[String]:
     return dir.list()
 
 
+@inline(.always)
 def _abort_base() -> Never:
     __mlir_op.`llvm.intr.trap`()
 
@@ -67,12 +68,22 @@ def _abort_base() -> Never:
         pass
 
 
+# Upstream's, except that it omits the `CurrentPlugin.abort_fn()` hook
+# call ahead of the trap, as `std._plugin` omits the hook (R1698).
+@inline(.always)
+def abort() -> Never:
+    """Terminates execution, using a target dependent trap instruction if
+    available.
+    """
+
+    _abort_base()
+
+
 # Mojito's abort: an uncatchable trap carrying the message, returning
 # `Never` as upstream's does, so a call to it ends its path. It differs
-# from upstream's in lacking the `prefix` and `location` parameters, the
-# `TString` overload, and the no-argument `abort()`, and in trapping
-# through the compiler crossing `_mojito_abort` rather than reporting and
-# then calling `_abort_base()` (R1980).
+# from upstream's in lacking the `prefix` and `location` parameters and
+# the `TString` overload, and in trapping through the compiler crossing
+# `_mojito_abort` rather than reporting and then calling `_abort_base()`.
 @inline(.always)
 def abort(message: String) -> Never:
     _mojito_abort(message)

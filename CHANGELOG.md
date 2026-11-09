@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.os` bundles upstream's no-argument `abort() -> Never`, which traps
+  through `_abort_base()` (R1980). `mojito run` on the VM now prints the
+  output a program wrote before a runtime error, as the native run and
+  `mojo run` do, so a failed safe `debug_assert` shows the pin's `At:`
+  line on both backends; `Compiler::execute_keeping_output` returns that
+  output with the error.
+
 - ``__mlir_op.`llvm.intr.trap`()`` and `llvm_intrinsic["llvm.trap", NoneType]()`
   trap uncatchably, as at the pin: the VM reports `abort: trap`, the native
   program executes LLVM's trap, and compile-time evaluation reaching it

@@ -281,10 +281,11 @@ point, as upstream's toolchain does.
 - `std/os/` — upstream's `os` package subset: `os.mojo` (`sep`, `SEEK_*`,
   `listdir` over a private `opendir`/`readdir` stream read as glibc `dirent`
   bytes, `mkdir`/`makedirs`, `remove`/`unlink`, `rmdir`/`removedirs`, and
+  upstream's no-argument `abort() -> Never`, and
   `abort(message)` — the uncatchable trap crossing to the VM through the
   compiler-private `_mojito_abort` primitive, which stdlib-internal trap sites
   call directly to avoid import cycles, and upstream's `_abort_base() -> Never`
-  over ``__mlir_op.`llvm.intr.trap`()``, which the `paramfor_*` stubs call),
+  over ``__mlir_op.`llvm.intr.trap`()``, which `abort()` and the `paramfor_*` stubs call),
   `env.mojo` (`getenv`/`setenv`/
   `unsetenv`), `pathlike.mojo` (re-exports the `PathLike` trait declared beside
   `String`), `_linux_x86.mojo` (the scalar-only `_c_stat` record glibc's

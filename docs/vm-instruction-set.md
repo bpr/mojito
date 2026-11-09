@@ -104,7 +104,7 @@ accessed; the compact notation omits this analysis-only field.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `call` | `Call` | Call a free function, constructor, or builtin |
-| `closure.make` | `MakeClosure` | Materialize a lifted function's checked capture environment |
+| `closure.make` | `MakeClosure` | Make a function value of a capture-free lifted function |
 | `call.indirect` | `CallIndirect` | Invoke a function, closure, or nominal callable value |
 | `call.method` | `MethodCall` | Invoke a method on a receiver |
 
@@ -128,6 +128,9 @@ accessed; the compact notation omits this analysis-only field.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `tuple.make` | `MakeTuple` | Construct compiler-private heterogeneous pack storage |
+| `array.create` | `MakeArray` | Build a `!pop.array` from one register per element |
+| `array.repeat` | `ArrayRepeat` | Build a `!pop.array` holding one value in every element |
+| `lit.ref.pack.create` | `MakeRefPack` | Build a `!lit.ref.pack` from one reference per element |
 | `variant.make` | `MakeVariant` | Construct a checked tagged-union alternative, moving its payload in |
 | `variant.is` | `VariantIs` | Test a checker-selected Variant tag |
 | `variant.get` | `VariantGet` | Project a checked Variant alternative |
@@ -408,29 +411,37 @@ All binary operations have the form:
 opcode %dest, %left, %right
 ```
 
-| Mnemonic | Source operation | Struct dispatch |
-|---|---|---|
-| `add` | `a + b` | `a.__add__(b)` |
-| `sub` | `a - b` | `a.__sub__(b)` |
-| `mul` | `a * b` | `a.__mul__(b)` |
-| `div` | `a / b` (`pop.div`: integer operands truncate toward zero and trap on a zero divisor) | `a.__truediv__(b)` |
-| `floor_div` | `a // b` | `a.__floordiv__(b)` |
-| `mod` | `a % b` | `a.__mod__(b)` |
-| `pow` | `a ** b` | `a.__pow__(b)` |
-| `eq` | `a == b` | `a.__eq__(b)` |
-| `ne` | `a != b` | `a.__ne__(b)` |
-| `lt` | `a < b` | `a.__lt__(b)` |
-| `gt` | `a > b` | `a.__gt__(b)` |
-| `le` | `a <= b` | `a.__le__(b)` |
-| `ge` | `a >= b` | `a.__ge__(b)` |
-| `and` | `a and b` | no dunder dispatch |
-| `or` | `a or b` | no dunder dispatch |
-| `in` | `a in b` | `b.__contains__(a)` |
-| `not_in` | `a not in b` | negated `b.__contains__(a)` |
+| Mnemonic | Operation |
+|---|---|
+| `add` | `+` |
+| `sub` | `-` |
+| `mul` | `*` |
+| `div` | `/` (`pop.div`: integer operands truncate toward zero and trap on a zero divisor) |
+| `floor_div` | `//` |
+| `mod` | `%` |
+| `pow` | `**` |
+| `eq` | `==` |
+| `ne` | `!=` |
+| `lt` | `<` |
+| `gt` | `>` |
+| `le` | `<=` |
+| `ge` | `>=` |
+| `and` | `and` |
+| `or` | `or` |
+| `in` | membership |
+| `not_in` | negated membership |
 
-Primitive values are handled by the shared runtime arithmetic implementation.
-For most operators, a struct in the left operand dispatches to its corresponding
-dunder method. Membership dispatches on the right operand.
+A source operator is not a `binary` instruction. MIR lowering makes every
+operator a `call.method` of its dunder (`a + b` calls `a.__add__(b)`,
+`x in c` calls `c.__contains__(x)`), or, inside a generic body, a call of
+the bound's requirement, which elaboration folds to the member. That holds
+for `Int`, `Float64`, and `Bool`, which are library structs. A `binary`
+instruction is the `pop` arithmetic or comparison those library bodies
+apply to raw `!kgen.simd` or `i1` storage, and the shared runtime arithmetic
+executes it. The VM still dispatches a `binary` whose left operand (or, for
+membership, right operand) is a struct to that dunder, honoring the
+instruction's checker-selected `resolved` symbol, but lowering no longer
+produces one for source operators.
 
 Short-circuit evaluation of source `and` and `or` is normally expressed through
 control flow before MIR execution. The binary opcode remains part of the
@@ -489,31 +500,26 @@ the complete collector rather than issuing projected moves for its elements.
 Keyword/default tail arguments remain ordinary named slots. Multiple spreads
 and explicit positional overflow after the spread are rejected before MIR.
 
-### `closure.make` — Materialize Closure Environment
+### `closure.make` — Function Value of a Nested Body
 
 ```text
-closure.make %dest, @outer$middle$inner, [$x: imm, $y: mut, $z: var]
+closure.make %dest, @outer$helper, []
 ```
 
-Builds a non-escaping closure value for a recursively lifted MIR function. The
-compact spelling shows source capture conventions; the structured instruction
-contains the checker-resolved owner place, exact storage type, and storage mode
-for every environment slot. Lifted capture parameters carry those concrete
-types even when a capture is used only by a descendant or is explicitly unused.
-`imm`, `mut`, and `ref` slots retain frame/slot handles, `var` slots copy their
-value, and moved slots transfer it. Materialization occurs at a first-class
-use of the nested `def` (a function value passed or stored, a type
-application), or when the declaration executes for a body that copies or
-moves a capture or that a sibling captures, so an owned snapshot is
-independent of later outer assignment and a moved outer binding is
-unavailable immediately; a call by name is a direct `call` of the lifted
-function passing the captured places as its leading arguments and makes no
-closure. A retained
-reference handle does not by itself establish a declaration-to-call loan; its
-access convention is enforced when the closure is used. The verifier checks each
-capture place and the lifted function's leading environment slots. A captured
-sibling slot contains its already materialized closure; it is not reconstructed
-from or expanded into the sibling's transitive captures.
+Makes a function value of a lifted nested function that captures nothing,
+upstream's `kgen.create_closure` of a capture-free body. A capture-list
+closure never reaches this instruction: the check declares its `__storage`
+struct, whose fields are references to the captured places and whose
+methods are the body (called by name) and `__call__` (called through a
+callable bound), and the closure's value is that struct, built by its
+`__init__` and called through `call.method`. A call of a nested `def` by name
+is a direct `call` of the lifted function.
+
+The instruction still carries a capture list, each `closure_capture { place }`
+a reference to a captured place that the lifted body would take as a leading
+reference parameter, but no accepted program builds a capturing
+`closure.make` (R1946). A closure value owns nothing, so it has no
+destructor.
 
 ### `call.indirect` — Callable Value
 

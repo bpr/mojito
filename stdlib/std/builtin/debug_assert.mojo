@@ -1,12 +1,13 @@
 # Upstream's `std/builtin/debug_assert.mojo`, verbatim, except:
 # - `_debug_assert_fail_format` writes into a `String` rather than the
-#   unbundled `_FixedWriteBuffer` (R1980), and passes the `String`'s own
+#   unbundled `_FixedWriteBuffer` (R2061), and passes the `String`'s own
 #   pointer, since one read through its `as_bytes()` span does not keep it
 #   alive through the call (R1155).
 # - `_debug_assert_msg` omits the `CurrentPlugin._handles_debug_assert`
 #   arm (R1698). Its fallback prints `At: <location>: Assert Error:
-#   <message>` through `print` rather than `_printf`, and traps through
-#   the bundled `abort(message)` rather than `abort()` (R1980).
+#   <message>` through `print` rather than the unbundled `_printf`
+#   (R2060), and traps through `abort(message)` rather than `abort()`
+#   (R2061).
 """Implements run-time assertions.
 
 These are Mojo built-ins, so you don't need to import them.

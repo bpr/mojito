@@ -441,8 +441,11 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
     let execution = {
         let _backend_span = mojito::timing::span("backend");
         compiler
-            .execute(&compiled)
-            .map_err(|error| error.to_string())?
+            .execute_keeping_output(&compiled)
+            .map_err(|failure| {
+                print!("{}", failure.output);
+                failure.error.to_string()
+            })?
     };
     if !execution.output.is_empty() {
         print!("{}", execution.output);

@@ -10,7 +10,7 @@ The next step is always at the top. Finished steps are deleted;
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R1933`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R2005`. Every command runs on
 Opus. `--plan-fable-on-opus` gives a plan pass to every entry whose
 `Model:` bullet says Fable, `Planned` or not. `--task` runs an entry after
 its open prerequisites. `--only` runs exactly the entries named. A single
@@ -30,13 +30,17 @@ and 11-04 (*Measure*), so the size steps still matter.
    R1544, R1882, R1280), and so are `write_string` (R1938) and the hash
    leaves, which only a dead `Variant` storage shape kept (R2010): the
    type-reached member list is gone. Left:
-   - A call through a `def(...)` bound is still a `call.indirect`: R1933.
+   - A call through a monomorphic `def(...)` bound is the bound's
+     `__call__` requirement call (R1933). A call through a generic
+     `def[...]` bound is still a `call.indirect` (R2005), and so is a call
+     of closure storage bound to a local, which the elaborator
+     devirtualizes (R2003).
    - The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
      filed. Their first piece landed with R1832: the synthesized `copy` is
      upstream's `Self(copy=self)` for every struct.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1933 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R2005 --only R2003 -n 0
    ```
 
 2. **Gap D′ is finished**: R1932 (11-08) made the verifier reject an
@@ -122,7 +126,8 @@ and 11-04 (*Measure*), so the size steps still matter.
   arguments), R695 after it, R1415 (fieldwise keywords), and R1416
   (hand-written MIR).
 - Gap D′'s verifier rule is whole (R1932, 11-08).
-- Gap F has its `def(...)` bound calls left (step 1, R1933). Gaps H and I have
+- Gap F has its generic `def[...]` bound calls and closure-storage calls left
+  (step 1, R2005, R2003). Gaps H and I have
   their cores and their binder reads in. Their members are filed against
   shapes that have since changed, so each needs a re-probe.
 - Of the 10-25 conformance blocks, five have landed: type versus value
@@ -154,7 +159,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | none | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none | R788, R378, R472, R508, R602 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2010, R1938; R1933 | about 20 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2005, R2003 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1948, R1949 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1284 | about 20 (below) | slight |
@@ -180,15 +185,17 @@ R1411 and R1413 under *Entries outside the gaps*.
 ### F. Members reached by name, not called as the requirement
 
 - **Mojito**: no backend reaches a member by name from the value's type
-  any more but the lifecycle members (R1938, R2010). A
-  call through a `def(...)` bound is a `call.indirect`, not the bound's
-  `__call__` requirement (R1933).
+  any more but the lifecycle members (R1938 and R2010 landed). A call
+  through a monomorphic `def(...)` bound is the bound's `__call__`
+  requirement call (R1933). A call through a generic `def[...]` bound is
+  still a `call.indirect` (R2005), as is a call of closure storage bound
+  to a local (R2003).
 - **Upstream**: the traits are library declarations with default bodies,
   and every operator and protocol step is a `kgen.call` of the
   requirement, which substitution folds to the member.
 - **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
   instances reached through trait-bound calls.
-- **Closes**: R1933.
+- **Closes**: R2005, R2003.
 - **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list
@@ -256,7 +263,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | block | core | members |
 |---|---|---|
 | Scalars, `SIMD`, `Bool`, `DType`, literals, `StringLiteral`, and enum storage are compiler types | step 5 (R1955 → R1957, R1968 → R1969, R1972 → R1973), R1936 | R1408, R1019, R1352, R851, R171, R427, R1681 (`Pointer`) |
-| `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936, R1938 | R1463, R1409, R18, R159, R1883, R1884 |
+| `Writable`'s intrinsic receivers (`DType`, `Error`) are host-formatted by each backend | R1936 | R1463, R1409, R18, R159, R1883, R1884 |
 | Reflection is a builtin, not `Reflected[T]` | R324 | R271, R497, R272, R76, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768 |
@@ -307,14 +314,14 @@ scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1853 --only R18
 Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
 `scripts/instantiation-report`. The overnight gate says when it is stale.
 
-| counter | 10-13 | 10-17 | 10-21 | 10-24 | 10-29 | 11-01 | 11-01 re-pin | 11-04 |
-|---|---|---|---|---|---|---|---|---|
-| fixtures | | | | 1,200 | 1,379 | 1,538 | 1,537 | 1,578 |
-| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 | 18,743 | 41,010 | 42,159 | 62,479 |
-| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 | 859,746 | 1,821,334 | 2,108,848 | 3,804,799 |
-| generators | 16,553 | 8,801 | 9,213 | 9,500 | 5,841 | 17,667 | 18,665 | 31,552 |
-| generator instances | 26,868 | 13,804 | 13,989 | 14,619 | 9,164 | 26,483 | 27,496 | 44,529 |
-| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 | 1.57 | 1.50 | 1.47 | 1.41 |
+| counter | 10-13 | 10-17 | 10-21 | 10-24 | 10-29 | 11-01 | 11-01 re-pin | 11-04 | 11-08 |
+|---|---|---|---|---|---|---|---|---|---|
+| fixtures | | | | 1,200 | 1,379 | 1,538 | 1,537 | 1,578 | 1,662 |
+| concrete functions | 42,409 | 24,864 | 25,859 | 26,934 | 18,743 | 41,010 | 42,159 | 62,479 | 63,777 |
+| concrete instructions | 892,391 | 402,905 | 386,579 | 401,799 | 859,746 | 1,821,334 | 2,108,848 | 3,804,799 | 4,265,051 |
+| generators | 16,553 | 8,801 | 9,213 | 9,500 | 5,841 | 17,667 | 18,665 | 31,552 | 32,485 |
+| generator instances | 26,868 | 13,804 | 13,989 | 14,619 | 9,164 | 26,483 | 27,496 | 44,529 | 47,114 |
+| instances per generator | 1.62 | 1.57 | 1.52 | 1.54 | 1.57 | 1.50 | 1.47 | 1.41 | 1.45 |
 
 - Compare runs with `scripts/instantiation-report --check`, over the
   fixtures both runs elaborate, not with the raw totals.
@@ -343,9 +350,12 @@ Corpus totals from `benchmarks/instantiation.tsv`, refreshed by
   spread: most fixtures gained a few thousand instructions, the shape a
   library `print` reached from every program would leave. Which change
   accounts for how much is not measured.
-- No baseline has been taken since 11-04, so the 11-05 to 11-07 runs are
-  unmeasured. Refresh it with `scripts/instantiation-report` before
-  choosing between steps 1 and 2.
+- The 11-08 baseline (`ed68e3aab`, after pmir batch 6) follows the 11-05
+  to 11-08 runs. Over the 1,578 fixtures both it and the 11-04 baseline
+  elaborate, concrete functions fell to 0.97×, generators to 0.98×, and
+  their instances held at 1.01×, while concrete instructions grew 1.07×.
+  Instances per generator rose from 1.41 to 1.45 over the whole corpus,
+  which gained 84 fixtures.
 - `assets/ok/pointer_tuple_field_write.mojo` elaborates differently from
   run to run (R1069), so `--check` can report a few instructions of
   growth there with no change.

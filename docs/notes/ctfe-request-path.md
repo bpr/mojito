@@ -16,8 +16,8 @@ evaluation whose consumer sits below the check — a local `comptime`
 binding, a `comptime if` condition, a `comptime for` range bound or
 sequence, a `comptime(...)` or `materialize[...]()` operand in any function
 body, plain or generic — is a request: one predicate draws that line for
-the elaborator and the checker alike
-(`mojito_checker::checker::applies_callable`, over each phase's
+the check
+(`mojito_checker::checker::applies_callable`, over its
 `CalleeOracle`): a call of a module `def`, generic over a type or not, a
 struct construction, a static method, a method or subscript of a
 dictionary or set display, or an operator over a tuple display (`Tuple`'s
@@ -30,10 +30,9 @@ own), and `native::mono` evaluates it on first demand
 closure as concrete MIR on the VM under one fuel budget per compilation
 (`Specializer.fuel`).
 
-A module constant follows D3 below: the elaborator folds a closed
-initializer, marks one that applies a callable, asks a layout, or reads
-such a constant (`CtMarker::Applied`) and keeps its declaration as written,
-and the check classifies it in its declaration pass — a folded `Int`
+A module constant follows D3 below: the elaborator above the check keeps
+its declaration as written, and the check classifies it in its declaration
+pass — a folded `Int`
 (`Checker.comptimes`), an application (`Checker::applied_constant_expr`,
 `comptime_applied`, now with the callee's declared result type), a literal
 (`comptime_literals`), a closed attribute (`Checker.module_values`: a
@@ -55,16 +54,16 @@ declared ahead of the first body after which its initializer types
 and an alias of an applied constant (`comptime E = D`) takes its
 parameter expression rather than naming a type.
 
-The elaborator above the check (`crates/mojito-comptime`) folds closed
-values only — literals, operators, displays, type and reflection facts, a
-generic alias body that applies no callable — and refuses every call
-(`eval.rs:not_evaluated_here`). The AST route, `VmBackend::run_function_value`,
-the pending/forced constants, and the `mojito-vm → mojito-checker` and
-`mojito-comptime → mojito-vm` edges are gone. A module constant whose
-initializer the elaborator refuses — a sized-scalar construction, a builtin
-call, a generic `comptime` alias body that applies a callable — is the
-check's to bind, closed as a folded attribute and otherwise as a request
-(R1381).
+The elaborator above the check (`crates/mojito-comptime`) evaluates
+nothing (R1388): it normalizes declarations and keeps every compile-time
+construct as written. The check folds what is closed itself, with one
+parameter-expression builder (`compile_dependent_ct_expr`), the operator
+folder (`mojito_types::param_expr::fold`), and the builtin-body folds
+(`checker/builtin_fold.rs`, upstream's `foldInlineBuiltinFunction`), and
+binds everything else as a request. The AST route,
+`VmBackend::run_function_value`, the pending/forced constants, and the
+`mojito-vm → mojito-checker` and `mojito-comptime → mojito-vm` edges are
+gone, so the elaborator below MIR is the only compile-time evaluator.
 
 ## Upstream
 
@@ -133,8 +132,8 @@ evaluates by demanding a concrete instance and running it on the VM.**
 - The result is cached by the thunk's instance key, which is upstream's
   `(FuncOp, operands)`: the same application under the same bindings runs
   once per compilation.
-- The path is entered wherever the AST elaborator calls `Elab::eval` on an
-  application today: a `comptime if` or `comptime for` condition or range,
+- The path serves every compile-time application, wherever the deleted
+  AST elaborator once evaluated one: a `comptime if` or `comptime for` condition or range,
   a value argument (`scale[f(3)]()`), a module constant, a local `comptime`
   binding, an associated compile-time value, a `where` operand, and a
   `comptime(e)` crossing. A `comptime if` whose condition is an `Op` over
@@ -255,12 +254,12 @@ Decided 2026-10-02: **match the pin.** The evidence
 
 The boundary:
 
-- A module constant is **folded before the check** when the `ParamExpr`
+- A module constant is **folded by the check** when the `ParamExpr`
   folder closes its initializer: literals, other folded constants,
   operators, `DType` members, type names and applications, predicates.
   That is upstream's attribute folding, and it is what the checker's
-  `eval_ct`, `register_module_alias`, and `Checker.module_values` (a
-  `DType`, a vector, a closed tuple or struct) do today.
+  `register_module_alias` and `Checker.module_values` (a `DType`, a
+  vector, a closed tuple or struct) do today.
 - A **collection display** (`[1, 2, 3]`, `{"a": 1}`) is never an
   attribute, closed or not: the pin constructs it by running its
   initializer and names `[1, 2, 3]` an `Array[Int, Int(3)]`, a
@@ -276,9 +275,8 @@ The boundary:
   as at the pin. The elaborator evaluates it on first demand. Landed
   2026-10-09 (R9): the one check builds the application
   (`Checker::applied_constant_expr`, any declared result type; a display or
-  a method chain as a lifted `$comptime$<name>$module`), the elaborator
-  above the check marks the constant (`CtMarker::Applied`) and keeps its
-  name everywhere, and a body's read is a `ParamValue` fact. Nothing is
+  a method chain as a lifted `$comptime$<name>$module`), the constant
+  keeps its name everywhere, and a body's read is a `ParamValue` fact. Nothing is
   folded early any more: `comptime D = g(A) * h(A)` is `g(2) * h(2)` in a
   type (the R139 case), and a layout query is `Apply(kgen.get_sizeof, T, target)` answered
   under the target.

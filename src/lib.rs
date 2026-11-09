@@ -61,7 +61,8 @@ pub use checked::{
 };
 pub use checker::{Checker, check, check_program};
 pub use compiler::{
-    CheckedSource, CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope,
+    CheckedSource, CompiledProgram, Compiler, CompilerError, Execution, ExecutionFailure,
+    validate_module_scope,
 };
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;

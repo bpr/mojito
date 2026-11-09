@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2060**.
+Next free ID: **R2063**.
 
 ## Ordered Work
 
@@ -1202,6 +1202,8 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Probe: `from std.os.os import _abort_base`, a `pick(n: Int) -> Int`
     returning `n` when positive and ending in `_abort_base()`, and `main`
     printing `pick(2)` then `pick(0)`.
+  - Probe: the same `pick` ending in `std.os.abort()`, upstream's
+    no-argument `abort`, which traps through `_abort_base()`.
   - Found while landing R799 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9245,24 +9247,50 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1980 A failed `assert` reports through `print` and
+- [ ] **R2060 The bundled `std.io` lacks upstream's `_printf`**
+
+  Upstream's `_printf[fmt](*args, file=)` formats through the C runtime's
+  `KGEN_CompilerRT_fprintf` on a `fdopen`ed duplicate of the descriptor,
+  and `std.io.io` bundles only `print`.
+  - `external_call` has no `KGEN_CompilerRT_fprintf` row in
+    `mojito_types::ffi::CALLEES`: the VM needs a `printf` formatter for
+    the conversions upstream's callers spell (`%s`, `%llu`, `%d`), and the
+    native backend declares the row as libc's `fprintf`, whose prototype
+    it shares.
+  - `_printf_cpu` passes `args.get_loaded_kgen_pack()` as the variadic
+    tail, which the `external_call` checker must accept as a C argument
+    list (R1922 owns the method itself).
+  - Spell the plugin selection as `std.math` does until `comptime if case`
+    lands, and keep the `print_emit_fn` arm out with R1884.
+  - Probe: `_printf["At: %s:%llu:%llu: x\n"]("f".as_c_string_span(),
+    UInt64(3), UInt64(4))` prints `At: f:3:4: x` on both backends, after
+    a `print` line it must not reorder.
+  - Found while landing R1980 (2026-11-08).
+  - Depends on R1883 (`_fdopen` and its libc callees) and R222
+    (`as_c_string_span`).
+  - Model: Opus, Not Planned.
+
+- [ ] **R2061 A failed `assert` reports through `print` and
   `abort(message)`, not upstream's `_printf` and `abort()`**
 
-  A failing `debug_assert[assert_mode="safe"](False, "boom")` prints the
-  pin's `At: <file>:<line>:<col>: Assert Error: boom` natively, but the VM
-  shows only `abort: boom`, since it drops a program's output when it
-  aborts, and the abort carries the message upstream's does not.
-  - The bundled `_debug_assert_msg` prints through `print` and traps through
-    `abort(message)`, where upstream's calls `_printf` and the no-argument
-    `abort() -> Never`.
+  The bundled `_debug_assert_msg` prints `At: <location>: Assert Error:
+  <message>` through `print` and traps through `abort(message)`, where
+  upstream's calls `_printf` and the no-argument `abort() -> Never`.
   - `_debug_assert_fail_format` writes into a `String`, where upstream's
-    writes into a stack `_FixedWriteBuffer`.
-  - Port `_printf`, `_FixedWriteBuffer`, and `abort()` verbatim, then make
-    `_debug_assert_msg` and `_debug_assert_fail_format` upstream's
-    (`stdlib/std/builtin/debug_assert.mojo`'s header note).
-  - Probe: `assets/runtime_error/debug_assert_safe_mode_fails.mojo`.
+    writes into a stack `_FixedWriteBuffer` and hands over its
+    `nul_terminate()`d bytes.
+  - Port `_FixedWriteBuffer`, `_fixed_buffer_exceeded`, and
+    `FIXED_WRITE_BUFFER_BYTES` into `std/format/_utils.mojo` verbatim, then
+    make both functions upstream's (`stdlib/std/builtin/debug_assert.mojo`'s
+    header note).
+  - The bundled `abort()` is upstream's already, and both backends print a
+    program's output ahead of its runtime error, so the `At:` line already
+    reads as the pin's.
+  - Probe: `assets/runtime_error/debug_assert_safe_mode_fails.mojo`, whose
+    `# expect:` becomes R2059's trap text.
   - Found while landing R1598 (2026-11-06).
-  - Depends on R50 and R799 (`abort() -> Never`).
+  - Depends on R2060 (`_printf`), R2059 (a trap the corpus can pin), and
+    R222 (`CStringSpan`).
   - Model: Opus, Not Planned.
 
 - [ ] **R2056 An operator's call site reports the expression's start,

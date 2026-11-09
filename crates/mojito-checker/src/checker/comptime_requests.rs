@@ -1,7 +1,6 @@
-//! Which compile-time expressions are requests: one predicate, shared by the
-//! elaborator above the check (which keeps such an expression for the
-//! check) and the checker (which lifts it into the function MIR binds), so
-//! the two never disagree about a binding. See
+//! Which compile-time expressions are requests: the one predicate the
+//! checker consults before lifting such an expression into the function MIR
+//! binds, which the elaborator below MIR evaluates. See
 //! `docs/notes/ctfe-request-path.md`.
 
 use mojito_ast::ast::{Expr, ExprKind};
@@ -28,7 +27,7 @@ pub trait CalleeOracle {
     fn names_struct(&self, name: &str) -> bool;
 }
 
-/// Whether `expression` applies a callable the elaborator does not fold
+/// Whether `expression` applies a callable the check does not fold
 /// itself.
 ///
 /// That is a call of a module `def`, a construction of a struct (`P(3)`),

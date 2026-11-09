@@ -333,6 +333,13 @@ pub struct Execution {
     /// Final named module-scope values exposed by the backend for inspection.
     pub bindings: Vec<(String, Value)>,
 }
+/// A failed execution: the error and the standard output the program wrote
+/// before it stopped.
+#[derive(Debug)]
+pub struct ExecutionFailure {
+    pub error: CompilerError,
+    pub output: String,
+}
 /// The stage at which the authoritative pipeline stopped.
 #[derive(Debug)]
 pub enum CompilerError {
@@ -762,8 +769,22 @@ impl Compiler {
 
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
+        self.execute_keeping_output(program)
+            .map_err(|failure| failure.error)
+    }
+    /// Execute as [`Self::execute`] does, but on failure also return the
+    /// standard output the program wrote before it stopped, which `mojo run`
+    /// shows ahead of a trap's report.
+    pub fn execute_keeping_output(
+        &self,
+        program: &CompiledProgram,
+    ) -> Result<Execution, Box<ExecutionFailure>> {
+        let failed = |error, output| Box::new(ExecutionFailure { error, output });
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
-            CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
+            failed(
+                CompilerError::Runtime(RuntimeError::Unsupported(unimplemented)),
+                String::new(),
+            )
         })?;
         {
             let _prepare = timing::span("prepare");
@@ -771,7 +792,9 @@ impl Compiler {
         }
         let concrete = {
             let _prepare = timing::span("prepare");
-            let concrete = program.concrete_mir()?;
+            let concrete = program
+                .concrete_mir()
+                .map_err(|error| failed(error, String::new()))?;
             let _clone = timing::span("mir_clone");
             concrete.program.clone()
         };
@@ -779,7 +802,7 @@ impl Compiler {
             let _run = timing::span("vm");
             backend.run_concrete(concrete)
         }
-        .map_err(CompilerError::Runtime)?;
+        .map_err(|error| failed(CompilerError::Runtime(error), backend.output()))?;
         Ok(Execution {
             output: backend.output(),
             bindings: backend.bindings(),

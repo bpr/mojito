@@ -34,7 +34,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "__floor__",
     "__ceil__",
     "__trunc__",
-    "write_string",
     "__len__",
     "copy",
     "free",
@@ -64,11 +63,7 @@ mod tests {
     #[test]
     fn every_intrinsic_method_has_an_implementation() {
         for name in INTRINSIC_METHODS {
-            let implemented = quoted(INVOKE, name)
-                || quoted(EXEC, name)
-                || quoted(RUNTIME, name)
-                || (mojito_symbol::symbol::is_formatted_write(name)
-                    && INVOKE.contains("mojito_symbol::symbol::is_formatted_write"));
+            let implemented = quoted(INVOKE, name) || quoted(EXEC, name) || quoted(RUNTIME, name);
             assert!(
                 implemented,
                 "`{name}` is implemented nowhere the VM dispatches"

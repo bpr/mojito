@@ -138,8 +138,9 @@ import (every compilation that links the bundled library):
   file (`PackageBytes`), decodes its header, and reads the
   directory in place, looking a name up by binary search over the mapped
   rows; declarations and units decode from their own ranges on demand:
-  Hello World decodes three of 251 declaration records and lowers three
-  of 874 bodies.
+  Hello World, whose `print` reaches the library's `Writable` and `SIMD`
+  code, decodes 61 declaration records and 69 bodies and lowers 66 units
+  (the `package_*` counters of `run --timings`).
 - **The type section** (`mojito_types::type_section`) holds every type
   the records hold once, as MLIR bytecode's attribute and type section
   does: a record refers to a type by its index, and an entry holds the
