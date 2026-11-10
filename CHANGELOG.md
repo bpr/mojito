@@ -152,6 +152,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time `len` of a pack (`len(Ts)`, `len(Self.Ts)`,
+  `len(Self.values)`, `len(vs)` in a signature) is the library `len`'s
+  application over the pack's visible `TypeList` or `ParameterList`
+  value, as upstream's `len[TypeList[Ts.values]](Ts)`, rather than a
+  checker query. A struct member `comptime size = len(Self.values)` and
+  `-> Box[len(vs)]` now run as at the pin, and a `where len(Ts) == 2`
+  clause is no longer proved by folding the call, which the pin rejects
+  (R1284, R803, R804).
 - A `contains` element naming a binder (`Us.contains[Self.T]()`,
   `Us.contains[T]()`) is read by its declaration rather than re-read by
   its spelling, and a runtime-position pack proposition emits through the

@@ -365,7 +365,7 @@ fn bound_pack_element(pack: &str, index: &Expr, subs: Subs) -> Option<Type> {
 }
 
 /// Fold upstream's `TypeList` uses of a bound type pack in a runtime
-/// position — `Ts.length` / `Self.Ts.length` / `len(Ts)` to the pack's length and
+/// position — `Ts.length` / `Self.Ts.length` to the pack's length and
 /// `Ts.contains[X]()` to whether `X` names an element — so a specialized
 /// variadic struct's methods (`is_type_supported`, `__len__`) see literals.
 /// The conformance-dependent members (`all_conforms_to`, `all`, `any`) need
@@ -451,18 +451,6 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
     match &e.kind {
         ExprKind::Member { object, field } if field == "length" => {
             let length = list_length(object, subs)?;
-            CtValue::Int(length as i64).materialize(e.span)
-        }
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
-            let [pack] = args.as_slice() else {
-                return None;
-            };
-            let length = pack_length(pack, subs)?;
             CtValue::Int(length as i64).materialize(e.span)
         }
         ExprKind::Invoke {

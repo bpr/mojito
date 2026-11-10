@@ -110,9 +110,9 @@ and 11-04 (*Measure*), so the size steps still matter.
    - Gap H: R1948 (a callable's `where` clauses compile twice) and R1949
      (a `contains` element naming a binder is re-read by spelling). Then
      re-probe the members under *H* below before planning any.
-   - Gap I: its members under *I* below. R1284 (compile-time `len`) is
-     the first, since `pack_length_binder` and `typelist_receiver` still
-     answer pack queries by spelling.
+   - Gap I: its members under *I* below. R1284 (compile-time `len`)
+     landed 11-09: a pack's `len` is the library application; its
+     residues are R2076 and R2077.
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1948 --only R1949 --only R1284 -n 0
@@ -161,7 +161,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2005, R2003 | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1948, R1949 | about 25 (below) | partial |
-| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1284 | about 20 (below) | slight |
+| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R2077 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers
 
@@ -241,13 +241,13 @@ R1411 and R1413 under *Entries outside the gaps*.
   (R1491, R1492). A bracket list with open slots is a partial
   `#kgen.bind_params` (R1485), and a type-bodied alias is a type generator
   (R1486). A pack's reads come from the visible binder (R1910, R1912).
-  A compile-time `len`, subscript, and the `TypeList` vocabulary are still
-  answered by spelling (`pack_length_binder`, `typelist_receiver`,
-  R1284).
+  A compile-time `len` is the library application (R1284); a subscript
+  and the `TypeList` vocabulary are still answered by spelling
+  (`typelist_receiver`).
 - **Upstream**: a pack is a `TypeList` / `ParameterList` value, and its
   library members run by CTFE.
 - **Members**:
-  - Queries: R1284, R800, R904, R1182, R445, R803, R345, R804,
+  - Queries: R800, R904, R1182, R445, R345, R2076,
     R348, R1071.
   - Library ports: R810, R811, R812, R1181, R223.
   - Pack constraints: R1343.

@@ -3644,6 +3644,9 @@ impl Checker {
             // spelled for the slot (`{1, 2}` at a `Box`).
             let spelled = self.spelled_construction(argument);
             let _lifting = self.lifting_position();
+            if let Some(pack) = self.pack_visible_binder(argument) {
+                return Some(pack);
+            }
             self.compile_dependent_ct_expr(spelled.as_ref().unwrap_or(argument))
                 .ok()
         };
@@ -4720,7 +4723,7 @@ impl Checker {
     /// Whether `value` calls a builtin function the check types itself
     /// (`max(3, 4)`, `abs(n)`): an application the elaborator does not
     /// fold, as upstream's interpreter runs the library function. The
-    /// queries the elaborator folds (`len`, `range`, `reflect`,
+    /// queries the elaborator folds (`range`, `reflect`,
     /// `conforms_to`, `materialize`) are not.
     fn calls_builtin_function(&self, value: &Expr) -> bool {
         struct Finder<'c> {
@@ -4732,7 +4735,7 @@ impl Checker {
                 if let ExprKind::Call { name, .. } = &expr.kind {
                     self.found |= !matches!(
                         name.as_str(),
-                        "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                        "range" | "reflect" | "conforms_to" | "materialize"
                     ) && self.checker.binding_scope(name).is_none()
                         && super::CalleeOracle::callee(self.checker, name) == super::Callee::Other;
                 }
@@ -5774,6 +5777,34 @@ impl Checker {
         self.self_decls.iter().find(|decl| {
             decl.pack_list_ref().is_some() && decl.name().trim_start_matches('*') == field
         })
+    }
+
+    /// The visible binder a pack named whole as a call argument is
+    /// (`len(Ts)`, `len(Self.values)`): its `TypeList[Tr, Ts.values]` or
+    /// `ParameterList[T, vs.values]` value, as upstream passes the pack
+    /// itself (`len[TypeList[Ts.values]](Ts)`). `None` for any other
+    /// argument.
+    pub(super) fn pack_visible_binder(&self, argument: &Expr) -> Option<ParamExpr> {
+        match &argument.kind {
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") =>
+            {
+                let decl = self.self_pack_visible(field)?;
+                let ParamDecl::Value { ty, .. } = decl else {
+                    return None;
+                };
+                Some(
+                    self.param_context
+                        .intern(&super::annotations::value_parameter_expr(decl, ty)),
+                )
+            }
+            ExprKind::Identifier(name)
+                if self.type_pack_in_scope(name).is_some()
+                    || self.value_pack_in_scope(name).is_some() =>
+            {
+                self.value_parameter_in_scope(name)
+            }
+            _ => None,
+        }
     }
 
     /// The enclosing struct's own value pack `Self.<field>`, as the

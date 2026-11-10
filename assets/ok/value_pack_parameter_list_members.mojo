@@ -2,6 +2,8 @@
 # list's compile-time member, read through the value as upstream's
 # documentation spells it (`args.length`), a runtime `len` or subscript calls
 # `__len__` or `__getitem__`, and a compile-time subscript names the element.
+# A compile-time `len` of a pack, in a signature or a struct member, is the
+# library `len`'s application over the pack's `ParameterList` or `TypeList`.
 
 
 struct Counter[k: Int]:
@@ -17,6 +19,18 @@ struct Width[n: Int]:
 
     def get(self) -> Int:
         return Self.n
+
+
+struct Measured[*values: Int]:
+    comptime size: Int = len(Self.values)
+
+
+struct Kinds[*Ts: Movable]:
+    comptime count: Int = len(Self.Ts)
+
+
+def counted[*values: Int]() -> Width[len(values)]:
+    return {}
 
 
 def widened[*values: Int]() -> Width[values.length]:
@@ -50,3 +64,5 @@ def main():
     elements[7, 8, 9](2)
     print(instance[41]())
     print(widened[1, 2]().get())
+    print(Measured[1, 2, 3].size, Kinds[Int, Bool].count)
+    print(counted[4, 5, 6, 7]().get())

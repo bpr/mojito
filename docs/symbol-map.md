@@ -2646,8 +2646,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the pack is bound and leaves the caller's pack the call's operand, an
   LLVM intrinsic call taking its element places as its arguments; the VM's `bind_args` (`backend/vm/calls.rs`) and Pliron's
   `bind_call_slots` take the collector operand whole; `Checker::pack_length_binder`/`pack_length_query`
-  (`checker/constraints.rs`) read `args.__len__()` and `len(Ts)` as
-  `PackQuery::Length` for the loop bound and as a
+  (`checker/constraints.rs`) read a collector's `args.__len__()` as
+  `PackQuery::Length` (a compile-time `len(Ts)` is the library `len`'s
+  application over the visible binder, `Checker::pack_visible_binder`) for the loop bound and as a
   `ConstraintOperand::PackLength` in a `comptime if`, while `Ts.length` is
   the `TypeList` member `type_list_member` folds to the same query; a pack element's
   literal argument converts to the element the call solved

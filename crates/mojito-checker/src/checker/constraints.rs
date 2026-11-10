@@ -1947,7 +1947,7 @@ impl Checker {
                 self.ct_param(ty)
             }
             // The length of a pack that is still a parameter, which the
-            // instance's elements fix (`len(Self.Ts)`).
+            // instance's elements fix (a collector's `args.__len__()`).
             _ if let Some(length) = self.pack_length_query(expr) => Ok(length),
             // `Int(3)`: a scalar conversion of a compile-time value, which is
             // the declared type's ordinary literal materialization. It makes
@@ -3186,8 +3186,7 @@ impl Checker {
     }
 
     /// An element (`r[0]`, `Self.Ts.reverse()[0]`) or the length
-    /// (`TypeList[Ts.values]().length`, `len(...)` of the same list) of a
-    /// `TypeList` value. `None` when `expr` reads no `TypeList` value.
+    /// (`TypeList[Ts.values]().length`) of a `TypeList` value. `None` when `expr` reads no `TypeList` value.
     fn type_list_read(
         &self,
         expr: &Expr,
@@ -3223,9 +3222,6 @@ impl Checker {
                 }
                 receiver => Some(receiver.and_then(|receiver| self.type_list_length(receiver))),
             },
-            ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
-                Some(receiver(&args[0])?.and_then(|receiver| self.type_list_length(receiver)))
-            }
             _ => None,
         }
     }
@@ -4221,33 +4217,25 @@ impl Checker {
     }
 
     /// The pack whose length `expr` asks, as the pin reads it at compile
-    /// time: `args.__len__()` of a collector spreading the pack, or `len(Ts)`
-    /// of the pack itself. `len(args)` is a runtime value, as it is
-    /// upstream; `Ts.length` is the pack's `TypeList` member.
+    /// time: `args.__len__()` of a collector spreading the pack. `len(args)`
+    /// is a runtime value, as it is upstream, `len(Ts)` the library `len`'s
+    /// application over the pack's `TypeList`, and `Ts.length` that
+    /// `TypeList`'s member.
     fn pack_length_operand(&self, expr: &Expr) -> Option<ParamExpr> {
-        let pack = match &expr.kind {
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
-                match args.as_slice() {
-                    [pack] => self.type_pack_named(pack),
-                    _ => None,
-                }
-            }
-            ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                kwargs,
-            } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
-                self.collector_pack(object)
-            }
-            _ => None,
-        }?;
-        pack.as_decl_ref().is_some().then_some(pack)
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        if method != "__len__" || !args.is_empty() || !kwargs.is_empty() {
+            return None;
+        }
+        self.collector_pack(object)
+            .filter(|pack| pack.as_decl_ref().is_some())
     }
 
     /// A condition of the declaration owning `decls` (a struct header's
@@ -5194,12 +5182,11 @@ impl Checker {
     }
 
     pub(super) fn constraint_operand(&self, expr: &Expr) -> Result<ConstraintOperand, TypeError> {
-        // `TypeList[Ts.values]().length`, or `len(...)` of the same `Sized`
-        // list, is an Int operand (the removed `size` alias rejects like any
-        // unknown member).
+        // `TypeList[Ts.values]().length` is an Int operand (the removed
+        // `size` alias rejects like any unknown member); `len(...)` of the
+        // same list is the library `len`'s application.
         let length_receiver = match &expr.kind {
             ExprKind::Member { object, field } if field == "length" => Some(&**object),
-            ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => Some(&args[0]),
             _ => None,
         };
         // Any other member of a `TypeList` value is unknown, `size` included.

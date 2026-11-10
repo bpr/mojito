@@ -54,7 +54,7 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
                 ExprKind::Call { name, .. } => {
                     !matches!(
                         name.as_str(),
-                        "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                        "range" | "reflect" | "conforms_to" | "materialize"
                     ) && match self.oracle.callee(name) {
                         Callee::Function => true,
                         Callee::Struct => !matches!(name.as_str(), "Dict" | "Set"),

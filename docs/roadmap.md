@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2076**.
+Next free ID: **R2078**.
 
 ## Ordered Work
 
@@ -5085,6 +5085,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     print(c[i])`, fails with "not a compile-time Int constant: L", where
     the pin prints `1 2 3`; `f[[1, 2, 3]]()` runs (found while landing
     R1712, 2026-10-30).
+  - Probe: `comptime n = len(L)` over `comptime L = [1, 2, k]` prints `3`
+    through a checker query on the binding's sequence (the `len` arm of
+    `Checker::display_read`, `checker/constraints.rs`), where the pin
+    applies the library `len` to the `List` value; binding the display as
+    its constructor's application makes it that application (found while
+    landing R1284, 2026-11-09).
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
   - Depends on R1529.
@@ -6013,32 +6019,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R803 A `where` clause over a value pack's length reads the pack as
-  a type list**
+- [ ] **R2076 A `where` operand that applies a function is rejected at
+  its declaration, where the pin keeps the application unproven**
 
-  Problem: `def f[*vs: Int]() -> Int where len(vs) > 1`, called as
-  `f[4, 5]()`, fails with "cannot prove constraint
-  'TypeList[vs.values]().length > 1'", where the pin runs it.
-  - `Checker::typelist_receiver` (`checker/constraints.rs`) takes every
-    enclosing variadic parameter for a type pack, a value pack included.
-  - The same cause stops `comptime if len(vs) == 2:` over `*vs: Int` in
-    the elaborator with "unsupported comptime if condition
-    `Eq(PackLength(...))` the instance does not decide", where the pin
-    prints `202` for `f[1, 2]()` (found while landing R805, 2026-10-20).
-  - Found while landing R494 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R804 The length of a value pack in a signature type is rejected**
-
-  Problem: `def sized[*vs: Int]() -> Box[len(vs)]` fails with "not a
-  compile-time Int constant: not an associated comptime expression", where
-  the pin types the result by the pack's length.
-  - A signature has no body to lift `len(vs)` from, and `len` is now the
-    library function, but `called_application` serves only `Int` and
-    `Bool` arguments, so a pack argument still needs its own path (R1284).
-  - `Box[vs.size]` is the spelling that works today.
-  - Found while landing R494 (2026-10-13).
+  `def f[*Ts: Movable]() where len(Ts) == 2` is rejected with
+  "unsupported generic constraint operand" even when nothing calls it,
+  where the pin accepts the declaration and rejects each call for
+  "lacking evidence" of `len[TypeList[Int, Bool]](TypeList[Int, Bool]())
+  == Int(2)`.
+  - `Checker::constraint_operand` (`checker/constraints.rs`) drops a
+    call whose `called_application` is an `Apply`, so a function's
+    application never becomes an operand.
+  - Upstream keeps the clause as a proposition over the application, and
+    its prover does not run the function: no call can supply evidence.
+  - Probe: `def g[n: Int]() where twice(n) == 4` over a module `def
+    twice`, uncalled, is rejected, where the pin compiles the program;
+    `g[2]()` is rejected by both, with the pin saying "lacking evidence".
+  - Probe: `def f[*vs: Int]() -> Int where len(vs) > 1`, called as
+    `f[4, 5]()`, is rejected by both, with the same two messages.
+  - R509's constrained module constant reaches the same operand rule.
+  - Found while landing R1284 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9621,45 +9621,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1284 Compile-time `len` of a compile-time-only operand is a
-  checker query, where upstream applies the library `len`**
+- [ ] **R2077 The VM and Pliron keep a compiler `len` callee beside the
+  library `len`**
 
-  `len(Ts)` over a type pack, `len(tl)` over a `TypeList` binding,
-  `len(Self.values)` over a raw list, and `len(names)` over a reflected
-  list are answered by checker queries, where the pin applies its library
-  `len` to the operand's value at compile time (its `Ts` is a `TypeList`
-  value, whose `__len__` the `Sized` overload calls).
-  - A run-time `len(Ts)` or `len(tl)` is the library call over the
-    spelled `TypeList` value already; only the compile-time folds remain.
-  - The comptime evaluators fold `len` by name: `eval_reflection_expr`,
-    `pack_length_binder`, the bound-display arm, and
-    `compile_dependent_ct_expr`'s raw-list arm (`checker/constraints.rs`,
-    `checker/reflection.rs`), and `applies_callable` excludes it
-    (`checker/comptime_requests.rs`).
-  - The VM's and Pliron's bare `len` callee survives for the pack cursor's
-    has-next test (`mir::lower_stmt::emit_has_next`) and CTFE's
-    compile-time lists.
-  - Done when each operand's length is a compile-time application of the
-    library overload and the bare `len` callee is gone.
-  - Probe: R804's `Box[len(vs)]`.
-  - Probe: a user struct's member `comptime size: Int = len(Self.values)`
-    over `*values: Int`, read as `PL[1, 2, 3].size`, fails with "not an
-    associated comptime expression", where the pin prints `3`: a member
-    has no body to lift the call from, and the check answers `len` of a
-    raw list only inside the bundled `ParameterList`.
-  - `called_application` applies a function to a struct-valued argument
-    since R1528 (a member `comptime count = mylen(Foo())` runs), so a
-    member `comptime count = len(Self.Ts)` can be the library `len`'s
-    application over `TypeList[Self.Ts.values]()` once the checker stops
-    folding `len` by name.
-  - Probe: `def f[*Ts: Movable]() where len(Ts) == 2`, called as
-    `f[Int, Bool]()`, prints its body in Mojito, where the pin rejects it
-    for "lacking evidence" of `len[TypeList[Int, Bool]](TypeList[Int,
-    Bool]()) == Int(2)`.
-  - Probe: `Box[len(Ts)]` passed where `Box[Ts.length]` is expected is
-    rejected by both, with the pin naming `len[TypeList[Ts.values]](Ts)`.
-  - Found while landing R988 (2026-10-22).
-  - Depends on R1528.
+  The VM dispatch and Pliron's `lower_len_builtin` still answer a bare
+  `len` callee over strings, tuple storage, `SIMD`, and CTFE's
+  compile-time lists, where upstream has only the library overloads.
+  - Every compile-time pack `len` is now the library application (R1284),
+    so the callee's remaining producers are the checker's `infer_len` for
+    a program linked without the prelude (`checker/builtins.rs`) and
+    CTFE's `Value::ComptimeList` operand (`vm/dispatch.rs`).
+  - Pliron's `__len__` of a `Tuple`/`RuntimePack` register
+    (`lower/methods.rs`) reuses the same builtin lowering.
+  - Done when `len` leaves `BUILTIN_CALLEES` (`mojito-vm/src/builtins.rs`)
+    and both lowerings are deleted.
+  - Probe: `rg '"len"' crates/mojito-vm crates/mojito-pliron` lists the
+    arms to delete.
+  - Found while landing R1284 (2026-11-09).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
@@ -10465,6 +10444,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     is a CTFE application, served as display constants are.
   - The fix deletes `array_display_construction`, `ConstructionDecls`, and
     `constructed_parameter_constant` (`mono/substitute.rs`).
+  - Probe: `len(names)` and `names.length` over a reflected list are
+    answered by `Checker::eval_reflection_expr` and the `len` arm of the
+    reflection typing (`checker/reflection.rs`), where the pin applies the
+    library `len` to the `Array` value; with `field_names()` bundled, both
+    arms go (found while landing R1284, 2026-11-09).
   - Found while landing R789 (2026-10-14).
   - Depends on R324.
   - Model: Fable, Not Planned.
