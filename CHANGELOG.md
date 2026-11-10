@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `canonicalize` turns an elif-free `if` over register-passable trivial
+  results into `pop.select`, as the pin's `EmptyIfToSelect` and
+  `IfYieldSelect` do: `x = 1 if c else 2` and `if c: y = a else: y = b`
+  are one `select`, an `if` whose arm does work keeps it beside a `select`
+  of what both arms yield from outside, and `select` folds over a constant
+  condition or equal cases (R1255, `assets/ok/if_to_select.mojo`).
 - `-D NAME[=VALUE]` (also `--define`) defines a compile-time name for
   `check`, `own`, `run`, `emit-mir`, and `compile`, read by every
   `#kgen.param.expr<get_env>` fold in the checker and the elaborator

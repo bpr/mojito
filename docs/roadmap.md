@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2078**.
+Next free ID: **R2080**.
 
 ## Ordered Work
 
@@ -502,19 +502,40 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1255 `canonicalize` does not turn an `if` into a `select`**
+- [ ] **R2078 `canonicalize` lacks the pin's `IfToSelect`, whose match is
+  unknown**
 
-  The generator `Canonicalizer` rewrites an `hlcf.if` whose arms only
-  yield values into `pop.select` (`EmptyIfToSelect`, `IfToSelect`,
-  `IfYieldSelect`, `lib/Transforms/Canonicalizer.cpp`), and Mojito keeps
-  the `if`.
-  - Shape: an `if` whose two arms yield different constants, such as
-    `x = 1 if c else 2`, stays an `if` with a result; `HoistYieldResults`
-    folds only equal yields and a `Bool` true/false pair.
-  - MIR's `select` (upstream's `pop.select`) runs on both backends; the
-    fix adds the three patterns to `canonicalize/hlcf.rs`.
-  - Depends on R1254, before which no structured body reaches the pass.
+  The generator `Canonicalizer` registers `IfToSelect` beside
+  `EmptyIfToSelect` and `IfYieldSelect`, which landed, and the pin's
+  stripped binary shows only its name.
+  - Shape: arms of speculatable ops (`a + 1` and `b * 2`) end in a
+    `select` at the pin.
+  - `hoist-trivial-invariants` explains that shape after elaboration, so a
+    difference could show only before it, in `inline-parametric`'s costs.
+  - Lever: a pin probe whose pre-elaboration size is observable, such as
+    an `@always_inline` callee at the inline bound with speculatable arms,
+    or a disassembly of the pattern's `matchAndRewrite`.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2079 `canonicalize`'s `foldTrivialStructCopy` needs each extract
+  read once**
+
+  `StructFolds::trivial_copy` (`analysis/canonicalize.rs`) folds a
+  `struct.create` of a value's extracted fields to that value only when
+  each extract is read once, so two re-creations of one extract both stay,
+  where upstream's SSA fold replaces each.
+  - Probe: `use_same(c, a)` calling the `@always_inline`
+    `pick(c, a, b) = a if c else b` as `pick(c, a, a)`
+    (`assets/ok/if_to_select.mojo`) keeps `select` over two
+    `struct.create`s of `a`'s storage until the pipeline's last `cse`
+    merges them, so `c` is never removed before elaboration, where the pin
+    defines `use_same` with `c` as `_REMOVED_ARG`.
+  - Lever: drop the read-once rule for a register-passable trivial
+    container (`MirDeclarations::copy_is_identity`), whose copies are one
+    SSA value upstream.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1256 `canonicalize` folds a constant in place, where MLIR's
   folder materializes one per value at the region's entry**
@@ -528,6 +549,10 @@ which names the upstream pass each one follows. Each is measured by the
     the yield.
   - Shape: equal constants stay one `const` per use, so instance sizes
     count them.
+  - Shape: `EmptyIfToSelect` and `IfYieldSelect`
+    (`canonicalize/hlcf.rs`) read a `const` inside an `if` arm as defined
+    before the `if` and move it out, where upstream's arm already holds
+    only the yield.
   - Deciding it changes every instance size, so it waits for the
     structured seam.
   - Depends on R1254.

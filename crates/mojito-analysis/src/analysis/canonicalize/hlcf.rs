@@ -1,6 +1,7 @@
 //! The canonicalization patterns of upstream's `hlcf` ops
 //! (`HLCFOpsCanonicalizers.cpp`) and the generator `Canonicalizer`'s
-//! `ConditionPropagation`, over a structured body.
+//! `ConditionPropagation`, `EmptyIfToSelect`, and `IfYieldSelect`, over a
+//! structured body.
 //!
 //! Every region of a structured body is one block, as `verify` requires.
 //! The patterns rewrite an op in place, splice a region into its parent
@@ -12,20 +13,25 @@
 //! every reader once a walk ends.
 
 use super::definition_counts;
+use mojito_ast::ast::Dtype;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, LoopLabel, MirBlock, MirElif, MirFunction, MirInstr, MirTerm, Reg, count_register_reads,
-    fresh_register, instruction_regions, instruction_regions_mut, loop_breaks_mut,
-    loop_continues_mut, replace_register_reads, resolve_replacements,
+    Const, LoopLabel, MirBlock, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
+    count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
+    loop_breaks_mut, loop_continues_mut, replace_register_reads, resolve_replacements,
 };
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind, kgen_simd_ty, storage_ty};
 use std::collections::{HashMap, HashSet};
 
 /// Apply the `hlcf` patterns to `function` until none applies; returns how
 /// many rewrites applied. The registers the rewrites leave undefined join
 /// `erased`.
-pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32>) -> usize {
+pub(super) fn hlcf_patterns(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    erased: &mut HashSet<u32>,
+) -> usize {
     let mut counts = Counts::default();
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
@@ -36,7 +42,9 @@ pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32
         bool_constants(&blocks, &definitions, &mut constants);
         let mut walk = Walk {
             function,
+            declarations,
             reads,
+            definitions,
             constants,
             replaced: HashMap::new(),
             erased,
@@ -85,6 +93,8 @@ struct Counts {
     conditional_returns: usize,
     yield_results: usize,
     unused_results: usize,
+    empty_ifs_to_selects: usize,
+    if_yield_selects: usize,
     dead_loops: usize,
     unused_loop_results: usize,
     unused_loop_args: usize,
@@ -99,6 +109,8 @@ impl Counts {
             + self.conditional_returns
             + self.yield_results
             + self.unused_results
+            + self.empty_ifs_to_selects
+            + self.if_yield_selects
             + self.dead_loops
             + self.unused_loop_results
             + self.unused_loop_args
@@ -112,6 +124,8 @@ impl Counts {
         self.conditional_returns += other.conditional_returns;
         self.yield_results += other.yield_results;
         self.unused_results += other.unused_results;
+        self.empty_ifs_to_selects += other.empty_ifs_to_selects;
+        self.if_yield_selects += other.if_yield_selects;
         self.dead_loops += other.dead_loops;
         self.unused_loop_results += other.unused_loop_results;
         self.unused_loop_args += other.unused_loop_args;
@@ -126,6 +140,8 @@ impl Counts {
             ("hoisted_conditional_returns", self.conditional_returns),
             ("hoisted_yield_results", self.yield_results),
             ("removed_unused_results", self.unused_results),
+            ("empty_ifs_to_selects", self.empty_ifs_to_selects),
+            ("if_yield_selects", self.if_yield_selects),
             ("removed_dead_loops", self.dead_loops),
             ("removed_unused_loop_results", self.unused_loop_results),
             ("removed_unused_loop_args", self.unused_loop_args),
@@ -152,7 +168,12 @@ struct Enclosing {
 /// starts; a result a pattern replaces is rewritten once it ends.
 struct Walk<'a> {
     function: &'a mut MirFunction,
+    declarations: &'a MirDeclarations,
     reads: Vec<u32>,
+    /// How many instructions define each register when the walk starts: a
+    /// rewrite moves or removes definitions, never adds one to an existing
+    /// register, so each count stays an upper bound.
+    definitions: Vec<u32>,
     /// The registers defined once, by a `const bool`.
     constants: HashMap<u32, bool>,
     replaced: HashMap<u32, Reg>,
@@ -220,8 +241,8 @@ impl Walk<'_> {
 
     /// Apply the first pattern that matches the op at `index` of `block`,
     /// in upstream's order: `RemoveStaticCondition`, `ConditionPropagation`,
-    /// the hoists, `HoistYieldResults`, and `RemoveUnusedResults` for an
-    /// `if`; `RemoveDeadLoop`, `RemoveUnusedLoopResults`, and
+    /// the hoists, `HoistYieldResults`, `RemoveUnusedResults`,
+    /// `EmptyIfToSelect`, and `IfYieldSelect` for an `if`; `RemoveDeadLoop`, `RemoveUnusedLoopResults`, and
     /// `RemoveUnusedLoopArgs` for a loop;
     /// `ComptimeIfOp::canonicalize` for a `comptime if`.
     fn apply(&mut self, block: &mut MirBlock, index: usize, enclosing: &[Enclosing]) -> bool {
@@ -233,6 +254,8 @@ impl Walk<'_> {
                     || self.hoist_conditional_return(block, index, enclosing)
                     || self.hoist_yield_results(block, index)
                     || self.remove_unused_results(block, index)
+                    || self.empty_if_to_select(block, index)
+                    || self.if_yield_select(block, index)
             }
             MirInstr::Loop { .. } => {
                 self.remove_dead_loop(block, index)
@@ -727,6 +750,267 @@ impl Walk<'_> {
         true
     }
 
+    /// `EmptyIfToSelect`: an `if` without elifs whose arms hold only
+    /// constants before their `yield` becomes one `pop.select` per result,
+    /// on the condition's `!kgen.scalar<bool>` storage, and goes. The arms'
+    /// constants move before the selects, the entry MLIR's folder
+    /// materializes them at, as [`trivial_condition`] reads an elif
+    /// condition region. Every result is of a register-passable trivial
+    /// type ([`Self::selectable`]); one `HoistYieldResults` replaced takes
+    /// no select.
+    fn empty_if_to_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
+        let MirInstr::If {
+            results,
+            cond,
+            then,
+            elifs,
+            else_args,
+            orelse,
+        } = &block.instrs[index]
+        else {
+            return false;
+        };
+        if results.is_empty() || !elifs.is_empty() || !else_args.is_empty() {
+            return false;
+        }
+        let (Some(on_true), Some(on_false)) = (
+            self.constant_arm(then, results.len()),
+            self.constant_arm(orelse, results.len()),
+        ) else {
+            return false;
+        };
+        let live: Vec<(Reg, Reg, Reg)> = results
+            .iter()
+            .zip(on_true.iter().zip(on_false))
+            .filter(|(result, _)| !self.replaced.contains_key(&result.0))
+            .map(|(result, (on_true, on_false))| (*result, *on_true, *on_false))
+            .collect();
+        let cond = *cond;
+        if !self.condition_selects(cond)
+            || !live
+                .iter()
+                .all(|(result, on_true, on_false)| self.selectable(*result, [*on_true, *on_false]))
+        {
+            return false;
+        }
+        let Some(IfParts { then, orelse, .. }) = take_if(block, index) else {
+            return false;
+        };
+        let (storage, convert) = self.condition_storage(cond);
+        let selects = live
+            .into_iter()
+            .map(|(dest, on_true, on_false)| MirInstr::Select {
+                dest,
+                condition: storage,
+                on_true,
+                on_false,
+            });
+        let rewritten: Vec<MirInstr> = then
+            .instrs
+            .into_iter()
+            .chain(orelse.instrs)
+            .chain([convert])
+            .chain(selects)
+            .collect();
+        block.instrs.splice(index..index, rewritten);
+        self.counts.empty_ifs_to_selects += 1;
+        true
+    }
+
+    /// `IfYieldSelect`: a result of an `if` without elifs whose arms both
+    /// yield a value defined outside the `if`, or by a constant the arm
+    /// holds, becomes a `pop.select` after the `if`, which keeps its
+    /// effects without that result. A yielded constant moves before the
+    /// `if`, as [`Self::empty_if_to_select`] moves it. MIR is not SSA, so
+    /// a yielded value must have one definition: one an arm redefines is
+    /// not the value it held before the `if`.
+    fn if_yield_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
+        let MirInstr::If {
+            results,
+            cond,
+            then,
+            elifs,
+            else_args,
+            orelse,
+        } = &block.instrs[index]
+        else {
+            return false;
+        };
+        if results.is_empty() || !elifs.is_empty() || !else_args.is_empty() {
+            return false;
+        }
+        let (MirTerm::Yield(on_true), MirTerm::Yield(on_false)) = (&then.term, &orelse.term) else {
+            return false;
+        };
+        if on_true.len() != results.len() || on_false.len() != results.len() {
+            return false;
+        }
+        let mut inside = HashSet::new();
+        for region in [then, orelse] {
+            for nested in &region.instrs {
+                erased_results(nested, &mut inside);
+            }
+        }
+        let mut chosen = Vec::new();
+        let mut hoisted = [HashSet::new(), HashSet::new()];
+        for (at, result) in results.iter().enumerate() {
+            if self.replaced.contains_key(&result.0)
+                || self.reads.get(result.0 as usize) == Some(&0)
+                || !self.selectable(*result, [on_true[at], on_false[at]])
+            {
+                continue;
+            }
+            let outside = |arm: &MirBlock, value: Reg| -> Option<bool> {
+                if !self.defined_at_most_once(value) {
+                    return None;
+                }
+                if !inside.contains(&value.0) {
+                    return Some(false);
+                }
+                arm.instrs
+                    .iter()
+                    .any(|instruction| {
+                        matches!(instruction, MirInstr::Const { dest, .. } if *dest == value)
+                    })
+                    .then_some(true)
+            };
+            let (Some(from_then), Some(from_else)) =
+                (outside(then, on_true[at]), outside(orelse, on_false[at]))
+            else {
+                continue;
+            };
+            if from_then {
+                hoisted[0].insert(on_true[at].0);
+            }
+            if from_else {
+                hoisted[1].insert(on_false[at].0);
+            }
+            chosen.push(at);
+        }
+        let cond = *cond;
+        if chosen.is_empty() || !self.condition_selects(cond) {
+            return false;
+        }
+        let (storage, convert) = self.condition_storage(cond);
+        let MirInstr::If {
+            results,
+            then,
+            orelse,
+            ..
+        } = &mut block.instrs[index]
+        else {
+            return false;
+        };
+        let mut before = Vec::new();
+        for (arm, hoisted) in [&mut **then, &mut **orelse].into_iter().zip(&hoisted) {
+            let (constants, kept) = std::mem::take(&mut arm.instrs)
+                .into_iter()
+                .partition(|instruction| {
+                    matches!(instruction, MirInstr::Const { dest, .. } if hoisted.contains(&dest.0))
+                });
+            arm.instrs = kept;
+            before.extend::<Vec<MirInstr>>(constants);
+        }
+        let mut selects = Vec::new();
+        for arm in [&mut **then, &mut **orelse] {
+            if let MirTerm::Yield(values) = &mut arm.term {
+                selects.push(take_positions(values, &chosen));
+            }
+        }
+        let dests = take_positions(results, &chosen);
+        let after = dests
+            .into_iter()
+            .zip(selects[0].iter().zip(&selects[1]))
+            .map(|(dest, (on_true, on_false))| MirInstr::Select {
+                dest,
+                condition: storage,
+                on_true: *on_true,
+                on_false: *on_false,
+            });
+        let tail = block.instrs.split_off(index + 1);
+        block.instrs.extend(after.chain(tail));
+        before.push(convert);
+        block.instrs.splice(index..index, before);
+        self.counts.if_yield_selects += 1;
+        true
+    }
+
+    /// The values an `if` arm yields when the arm holds only constants
+    /// defined nowhere else, and yields `count` values.
+    fn constant_arm<'r>(&self, region: &'r MirBlock, count: usize) -> Option<&'r [Reg]> {
+        let MirTerm::Yield(values) = &region.term else {
+            return None;
+        };
+        (values.len() == count
+            && region.instrs.iter().all(|instruction| {
+                matches!(instruction, MirInstr::Const { dest, .. } if self.defined_at_most_once(*dest))
+            }))
+        .then_some(values.as_slice())
+    }
+
+    /// Whether `reg` has at most one definition.
+    fn defined_at_most_once(&self, reg: Reg) -> bool {
+        self.definitions
+            .get(reg.0 as usize)
+            .is_none_or(|count| *count <= 1)
+    }
+
+    /// Whether `result` and its two `cases` can be a `pop.select`: the
+    /// result is of a register-passable trivial type, which `pop.select`
+    /// moves as one value, and each case is held as the result is.
+    fn selectable(&self, result: Reg, cases: [Reg; 2]) -> bool {
+        let types = &self.function.reg_types;
+        let Some(ty) = types.get(&result.0) else {
+            return false;
+        };
+        self.declarations.copy_is_identity(ty)
+            && cases.iter().all(|case| {
+                types
+                    .get(&case.0)
+                    .is_some_and(|found| storage_ty(found) == storage_ty(ty))
+            })
+    }
+
+    /// Whether `cond`, an `if`'s condition, converts to a `pop.select`
+    /// condition: a `Bool` or the builtin `i1`.
+    fn condition_selects(&self, cond: Reg) -> bool {
+        self.function
+            .reg_types
+            .get(&cond.0)
+            .is_some_and(|ty| ty.is_bool() || matches!(ty.kind(), TyKind::I1))
+    }
+
+    /// A fresh register holding `cond`'s `!kgen.scalar<bool>` storage and
+    /// the instruction defining it: a `Bool`'s `_mlir_value` field, the
+    /// body of its `__mlir_bool__`, or `pop.cast_from_builtin` of an `i1`,
+    /// as `_select_register_value` spells the condition of its
+    /// `pop.select`. [`Self::condition_selects`] holds of `cond`.
+    fn condition_storage(&mut self, cond: Reg) -> (Reg, MirInstr) {
+        let is_bool = self
+            .function
+            .reg_types
+            .get(&cond.0)
+            .is_some_and(|ty| ty.is_bool());
+        let span = self
+            .function
+            .spans
+            .0
+            .get(&cond.0)
+            .map(|(span, _)| span.clone());
+        let dest = fresh_register(self.function, kgen_simd_ty(Dtype::Bool, 1), span.as_ref());
+        self.reads.push(1);
+        let convert = if is_bool {
+            MirInstr::GetField {
+                dest,
+                base: cond,
+                field: "_mlir_value".to_string(),
+            }
+        } else {
+            MirInstr::BuiltinCast { dest, value: cond }
+        };
+        (dest, convert)
+    }
+
     /// `RemoveDeadLoop`: a loop whose body is just a `break` goes. A break
     /// out of it replaces its results by the values it carries; one naming
     /// an outer loop replaces the loop and the rest of the block. Either
@@ -1188,4 +1472,20 @@ fn reads_register(block: &mut MirBlock, reg: Reg) -> bool {
     let mut reads = vec![0_u32; reg.0 as usize + 1];
     count_register_reads(block, &mut reads);
     reads[reg.0 as usize] > 0
+}
+
+/// Remove the elements of `values` at the ascending positions `at` and
+/// return them in order.
+fn take_positions(values: &mut Vec<Reg>, at: &[usize]) -> Vec<Reg> {
+    let mut taken = Vec::with_capacity(at.len());
+    let mut position = 0;
+    values.retain(|value| {
+        let keep = !at.contains(&position);
+        if !keep {
+            taken.push(*value);
+        }
+        position += 1;
+        keep
+    });
+    taken
 }

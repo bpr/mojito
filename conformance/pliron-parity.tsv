@@ -493,6 +493,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	main	exe-differential	
 assets/ok/if_case_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_elif_chains_and_while_case.mojo	main	exe-differential	sanitized
 assets/ok/if_case_mixed_with_boolean_elif.mojo	main	exe-differential	sanitized
+assets/ok/if_to_select.mojo	main	exe-differential	sanitized
 assets/ok/if_unread_elif_call_runs.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized

@@ -6619,6 +6619,21 @@ point where a slot declared in a loop is uninitialized again.
   a `Bool` true/false pair by the condition, and erases an `if` left
   unread with its elif condition regions, as upstream does (the pin skips
   a call in such a condition), `RemoveUnusedResults` drops unread results,
+  `EmptyIfToSelect` turns an `if` without elifs whose arms hold only
+  `const`s before their `yield` into one `pop.select` per result and
+  removes it, the arms' `const`s moved before the selects (where MLIR's
+  folder materializes them; reading them in the arm is a local stand-in,
+  R1256), `IfYieldSelect` turns a result of an elif-free `if` whose arms
+  both yield a value defined once outside the `if` (or by a `const` in the
+  arm, which moves out) into a `pop.select` after the `if`, which keeps its
+  effects without that result (both patterns select only a result
+  `MirDeclarations::copy_is_identity` accepts, the type `pop.select`
+  carries, and read the condition's `!kgen.scalar<bool>` storage through
+  a `field.get _mlir_value` of a `Bool`, or `pop.cast_from_builtin` of an
+  `i1`, as `_select_register_value` spells it; an `if` with elifs keeps
+  its branch, as at the pin, `tests/mir_passes/canonicalize/empty_if_to_select*.mir`,
+  `if_yield_select*.mir`; the pin's `IfToSelect`, whose match its binary
+  does not show, is R2078),
   `RemoveDeadLoop` removes a loop whose body only breaks, its results
   replaced by the values the break carries and its arguments by its
   operands, `RemoveUnusedLoopResults` drops an unread loop result with its
@@ -6633,7 +6648,8 @@ point where a slot declared in a loop is uninitialized again.
   pattern has its own `--timings` counter (`removed_static_conditions`,
   `propagated_conditions`, `hoisted_unconditional_exits`,
   `hoisted_conditional_returns`, `hoisted_yield_results`,
-  `removed_unused_results`, `removed_dead_loops`,
+  `removed_unused_results`, `empty_ifs_to_selects`, `if_yield_selects`,
+  `removed_dead_loops`,
   `removed_unused_loop_results`, `removed_unused_loop_args`,
   `folded_comptime_ifs`).
   Every body is structured, so these patterns are the production path, as
@@ -6654,6 +6670,10 @@ point where a slot declared in a loop is uninitialized again.
   (`StructExtractOp::fold`), and a `struct.create` whose operands are the
   fields of one value of its type, read in order by extracts each read only
   there and its only readers, is that value (`foldTrivialStructCopy`).
+  A `pop.select` of two equal cases, or on a constant condition, is the
+  case it picks, as `arith.select` folds, and a constant `Bool`'s
+  `_mlir_value` is its one `bool` lane, so an inlined `pick(True, a, b)`
+  over a selecting `if` still folds to `a`.
   The shape of an inlined `SIMD` comparison dunder folds the same way:
   `pop.simd.reduce` of one lane is that lane, `pop.cmp ne m, False` (or
   `eq m, True`) over `bool` lanes is `m`, as `arith.cmpi` folds over `i1`,

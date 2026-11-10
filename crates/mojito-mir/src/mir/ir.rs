@@ -3238,6 +3238,9 @@ impl MirInstr {
     /// lane, and `pop.cmp ne m, False` (or `eq m, True`) over `bool` lanes
     /// is `m`, as `arith.cmpi` folds over `i1`: the shape of upstream's
     /// `__bool__` of a comparison's mask.
+    ///
+    /// A `pop.select` of two equal cases, or on a constant condition, is
+    /// the case it picks, as `arith.select` folds.
     pub fn forwarded_operand(
         &self,
         constant: &dyn Fn(Reg) -> Option<Const>,
@@ -3266,6 +3269,31 @@ impl MirInstr {
                     }) =>
             {
                 Some(*value)
+            }
+            Self::Select {
+                dest,
+                condition,
+                on_true,
+                on_false,
+            } => {
+                let case = if on_true == on_false {
+                    *on_true
+                } else {
+                    match constant(*condition)? {
+                        Const::Bool(true) => *on_true,
+                        Const::Bool(false) => *on_false,
+                        Const::Value(CtValue::Simd {
+                            dtype: Dtype::Bool,
+                            lanes,
+                        }) => match lanes.as_slice() {
+                            [mojito_types::ct::CtLane::Bool(true)] => *on_true,
+                            [mojito_types::ct::CtLane::Bool(false)] => *on_false,
+                            _ => return None,
+                        },
+                        _ => return None,
+                    }
+                };
+                held_alike(dest, &case).then_some(case)
             }
             Self::BinOp {
                 op: op @ (InfixOp::Eq | InfixOp::Ne),
@@ -3316,7 +3344,8 @@ impl MirInstr {
     /// into a `bool` vector, a built-in scalar conversion
     /// ([`Self::ScalarCast`], upstream's inlined `pop.cast`), a `SIMD`'s
     /// `struct.create` from its storage and `field.get` of it (upstream's
-    /// `kgen.struct` folds), and a forwarded copy fold, and only over values
+    /// `kgen.struct` folds), a constant `Bool`'s `_mlir_value`, its one
+    /// `bool` lane, and a forwarded copy fold, and only over values
     /// whose constant kind is the one their register's type names. A
     /// materialization folds to the lane the VM materializes (`CtValue::materialize_as`), a wider one to the lanes
     /// `ct::simd_construction_lanes` gives (the comptime evaluator's own
@@ -3506,6 +3535,22 @@ impl MirInstr {
                     && reg_types.get(&base.0)?.is_simd() =>
             {
                 (dest, operand(*base)?)
+            }
+            // A constant `Bool`'s storage is its one `bool` lane.
+            Self::GetField { dest, base, field }
+                if field == mojito_types::ct::MLIR_VALUE_FIELD
+                    && reg_types.get(&base.0)?.is_bool() =>
+            {
+                let CtValue::Bool(value) = operand(*base)? else {
+                    return None;
+                };
+                (
+                    dest,
+                    CtValue::Simd {
+                        dtype: Dtype::Bool,
+                        lanes: vec![mojito_types::ct::CtLane::Bool(value)],
+                    },
+                )
             }
             // A host integer cast into one integer lane wraps, as
             // `MakeSimd` builds it (`Int64(n)` through `SIMD`'s cast

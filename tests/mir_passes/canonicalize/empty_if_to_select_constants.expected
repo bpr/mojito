@@ -1,0 +1,32 @@
+  functions: [
+      fn {
+        name: one_or_two,
+        registers: 5,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: kgen_simd { dtype: bool, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              const { dest: %r1, value: int(1) },
+              const { dest: %r2, value: int(2) },
+              field.get { dest: %r4, base: %r0, field: _mlir_value },
+              select { dest: %r3, condition: %r4, on_true: %r1, on_false: %r2 }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]

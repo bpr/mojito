@@ -25,8 +25,10 @@
 //! A structured body's region ops take upstream's `hlcf` canonicalization
 //! patterns (`hlcf`): an `if` on a constant keeps the arm it selects, exits
 //! every arm shares are hoisted after the `if`, arms that only yield fold
-//! into the results, a loop that only breaks goes, and a `comptime if` on a
-//! constant keeps its live arm. Folding and the patterns alternate until
+//! into the results, a register-passable trivial result both arms yield
+//! from outside them becomes a `pop.select` (the generator
+//! `Canonicalizer`'s `EmptyIfToSelect` and `IfYieldSelect`), a loop that
+//! only breaks goes, and a `comptime if` on a constant keeps its live arm. Folding and the patterns alternate until
 //! the patterns stop, as the greedy driver's worklist does. An erased raise
 //! point erases the destructors on its edge: each `try`'s raise-edge
 //! cleanup is cut to what a remaining raise path holds.
@@ -84,7 +86,7 @@ pub fn canonicalize(
     loop {
         loop {
             folded_constants += fold_constants(function, declarations);
-            let rewritten = hlcf::hlcf_patterns(function, &mut erased);
+            let rewritten = hlcf::hlcf_patterns(function, declarations, &mut erased);
             if rewritten == 0 {
                 break;
             }
@@ -113,7 +115,7 @@ pub fn canonicalize(
         if erased.len() == before {
             break;
         }
-        let rewritten = hlcf::hlcf_patterns(function, &mut erased);
+        let rewritten = hlcf::hlcf_patterns(function, declarations, &mut erased);
         if rewritten == 0 {
             break;
         }
