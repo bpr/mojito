@@ -822,8 +822,11 @@ impl Walk<'_> {
     /// holds, becomes a `pop.select` after the `if`, which keeps its
     /// effects without that result. A yielded constant moves before the
     /// `if`, as [`Self::empty_if_to_select`] moves it. MIR is not SSA, so
-    /// a yielded value must have one definition: one an arm redefines is
-    /// not the value it held before the `if`.
+    /// a yielded value and the condition must have one definition: one an
+    /// arm redefines is not the value it held before the `if`. The
+    /// condition's storage is read after the `if`, since the `if` may be a
+    /// raising instruction's error region, which must follow it with no
+    /// read of its flag between.
     fn if_yield_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -888,7 +891,7 @@ impl Walk<'_> {
             chosen.push(at);
         }
         let cond = *cond;
-        if chosen.is_empty() || !self.condition_selects(cond) {
+        if chosen.is_empty() || !self.condition_selects(cond) || !self.defined_at_most_once(cond) {
             return false;
         }
         let (storage, convert) = self.condition_storage(cond);
@@ -928,8 +931,9 @@ impl Walk<'_> {
                 on_false: *on_false,
             });
         let tail = block.instrs.split_off(index + 1);
-        block.instrs.extend(after.chain(tail));
-        before.push(convert);
+        block
+            .instrs
+            .extend(std::iter::once(convert).chain(after).chain(tail));
         block.instrs.splice(index..index, before);
         self.counts.if_yield_selects += 1;
         true
