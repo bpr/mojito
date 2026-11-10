@@ -35,7 +35,7 @@ pub(super) fn elaborate_store_drops(
     walked: &dyn Fn(&MirPlace) -> bool,
 ) {
     let entry = entry_move_states(f, initializer_receiver_entry(f, name, declarations));
-    let handles = make_ref_places(&f.blocks);
+    let handles = make_ref_places(&f.body);
     let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
     let observed = observe_move_states(f, entry, &mut |state, instr| {
         if let Some(place) = replaced_place(instr, state, f, &handles)
@@ -45,7 +45,7 @@ pub(super) fn elaborate_store_drops(
         }
     });
     if observed.is_ok() && !overwrites.is_empty() {
-        splice_blocks(&mut f.blocks, &overwrites);
+        splice_blocks(&mut f.body, &overwrites);
     }
 }
 
@@ -207,9 +207,9 @@ fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunctio
 /// `WriteRef` names only that register, so the place it writes is recovered
 /// here. A register is defined once per function, so one map covers every
 /// block, every region included.
-fn make_ref_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
+fn make_ref_places(block: &MirBlock) -> HashMap<u32, MirPlace> {
     let mut handles = HashMap::new();
-    for_each_instr_deep(blocks, &mut |instr| {
+    for_each_instr_deep(block, &mut |instr| {
         if let MirInstr::MakeRef { dest, place } = instr {
             handles.insert(dest.0, place.clone());
         }
@@ -220,31 +220,29 @@ fn make_ref_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
 /// Insert each marked write's `DropPlace` before it in `blocks`, recursing
 /// into every region op's regions. A write is looked up while it is still
 /// in place, before its block is rebuilt.
-fn splice_blocks(blocks: &mut [MirBlock], overwrites: &HashMap<*const MirInstr, MirPlace>) {
-    for block in blocks {
-        let places: Vec<Option<MirPlace>> = block
-            .instrs
-            .iter()
-            .map(|instr| overwrites.get(&std::ptr::from_ref(instr)).cloned())
-            .collect();
-        for instr in &mut block.instrs {
-            for region in instruction_regions_mut(instr) {
-                splice_blocks(region, overwrites);
-            }
+fn splice_blocks(block: &mut MirBlock, overwrites: &HashMap<*const MirInstr, MirPlace>) {
+    let places: Vec<Option<MirPlace>> = block
+        .instrs
+        .iter()
+        .map(|instr| overwrites.get(&std::ptr::from_ref(instr)).cloned())
+        .collect();
+    for instr in &mut block.instrs {
+        for region in instruction_regions_mut(instr) {
+            splice_blocks(region, overwrites);
         }
-        let instrs = std::mem::take(&mut block.instrs);
-        block.instrs = instrs
-            .into_iter()
-            .zip(places)
-            .flat_map(|(instr, place)| {
-                place
-                    .map(|place| MirInstr::DropPlace {
-                        place,
-                        destructor: None,
-                    })
-                    .into_iter()
-                    .chain(std::iter::once(instr))
-            })
-            .collect();
     }
+    let instrs = std::mem::take(&mut block.instrs);
+    block.instrs = instrs
+        .into_iter()
+        .zip(places)
+        .flat_map(|(instr, place)| {
+            place
+                .map(|place| MirInstr::DropPlace {
+                    place,
+                    destructor: None,
+                })
+                .into_iter()
+                .chain(std::iter::once(instr))
+        })
+        .collect();
 }

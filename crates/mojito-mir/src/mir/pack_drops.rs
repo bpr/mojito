@@ -32,14 +32,14 @@ pub fn refine_pack_drops(
     owned_pack: Option<VarId>,
     runs_no_code: &dyn Fn(&Ty) -> bool,
 ) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     Refine {
         function: &*function,
         owned_pack,
         runs_no_code,
     }
-    .blocks(&mut blocks);
-    function.blocks = blocks;
+    .block(&mut blocks);
+    function.body = blocks;
 }
 
 struct Refine<'a> {
@@ -49,18 +49,16 @@ struct Refine<'a> {
 }
 
 impl Refine<'_> {
-    fn blocks(&self, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            let instrs = std::mem::take(&mut block.instrs);
-            let mut refined = Vec::with_capacity(instrs.len());
-            for mut instruction in instrs {
-                for region in instruction_regions_mut(&mut instruction) {
-                    self.blocks(region);
-                }
-                self.instruction(instruction, &mut refined);
+    fn block(&self, block: &mut MirBlock) {
+        let instrs = std::mem::take(&mut block.instrs);
+        let mut refined = Vec::with_capacity(instrs.len());
+        for mut instruction in instrs {
+            for region in instruction_regions_mut(&mut instruction) {
+                self.block(region);
             }
-            block.instrs = refined;
+            self.instruction(instruction, &mut refined);
         }
+        block.instrs = refined;
     }
 
     /// Push `instruction`, or the element drops refining it.
@@ -159,10 +157,10 @@ mod tests {
 
     fn function(var_ty: Ty, instrs: Vec<MirInstr>) -> MirFunction {
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             n_vars: 1,
             n_params: 1,
             var_names: vec!["args".into()],
@@ -174,7 +172,8 @@ mod tests {
     /// The elements each `drop.place` of `function` drops, and how a
     /// whole slot's pack ends.
     fn shape(function: &MirFunction) -> Vec<String> {
-        function.blocks[0]
+        function
+            .body
             .instrs
             .iter()
             .map(|instruction| match instruction {

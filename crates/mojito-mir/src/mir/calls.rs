@@ -57,9 +57,9 @@ pub(super) struct CallSetup {
 pub(super) struct SetupReference {
     /// The operand's [`Node::address`].
     node: usize,
-    /// Where the read begins once the handle is materialized: its block and
-    /// the index of the first instruction after the handle's loans.
-    read_start: Option<(MirBlockId, usize)>,
+    /// Where the read begins once the handle is materialized: the index of
+    /// the first instruction after the handle's loans.
+    read_start: Option<usize>,
 }
 
 /// Whether a literal register of type `found` materializes at the checked
@@ -190,7 +190,7 @@ impl<'a> Flatten<'a> {
         if self.awaits_setup_read(display)
             && let Some(pending) = self.setup_reference.as_mut()
         {
-            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+            pending.read_start = Some(self.f.body.instrs.len());
         }
         self.close_call_setup(None);
         regs
@@ -295,8 +295,7 @@ impl<'a> Flatten<'a> {
         bound: bool,
         lower: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let block = self.cur;
-        let start = self.f.blocks[block].instrs.len();
+        let start = self.f.body.instrs.len();
         let read = self.setup_read(expression);
         let pending = (!read
             && (bound && Self::setup_display(expression) || self.setup_reference(expression)))
@@ -308,18 +307,18 @@ impl<'a> Flatten<'a> {
         let lowered = lower(self);
         let reference = std::mem::replace(&mut self.setup_reference, enclosing);
         let read_start = if read {
-            Some((block, start))
+            Some(start)
         } else {
             reference.and_then(|reference| reference.read_start)
         };
-        if let Some((block, start)) = read_start
+        if let Some(start) = read_start
             && let Some(setup) = self.call_setups.last_mut()
         {
-            let instrs = self.f.blocks[block].instrs.drain(start..).collect();
+            let instrs = self.f.body.instrs.drain(start..).collect();
             setup.reads.push((source, instrs));
-        } else if self.f.blocks[block].instrs.len() > start
+        } else if self.f.body.instrs.len() > start
             && matches!(
-                self.f.blocks[block].instrs.last(),
+                self.f.body.instrs.last(),
                 Some(MirInstr::UseVar {
                     mode: UseMode::Forward,
                     ..
@@ -327,7 +326,7 @@ impl<'a> Flatten<'a> {
             )
             && let Some(setup) = self.call_setups.last_mut()
         {
-            let forward = self.f.blocks[block].instrs.pop().into_iter().collect();
+            let forward = self.f.body.instrs.pop().into_iter().collect();
             setup.forwards.push((source, forward));
         }
         lowered
@@ -349,7 +348,7 @@ impl<'a> Flatten<'a> {
         if self.awaits_setup_read(expression)
             && let Some(pending) = self.setup_reference.as_mut()
         {
-            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+            pending.read_start = Some(self.f.body.instrs.len());
         }
     }
 
@@ -1359,7 +1358,7 @@ impl<'a> Flatten<'a> {
             (setup, written),
         );
         if setup && let Some(pending) = self.setup_reference.as_mut() {
-            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+            pending.read_start = Some(self.f.body.instrs.len());
         }
         Some(place)
     }
@@ -1653,7 +1652,7 @@ impl<'a> Flatten<'a> {
             // A copying slot read, or a compile-time parameter's value,
             // is already a fresh owned value the call may consume.
             let read_copied = matches!(
-                self.f.blocks[self.cur].instrs.last(),
+                self.f.body.instrs.last(),
                 Some(
                     MirInstr::UseVar { dest, mode: UseMode::Copy, .. }
                         | MirInstr::Const { dest, .. }
@@ -2042,7 +2041,7 @@ impl<'a> Flatten<'a> {
     /// A prefix dunder's raising is not recorded, so its result is never
     /// bound in place.
     pub(super) fn produced_in_place(&self, value: Reg, operator_non_raising: bool) -> bool {
-        let Some(producer) = self.f.blocks[self.cur].instrs.last() else {
+        let Some(producer) = self.f.body.instrs.last() else {
             return false;
         };
         match producer {

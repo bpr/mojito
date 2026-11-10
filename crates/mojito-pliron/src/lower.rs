@@ -271,7 +271,7 @@ pub fn lower_body(
         lazy_values: Vec::new(),
         erased: HashSet::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
-        loaded_places: collect_loaded_places(&func.blocks),
+        loaded_places: collect_loaded_places(&func.body),
         storage_reads: HashSet::new(),
         pointer_slot_refs: HashSet::new(),
         made_ref_places: HashMap::new(),
@@ -287,8 +287,8 @@ pub fn lower_body(
         outcome_ptr: None,
         err_slot: None,
         propagate_block: None,
-        edge_errors: edge_errors(&func.blocks),
-        error_slots: error_slots(&func.blocks),
+        edge_errors: edge_errors(&func.body),
+        error_slots: error_slots(&func.body),
         open_edge: None,
         current: None,
     };
@@ -480,9 +480,9 @@ struct OpenEdge {
     error_block: Option<Ptr<BasicBlock>>,
 }
 
-/// The error slot of every `try` in `blocks`, at any depth.
-fn error_slots(blocks: &[MirBlock]) -> HashSet<u32> {
-    mojito_mir::mir::nested_instructions(blocks)
+/// The error slot of every `try` in `block`, at any depth.
+fn error_slots(block: &MirBlock) -> HashSet<u32> {
+    mojito_mir::mir::nested_instructions(block)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Try { error, .. } => *error,
@@ -492,19 +492,15 @@ fn error_slots(blocks: &[MirBlock]) -> HashSet<u32> {
 }
 
 /// The error register of every raise edge in `blocks`, at any depth.
-fn edge_errors(blocks: &[MirBlock]) -> HashSet<u32> {
+fn edge_errors(body: &MirBlock) -> HashSet<u32> {
     let mut errors = HashSet::new();
-    let mut pending: Vec<&[MirBlock]> = vec![blocks];
-    while let Some(blocks) = pending.pop() {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    let mut pending: Vec<&MirBlock> = vec![body];
+    while let Some(block) = pending.pop() {
+        for instruction in &block.instrs {
             if let Some(raises) = instruction.raise_edge() {
                 errors.insert(raises.error.0);
             }
-            pending.extend(
-                mojito_mir::mir::instruction_regions(instruction)
-                    .into_iter()
-                    .map(Vec::as_slice),
-            );
+            pending.extend(mojito_mir::mir::instruction_regions(instruction));
         }
     }
     errors

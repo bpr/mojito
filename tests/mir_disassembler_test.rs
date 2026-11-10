@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 fn identity_program() -> MirProgram {
     let function = MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs: vec![MirInstr::UseVar {
                 dest: Reg(0),
                 var: 0,
@@ -21,7 +21,7 @@ fn identity_program() -> MirProgram {
                 constructor: None,
             }],
             term: MirTerm::Return(Some(Reg(0))),
-        }],
+        },
         n_regs: 1,
         n_vars: 1,
         var_names: vec!["value".into()],
@@ -84,7 +84,7 @@ fn control_flow_program() -> MirProgram {
         ]
     };
     let function = MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs: vec![
                 MirInstr::UseVar {
                     dest: Reg(0),
@@ -95,20 +95,20 @@ fn control_flow_program() -> MirProgram {
                 MirInstr::If {
                     results: vec![Reg(5)],
                     cond: Reg(0),
-                    then: vec![MirBlock {
+                    then: Box::new(MirBlock {
                         instrs: literal(1, 6, "7"),
                         term: MirTerm::Yield(vec![Reg(2)]),
-                    }],
+                    }),
                     elifs: Vec::new(),
                     else_args: Vec::new(),
-                    orelse: vec![MirBlock {
+                    orelse: Box::new(MirBlock {
                         instrs: literal(3, 7, "-3"),
                         term: MirTerm::Yield(vec![Reg(4)]),
-                    }],
+                    }),
                 },
             ],
             term: MirTerm::Return(Some(Reg(5))),
-        }],
+        },
         n_regs: 8,
         n_vars: 1,
         var_names: vec!["flag".into()],

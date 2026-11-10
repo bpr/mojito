@@ -47,7 +47,7 @@ pub fn destroyed_structs(function: &MirFunction, fields: &StructFields<'_>) -> D
         pending: Vec::new(),
         named: Vec::new(),
     };
-    walk.blocks(&function.blocks);
+    walk.block(&function.body);
     Destroyed {
         named: walk.named,
         ..close_over_fields(walk.pending, fields)
@@ -113,13 +113,11 @@ struct Walk<'f> {
 }
 
 impl Walk<'_> {
-    fn blocks(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                self.instruction(instruction);
-                for region in instruction_regions(instruction) {
-                    self.blocks(region);
-                }
+    fn block(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            self.instruction(instruction);
+            for region in instruction_regions(instruction) {
+                self.block(region);
             }
         }
     }

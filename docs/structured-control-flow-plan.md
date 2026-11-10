@@ -106,7 +106,7 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   included, to be one block.
   - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
     `ComptimeIf`, and `ComptimeFor`. Each
-    region is a `Vec<MirBlock>` of one block sharing the function's
+    region is one `MirBlock` (since R1276) sharing the function's
     registers and slots, walked by
     `instruction_regions`/`instruction_regions_mut`. A structured `try`
     part completes by `TryYield` (`lit.try.yield`) and leaves to a loop by
@@ -518,9 +518,9 @@ last producer. Every stage keeps program output unchanged; the
       reads one block per list: the block-list fixpoints of the ownership
       walks, drop lowering, and the slot-ends check, their escape
       channels, `cse`'s dominator tree, and `canonicalize`'s
-      unreachable-block erasure are gone. A region is still a
-      `Vec<MirBlock>` the verifier holds to one block, where upstream's is
-      `SizedRegion<1>`: filed on the roadmap's `pmir` track.
+      unreachable-block erasure are gone. Since R1276 a region is one
+      `MirBlock` by its type, as upstream's is `SizedRegion<1>`, and the
+      verifier's block-count findings went with the shape they guarded.
 
 Each stage moves Mojito strictly closer to upstream; no stage adopts a
 Mojito-only shape.

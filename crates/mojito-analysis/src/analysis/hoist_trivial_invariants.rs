@@ -57,7 +57,7 @@ pub fn hoist_trivial_invariants(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let definitions = definition_counts(&mut function.body, function.n_regs);
     let mut walk = Walk {
         declarations,
         reg_types: &function.reg_types,
@@ -67,9 +67,7 @@ pub fn hoist_trivial_invariants(
         fresh: 0,
         hoisted: 0,
     };
-    if let Some(entry) = function.blocks.first_mut() {
-        walk.block(entry, 0, false, &[]);
-    }
+    walk.block(&mut function.body, 0, false, &[]);
     timing::count("hoisted_instructions", walk.hoisted);
     walk.hoisted > 0
 }
@@ -209,9 +207,7 @@ impl Walk<'_> {
             .into_iter()
             .zip(&arguments)
         {
-            if let Some(block) = region.first_mut() {
-                arrived.extend(self.block(block, depth + 1, hoists, arguments));
-            }
+            arrived.extend(self.block(region, depth + 1, hoists, arguments));
         }
         arrived
     }

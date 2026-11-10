@@ -273,10 +273,10 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// `mem-2-reg` ([`MirFunction::fresh_splices`]) are priced as they stand
 /// (the private `CostWalk`).
 pub fn inline_cost(callee: &MirFunction) -> usize {
-    let mut walk = CostWalk::new(&callee.blocks, callee.fresh_splices);
+    let mut walk = CostWalk::new(&callee.body, callee.fresh_splices);
     walk.allocas()
-        + walk.blocks(&callee.blocks, false)
-        + LOOP_COST * structured_back_edges(&callee.blocks)
+        + walk.blocks(&callee.body, false)
+        + LOOP_COST * structured_back_edges(&callee.body)
         + if callee.raises { RAISES_COST } else { 0 }
 }
 
@@ -328,14 +328,14 @@ pub fn inline_calls(
     admission: Admission,
 ) -> bool {
     let mut reads = vec![0; function.n_regs as usize];
-    count_register_reads(&mut function.blocks, &mut reads);
+    count_register_reads(&mut function.body, &mut reads);
     let function_values = callable_targets(function);
     let owned = RegisterEnds::new(function, declarations)
         .owned_registers()
         .into_iter()
         .map(|reg| reg.0)
         .collect();
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     let closures = Closures::of(&blocks);
     let mut inliner = Inliner {
         function,
@@ -356,7 +356,7 @@ pub fn inline_calls(
     };
     let changed = inliner.block_list(&mut blocks);
     let dropped_operands = inliner.dropped_operands;
-    function.blocks = blocks;
+    function.body = blocks;
     if dropped_operands {
         erase_removed_operands(function, declarations, &reads);
     }
@@ -576,14 +576,14 @@ struct Closures {
 }
 
 impl Closures {
-    /// The closures `blocks`, a caller's body, makes, its regions included.
-    fn of(blocks: &[MirBlock]) -> Self {
+    /// The closures `block`, a caller's body, makes, its regions included.
+    fn of(block: &MirBlock) -> Self {
         let mut closures = Self {
             made: HashMap::new(),
             slots: HashMap::new(),
         };
         let mut stored = HashMap::new();
-        closures.collect(blocks, &mut stored);
+        closures.collect(block, &mut stored);
         closures.slots = stored
             .into_iter()
             .filter_map(|(var, src)| {
@@ -594,10 +594,10 @@ impl Closures {
         closures
     }
 
-    /// Record the closures `blocks` makes, and each slot's store: its
+    /// Record the closures `block` makes, and each slot's store: its
     /// source register when it is stored once, `None` when more often.
-    fn collect(&mut self, blocks: &[MirBlock], stored: &mut HashMap<VarId, Option<u32>>) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    fn collect(&mut self, block: &MirBlock, stored: &mut HashMap<VarId, Option<u32>>) {
+        for instruction in &block.instrs {
             for region in instruction_regions(instruction) {
                 self.collect(region, stored);
             }
@@ -872,86 +872,75 @@ enum Returned {
 }
 
 impl<'c> Inliner<'_, 'c> {
-    /// Inline every inlinable call of `list`, a block list of the caller,
-    /// in its regions too; returns whether it inlined one.
-    ///
-    /// A structured list holds one block, as does a structured callee's
-    /// body; a call in a list of more, or of a callee whose body has more,
-    /// stays a call.
-    fn block_list(&mut self, list: &mut [MirBlock]) -> bool {
+    /// Inline every inlinable call of `caller`, a block of the caller, in
+    /// its regions too; returns whether it inlined one.
+    fn block_list(&mut self, caller: &mut MirBlock) -> bool {
         let mut changed = false;
-        let structured = list.len() == 1;
-        for caller in list {
-            let mut index = 0;
-            while index < caller.instrs.len() {
-                if !instruction_regions(&caller.instrs[index]).is_empty() {
-                    changed |= self.instruction_regions(&mut caller.instrs[index]);
-                }
-                let store = structured
-                    .then(|| self.setter_call(&mut caller.instrs[index]))
-                    .flatten();
-                if structured
-                    && let Some(Inlinable {
-                        dest,
-                        mut callee,
-                        inline,
-                        mut bindings,
-                        dropped,
-                        closures,
-                    }) = self.inlinable(caller, index)
-                    && callee.blocks.len() == 1
-                    && let Some(mut blocks) =
-                        self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
-                            demote_parts(&mut bindings)
-                                .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
-                                .flatten()
-                        })
-                    && let raises = caller.instrs[index].raise_edge().cloned()
-                    && raises.as_ref().is_none_or(|raises| {
-                        routes_raises(
-                            &blocks,
-                            raises,
-                            callee
-                                .error_slot
-                                .map(|slot| slot + self.function.n_vars as VarId),
-                            (&callee.reg_types, self.function.n_regs),
-                        )
-                    })
-                {
-                    self.dropped_operands |=
-                        dropped || passes_value_arguments(&caller.instrs[index]);
-                    changed = true;
-                    // The body's loop is scanned next, its regions as any
-                    // region op's; after elaboration it is skipped, as
-                    // upstream's `AutomaticInline` inlines only the caller's
-                    // own call sites, the callee's having been decided when
-                    // it was processed, and a recursive callee's call inside
-                    // its own body would inline again without end.
-                    let resumed = matches!(self.admission, Admission::Automatic { .. });
-                    let call_span = self.function.spans.0.get(&dest.0).map(|(span, _)| span);
-                    extend_source_locations(&mut blocks, inline, call_span);
-                    index = usize::from(resumed)
-                        + self.splice(
-                            caller,
-                            &CallSite {
-                                index,
-                                dest,
-                                raises,
-                            },
-                            &callee,
-                            (&bindings, &closures),
-                            blocks,
-                        );
-                    continue;
-                }
-                if let Some((original, dest)) = store {
-                    caller.instrs[index] = original;
-                    self.function.n_regs -= 1;
-                    self.function.reg_types.remove(&dest.0);
-                }
-                index += 1;
+        let mut index = 0;
+        while index < caller.instrs.len() {
+            if !instruction_regions(&caller.instrs[index]).is_empty() {
+                changed |= self.instruction_regions(&mut caller.instrs[index]);
             }
+            let store = self.setter_call(&mut caller.instrs[index]);
+            if let Some(Inlinable {
+                dest,
+                mut callee,
+                inline,
+                mut bindings,
+                dropped,
+                closures,
+            }) = self.inlinable(caller, index)
+                && let Some(mut blocks) =
+                    self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
+                        demote_parts(&mut bindings)
+                            .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
+                            .flatten()
+                    })
+                && let raises = caller.instrs[index].raise_edge().cloned()
+                && raises.as_ref().is_none_or(|raises| {
+                    routes_raises(
+                        &blocks,
+                        raises,
+                        callee
+                            .error_slot
+                            .map(|slot| slot + self.function.n_vars as VarId),
+                        (&callee.reg_types, self.function.n_regs),
+                    )
+                })
+            {
+                self.dropped_operands |= dropped || passes_value_arguments(&caller.instrs[index]);
+                changed = true;
+                // The body's loop is scanned next, its regions as any
+                // region op's; after elaboration it is skipped, as
+                // upstream's `AutomaticInline` inlines only the caller's
+                // own call sites, the callee's having been decided when
+                // it was processed, and a recursive callee's call inside
+                // its own body would inline again without end.
+                let resumed = matches!(self.admission, Admission::Automatic { .. });
+                let call_span = self.function.spans.0.get(&dest.0).map(|(span, _)| span);
+                extend_source_locations(&mut blocks, inline, call_span);
+                index = usize::from(resumed)
+                    + self.splice(
+                        caller,
+                        &CallSite {
+                            index,
+                            dest,
+                            raises,
+                        },
+                        &callee,
+                        (&bindings, &closures),
+                        blocks,
+                    );
+                continue;
+            }
+            if let Some((original, dest)) = store {
+                caller.instrs[index] = original;
+                self.function.n_regs -= 1;
+                self.function.reg_types.remove(&dest.0);
+            }
+            index += 1;
         }
+
         changed
     }
 
@@ -1689,13 +1678,9 @@ impl<'c> Inliner<'_, 'c> {
     /// or a place reached through a reference other than the parameter's
     /// composes with a caller's place reached through one. A copy of a
     /// place-bound parameter takes a fresh register of `callee`.
-    fn inlined_blocks(
-        &self,
-        callee: &mut MirFunction,
-        bindings: &[Binding],
-    ) -> Option<Vec<MirBlock>> {
+    fn inlined_blocks(&self, callee: &mut MirFunction, bindings: &[Binding]) -> Option<MirBlock> {
         let base = self.function.n_vars as VarId;
-        let mut blocks = callee.blocks.clone();
+        let mut blocks = callee.body.clone();
         renumber_block_slots(&mut blocks, &|var| match bindings.get(var as usize) {
             Some(Binding::Slot(slot)) => *slot,
             _ => var + base,
@@ -1749,7 +1734,7 @@ impl<'c> Inliner<'_, 'c> {
         site: &CallSite,
         callee: &MirFunction,
         (bindings, closures): (&[Binding], &[(VarId, Reg)]),
-        mut blocks: Vec<MirBlock>,
+        mut blocks: MirBlock,
     ) -> usize {
         let declarations = self.declarations;
         let function = &mut *self.function;
@@ -1883,12 +1868,12 @@ impl<'c> Inliner<'_, 'c> {
             lent.insert(argument.0, forwarded);
         }
         if !lent.is_empty() {
-            let mut rest = [MirBlock {
+            let mut rest = MirBlock {
                 instrs: std::mem::take(&mut after),
                 term: MirTerm::Return(None),
-            }];
+            };
             mojito_mir::mir::replace_register_reads(&mut rest, &lent);
-            after = std::mem::take(&mut rest[0].instrs);
+            after = rest.instrs;
             for reg in terminator_regs_mut(&mut caller.term) {
                 if let Some(forwarded) = lent.get(&reg.0) {
                     *reg = *forwarded;
@@ -2056,21 +2041,17 @@ impl<'c> Inliner<'_, 'c> {
     }
 }
 
-/// Extend the call-site chain of every `kgen.source_loc` of `blocks`, a
+/// Extend the call-site chain of every `kgen.source_loc` of `block`, a
 /// body inlined at a call located at `call`, as MLIR's inliner relocates
 /// an inlined op: an `@always_inline` callee's sites gain the call as
 /// their next frame out, `callsite(op at call)`, and a `nodebug` or
 /// `builtin` callee's take the call's own location, so the inlined code
 /// reports as the call.
-fn extend_source_locations(
-    blocks: &mut [MirBlock],
-    inline: InlineLevel,
-    call: Option<&SourceSpan>,
-) {
+fn extend_source_locations(block: &mut MirBlock, inline: InlineLevel, call: Option<&SourceSpan>) {
     let Some(call) = call else {
         return;
     };
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             extend_source_locations(region, inline, Some(call));
         }
@@ -2094,7 +2075,7 @@ fn extend_source_locations(
 fn splice_region(
     function: &mut MirFunction,
     caller: &mut MirBlock,
-    mut blocks: Vec<MirBlock>,
+    mut blocks: MirBlock,
     resumed: Vec<MirInstr>,
     exit: &ReturnExit,
 ) -> usize {
@@ -2105,7 +2086,7 @@ fn splice_region(
         operands: Vec::new(),
         args: Vec::new(),
         results: exit.results(),
-        body: blocks,
+        body: Box::new(blocks),
     });
     caller.instrs.extend(resumed);
     at
@@ -2216,13 +2197,11 @@ impl ReturnExit {
     /// [`Self::rewrite`] every return, and every raise, of `blocks` and
     /// their regions into a break of the [`LoopLabel::INLINED_CF_SCOPE`]
     /// loop, upstream's `hlcf.break` of `inlined_cf_scope`.
-    fn break_returns(&self, function: &mut MirFunction, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-                self.break_returns(function, region);
-            }
-            self.rewrite(function, block);
+    fn break_returns(&self, function: &mut MirFunction, block: &mut MirBlock) {
+        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
+            self.break_returns(function, region);
         }
+        self.rewrite(function, block);
     }
 }
 
@@ -2241,12 +2220,12 @@ fn raised_store(block: &MirBlock, slot: Option<VarId>) -> Option<usize> {
 /// `reg_types` are the callee's, whose registers the body numbers from
 /// `base`.
 fn routes_raises(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     raises: &Raises,
     slot: Option<VarId>,
     (reg_types, base): (&HashMap<u32, Ty>, u32),
 ) -> bool {
-    blocks.iter().all(|block| {
+    {
         let routed = !matches!(block.term, MirTerm::ErrorReturn)
             || raised_store(block, slot).is_some_and(|store| {
                 matches!(&block.instrs[store], MirInstr::DefVar { src, .. } if src
@@ -2261,19 +2240,19 @@ fn routes_raises(
                 .iter()
                 .flat_map(instruction_regions)
                 .all(|region| routes_raises(region, raises, slot, (reg_types, base)))
-    })
+    }
 }
 
 /// Retype each read of `var`, a callable slot bound to a caller's closure,
-/// in `blocks` and their regions to the closure's type `ty`: a `var.use`'s
+/// in `block` and their regions to the closure's type `ty`: a `var.use`'s
 /// register in `reg_types`, and a call through the slot's place.
 fn retype_closure_slot(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var: VarId,
     ty: &Ty,
     reg_types: &mut HashMap<u32, Ty>,
 ) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             retype_closure_slot(region, var, ty, reg_types);
         }
@@ -2303,7 +2282,7 @@ fn retype_closure_slot(
 /// call-graph pass will.
 fn record_lowered_callees(function: &mut MirFunction, callees: &Callees<'_>) {
     let mut named = Vec::new();
-    call_targets_in(&function.blocks, &mut named);
+    call_targets_in(&function.body, &mut named);
     for callee in named {
         if function
             .callee_removed_params
@@ -2321,9 +2300,9 @@ fn record_lowered_callees(function: &mut MirFunction, callees: &Callees<'_>) {
     }
 }
 
-/// The callees the direct calls of `blocks` and their regions name.
-fn call_targets_in(blocks: &[MirBlock], out: &mut Vec<String>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+/// The callees the direct calls of `block` and their regions name.
+fn call_targets_in(block: &MirBlock, out: &mut Vec<String>) {
+    for instruction in &block.instrs {
         if let MirInstr::Call { func, .. } = instruction {
             out.push(func.0.clone());
         }
@@ -2686,16 +2665,13 @@ fn reads_register(instruction: &MirInstr, reg: Reg) -> bool {
     let mut operands = Vec::new();
     mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
     operands.contains(&reg)
-        || instruction_regions(instruction)
-            .into_iter()
-            .flatten()
-            .any(|block| {
-                block
-                    .instrs
-                    .iter()
-                    .any(|instruction| reads_register(instruction, reg))
-                    || mojito_mir::mir::terminator_regs(&block.term).contains(&reg)
-            })
+        || instruction_regions(instruction).into_iter().any(|block| {
+            block
+                .instrs
+                .iter()
+                .any(|instruction| reads_register(instruction, reg))
+                || mojito_mir::mir::terminator_regs(&block.term).contains(&reg)
+        })
 }
 
 /// The whole slot the register `argument` is a load of before the call at
@@ -2726,7 +2702,6 @@ fn names_slot(instruction: &MirInstr, slot: VarId) -> bool {
     instruction_slots(instruction).contains(&slot)
         || mojito_mir::mir::instruction_regions(instruction)
             .into_iter()
-            .flatten()
             .flat_map(|block| &block.instrs)
             .any(|instruction| names_slot(instruction, slot))
 }
@@ -2799,12 +2774,12 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
             }))
         )
     };
-    let mut blocks = callee.blocks.clone();
+    let mut blocks = callee.body.clone();
     let mut made = HashMap::new();
     let mut returned = Vec::new();
-    references_and_returns(&callee.blocks, &mut made, &mut returned);
+    references_and_returns(&callee.body, &mut made, &mut returned);
     let mut stores = HashMap::new();
-    whole_stores(&callee.blocks, &mut stores);
+    whole_stores(&callee.body, &mut stores);
     let held = |value: &Reg| {
         made.get(&value.0).and_then(|place: &&MirPlace| {
             let slot = place.root;
@@ -2840,11 +2815,11 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     })
 }
 
-/// Add to `stores` each register `blocks` and their regions store whole
+/// Add to `stores` each register `block` and their regions store whole
 /// into a slot (`var.store`, or a `place.store` of the whole slot), by
 /// that slot.
-fn whole_stores(blocks: &[MirBlock], stores: &mut HashMap<VarId, Vec<Reg>>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn whole_stores(block: &MirBlock, stores: &mut HashMap<VarId, Vec<Reg>>) {
+    for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
             whole_stores(region, stores);
         }
@@ -2861,35 +2836,33 @@ fn whole_stores(blocks: &[MirBlock], stores: &mut HashMap<VarId, Vec<Reg>>) {
 /// Add to `made` the place each reference `blocks` and their regions make
 /// refers to, by its register, and to `returned` each register they return.
 fn references_and_returns<'b>(
-    blocks: &'b [MirBlock],
+    block: &'b MirBlock,
     made: &mut HashMap<u32, &'b MirPlace>,
     returned: &mut Vec<Reg>,
 ) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            if let MirInstr::MakeRef { dest, place } = instruction {
-                made.insert(dest.0, place);
-            }
-            for region in instruction_regions(instruction) {
-                references_and_returns(region, made, returned);
-            }
+    for instruction in &block.instrs {
+        if let MirInstr::MakeRef { dest, place } = instruction {
+            made.insert(dest.0, place);
         }
-        if let MirTerm::Return(Some(value)) = block.term {
-            returned.push(value);
+        for region in instruction_regions(instruction) {
+            references_and_returns(region, made, returned);
         }
+    }
+    if let MirTerm::Return(Some(value)) = block.term {
+        returned.push(value);
     }
 }
 
 /// Add to `returned` each value a region result it holds merges, at any
-/// depth: what a `break` of `blocks` carries for a loop result, each
+/// depth: what a `break` of `block` carries for a loop result, each
 /// operand and `continue` value defining a loop argument, and what each
 /// arm of an `if` yields for its result, the merges a structured body's
 /// returns lower to. Outer regions go first, so a nested region's result
 /// an outer one merges brings its own values. Returns the region results
 /// and arguments so expanded.
-fn carried_values(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) -> HashSet<u32> {
+fn carried_values(block: &mut MirBlock, returned: &mut Vec<Reg>) -> HashSet<u32> {
     let mut merged = HashSet::new();
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         match instruction {
             MirInstr::Loop {
                 label,
@@ -2926,10 +2899,9 @@ fn carried_values(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) -> HashSet<u
                 for (at, result) in results.iter().enumerate() {
                     if returned.contains(result) {
                         merged.insert(result.0);
-                        let arms = then
-                            .iter()
-                            .chain(elifs.iter().flat_map(|elif| &elif.then))
-                            .chain(orelse.iter());
+                        let arms = std::iter::once(&**then)
+                            .chain(elifs.iter().map(|elif| &elif.then))
+                            .chain(std::iter::once(&**orelse));
                         for arm in arms {
                             if let MirTerm::Yield(values) = &arm.term {
                                 returned.extend(values.get(at));
@@ -2958,7 +2930,7 @@ fn grants_call_permission(callee: &MirFunction, call: Option<&Ty>) -> bool {
     if call.mutability == Mutability::Immutable {
         return true;
     }
-    let mut blocks = callee.blocks.clone();
+    let mut blocks = callee.body.clone();
     let mut returned = Vec::new();
     references_and_returns(&blocks, &mut HashMap::new(), &mut returned);
     carried_values(&mut blocks, &mut returned);
@@ -3031,14 +3003,14 @@ impl BoundMutabilities {
         rewrite_ty(ty, self).unwrap_or_else(|_| ty.clone())
     }
 
-    /// Substitute each bound mutability through `blocks`: their types, and
+    /// Substitute each bound mutability through `block`: their types, and
     /// the reference results calls and subscripts record.
-    fn blocks(&mut self, blocks: &mut [MirBlock]) {
-        let Ok(()) = walk_blocks_mut(self, blocks);
-        self.reference_results(blocks);
+    fn blocks(&mut self, block: &mut MirBlock) {
+        let Ok(()) = walk_blocks_mut(self, block);
+        self.reference_results(block);
     }
 
-    fn reference_results(&self, blocks: &mut [MirBlock]) {
+    fn reference_results(&self, block: &mut MirBlock) {
         let bind = |reference: &mut RefTy| {
             if let Mutability::Param(id) = reference.mutability
                 && let Some(bound) = self.0.get(&id)
@@ -3046,7 +3018,7 @@ impl BoundMutabilities {
                 reference.mutability = *bound;
             }
         };
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for instruction in &mut block.instrs {
             if let MirInstr::MethodCall {
                 reference_result: Some(reference),
                 ..
@@ -3183,15 +3155,15 @@ impl MutTypeVisitor for BoundMutabilities {
     }
 }
 
-/// Give each call of `blocks`, at any depth, that defines one of
+/// Give each call of `block`, at any depth, that defines one of
 /// `returned` the reference type `ty` as its result: a subscript's selected
 /// result and a call's reference result, which name the reference the
 /// register holds.
-fn retype_reference_results(blocks: &mut [MirBlock], returned: &[Reg], ty: &Ty) {
+fn retype_reference_results(block: &mut MirBlock, returned: &[Reg], ty: &Ty) {
     let TyKind::Ref(reference) = ty.kind() else {
         return;
     };
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         match instruction {
             MirInstr::Index {
                 dest,
@@ -3216,16 +3188,16 @@ fn retype_reference_results(blocks: &mut [MirBlock], returned: &[Reg], ty: &Ty) 
     }
 }
 
-/// Give each value `blocks` return, and each a region result they return
+/// Give each value `block` return, and each a region result they return
 /// merges, `ty`, the call's own type, where it is `ty` with its origins
 /// erased: an instance spells the types its bindings carry without their
 /// origins ([`erase_origins`]), so `id(Pointer(to=x))` returns a static
 /// pointer the caller's type names as `x`'s.
-fn retype_erased_values(function: &mut MirFunction, blocks: &mut [MirBlock], ty: &Ty) {
+fn retype_erased_values(function: &mut MirFunction, block: &mut MirBlock, ty: &Ty) {
     let erased = erase_origins(ty);
     let mut returned = Vec::new();
-    references_and_returns(blocks, &mut HashMap::new(), &mut returned);
-    carried_values(blocks, &mut returned);
+    references_and_returns(block, &mut HashMap::new(), &mut returned);
+    carried_values(block, &mut returned);
     for reg in returned {
         if let Some(own) = function.reg_types.get_mut(&reg.0)
             && own != ty
@@ -3249,7 +3221,7 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
             .param_types
             .first()
             .is_some_and(|receiver| nominal_parts(receiver).is_some());
-    receiver_closed && closed_blocks(&callee.blocks)
+    receiver_closed && closed_blocks(&callee.body)
 }
 
 /// The binding of each `Some[Trait]` binder `declaration`'s parameters
@@ -3320,15 +3292,15 @@ fn peel_refs(ty: &Ty) -> &Ty {
 }
 
 /// Whether `blocks` and their regions hold no closure.
-fn closed_blocks(blocks: &[MirBlock]) -> bool {
-    blocks.iter().all(|block| {
+fn closed_blocks(block: &MirBlock) -> bool {
+    {
         block.instrs.iter().all(|instruction| {
             !matches!(instruction, MirInstr::MakeClosure { .. })
                 && instruction_regions(instruction)
                     .into_iter()
-                    .all(|region| closed_blocks(region))
+                    .all(closed_blocks)
         })
-    })
+    }
 }
 
 /// The place the register `argument` was loaded from in `block` before the
@@ -3399,45 +3371,43 @@ fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
 /// splice names constructors, as a copy of a slot does: upstream's copy of
 /// a `read` argument reads it through its address.
 fn copy_bound_parameters<'b>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     callee: &mut MirFunction,
     bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
 ) {
-    for block in blocks {
-        let mut rewritten = Vec::with_capacity(block.instrs.len());
-        for mut instruction in std::mem::take(&mut block.instrs) {
-            for region in instruction_regions_mut(&mut instruction) {
-                copy_bound_parameters(region, callee, bound);
-            }
-            match instruction {
-                MirInstr::UseVar {
-                    dest,
-                    var,
-                    mode: UseMode::Copy,
-                    constructor,
-                } if let Some(outer) = bound(var) => {
-                    let ty = callee.reg_types.get(&dest.0).cloned();
-                    let span = callee.spans.0.get(&dest.0).map(|(span, _)| span.clone());
-                    let loaded = fresh_register(
-                        callee,
-                        ty.unwrap_or_else(|| outer.ty.clone().unwrap_or_else(Ty::none)),
-                        span.as_ref(),
-                    );
-                    rewritten.push(MirInstr::LoadPlace {
-                        dest: loaded,
-                        place: outer.clone(),
-                    });
-                    rewritten.push(MirInstr::CopyValue {
-                        dest,
-                        value: loaded,
-                        constructor,
-                    });
-                }
-                other => rewritten.push(other),
-            }
+    let mut rewritten = Vec::with_capacity(block.instrs.len());
+    for mut instruction in std::mem::take(&mut block.instrs) {
+        for region in instruction_regions_mut(&mut instruction) {
+            copy_bound_parameters(region, callee, bound);
         }
-        block.instrs = rewritten;
+        match instruction {
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Copy,
+                constructor,
+            } if let Some(outer) = bound(var) => {
+                let ty = callee.reg_types.get(&dest.0).cloned();
+                let span = callee.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+                let loaded = fresh_register(
+                    callee,
+                    ty.unwrap_or_else(|| outer.ty.clone().unwrap_or_else(Ty::none)),
+                    span.as_ref(),
+                );
+                rewritten.push(MirInstr::LoadPlace {
+                    dest: loaded,
+                    place: outer.clone(),
+                });
+                rewritten.push(MirInstr::CopyValue {
+                    dest,
+                    value: loaded,
+                    constructor,
+                });
+            }
+            other => rewritten.push(other),
+        }
     }
+    block.instrs = rewritten;
 }
 
 /// Rewrite in `blocks` and their regions each whole reference to a
@@ -3449,86 +3419,80 @@ fn copy_bound_parameters<'b>(
 /// the address its caller passes, which takes no reference. The reference's
 /// register leaves `callee` with its instruction.
 fn access_bound_parameters_in_place<'b>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     callee: &mut MirFunction,
     reads: &[u32],
     bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
 ) {
-    for block in blocks {
-        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-            access_bound_parameters_in_place(region, callee, reads, bound);
-        }
-        let mut rewritten = Vec::with_capacity(block.instrs.len());
-        let mut instructions = std::mem::take(&mut block.instrs).into_iter().peekable();
-        while let Some(instruction) = instructions.next() {
-            let MirInstr::MakeRef { dest, place } = &instruction else {
-                rewritten.push(instruction);
-                continue;
-            };
-            let outer = (place.proj.is_empty()
-                && place.through.is_none_or(|var| var == place.root)
-                && reads.get(dest.0 as usize) == Some(&1))
-            .then(|| bound(place.root))
-            .flatten();
-            let access = match (outer, instructions.peek()) {
-                (Some(outer), Some(MirInstr::WriteRef { reference, value }))
-                    if reference == dest =>
-                {
-                    let slot = outer.is_whole_root()
-                        && outer.through.is_none()
-                        && !outer.root_ty.as_ref().is_some_and(|ty| {
-                            matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
-                        });
-                    Some(if slot {
-                        MirInstr::DefVar {
-                            var: outer.root,
-                            src: *value,
-                            binding_ty: None,
-                            in_place: false,
-                        }
-                    } else {
-                        MirInstr::Store {
-                            place: place.clone(),
-                            src: *value,
-                        }
-                    })
-                }
-                (
-                    Some(_),
-                    Some(MirInstr::ReadRef {
-                        dest: read,
-                        reference,
-                    }),
-                ) if reference == dest => Some(MirInstr::LoadPlace {
-                    dest: *read,
-                    place: place.clone(),
-                }),
-                _ => None,
-            };
-            match access {
-                Some(access) => {
-                    callee.reg_types.remove(&dest.0);
-                    instructions.next();
-                    rewritten.push(access);
-                }
-                None => rewritten.push(instruction),
-            }
-        }
-        block.instrs = rewritten;
+    for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
+        access_bound_parameters_in_place(region, callee, reads, bound);
     }
+    let mut rewritten = Vec::with_capacity(block.instrs.len());
+    let mut instructions = std::mem::take(&mut block.instrs).into_iter().peekable();
+    while let Some(instruction) = instructions.next() {
+        let MirInstr::MakeRef { dest, place } = &instruction else {
+            rewritten.push(instruction);
+            continue;
+        };
+        let outer = (place.proj.is_empty()
+            && place.through.is_none_or(|var| var == place.root)
+            && reads.get(dest.0 as usize) == Some(&1))
+        .then(|| bound(place.root))
+        .flatten();
+        let access = match (outer, instructions.peek()) {
+            (Some(outer), Some(MirInstr::WriteRef { reference, value })) if reference == dest => {
+                let slot = outer.is_whole_root()
+                    && outer.through.is_none()
+                    && !outer.root_ty.as_ref().is_some_and(|ty| {
+                        matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
+                    });
+                Some(if slot {
+                    MirInstr::DefVar {
+                        var: outer.root,
+                        src: *value,
+                        binding_ty: None,
+                        in_place: false,
+                    }
+                } else {
+                    MirInstr::Store {
+                        place: place.clone(),
+                        src: *value,
+                    }
+                })
+            }
+            (
+                Some(_),
+                Some(MirInstr::ReadRef {
+                    dest: read,
+                    reference,
+                }),
+            ) if reference == dest => Some(MirInstr::LoadPlace {
+                dest: *read,
+                place: place.clone(),
+            }),
+            _ => None,
+        };
+        match access {
+            Some(access) => {
+                callee.reg_types.remove(&dest.0);
+                instructions.next();
+                rewritten.push(access);
+            }
+            None => rewritten.push(instruction),
+        }
+    }
+    block.instrs = rewritten;
 }
 
 /// Remove from `blocks` and their regions each consume of a slot
 /// `part_bound` answers for: the call's consumption of a part-bound
 /// parameter's place is the body's end of it.
-fn retain_unconsumed(blocks: &mut [MirBlock], part_bound: &dyn Fn(VarId) -> bool) {
-    for block in blocks {
-        block.instrs.retain(
-            |instruction| !matches!(instruction, MirInstr::ConsumeVar { var } if part_bound(*var)),
-        );
-        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-            retain_unconsumed(region, part_bound);
-        }
+fn retain_unconsumed(block: &mut MirBlock, part_bound: &dyn Fn(VarId) -> bool) {
+    block.instrs.retain(
+        |instruction| !matches!(instruction, MirInstr::ConsumeVar { var } if part_bound(*var)),
+    );
+    for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
+        retain_unconsumed(region, part_bound);
     }
 }
 
@@ -3539,77 +3503,76 @@ fn retain_unconsumed(blocks: &mut [MirBlock], part_bound: &dyn Fn(VarId) -> bool
 /// interior reads, or a place reached through a reference other than the
 /// parameter's composes with a caller's place reached through one.
 fn rebind_blocks<'b>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     registers: &Registers,
     bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
 ) -> Option<()> {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                rebind_blocks(region, registers, bound)?;
-            }
-            for reg in instruction_regs_mut(instruction) {
-                *reg = registers.of(*reg);
-            }
-            for place in instruction_places_mut(instruction) {
-                let through_other = place.through.filter(|&var| var != place.root);
-                match bound(place.root) {
-                    Some(outer) if through_other.is_some() && outer.through.is_some() => {
-                        return None;
-                    }
-                    Some(outer) => *place = composed_place(outer, place),
-                    None if through_other.is_some_and(|var| bound(var).is_some()) => {
-                        return None;
-                    }
-                    None => {}
-                }
-            }
-            // An iteration over a place-bound parameter iterates the
-            // caller's slot, and a loan's interior of the parameter is an
-            // interior of that slot.
-            match instruction {
-                MirInstr::GetIter { source, .. }
-                    if let Some(outer) = bound(*source)
-                        && outer.is_whole_root()
-                        && outer.through.is_none() =>
-                {
-                    *source = outer.root;
-                }
-                MirInstr::EstablishLoans {
-                    loans,
-                    dest_interior,
-                    ..
-                } => {
-                    for interior in loans
-                        .iter_mut()
-                        .filter_map(|loan| loan.interior.as_mut())
-                        .chain(dest_interior.as_mut())
-                    {
-                        if let Some(outer) = bound(interior.root)
-                            && outer.is_whole_root()
-                            && outer.through.is_none()
-                        {
-                            interior.root = outer.root;
-                        }
-                    }
-                }
-                _ => {}
-            }
-            // A handle-bound parameter's places are rooted at its own slot,
-            // which the instruction may name only as such a place.
-            let placed: Vec<VarId> = instruction_places(instruction)
-                .into_iter()
-                .flat_map(|place| std::iter::once(place.root).chain(place.through))
-                .collect();
-            if instruction_slots(instruction).into_iter().any(|var| {
-                bound(var).is_some_and(|outer| outer.root != var || !placed.contains(&var))
-            }) {
-                return None;
-            }
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            rebind_blocks(region, registers, bound)?;
         }
-        for reg in terminator_regs_mut(&mut block.term) {
+        for reg in instruction_regs_mut(instruction) {
             *reg = registers.of(*reg);
         }
+        for place in instruction_places_mut(instruction) {
+            let through_other = place.through.filter(|&var| var != place.root);
+            match bound(place.root) {
+                Some(outer) if through_other.is_some() && outer.through.is_some() => {
+                    return None;
+                }
+                Some(outer) => *place = composed_place(outer, place),
+                None if through_other.is_some_and(|var| bound(var).is_some()) => {
+                    return None;
+                }
+                None => {}
+            }
+        }
+        // An iteration over a place-bound parameter iterates the
+        // caller's slot, and a loan's interior of the parameter is an
+        // interior of that slot.
+        match instruction {
+            MirInstr::GetIter { source, .. }
+                if let Some(outer) = bound(*source)
+                    && outer.is_whole_root()
+                    && outer.through.is_none() =>
+            {
+                *source = outer.root;
+            }
+            MirInstr::EstablishLoans {
+                loans,
+                dest_interior,
+                ..
+            } => {
+                for interior in loans
+                    .iter_mut()
+                    .filter_map(|loan| loan.interior.as_mut())
+                    .chain(dest_interior.as_mut())
+                {
+                    if let Some(outer) = bound(interior.root)
+                        && outer.is_whole_root()
+                        && outer.through.is_none()
+                    {
+                        interior.root = outer.root;
+                    }
+                }
+            }
+            _ => {}
+        }
+        // A handle-bound parameter's places are rooted at its own slot,
+        // which the instruction may name only as such a place.
+        let placed: Vec<VarId> = instruction_places(instruction)
+            .into_iter()
+            .flat_map(|place| std::iter::once(place.root).chain(place.through))
+            .collect();
+        if instruction_slots(instruction)
+            .into_iter()
+            .any(|var| bound(var).is_some_and(|outer| outer.root != var || !placed.contains(&var)))
+        {
+            return None;
+        }
+    }
+    for reg in terminator_regs_mut(&mut block.term) {
+        *reg = registers.of(*reg);
     }
     Some(())
 }
@@ -3652,7 +3615,7 @@ struct CostWalk {
 }
 
 impl CostWalk {
-    fn new(blocks: &[MirBlock], fresh: Option<FreshSplices>) -> Self {
+    fn new(block: &MirBlock, fresh: Option<FreshSplices>) -> Self {
         let mut walk = Self {
             constants: BTreeSet::new(),
             fresh,
@@ -3661,8 +3624,8 @@ impl CostWalk {
             unpromoted: HashSet::new(),
         };
         if let Some(fresh) = fresh {
-            walk.bindings = parameter_bindings(blocks, fresh, &mut walk.bound);
-            unpromoted_slots(blocks, fresh, false, &mut walk.unpromoted);
+            walk.bindings = parameter_bindings(block, fresh, &mut walk.bound);
+            unpromoted_slots(block, fresh, false, &mut walk.unpromoted);
             walk.unpromoted.retain(|var| !walk.bound.contains(var));
         }
         walk
@@ -3675,18 +3638,15 @@ impl CostWalk {
 
     /// The cost of `blocks` and their regions, which lie in a body spliced
     /// since the last `mem-2-reg` when `spliced` holds.
-    fn blocks(&mut self, blocks: &[MirBlock], spliced: bool) -> usize {
-        blocks
-            .iter()
-            .map(|block| {
-                let mut loaded = Vec::new();
-                block
-                    .instrs
-                    .iter()
-                    .map(|instruction| self.instruction(instruction, spliced, &mut loaded))
-                    .sum::<usize>()
-            })
-            .sum()
+    fn blocks(&mut self, block: &MirBlock, spliced: bool) -> usize {
+        {
+            let mut loaded = Vec::new();
+            block
+                .instrs
+                .iter()
+                .map(|instruction| self.instruction(instruction, spliced, &mut loaded))
+                .sum::<usize>()
+        }
     }
 
     /// What `instruction` and its regions cost, beside `loaded`, the places
@@ -3745,17 +3705,17 @@ impl CostWalk {
     }
 }
 
-/// Gather into `slots` the slots of `blocks` the pin has not promoted
+/// Gather into `slots` the slots of `block` the pin has not promoted
 /// since the last `mem-2-reg`: each a body spliced since names, and each of
 /// the caller's that such a body, inside its wrapper loop (`spliced`),
 /// names as a place or a slot.
 fn unpromoted_slots(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     fresh: FreshSplices,
     spliced: bool,
     slots: &mut HashSet<VarId>,
 ) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         let named = instruction_slots(instruction).into_iter().chain(
             instruction_places(instruction)
                 .into_iter()
@@ -3773,28 +3733,26 @@ fn unpromoted_slots(
 /// last `mem-2-reg` to its argument, each in the run of slot stores right
 /// before that body's wrapper loop, their slots gathered into `bound`.
 fn parameter_bindings(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     fresh: FreshSplices,
     bound: &mut HashSet<VarId>,
 ) -> HashSet<*const MirInstr> {
     let mut bindings = HashSet::new();
-    for block in blocks {
-        for (index, instruction) in block.instrs.iter().enumerate() {
-            if is_fresh_wrapper(instruction, fresh) {
-                for binding in block.instrs[..index].iter().rev() {
-                    let MirInstr::DefVar { var, .. } = binding else {
-                        break;
-                    };
-                    if !fresh.var(*var) {
-                        break;
-                    }
-                    bound.insert(*var);
-                    bindings.insert(std::ptr::from_ref(binding));
+    for (index, instruction) in block.instrs.iter().enumerate() {
+        if is_fresh_wrapper(instruction, fresh) {
+            for binding in block.instrs[..index].iter().rev() {
+                let MirInstr::DefVar { var, .. } = binding else {
+                    break;
+                };
+                if !fresh.var(*var) {
+                    break;
                 }
+                bound.insert(*var);
+                bindings.insert(std::ptr::from_ref(binding));
             }
-            for region in instruction_regions(instruction) {
-                bindings.extend(parameter_bindings(region, fresh, bound));
-            }
+        }
+        for region in instruction_regions(instruction) {
+            bindings.extend(parameter_bindings(region, fresh, bound));
         }
     }
     bindings
@@ -3814,56 +3772,50 @@ fn is_fresh_wrapper(instruction: &MirInstr, fresh: FreshSplices) -> bool {
         return false;
     };
     results.iter().any(|reg| fresh.reg(*reg))
-        || body
-            .first()
-            .and_then(|block| block.instrs.first())
-            .is_some_and(|first| {
-                let mut defined = Vec::new();
-                instruction_result_regs(first, &mut defined);
-                defined.into_iter().any(|reg| fresh.reg(reg))
-                    || instruction_slots(first)
-                        .into_iter()
-                        .any(|var| fresh.var(var))
-            })
+        || body.instrs.first().is_some_and(|first| {
+            let mut defined = Vec::new();
+            instruction_result_regs(first, &mut defined);
+            defined.into_iter().any(|reg| fresh.reg(reg))
+                || instruction_slots(first)
+                    .into_iter()
+                    .any(|var| fresh.var(var))
+        })
 }
 
 /// The breaks in `blocks`, a wrapper loop's body, that leave it: those
 /// labelled [`LoopLabel::INLINED_CF_SCOPE`] outside every wrapper loop it
 /// nests.
-fn wrapper_breaks(blocks: &[MirBlock]) -> usize {
-    blocks
-        .iter()
-        .map(|block| {
-            usize::from(matches!(
-                block.term,
-                MirTerm::Break {
-                    label: Some(LoopLabel::INLINED_CF_SCOPE),
-                    ..
-                }
-            )) + block
-                .instrs
-                .iter()
-                .filter(|instruction| {
-                    !matches!(
-                        instruction,
-                        MirInstr::Loop {
-                            label: Some(LoopLabel::INLINED_CF_SCOPE),
-                            ..
-                        }
-                    )
-                })
-                .flat_map(instruction_regions)
-                .map(|region| wrapper_breaks(region))
-                .sum::<usize>()
-        })
-        .sum()
+fn wrapper_breaks(block: &MirBlock) -> usize {
+    {
+        usize::from(matches!(
+            block.term,
+            MirTerm::Break {
+                label: Some(LoopLabel::INLINED_CF_SCOPE),
+                ..
+            }
+        )) + block
+            .instrs
+            .iter()
+            .filter(|instruction| {
+                !matches!(
+                    instruction,
+                    MirInstr::Loop {
+                        label: Some(LoopLabel::INLINED_CF_SCOPE),
+                        ..
+                    }
+                )
+            })
+            .flat_map(instruction_regions)
+            .map(wrapper_breaks)
+            .sum::<usize>()
+    }
 }
 
-/// How many `continue`s of `blocks`, a structured body, are reached, each
+/// How many `continue`s of `block`, a structured body, are reached, each
 /// the back edge lowering makes of it.
-fn structured_back_edges(blocks: &[MirBlock]) -> usize {
+fn structured_back_edges(block: &MirBlock) -> usize {
     let mut walk = ContinueWalk::default();
-    walk.region(blocks);
+    walk.region(block);
     walk.continues
 }
 
@@ -3877,13 +3829,10 @@ struct ContinueWalk {
 }
 
 impl ContinueWalk {
-    /// Walk `blocks`, a reached region, whose one block holds it; returns
-    /// whether its `yield` or elif condition's end is reached. A block's
-    /// end is reached when each region op before it completes.
-    fn region(&mut self, blocks: &[MirBlock]) -> bool {
-        let Some(block) = blocks.first() else {
-            return true;
-        };
+    /// Walk `block`, a reached region's; returns whether its `yield` or
+    /// elif condition's end is reached. A block's end is reached when each
+    /// region op before it completes.
+    fn region(&mut self, block: &MirBlock) -> bool {
         if !block
             .instrs
             .iter()
@@ -3933,7 +3882,7 @@ impl ContinueWalk {
             }
             MirInstr::ComptimeIf { arms, orelse, .. } => arms
                 .iter()
-                .chain(std::iter::once(orelse))
+                .chain(std::iter::once(&**orelse))
                 .fold(false, |completes, arm| self.region(arm) | completes),
             MirInstr::Loop { label, body, .. } => self.framed(RegionFrame::Loop(*label), body).0,
             MirInstr::ComptimeFor { body, .. } => self.framed(RegionFrame::ComptimeFor, body).0,
@@ -3952,11 +3901,11 @@ impl ContinueWalk {
         }
     }
 
-    /// Walk `blocks` under a fresh frame of `kind`; returns whether a
+    /// Walk `block` under a fresh frame of `kind`; returns whether a
     /// reached terminator leaves it and whether one resumes it.
-    fn framed(&mut self, kind: RegionFrame, blocks: &[MirBlock]) -> (bool, bool) {
+    fn framed(&mut self, kind: RegionFrame, block: &MirBlock) -> (bool, bool) {
         self.frames.push((kind, false, false));
-        self.region(blocks);
+        self.region(block);
         self.frames
             .pop()
             .map_or((false, false), |(_, left, resumed)| (left, resumed))
@@ -3997,16 +3946,16 @@ fn instantiated<'c>(
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
-    construct_type_parameters(&mut function.blocks, &instantiation, declarations).ok()?;
-    if constructs_binder(&function.blocks, &instantiation.types) {
+    construct_type_parameters(&mut function.body, &instantiation, declarations).ok()?;
+    if constructs_binder(&function.body, &instantiation.types) {
         return None;
     }
     let closures = instantiation.read_binders(&mut function)?;
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     fold_witnesses(&mut blocks, &function, declarations);
     fold_bound_calls(&mut blocks, &function);
     adopt_callee_binders(&mut blocks, &function);
-    function.blocks = blocks;
+    function.body = blocks;
     Some(Instantiated {
         body: Cow::Owned(function),
         closures,
@@ -4023,105 +3972,97 @@ fn instantiated<'c>(
 /// declarations, which its arguments bind by position as they bound the
 /// requirement's. A call whose result the checker adapts, or whose result
 /// ABI or parameter count differs from the member's, keeps the dispatch.
-fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations: &MirDeclarations) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                fold_witnesses(region, function, declarations);
+fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &MirDeclarations) {
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            fold_witnesses(region, function, declarations);
+        }
+        let Some(member) = witness_of(instruction, function, declarations) else {
+            continue;
+        };
+        let Some(declaration) = declarations.function(&member) else {
+            continue;
+        };
+        match instruction {
+            // An iteration step copies its element out of a reference
+            // the member returns: one that returns the element itself
+            // needs no adapter. The destination keeps the element's
+            // value type either way.
+            MirInstr::MethodCall {
+                resolved,
+                reference_result: None,
+                result_adapter: result_adapter @ Some(_),
+                receiver_convention,
+                param_decls,
+                ..
+            } if result_adapter.as_ref().is_some_and(|adapter| {
+                adapter.kind == CheckedResultAdapter::CopyIteratorReference
+            }) && declaration.param_decls.len() == param_decls.len() =>
+            {
+                *resolved = Some(member);
+                param_decls.clone_from(&declaration.param_decls);
+                if !declaration.returns_reference {
+                    *result_adapter = None;
+                }
+                if receiver_convention.is_none() {
+                    *receiver_convention = declaration.receiver_convention;
+                }
             }
-            let Some(member) = witness_of(instruction, function, declarations) else {
-                continue;
-            };
-            let Some(declaration) = declarations.function(&member) else {
-                continue;
-            };
-            match instruction {
-                // An iteration step copies its element out of a reference
-                // the member returns: one that returns the element itself
-                // needs no adapter. The destination keeps the element's
-                // value type either way.
-                MirInstr::MethodCall {
-                    resolved,
-                    reference_result: None,
-                    result_adapter: result_adapter @ Some(_),
+            MirInstr::MethodCall {
+                resolved,
+                reference_result,
+                result_adapter: None,
+                param_decls,
+                ..
+            } if declaration.returns_reference == reference_result.is_some()
+                && declaration.param_decls.len() == param_decls.len() =>
+            {
+                *resolved = Some(member);
+                param_decls.clone_from(&declaration.param_decls);
+            }
+            // An operator through a bound is its member's call once
+            // the receiver is a struct, as a struct operator is.
+            MirInstr::BinOp {
+                op,
+                dest,
+                a,
+                b,
+                raises,
+                ..
+            } if declaration.param_decls.is_empty()
+                && let Some(method) = operator_method(*op) =>
+            {
+                let mut call =
+                    dunder_method_call(*dest, *a, method, Some(member), raises.take(), vec![*b]);
+                if let MirInstr::MethodCall {
                     receiver_convention,
-                    param_decls,
                     ..
-                } if result_adapter.as_ref().is_some_and(|adapter| {
-                    adapter.kind == CheckedResultAdapter::CopyIteratorReference
-                }) && declaration.param_decls.len() == param_decls.len() =>
+                } = &mut call
                 {
-                    *resolved = Some(member);
-                    param_decls.clone_from(&declaration.param_decls);
-                    if !declaration.returns_reference {
-                        *result_adapter = None;
-                    }
-                    if receiver_convention.is_none() {
-                        *receiver_convention = declaration.receiver_convention;
-                    }
+                    *receiver_convention = declaration.receiver_convention;
                 }
-                MirInstr::MethodCall {
-                    resolved,
-                    reference_result,
-                    result_adapter: None,
-                    param_decls,
-                    ..
-                } if declaration.returns_reference == reference_result.is_some()
-                    && declaration.param_decls.len() == param_decls.len() =>
+                *instruction = call;
+            }
+            MirInstr::BinOp { resolved, .. } if declaration.param_decls.is_empty() => {
+                *resolved = Some(member);
+            }
+            instruction => {
+                if let Some(call) = instruction_subscript_call_mut(instruction)
+                    && declaration.param_decls.len() == call.param_decls.len()
                 {
-                    *resolved = Some(member);
-                    param_decls.clone_from(&declaration.param_decls);
-                }
-                // An operator through a bound is its member's call once
-                // the receiver is a struct, as a struct operator is.
-                MirInstr::BinOp {
-                    op,
-                    dest,
-                    a,
-                    b,
-                    raises,
-                    ..
-                } if declaration.param_decls.is_empty()
-                    && let Some(method) = operator_method(*op) =>
-                {
-                    let mut call = dunder_method_call(
-                        *dest,
-                        *a,
-                        method,
-                        Some(member),
-                        raises.take(),
-                        vec![*b],
-                    );
-                    if let MirInstr::MethodCall {
-                        receiver_convention,
-                        ..
-                    } = &mut call
-                    {
-                        *receiver_convention = declaration.receiver_convention;
-                    }
-                    *instruction = call;
-                }
-                MirInstr::BinOp { resolved, .. } if declaration.param_decls.is_empty() => {
-                    *resolved = Some(member);
-                }
-                instruction => {
-                    if let Some(call) = instruction_subscript_call_mut(instruction)
-                        && declaration.param_decls.len() == call.param_decls.len()
-                    {
-                        call.target = member;
-                        call.param_decls.clone_from(&declaration.param_decls);
-                    }
+                    call.target = member;
+                    call.param_decls.clone_from(&declaration.param_decls);
                 }
             }
         }
     }
 }
 
-/// Make each `def(...)` bound's `__call__` requirement call of `blocks`
+/// Make each `def(...)` bound's `__call__` requirement call of `block`
 /// whose receiver the substitution made a function value that value's own
 /// indirect call, as a function type has no witness table to fold.
-fn fold_bound_calls(blocks: &mut [MirBlock], function: &MirFunction) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+fn fold_bound_calls(block: &mut MirBlock, function: &MirFunction) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             fold_bound_calls(region, function);
         }
@@ -4129,12 +4070,12 @@ fn fold_bound_calls(blocks: &mut [MirBlock], function: &MirFunction) {
     }
 }
 
-/// Give each indirect call of `blocks` whose callee the substitution made a
+/// Give each indirect call of `block` whose callee the substitution made a
 /// generic callable the callee's own compile-time parameter declarations:
 /// a call through a callable binder named the contract's, which the
 /// call's arguments bind by position as they bind the callee's.
-fn adopt_callee_binders(blocks: &mut [MirBlock], function: &MirFunction) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             adopt_callee_binders(region, function);
         }
@@ -4657,9 +4598,9 @@ impl<'d> Instantiation<'d> {
     /// `None` when such a binder is read otherwise than whole.
     fn read_binders(&self, function: &mut MirFunction) -> Option<Vec<(VarId, Reg)>> {
         if !self.members.is_empty() {
-            read_members(&mut function.blocks, &self.members, &function.reg_types);
+            read_members(&mut function.body, &self.members, &function.reg_types);
         }
-        fold_parameter_constants(&mut function.blocks, &function.reg_types);
+        fold_parameter_constants(&mut function.body, &function.reg_types);
         self.closures
             .iter()
             .map(|(binder, ty, closure)| {
@@ -4667,7 +4608,7 @@ impl<'d> Instantiation<'d> {
                 function.n_vars += 1;
                 function.var_names.push(binder.name.to_string());
                 function.var_tys.insert(slot, ty.clone());
-                read_binder(&mut function.blocks, binder, slot)?;
+                read_binder(&mut function.body, binder, slot)?;
                 Some((slot, *closure))
             })
             .collect()
@@ -4818,56 +4759,54 @@ impl ConstructionTypes for Instantiation<'_> {
     }
 }
 
-/// Rewrite each read of the callable binder `binder` in `blocks`, its
+/// Rewrite each read of the callable binder `binder` in `block`, its
 /// parameter constant, into a read of the slot `slot` the inlined entry
 /// stores its closure into, and a call through such a read into a call
 /// through the slot; `None` when a parameter site names the binder
 /// otherwise.
-fn read_binder(blocks: &mut [MirBlock], binder: &ParamRef, slot: VarId) -> Option<()> {
-    read_binder_constants(blocks, binder, slot, &mut HashSet::new());
+fn read_binder(block: &mut MirBlock, binder: &ParamRef, slot: VarId) -> Option<()> {
+    read_binder_constants(block, binder, slot, &mut HashSet::new());
     let mut names = NamesBinder {
         binder,
         named: false,
     };
-    walk_blocks_mut(&mut names, blocks).ok()?;
+    walk_blocks_mut(&mut names, block).ok()?;
     (!names.named).then_some(())
 }
 
 /// [`read_binder`]'s rewrite of `blocks`, its regions included, where
 /// `reads` collects the registers read so far.
 fn read_binder_constants(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     binder: &ParamRef,
     slot: VarId,
     reads: &mut HashSet<u32>,
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::Const {
-                    dest,
-                    k: Const::Param(value),
-                } if value.as_decl_ref().is_some_and(|read| read.id == binder.id) => {
-                    reads.insert(dest.0);
-                    *instruction = MirInstr::UseVar {
-                        dest: *dest,
-                        var: slot,
-                        mode: UseMode::Copy,
-                        constructor: None,
-                    };
-                }
-                MirInstr::CallIndirect {
-                    callee,
-                    callee_place,
-                    ..
-                } if callee_place.is_none() && reads.contains(&callee.0) => {
-                    *callee_place = Some(Box::new(MirPlace::root(slot, None)));
-                }
-                _ => {}
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::Const {
+                dest,
+                k: Const::Param(value),
+            } if value.as_decl_ref().is_some_and(|read| read.id == binder.id) => {
+                reads.insert(dest.0);
+                *instruction = MirInstr::UseVar {
+                    dest: *dest,
+                    var: slot,
+                    mode: UseMode::Copy,
+                    constructor: None,
+                };
             }
-            for region in instruction_regions_mut(instruction) {
-                read_binder_constants(region, binder, slot, reads);
+            MirInstr::CallIndirect {
+                callee,
+                callee_place,
+                ..
+            } if callee_place.is_none() && reads.contains(&callee.0) => {
+                *callee_place = Some(Box::new(MirPlace::root(slot, None)));
             }
+            _ => {}
+        }
+        for region in instruction_regions_mut(instruction) {
+            read_binder_constants(region, binder, slot, reads);
         }
     }
 }
@@ -4962,39 +4901,37 @@ impl MutTypeVisitor for NamesBinder<'_> {
 /// constant typed by the read's register, where the argument is closed
 /// enough to select what the read projects.
 fn read_members(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     members: &[(String, ParamExpr)],
     reg_types: &std::collections::HashMap<u32, Ty>,
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                read_members(region, members, reg_types);
-            }
-            let MirInstr::LoadPlace { dest, place } = instruction else {
-                continue;
-            };
-            if place.root != 0 || place.through.is_some() {
-                continue;
-            }
-            let storage = place.storage();
-            let Some((Proj::Field(field), projected)) = storage.proj.split_first() else {
-                continue;
-            };
-            let Some((_, value)) = members.iter().find(|(name, _)| name == field) else {
-                continue;
-            };
-            let ty = reg_types.get(&dest.0);
-            let k = if projected.is_empty() {
-                Some(parameter_constant(value, ty))
-            } else {
-                value
-                    .as_constant()
-                    .and_then(|value| Const::of_projected_parameter_value(value, projected, ty))
-            };
-            if let Some(k) = k {
-                *instruction = MirInstr::Const { dest: *dest, k };
-            }
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            read_members(region, members, reg_types);
+        }
+        let MirInstr::LoadPlace { dest, place } = instruction else {
+            continue;
+        };
+        if place.root != 0 || place.through.is_some() {
+            continue;
+        }
+        let storage = place.storage();
+        let Some((Proj::Field(field), projected)) = storage.proj.split_first() else {
+            continue;
+        };
+        let Some((_, value)) = members.iter().find(|(name, _)| name == field) else {
+            continue;
+        };
+        let ty = reg_types.get(&dest.0);
+        let k = if projected.is_empty() {
+            Some(parameter_constant(value, ty))
+        } else {
+            value
+                .as_constant()
+                .and_then(|value| Const::of_projected_parameter_value(value, projected, ty))
+        };
+        if let Some(k) = k {
+            *instruction = MirInstr::Const { dest: *dest, k };
         }
     }
 }
@@ -5120,35 +5057,30 @@ fn accessed_through(
 /// constant its register reads it as, and an LLVM intrinsic call's closed
 /// name and side-effect flag and a `pop` op's closed fast-math flag into
 /// values.
-fn fold_parameter_constants(
-    blocks: &mut [MirBlock],
-    reg_types: &std::collections::HashMap<u32, Ty>,
-) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                fold_parameter_constants(region, reg_types);
-            }
-            if let MirInstr::Const { dest, k } = instruction
-                && let Const::Param(expr) = k
-                && expr.as_constant().is_some()
+fn fold_parameter_constants(block: &mut MirBlock, reg_types: &std::collections::HashMap<u32, Ty>) {
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            fold_parameter_constants(region, reg_types);
+        }
+        if let MirInstr::Const { dest, k } = instruction
+            && let Const::Param(expr) = k
+            && expr.as_constant().is_some()
+        {
+            *k = parameter_constant(expr, reg_types.get(&dest.0));
+        }
+        let constants: Vec<&mut Const> = match instruction {
+            MirInstr::CallLlvmIntrinsic {
+                intrinsic,
+                has_side_effect,
+                ..
+            } => vec![intrinsic, has_side_effect],
+            other => other.fastmath_mut().into_iter().collect(),
+        };
+        for k in constants {
+            if let Const::Param(expr) = k
+                && let Some(value) = expr.as_constant()
             {
-                *k = parameter_constant(expr, reg_types.get(&dest.0));
-            }
-            let constants: Vec<&mut Const> = match instruction {
-                MirInstr::CallLlvmIntrinsic {
-                    intrinsic,
-                    has_side_effect,
-                    ..
-                } => vec![intrinsic, has_side_effect],
-                other => other.fastmath_mut().into_iter().collect(),
-            };
-            for k in constants {
-                if let Const::Param(expr) = k
-                    && let Some(value) = expr.as_constant()
-                {
-                    *k = Const::Value(value.clone());
-                }
+                *k = Const::Value(value.clone());
             }
         }
     }
@@ -5168,10 +5100,10 @@ fn passes_value_arguments(instruction: &MirInstr) -> bool {
     }
 }
 
-/// Whether `blocks`, regions included, still construct one of `binders`:
+/// Whether `block`, regions included, still construct one of `binders`:
 /// a construction the binding left open, which the caller cannot name.
-fn constructs_binder(blocks: &[MirBlock], binders: &[ParamRef]) -> bool {
-    blocks.iter().flat_map(|block| &block.instrs).any(|instruction| {
+fn constructs_binder(block: &MirBlock, binders: &[ParamRef]) -> bool {
+    block.instrs.iter().any(|instruction| {
         matches!(instruction, MirInstr::ConstructTypeParam { param, .. } if binders.contains(param))
             || instruction_regions(instruction)
                 .into_iter()
@@ -5183,13 +5115,13 @@ fn constructs_binder(blocks: &[MirBlock], binders: &[ParamRef]) -> bool {
 mod tests {
     use super::*;
 
-    fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
-        vec![MirBlock { instrs, term }]
+    fn one(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+        MirBlock { instrs, term }
     }
 
-    fn body(blocks: Vec<MirBlock>) -> MirFunction {
+    fn body(blocks: MirBlock) -> MirFunction {
         MirFunction {
-            blocks,
+            body: blocks,
             n_regs: 1,
             ret_ty: Some(Ty::none()),
             reg_types: HashMap::from([(0, Ty::bool())]),
@@ -5209,7 +5141,7 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: vec![Reg(1)],
-            body: one(
+            body: Box::new(one(
                 vec![
                     MirInstr::UseVar {
                         dest: Reg(2),
@@ -5230,7 +5162,7 @@ mod tests {
                     label: Some(LoopLabel::INLINED_CF_SCOPE),
                     values: vec![Reg(3)],
                 },
-            ),
+            )),
         };
         let mut function = body(one(
             vec![
@@ -5265,29 +5197,29 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(Vec::new(), MirTerm::ErrorReturn),
+                body: Box::new(one(Vec::new(), MirTerm::ErrorReturn)),
             }],
             MirTerm::Unreachable,
         );
         let breaking_if = MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(
+            then: Box::new(one(
                 Vec::new(),
                 MirTerm::Break {
                     label: Some(LoopLabel(0)),
                     values: Vec::new(),
                 },
-            ),
+            )),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(
+            orelse: Box::new(one(
                 Vec::new(),
                 MirTerm::Break {
                     label: Some(LoopLabel(0)),
                     values: Vec::new(),
                 },
-            ),
+            )),
         };
         let dead_continue = one(
             vec![MirInstr::Loop {
@@ -5295,13 +5227,13 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
+                body: Box::new(one(
                     vec![breaking_if],
                     MirTerm::Continue {
                         label: Some(LoopLabel(0)),
                         values: Vec::new(),
                     },
-                ),
+                )),
             }],
             MirTerm::Return(None),
         );
@@ -5311,41 +5243,41 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
+                body: Box::new(one(
                     vec![MirInstr::Loop {
                         label: Some(LoopLabel(1)),
                         operands: Vec::new(),
                         args: Vec::new(),
                         results: Vec::new(),
-                        body: one(
+                        body: Box::new(one(
                             vec![MirInstr::If {
                                 results: Vec::new(),
                                 cond: Reg(0),
-                                then: one(
+                                then: Box::new(one(
                                     Vec::new(),
                                     MirTerm::Continue {
                                         label: Some(LoopLabel(0)),
                                         values: Vec::new(),
                                     },
-                                ),
+                                )),
                                 else_args: Vec::new(),
                                 elifs: Vec::new(),
-                                orelse: one(
+                                orelse: Box::new(one(
                                     Vec::new(),
                                     MirTerm::Break {
                                         label: Some(LoopLabel(1)),
                                         values: Vec::new(),
                                     },
-                                ),
+                                )),
                             }],
                             MirTerm::Unreachable,
-                        ),
+                        )),
                     }],
                     MirTerm::Break {
                         label: Some(LoopLabel(0)),
                         values: Vec::new(),
                     },
-                ),
+                )),
             }],
             MirTerm::Return(None),
         );
@@ -5355,7 +5287,7 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
+                body: Box::new(one(
                     vec![MirInstr::Match {
                         results: Vec::new(),
                         else_args: Vec::new(),
@@ -5369,13 +5301,13 @@ mod tests {
                                 body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
                             },
                         ],
-                        orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                        orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
                     }],
                     MirTerm::Continue {
                         label: Some(LoopLabel(0)),
                         values: Vec::new(),
                     },
-                ),
+                )),
             }],
             MirTerm::Unreachable,
         );
@@ -5386,7 +5318,7 @@ mod tests {
             (match_to_orelse, 1),
         ] {
             let function = body(blocks);
-            assert_eq!(structured_back_edges(&function.blocks), edges);
+            assert_eq!(structured_back_edges(&function.body), edges);
         }
     }
 }

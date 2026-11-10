@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 /// included.
 pub fn name_constructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(
-        &mut function.blocks,
+        &mut function.body,
         &function.var_tys,
         &function.reg_types,
         declarations,
@@ -74,7 +74,7 @@ pub fn variant_place_alternatives<'a, S: std::hash::BuildHasher>(
 }
 
 fn name_in_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var_tys: &HashMap<VarId, Ty>,
     reg_types: &HashMap<u32, Ty>,
     declarations: &MirDeclarations,
@@ -88,7 +88,7 @@ fn name_in_blocks(
     let moved = |ty: Option<&Ty>| named(ty, Some("__moveinit__"));
     // A copy that is no call leaves its binding no longer in place.
     let mut copied_values = HashSet::new();
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         if let Some(copy) = struct_named_copy(instruction, reg_types, declarations) {
             if let MirInstr::CopyValue { dest, .. } = &copy {
                 copied_values.insert(dest.0);

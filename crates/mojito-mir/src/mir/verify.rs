@@ -6,10 +6,10 @@
 //! reject programs with any finding; use-after-move diagnostics remain owned
 //! by `crate::analysis`, composed with this verifier by the pipeline.
 //!
-//! Findings locate themselves textually with the canonical prefixes
-//! `MIR function '<name>'` and `MIR function '<name>' block <n>`.
-//! `crate::mir::text::verify_artifact` maps those prefixes back to artifact
-//! source locations — keep the spellings in sync with its candidate parser.
+//! Findings locate themselves textually with the canonical prefix
+//! `MIR function '<name>'`. `crate::mir::text::verify_artifact` maps that
+//! prefix back to artifact source locations — keep the spelling in sync
+//! with its candidate parser.
 //!
 //! Check classes:
 //! - typed-place completeness and projection consistency;

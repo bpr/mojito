@@ -205,7 +205,7 @@ fn store_arguments(
             .var_names
             .push(function.var_names[param as usize].clone());
         function.var_tys.insert(local, ty.clone());
-        renumber_block_slots(&mut function.blocks, &|var| {
+        renumber_block_slots(&mut function.body, &|var| {
             if var == param { local } else { var }
         });
         let value = Reg(function.n_regs);
@@ -244,7 +244,7 @@ fn store_arguments(
             in_place: false,
         });
     }
-    let block = &mut function.blocks[0];
+    let block = &mut function.body;
     block.instrs.splice(0..0, entry);
     true
 }
@@ -303,14 +303,14 @@ struct Facts {
 
 impl Facts {
     fn of(function: &mut MirFunction) -> Self {
-        let definitions = definition_counts(&mut function.blocks, function.n_regs);
+        let definitions = definition_counts(&mut function.body, function.n_regs);
         let mut reads = vec![0_u32; function.n_regs as usize];
-        count_register_reads(&mut function.blocks, &mut reads);
+        count_register_reads(&mut function.body, &mut reads);
         let mut closures = HashSet::new();
-        reference_closures(&function.blocks, &mut closures);
+        reference_closures(&function.body, &mut closures);
         let mut made = HashMap::new();
         let mut through = vec![0_u32; function.n_regs as usize];
-        slot_references(&function.blocks, &mut made, &mut through);
+        slot_references(&function.body, &mut made, &mut through);
         let addresses = made
             .into_iter()
             .filter(|&(dest, _)| {
@@ -319,7 +319,7 @@ impl Facts {
             })
             .collect();
         let mut called = vec![0_u32; function.n_regs as usize];
-        callee_reads(&function.blocks, &mut called);
+        callee_reads(&function.body, &mut called);
         let callees = (0..function.n_regs)
             .filter(|&reg| {
                 let at = reg as usize;
@@ -402,7 +402,7 @@ fn promote_in_regions(
     if slots.is_empty() {
         return (slots, HashSet::new(), 0);
     }
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     let mut promoter = Promoter {
         var_tys: &function.var_tys,
         slots: &slots,
@@ -424,7 +424,7 @@ fn promote_in_regions(
         erased,
         ..
     } = promoter;
-    function.blocks = blocks;
+    function.body = blocks;
     function.n_regs = n_regs;
     function.reg_types.extend(fresh);
     (slots, erased_results, erased)
@@ -447,10 +447,10 @@ fn variance(
 ) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>, Uses) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
-    collect_regions(&function.blocks, None, &mut regions, &mut 0);
+    collect_regions(&function.body, None, &mut regions, &mut 0);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
-        take_census(list, region.blocks, &facts.uses, &mut census);
+        take_census(list, region.block, &facts.uses, &mut census);
     }
     // A raise out of the function hands its error slot out whole.
     keep(&mut census, function.error_slot);
@@ -496,24 +496,24 @@ fn variance(
 
 /// One region of a structured body, in preorder.
 struct RegionInfo<'a> {
-    blocks: &'a [MirBlock],
+    block: &'a MirBlock,
     /// The region holding the op that holds this one, and that op's
     /// preorder number.
     parent: Option<(usize, usize)>,
 }
 
-/// Every region of `blocks` in preorder, `blocks` first, numbered as
+/// Every region of `block` in preorder, `block` first, numbered as
 /// [`collect_lists`] numbers them; `ops` counts the region ops numbered so
 /// far, in preorder.
 fn collect_regions<'a>(
-    blocks: &'a [MirBlock],
+    block: &'a MirBlock,
     parent: Option<(usize, usize)>,
     regions: &mut Vec<RegionInfo<'a>>,
     ops: &mut usize,
 ) {
     let list = regions.len();
-    regions.push(RegionInfo { blocks, parent });
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    regions.push(RegionInfo { block, parent });
+    for instruction in &block.instrs {
         let held = instruction_regions(instruction);
         if held.is_empty() {
             continue;
@@ -583,7 +583,7 @@ impl Promoter<'_> {
     /// slots `variant`.
     fn walk_region(
         &mut self,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         kind: Option<RegionFrame>,
         variant: &Rc<[VarId]>,
         args: &[Reg],
@@ -598,9 +598,8 @@ impl Promoter<'_> {
             kind,
             variant: Rc::clone(variant),
         });
-        for block in blocks {
-            self.walk_block(block);
-        }
+        self.walk_block(block);
+
         self.frames.pop();
         self.scopes.pop();
     }
@@ -692,7 +691,7 @@ impl Promoter<'_> {
                 orelse,
                 ..
             } => {
-                for arm in arms.iter_mut().chain(std::iter::once(orelse)) {
+                for arm in arms.iter_mut().chain(std::iter::once(&mut **orelse)) {
                     self.walk_region(arm, None, &variant, &[]);
                 }
                 results
@@ -739,8 +738,7 @@ impl Promoter<'_> {
                     try_raises_mut(body, *label, &mut |_| found = true);
                     found
                 };
-                let completes = carried
-                    && matches!(&body[..], [.., last] if matches!(last.term, MirTerm::TryYield(_)));
+                let completes = carried && matches!(body.term, MirTerm::TryYield(_));
                 self.walk_region(body, Some(RegionFrame::Try(*label)), &variant, &[]);
                 if let Some(blocks) = handler {
                     let args = self.arguments(&variant, raised, handler_args);
@@ -772,10 +770,10 @@ impl Promoter<'_> {
     fn walk_if(
         &mut self,
         variant: &Rc<[VarId]>,
-        then: &mut [MirBlock],
+        then: &mut MirBlock,
         elifs: &mut [MirElif],
         else_args: &mut Vec<Reg>,
-        orelse: &mut [MirBlock],
+        orelse: &mut MirBlock,
     ) {
         let carried = !variant.is_empty();
         self.walk_region(then, None, variant, &[]);
@@ -796,7 +794,7 @@ impl Promoter<'_> {
         variant: &Rc<[VarId]>,
         cases: &mut [MirCase],
         else_args: &mut Vec<Reg>,
-        orelse: &mut [MirBlock],
+        orelse: &mut MirBlock,
     ) {
         let carried = !variant.is_empty();
         let mut entered = false;
@@ -942,11 +940,11 @@ const fn edge_values_mut(term: &mut MirTerm) -> Option<&mut Vec<Reg>> {
     }
 }
 
-/// The registers `blocks`, its regions included, defines by a
+/// The registers `block`, its regions included, defines by a
 /// `closure.make`: a struct of pointers, trivially register-passable as
 /// upstream's closure of borrows is.
-fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn reference_closures(block: &MirBlock, closures: &mut HashSet<u32>) {
+    for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
             reference_closures(region, closures);
         }
@@ -959,20 +957,18 @@ fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
 /// Record every slot mention of the region `list`'s own blocks (not of the
 /// regions they hold) in `census`, a `ref.read` or `ref.write` through one
 /// of the [`Uses::addresses`] mentioning its slot.
-fn take_census(list: usize, blocks: &[MirBlock], uses: &Uses, census: &mut HashMap<VarId, Census>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            let slots = instruction_slots(instruction);
-            match slot_use(instruction, uses) {
-                Some((var, mention)) if slots.iter().all(|&slot| slot == var) => {
-                    census
-                        .entry(var)
-                        .or_default()
-                        .mentions
-                        .push((list, mention));
-                }
-                _ => keep(census, slots),
+fn take_census(list: usize, block: &MirBlock, uses: &Uses, census: &mut HashMap<VarId, Census>) {
+    for instruction in &block.instrs {
+        let slots = instruction_slots(instruction);
+        match slot_use(instruction, uses) {
+            Some((var, mention)) if slots.iter().all(|&slot| slot == var) => {
+                census
+                    .entry(var)
+                    .or_default()
+                    .mentions
+                    .push((list, mention));
             }
+            _ => keep(census, slots),
         }
     }
 }
@@ -1033,11 +1029,11 @@ fn slot_use(instruction: &MirInstr, uses: &Uses) -> Option<(VarId, Mention)> {
     }
 }
 
-/// Record in `made` each whole-root `ref.make` of `blocks`, its regions
+/// Record in `made` each whole-root `ref.make` of `block`, its regions
 /// included, by its dest, and count in `through` each register's reads as
 /// the reference of a `ref.read` or `ref.write`.
-fn slot_references(blocks: &[MirBlock], made: &mut Addresses, through: &mut [u32]) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn slot_references(block: &MirBlock, made: &mut Addresses, through: &mut [u32]) {
+    for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
             slot_references(region, made, through);
         }
@@ -1058,9 +1054,9 @@ fn slot_references(blocks: &[MirBlock], made: &mut Addresses, through: &mut [u32
 }
 
 /// Count in `called` each register's reads as the callee of a
-/// `call.indirect` in `blocks`, its regions included.
-fn callee_reads(blocks: &[MirBlock], called: &mut [u32]) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+/// `call.indirect` in `block`, its regions included.
+fn callee_reads(block: &MirBlock, called: &mut [u32]) {
+    for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
             callee_reads(region, called);
         }

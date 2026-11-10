@@ -926,7 +926,7 @@ fn reachable_set<'p>(
             }
         }
         visit_call_edges(
-            &function.blocks,
+            &function.body,
             function,
             &functions,
             &mut reachable,
@@ -940,31 +940,29 @@ fn reachable_set<'p>(
 /// recursing into every region (call sites inside an arm, a loop body, or a
 /// `try` part execute like any other).
 fn visit_call_edges<'p>(
-    blocks: &'p [mojito_mir::mir::MirBlock],
+    block: &'p mojito_mir::mir::MirBlock,
     function: &'p MirFunction,
     functions: &HashMap<&'p str, &'p MirFunction>,
     reachable: &mut HashSet<&'p str>,
     queue: &mut VecDeque<&'p str>,
 ) {
-    for block in blocks {
-        for instr in &block.instrs {
-            for region in mojito_mir::mir::instruction_regions(instr) {
-                visit_call_edges(region, function, functions, reachable, queue);
-            }
-            if matches!(instr, MirInstr::Try { .. }) {
-                continue;
-            }
-            let mut edges = CallEdges {
-                function,
-                functions,
-                targets: Vec::new(),
-            };
-            edges.dispatch_edges(instr);
-            edges.lifecycle_edges(instr);
-            for callee in edges.targets {
-                if reachable.insert(callee) {
-                    queue.push_back(callee);
-                }
+    for instr in &block.instrs {
+        for region in mojito_mir::mir::instruction_regions(instr) {
+            visit_call_edges(region, function, functions, reachable, queue);
+        }
+        if matches!(instr, MirInstr::Try { .. }) {
+            continue;
+        }
+        let mut edges = CallEdges {
+            function,
+            functions,
+            targets: Vec::new(),
+        };
+        edges.dispatch_edges(instr);
+        edges.lifecycle_edges(instr);
+        for callee in edges.targets {
+            if reachable.insert(callee) {
+                queue.push_back(callee);
             }
         }
     }
@@ -1286,10 +1284,10 @@ mod tests {
         fn test_function(param_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
             let n_params = param_types.len();
             MirFunction {
-                blocks: vec![mojito_mir::mir::MirBlock {
+                body: mojito_mir::mir::MirBlock {
                     instrs,
                     term: mojito_mir::mir::MirTerm::Return(None),
-                }],
+                },
                 n_regs: 8,
                 n_vars: n_params,
                 var_names: (0..n_params).map(|i| format!("v{i}")).collect(),

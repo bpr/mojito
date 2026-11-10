@@ -359,7 +359,7 @@ mod constant_tuple_place_tests {
     #[test]
     fn self_is_never_droppable_even_when_its_stable_slot_is_not_leading() {
         let function = MirFunction {
-            blocks: Vec::new(),
+            body: MirBlock::default(),
             n_regs: 0,
             n_vars: 3,
             var_names: vec!["argument".into(), "self".into(), "local".into()],
@@ -391,7 +391,7 @@ mod constant_tuple_place_tests {
     #[test]
     fn consuming_receivers_are_droppable_roots_of_the_callee() {
         let mut function = MirFunction {
-            blocks: Vec::new(),
+            body: MirBlock::default(),
             n_regs: 0,
             n_vars: 3,
             var_names: vec!["self".into(), "other".into(), "local".into()],
@@ -492,32 +492,32 @@ mod interior_origin_tests {
         MirBlock { instrs, term }
     }
 
-    fn region(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
-        vec![block(instrs, term)]
+    fn region(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+        block(instrs, term)
     }
 
-    fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+    fn yields(instrs: Vec<MirInstr>) -> MirBlock {
         region(instrs, MirTerm::Yield(Vec::new()))
     }
 
-    fn if_else(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+    fn if_else(then: MirBlock, orelse: MirBlock) -> MirInstr {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(99),
-            then,
+            then: Box::new(then),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse,
+            orelse: Box::new(orelse),
         }
     }
 
-    fn labelled(body: Vec<MirBlock>) -> MirInstr {
+    fn labelled(body: MirBlock) -> MirInstr {
         MirInstr::Loop {
             label: Some(LoopLabel(0)),
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body,
+            body: Box::new(body),
         }
     }
 
@@ -530,7 +530,7 @@ mod interior_origin_tests {
         values: Vec::new(),
     };
 
-    fn function(blocks: Vec<MirBlock>, spans: &[(u32, (usize, usize))]) -> MirFunction {
+    fn function(blocks: MirBlock, spans: &[(u32, (usize, usize))]) -> MirFunction {
         let mut span_table = SpanTable::default();
         for (reg, span) in spans {
             span_table.0.insert(
@@ -539,7 +539,7 @@ mod interior_origin_tests {
             );
         }
         MirFunction {
-            blocks,
+            body: blocks,
             n_regs: 128,
             n_vars: 3,
             var_names: vec!["values".into(), "first".into(), "second".into()],
@@ -568,14 +568,14 @@ mod interior_origin_tests {
     #[test]
     fn invalidation_reports_use_and_mutation_spans() {
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     invalidate(1),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
         match analyze_lifetimes(&f) {
@@ -597,14 +597,14 @@ mod interior_origin_tests {
     #[test]
     fn invalidation_on_one_branch_rejects_use_after_join() {
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     if_else(yields(vec![invalidate(1)]), yields(Vec::new())),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
@@ -617,14 +617,14 @@ mod interior_origin_tests {
     fn invalidation_on_loop_backedge_rejects_maybe_stale_exit() {
         let exit = if_else(region(Vec::new(), BREAK), yields(Vec::new()));
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     labelled(region(vec![exit, invalidate(1)], CONTINUE)),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
@@ -639,21 +639,21 @@ mod interior_origin_tests {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body: region(vec![invalidate(1)], BREAK),
+            body: Box::new(region(vec![invalidate(1)], BREAK)),
             handler_args: Vec::new(),
             handler: None,
             else_args: Vec::new(),
             orelse: None,
         };
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     labelled(region(vec![body], CONTINUE)),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
@@ -671,14 +671,14 @@ mod interior_origin_tests {
             constructor: None,
         };
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     moved,
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
         match analyze_lifetimes(&f) {
@@ -693,7 +693,7 @@ mod interior_origin_tests {
     #[test]
     fn rebinding_installs_a_fresh_generation() {
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     invalidate(1),
@@ -701,7 +701,7 @@ mod interior_origin_tests {
                     use_reference(1, 3),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_lifetimes(&f).is_ok());
@@ -711,14 +711,14 @@ mod interior_origin_tests {
     fn refresh_on_invalidating_branch_preserves_path_correlation() {
         let refresh = vec![invalidate(1), establish(1, 2, Some(element_origin()))];
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     if_else(yields(refresh), yields(Vec::new())),
                     use_reference(1, 3),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_lifetimes(&f).is_ok());
@@ -729,7 +729,7 @@ mod interior_origin_tests {
         // Two element generations over one list, even both mutable (nested
         // `for ref` loops), are generation-tracked rather than exclusive.
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     establish(2, 1, Some(element_origin())),
@@ -737,7 +737,7 @@ mod interior_origin_tests {
                     use_reference(2, 3),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
@@ -759,10 +759,10 @@ mod interior_origin_tests {
             ),
         ] {
             let f = function(
-                vec![block(
+                block(
                     vec![first, second, use_reference(1, 2), use_reference(2, 3)],
                     MirTerm::Return(None),
-                )],
+                ),
                 &[],
             );
             assert!(matches!(
@@ -776,7 +776,7 @@ mod interior_origin_tests {
     fn shared_interior_loan_coexists_with_a_shared_whole_place_loan() {
         // A value loop beside a live view reads only.
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish_with(1, 0, false, None),
                     establish_with(2, 1, false, Some(element_origin())),
@@ -784,7 +784,7 @@ mod interior_origin_tests {
                     use_reference(2, 3),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
@@ -817,10 +817,10 @@ mod interior_origin_tests {
             spread: None,
         };
         let f = function(
-            vec![block(
+            block(
                 vec![establish_with(1, 0, false, None), call, use_reference(1, 4)],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
@@ -833,14 +833,14 @@ mod interior_origin_tests {
             src: Reg(2),
         };
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish_with(1, 0, false, None),
                     store,
                     use_reference(1, 4),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(matches!(
@@ -852,7 +852,7 @@ mod interior_origin_tests {
     #[test]
     fn overlapping_ordinary_mutable_loans_still_conflict() {
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, None),
                     establish(2, 1, None),
@@ -860,7 +860,7 @@ mod interior_origin_tests {
                     use_reference(2, 3),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(matches!(
@@ -876,14 +876,14 @@ mod interior_origin_tests {
             src: Reg(4),
         };
         let f = function(
-            vec![block(
+            block(
                 vec![
                     establish(1, 0, None),
                     if_else(yields(vec![write]), yields(Vec::new())),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(matches!(
@@ -902,17 +902,17 @@ mod interior_origin_tests {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body: region(vec![write], MirTerm::TryYield(Vec::new())),
+            body: Box::new(region(vec![write], MirTerm::TryYield(Vec::new()))),
             handler_args: Vec::new(),
             handler: None,
             else_args: Vec::new(),
             orelse: None,
         };
         let f = function(
-            vec![block(
+            block(
                 vec![establish(1, 0, None), guarded, use_reference(1, 2)],
                 MirTerm::Return(None),
-            )],
+            ),
             &[],
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
@@ -924,26 +924,26 @@ mod interior_origin_tests {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body: vec![block(
+            body: Box::new(block(
                 vec![invalidate(1)],
                 MirTerm::TryRaise {
                     label: TryLabel(0),
                     values: Vec::new(),
                 },
-            )],
+            )),
             handler_args: Vec::new(),
-            handler: Some(vec![block(
+            handler: Some(Box::new(block(
                 vec![use_reference(1, 3)],
                 MirTerm::TryYield(Vec::new()),
-            )]),
+            ))),
             else_args: Vec::new(),
             orelse: None,
         };
         let f = function(
-            vec![block(
+            block(
                 vec![establish(1, 0, Some(element_origin())), try_instr],
                 MirTerm::Return(None),
-            )],
+            ),
             &[(1, (10, 20)), (3, (30, 35))],
         );
         assert!(matches!(
@@ -1012,13 +1012,13 @@ mod structured_move_tests {
     const X: VarId = 0;
     const S: VarId = 1;
 
-    fn block(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
-        vec![MirBlock { instrs, term }]
+    fn block(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+        MirBlock { instrs, term }
     }
 
     fn function(instrs: Vec<MirInstr>, term: MirTerm) -> MirFunction {
         MirFunction {
-            blocks: block(instrs, term),
+            body: block(instrs, term),
             n_regs: 64,
             n_vars: 2,
             var_names: vec!["x".into(), "s".into()],
@@ -1061,37 +1061,37 @@ mod structured_move_tests {
         place
     }
 
-    fn if_else(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+    fn if_else(then: MirBlock, orelse: MirBlock) -> MirInstr {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(60),
-            then,
+            then: Box::new(then),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse,
+            orelse: Box::new(orelse),
         }
     }
 
-    fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+    fn yields(instrs: Vec<MirInstr>) -> MirBlock {
         block(instrs, MirTerm::Yield(Vec::new()))
     }
 
-    fn labelled(body: Vec<MirBlock>) -> MirInstr {
+    fn labelled(body: MirBlock) -> MirInstr {
         MirInstr::Loop {
             label: Some(LoopLabel(0)),
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body,
+            body: Box::new(body),
         }
     }
 
-    fn try_part(body: Vec<MirBlock>) -> MirInstr {
+    fn try_part(body: MirBlock) -> MirInstr {
         MirInstr::Try {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body,
+            body: Box::new(body),
             handler_args: Vec::new(),
             handler: None,
             else_args: Vec::new(),
@@ -1200,7 +1200,7 @@ mod structured_move_tests {
                         body: block(vec![read(X, 2)], MirTerm::MatchComplete(Vec::new())),
                     },
                 ],
-                orelse: yields(Vec::new()),
+                orelse: Box::new(yields(Vec::new())),
             }],
             MirTerm::Return(None),
         );
@@ -1216,7 +1216,7 @@ mod structured_move_tests {
         f.ref_params = vec![false, true];
         f.n_params = 2;
         assert!(analyze_lifetimes(&f).is_ok());
-        f.blocks[0].term = MirTerm::Return(None);
+        f.body.term = MirTerm::Return(None);
         assert!(matches!(
             analyze_lifetimes(&f),
             Err(OwnershipError::ReferenceParameterLeftUninitialized { .. })

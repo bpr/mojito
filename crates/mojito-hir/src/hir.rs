@@ -256,7 +256,7 @@ pub enum HirInstr {
 /// A region of a region op: its one block, a node of its [`Cfg::g`].
 #[derive(Debug, Clone, Default)]
 pub struct HirRegion {
-    pub blocks: Vec<BlockId>,
+    pub block: BlockId,
 }
 
 /// An [`HirInstr::If`]'s operand: a checked condition, or a `Bool` slot HIR
@@ -479,7 +479,6 @@ impl Cfg {
         let mut lower = Lower {
             g,
             cur: entry,
-            region_blocks: vec![entry],
             loops: Vec::new(),
             next_label: 0,
             vars: Vec::new(),
@@ -585,8 +584,6 @@ struct PatternState {
 struct Lower {
     g: StableGraph<BasicBlock, ()>,
     cur: BlockId,
-    /// The blocks of the region being built, entry first.
-    region_blocks: Vec<BlockId>,
     /// Innermost-last stack of enclosing loops.
     loops: Vec<EnclosingLoop>,
     /// The next loop label free in this function.
@@ -681,25 +678,17 @@ impl Lower {
         }
     }
 
-    fn new_block(&mut self) -> BlockId {
-        let block = self.g.add_node(BasicBlock::default());
-        self.region_blocks.push(block);
-        block
-    }
-
-    /// A region of its own: a fresh entry block that `build` lowers into,
-    /// its last block sealed with the terminator `build` returns unless a
-    /// `return`, `break`, or `continue` sealed it already.
+    /// A region of its own: a fresh block that `build` lowers into, sealed
+    /// with the terminator `build` returns unless a `return`, `break`, or
+    /// `continue` sealed it already.
     fn region(&mut self, build: impl FnOnce(&mut Self) -> Terminator) -> HirRegion {
-        let outer = std::mem::take(&mut self.region_blocks);
         let cur = self.cur;
-        self.cur = self.new_block();
+        let block = self.g.add_node(BasicBlock::default());
+        self.cur = block;
         let end = build(self);
         self.seal(end);
         self.cur = cur;
-        HirRegion {
-            blocks: std::mem::replace(&mut self.region_blocks, outer),
-        }
+        HirRegion { block }
     }
 
     /// A fresh loop label.
@@ -739,9 +728,7 @@ impl Lower {
     fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {
         Cfg {
             g: self.g,
-            root: HirRegion {
-                blocks: self.region_blocks,
-            },
+            root: HirRegion { block: entry },
             entry,
             vars: self.vars,
             n_params,

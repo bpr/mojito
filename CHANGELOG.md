@@ -152,6 +152,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A MIR function body and every region of a region op are one `MirBlock`
+  by their type, as upstream's `hlcf` regions are `SizedRegion<1>`, where
+  they were block lists the verifier held to one block (R1276): its "body
+  holds N blocks" and "region holds N blocks" findings are gone, a finding
+  names its function without a `block N`, the MIR text reader rejects a
+  region list of any other length (the text keeps `[bb0 { … }]`), and HIR's
+  `HirRegion` holds its one block too.
 - A compile-time `len` of a pack (`len(Ts)`, `len(Self.Ts)`,
   `len(Self.values)`, `len(vs)` in a signature) is the library `len`'s
   application over the pack's visible `TypeList` or `ParameterList`

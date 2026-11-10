@@ -2237,12 +2237,14 @@ subscript is the declared `SIMD.__getitem__`/`__setitem__` call, and a
 place indexing a vector fails verification. Result adapters currently contain only
 `copy_iterator_reference`.
 
-For `Try`, `body`, `handler`, and `orelse` contain lists of local
-blocks, as every region of `if`, `loop`, `comptime.if`, and `comptime.for`
-does: a region's blocks are numbered `bb0..bbN` among themselves, entered at
-`bb0`. Parametric MIR, and so every artifact `emit-mir` writes, holds
-them, one block per region, and so does concrete MIR: the VM runs it as it
-stands, and Pliron lowers its region ops to LLVM blocks itself. Handler
+For `Try`, `body`, `handler`, and `orelse` each spell one block, as every
+region of `if`, `loop`, `comptime.if`, `comptime.for`, and `match` does, and
+as a function's `blocks` does: upstream's `SizedRegion<1>`, which the data
+model holds as one `MirBlock`. The text keeps the one-entry list `[bb0 { … }]`
+for it, as MLIR prints a region's entry block label only when it has
+arguments; a reader rejects a list of any other length. Parametric and
+concrete MIR alike hold them: the VM runs it as it stands, and Pliron lowers
+its region ops to LLVM blocks itself. Handler
 absence differs from a present empty handler; a `try.raise` naming a
 `try` without one fails verification. All call fields,
 including caller places, capture accesses, compile-time arguments, instantiated

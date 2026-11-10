@@ -26,11 +26,11 @@ use std::collections::HashMap;
 /// Name the destructor of every storage destroy, variant store, and owned
 /// closure capture in `function`, regions included.
 pub fn name_teardown_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
-    name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
+    name_in_blocks(&mut function.body, &function.var_tys, declarations);
 }
 
 fn name_in_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var_tys: &HashMap<VarId, Ty>,
     declarations: &MirDeclarations,
 ) {
@@ -38,33 +38,31 @@ fn name_in_blocks(
         ty.and_then(|ty| declarations.destructor(ty))
             .map(str::to_owned)
     };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::PointerStorageDestroy {
-                    element,
-                    destructor,
-                    ..
-                }
-                | MirInstr::UninitStorageDestroy {
-                    element,
-                    destructor,
-                    ..
-                } => *destructor = named(Some(element)),
-                MirInstr::VariantSet {
-                    place, destructors, ..
-                } => {
-                    *destructors = variant_place_alternatives(place, var_tys)
-                        .into_iter()
-                        .flatten()
-                        .map(|alternative| named(Some(alternative)))
-                        .collect();
-                }
-                _ => {}
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::PointerStorageDestroy {
+                element,
+                destructor,
+                ..
             }
-            for region in instruction_regions_mut(instruction) {
-                name_in_blocks(region, var_tys, declarations);
+            | MirInstr::UninitStorageDestroy {
+                element,
+                destructor,
+                ..
+            } => *destructor = named(Some(element)),
+            MirInstr::VariantSet {
+                place, destructors, ..
+            } => {
+                *destructors = variant_place_alternatives(place, var_tys)
+                    .into_iter()
+                    .flatten()
+                    .map(|alternative| named(Some(alternative)))
+                    .collect();
             }
+            _ => {}
+        }
+        for region in instruction_regions_mut(instruction) {
+            name_in_blocks(region, var_tys, declarations);
         }
     }
 }

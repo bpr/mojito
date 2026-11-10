@@ -29,8 +29,8 @@ pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32
     let mut counts = Counts::default();
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
-        count_register_reads(&mut function.blocks, &mut reads);
-        let mut blocks = std::mem::take(&mut function.blocks);
+        count_register_reads(&mut function.body, &mut reads);
+        let mut blocks = std::mem::take(&mut function.body);
         let definitions = definition_counts(&mut blocks, function.n_regs);
         let mut constants = HashMap::new();
         bool_constants(&blocks, &definitions, &mut constants);
@@ -51,7 +51,7 @@ pub(super) fn hlcf_patterns(function: &mut MirFunction, erased: &mut HashSet<u32
         } = walk;
         let resolved = resolve_replacements(&replaced);
         replace_register_reads(&mut blocks, &resolved);
-        function.blocks = blocks;
+        function.body = blocks;
         erased.extend(replaced.keys());
         if round.total() == 0 {
             break;
@@ -70,7 +70,7 @@ pub(in crate::analysis) fn erased_results(instruction: &MirInstr, erased: &mut H
     instruction_result_regs(instruction, &mut results);
     erased.extend(results.iter().map(|reg| reg.0));
     for region in instruction_regions(instruction) {
-        for nested in region.iter().flat_map(|block| &block.instrs) {
+        for nested in &region.instrs {
             erased_results(nested, erased);
         }
     }
@@ -171,10 +171,8 @@ enum ExitKind {
 impl Walk<'_> {
     /// Canonicalize each block of `blocks`, whose enclosing `if` arms are
     /// `enclosing`, innermost last.
-    fn list(&mut self, blocks: &mut [MirBlock], enclosing: &[Enclosing]) {
-        for block in blocks {
-            self.block(block, enclosing);
-        }
+    fn list(&mut self, block: &mut MirBlock, enclosing: &[Enclosing]) {
+        self.block(block, enclosing);
     }
 
     /// Canonicalize the regions `block`'s ops hold, then apply the patterns
@@ -254,23 +252,12 @@ impl Walk<'_> {
     /// without one. An elif whose condition carries values is never trivial,
     /// so every region the pattern splices or promotes takes no arguments.
     fn remove_static_condition(&mut self, block: &mut MirBlock, index: usize) -> bool {
-        let MirInstr::If {
-            cond,
-            then,
-            elifs,
-            orelse,
-            ..
-        } = &block.instrs[index]
-        else {
+        let MirInstr::If { cond, elifs, .. } = &block.instrs[index] else {
             return false;
         };
         let Some(&taken) = self.constants.get(&cond.0) else {
             return false;
         };
-        let single = |region: &[MirBlock]| region.len() == 1;
-        if !body_regions(then, elifs, orelse).into_iter().all(single) {
-            return false;
-        }
         let decided: Vec<Option<bool>> = elifs
             .iter()
             .map(|elif| self.trivial_constant_condition(&elif.cond))
@@ -296,41 +283,43 @@ impl Walk<'_> {
         };
         if taken {
             for elif in elifs {
-                self.erase_elif(elif);
+                self.erase_elif(&elif);
             }
             self.erased.extend(else_args.iter().map(|arg| arg.0));
-            self.erase_region(orelse);
+            self.erase_ops(&orelse.instrs);
             return self.replace_with_region(block, index, &results, then);
         }
-        self.erase_region(then);
+        self.erase_ops(&then.instrs);
         let mut elifs = elifs.into_iter().enumerate();
         while let Some((at, mut elif)) = elifs.next() {
             match (decided[at], promote) {
                 (Some(true), _) => {
                     let then = std::mem::take(&mut elif.then);
-                    self.erase_elif(elif);
+                    self.erase_elif(&elif);
                     for (_, rest) in elifs {
-                        self.erase_elif(rest);
+                        self.erase_elif(&rest);
                     }
                     self.erased.extend(else_args.iter().map(|arg| arg.0));
-                    self.erase_region(orelse);
+                    self.erase_ops(&orelse.instrs);
                     return self.replace_with_region(block, index, &results, then);
                 }
                 (_, Some((promoted, cond))) if promoted == at => {
-                    let hoisted = elif.cond.into_iter().flat_map(|block| block.instrs);
+                    let hoisted = elif.cond.instrs;
                     let promoted = MirInstr::If {
                         results,
                         cond,
-                        then: elif.then,
+                        then: Box::new(elif.then),
                         elifs: elifs.map(|(_, rest)| rest).collect(),
                         else_args,
-                        orelse,
+                        orelse: Box::new(orelse),
                     };
-                    block.instrs.splice(index..index, hoisted.chain([promoted]));
+                    block
+                        .instrs
+                        .splice(index..index, hoisted.into_iter().chain([promoted]));
                     self.counts.static_conditions += 1;
                     return true;
                 }
-                _ => self.erase_elif(elif),
+                _ => self.erase_elif(&elif),
             }
         }
         self.replace_with_region(block, index, &results, orelse)
@@ -338,9 +327,9 @@ impl Walk<'_> {
 
     /// The constant an elif condition region yields when it is trivial:
     /// one block of `const`s ending in its condition, a `const bool`.
-    fn trivial_constant_condition(&self, region: &[MirBlock]) -> Option<bool> {
+    fn trivial_constant_condition(&self, region: &MirBlock) -> Option<bool> {
         let cond = trivial_condition(region)?;
-        region[0]
+        region
             .instrs
             .iter()
             .find_map(|instruction| match instruction {
@@ -423,10 +412,7 @@ impl Walk<'_> {
             return false;
         };
         let mut terms = Vec::new();
-        for body in body_regions(then, elifs, orelse) {
-            let [region] = body else {
-                return false;
-            };
+        for region in body_regions(then, elifs, orelse) {
             terms.push(&region.term);
         }
         let Some((kind, label, operands)) = exit_of(terms[0]) else {
@@ -471,8 +457,8 @@ impl Walk<'_> {
             })
             .collect();
         for region in body_regions_mut(then, elifs, orelse) {
-            let operands = exit_of(&region[0].term).map(|(_, _, operands)| operands);
-            region[0].term = MirTerm::Yield(operands.unwrap_or_default());
+            let operands = exit_of(&region.term).map(|(_, _, operands)| operands);
+            region.term = MirTerm::Yield(operands.unwrap_or_default());
         }
         let old_results = std::mem::replace(results, new_results.clone());
         self.erased.extend(old_results.iter().map(|reg| reg.0));
@@ -517,10 +503,7 @@ impl Walk<'_> {
         };
         let mut yielding = None;
         let mut exit: Option<(ExitKind, Option<LoopLabel>, Vec<Reg>)> = None;
-        for (at, body) in body_regions(then, elifs, orelse).into_iter().enumerate() {
-            let [region] = body else {
-                return false;
-            };
+        for (at, region) in body_regions(then, elifs, orelse).into_iter().enumerate() {
             match &region.term {
                 MirTerm::Yield(values) => {
                     if yielding.is_some() {
@@ -602,11 +585,11 @@ impl Walk<'_> {
             .enumerate()
         {
             if at == yield_arm {
-                region[0].instrs.extend(tail.take().into_iter().flatten());
-                region[0].term = MirTerm::Yield(operands.clone());
+                region.instrs.extend(tail.take().into_iter().flatten());
+                region.term = MirTerm::Yield(operands.clone());
             } else {
-                let operands = exit_of(&region[0].term).map(|(_, _, operands)| operands);
-                region[0].term = MirTerm::Yield(operands.unwrap_or_default());
+                let operands = exit_of(&region.term).map(|(_, _, operands)| operands);
+                region.term = MirTerm::Yield(operands.unwrap_or_default());
             }
         }
         let old_results = std::mem::replace(results, new_results.clone());
@@ -644,14 +627,12 @@ impl Walk<'_> {
             return false;
         };
         let mut yields = Vec::new();
-        for body in body_regions(then, elifs, orelse) {
-            match body {
-                [
-                    MirBlock {
-                        instrs,
-                        term: MirTerm::Yield(values),
-                    },
-                ] if instrs.is_empty() => yields.push(values),
+        for region in body_regions(then, elifs, orelse) {
+            match region {
+                MirBlock {
+                    instrs,
+                    term: MirTerm::Yield(values),
+                } if instrs.is_empty() => yields.push(values),
                 _ => return false,
             }
         }
@@ -687,9 +668,7 @@ impl Walk<'_> {
                 None => unread = false,
             }
         }
-        let conditions_compute = elifs
-            .iter()
-            .any(|elif| elif.cond.iter().any(|block| !block.instrs.is_empty()));
+        let conditions_compute = elifs.iter().any(|elif| !elif.cond.instrs.is_empty());
         if unread && !conditions_compute {
             let removed = block.instrs.remove(index);
             self.erase_ops(std::slice::from_ref(&removed));
@@ -726,16 +705,14 @@ impl Walk<'_> {
             return false;
         }
         for region in body_regions_mut(then, elifs, orelse) {
-            for block in region {
-                if let MirTerm::Yield(values) = &mut block.term
-                    && values.len() == unused.len()
-                {
-                    let mut at = 0;
-                    values.retain(|_| {
-                        at += 1;
-                        !unused[at - 1]
-                    });
-                }
+            if let MirTerm::Yield(values) = &mut region.term
+                && values.len() == unused.len()
+            {
+                let mut at = 0;
+                values.retain(|_| {
+                    at += 1;
+                    !unused[at - 1]
+                });
             }
         }
         let mut at = 0;
@@ -767,16 +744,14 @@ impl Walk<'_> {
         else {
             return false;
         };
-        let [
-            MirBlock {
-                instrs,
-                term:
-                    term @ MirTerm::Break {
-                        label: target,
-                        values,
-                    },
-            },
-        ] = body.as_slice()
+        let MirBlock {
+            instrs,
+            term:
+                term @ MirTerm::Break {
+                    label: target,
+                    values,
+                },
+        } = &**body
         else {
             return false;
         };
@@ -922,14 +897,11 @@ impl Walk<'_> {
         };
         let value = *value;
         let (live, dead) = if value {
-            (&mut arms[0], orelse)
+            (&mut arms[0], &mut **orelse)
         } else {
-            (orelse, &mut arms[0])
+            (&mut **orelse, &mut arms[0])
         };
-        let ([live], [dead_block]) = (live.as_mut_slice(), dead.as_slice()) else {
-            return false;
-        };
-        if dead_block.instrs.is_empty() && matches!(dead_block.term, MirTerm::Unreachable) {
+        if dead.instrs.is_empty() && matches!(dead.term, MirTerm::Unreachable) {
             return false;
         }
         let stop = live
@@ -965,15 +937,15 @@ impl Walk<'_> {
             }
             _ => {
                 if let MirInstr::ComptimeIf { arms, orelse, .. } = &mut block.instrs[index] {
-                    let dead = if value { orelse } else { &mut arms[0] };
+                    let dead = if value { &mut **orelse } else { &mut arms[0] };
                     let purged = std::mem::replace(
                         dead,
-                        vec![MirBlock {
+                        MirBlock {
                             instrs: Vec::new(),
                             term: MirTerm::Unreachable,
-                        }],
+                        },
                     );
-                    self.erase_region(purged);
+                    self.erase_ops(&purged.instrs);
                 }
             }
         }
@@ -981,7 +953,7 @@ impl Walk<'_> {
         true
     }
 
-    /// `replaceOpWithRegion`: splice the one block of `region` at `index`.
+    /// `replaceOpWithRegion`: splice the block of `region` at `index`.
     /// A `yield` replaces `results` by its values; any other terminator
     /// ends `block`, whose rest (already removed by the caller when it
     /// differs) goes.
@@ -990,13 +962,9 @@ impl Walk<'_> {
         block: &mut MirBlock,
         index: usize,
         results: &[Reg],
-        region: Vec<MirBlock>,
+        region: MirBlock,
     ) -> bool {
-        let mut region = region.into_iter();
-        let Some(MirBlock { instrs, term }) = region.next() else {
-            return false;
-        };
-        self.erase_region(region.collect());
+        let MirBlock { instrs, term } = region;
         match term {
             MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => {
                 for (result, value) in results.iter().zip(values) {
@@ -1023,20 +991,13 @@ impl Walk<'_> {
         }
     }
 
-    /// [`Self::erase_ops`] over a region's blocks.
-    fn erase_region(&mut self, region: Vec<MirBlock>) {
-        for block in region {
-            self.erase_ops(&block.instrs);
-        }
-    }
-
-    /// [`Self::erase_region`] over a dropped elif's regions, and its
-    /// arguments with them.
-    fn erase_elif(&mut self, elif: MirElif) {
+    /// [`Self::erase_ops`] over a dropped elif's regions, and its arguments
+    /// with them.
+    fn erase_elif(&mut self, elif: &MirElif) {
         let args = elif.cond_args.iter().chain(&elif.then_args);
         self.erased.extend(args.map(|arg| arg.0));
-        self.erase_region(elif.cond);
-        self.erase_region(elif.then);
+        self.erase_ops(&elif.cond.instrs);
+        self.erase_ops(&elif.then.instrs);
     }
 }
 
@@ -1057,13 +1018,13 @@ fn trivial_comptime_if(block: &MirBlock, index: usize) -> bool {
         return false;
     }
     let mut all_yield = true;
-    for region in arms.iter().chain(std::iter::once(orelse)) {
-        match region.as_slice() {
-            [MirBlock { instrs, term }] if instrs.is_empty() => match term {
-                MirTerm::ComptimeYield(values) if values.is_empty() => {}
-                MirTerm::Break { values, .. } if values.is_empty() => all_yield = false,
-                _ => return false,
-            },
+    for region in arms.iter().chain(std::iter::once(&**orelse)) {
+        if !region.instrs.is_empty() {
+            return false;
+        }
+        match &region.term {
+            MirTerm::ComptimeYield(values) if values.is_empty() => {}
+            MirTerm::Break { values, .. } if values.is_empty() => all_yield = false,
             _ => return false,
         }
     }
@@ -1107,22 +1068,22 @@ fn climb(term: &MirTerm, enclosing: &[Enclosing]) -> Option<(MirTerm, Vec<Reg>)>
 
 /// An `if`'s body regions: `then`, each elif's `then`, and `orelse`.
 fn body_regions<'a>(
-    then: &'a [MirBlock],
+    then: &'a MirBlock,
     elifs: &'a [MirElif],
-    orelse: &'a [MirBlock],
-) -> Vec<&'a [MirBlock]> {
+    orelse: &'a MirBlock,
+) -> Vec<&'a MirBlock> {
     std::iter::once(then)
-        .chain(elifs.iter().map(|elif| elif.then.as_slice()))
+        .chain(elifs.iter().map(|elif| &elif.then))
         .chain(std::iter::once(orelse))
         .collect()
 }
 
 /// [`body_regions`], mutably.
 fn body_regions_mut<'a>(
-    then: &'a mut Vec<MirBlock>,
+    then: &'a mut MirBlock,
     elifs: &'a mut [MirElif],
-    orelse: &'a mut Vec<MirBlock>,
-) -> Vec<&'a mut Vec<MirBlock>> {
+    orelse: &'a mut MirBlock,
+) -> Vec<&'a mut MirBlock> {
     std::iter::once(then)
         .chain(elifs.iter_mut().map(|elif| &mut elif.then))
         .chain(std::iter::once(orelse))
@@ -1130,17 +1091,15 @@ fn body_regions_mut<'a>(
 }
 
 /// The condition an elif condition region yields when the region is
-/// trivial: one block of `const`s ending in its condition and carrying no
-/// values, the shape MLIR's folder leaves once it materializes the
-/// constants outside the region.
-fn trivial_condition(region: &[MirBlock]) -> Option<Reg> {
+/// trivial: `const`s ending in its condition and carrying no values, the
+/// shape MLIR's folder leaves once it materializes the constants outside
+/// the region.
+fn trivial_condition(region: &MirBlock) -> Option<Reg> {
     match region {
-        [
-            MirBlock {
-                instrs,
-                term: MirTerm::ElifCond { cond, values },
-            },
-        ] if values.is_empty()
+        MirBlock {
+            instrs,
+            term: MirTerm::ElifCond { cond, values },
+        } if values.is_empty()
             && instrs
                 .iter()
                 .all(|instruction| matches!(instruction, MirInstr::Const { .. })) =>
@@ -1154,10 +1113,10 @@ fn trivial_condition(region: &[MirBlock]) -> Option<Reg> {
 /// The parts of an `if`.
 struct IfParts {
     results: Vec<Reg>,
-    then: Vec<MirBlock>,
+    then: MirBlock,
     elifs: Vec<MirElif>,
     else_args: Vec<Reg>,
-    orelse: Vec<MirBlock>,
+    orelse: MirBlock,
 }
 
 /// Remove the `if` at `index` of `block` and return its parts; any other
@@ -1173,10 +1132,10 @@ fn take_if(block: &mut MirBlock, index: usize) -> Option<IfParts> {
             ..
         } => Some(IfParts {
             results,
-            then,
+            then: *then,
             elifs,
             else_args,
-            orelse,
+            orelse: *orelse,
         }),
         other => {
             block.instrs.insert(index, other);
@@ -1185,11 +1144,11 @@ fn take_if(block: &mut MirBlock, index: usize) -> Option<IfParts> {
     }
 }
 
-/// Collect the registers of `blocks`, at any depth, defined once by a
+/// Collect the registers of `block`, at any depth, defined once by a
 /// `const bool`, a constant one-lane `bool` storage, or a `struct.create`
 /// of a `Bool` over such storage.
-fn bool_constants(blocks: &[MirBlock], definitions: &[u32], out: &mut HashMap<u32, bool>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn bool_constants(block: &MirBlock, definitions: &[u32], out: &mut HashMap<u32, bool>) {
+    for instruction in &block.instrs {
         let known = match instruction {
             MirInstr::Const {
                 dest,
@@ -1223,10 +1182,10 @@ fn bool_constants(blocks: &[MirBlock], definitions: &[u32], out: &mut HashMap<u3
     }
 }
 
-/// Whether some instruction or terminator of `blocks`, at any depth, reads
+/// Whether some instruction or terminator of `block`, at any depth, reads
 /// `reg`.
-fn reads_register(blocks: &mut [MirBlock], reg: Reg) -> bool {
+fn reads_register(block: &mut MirBlock, reg: Reg) -> bool {
     let mut reads = vec![0_u32; reg.0 as usize + 1];
-    count_register_reads(blocks, &mut reads);
+    count_register_reads(block, &mut reads);
     reads[reg.0 as usize] > 0
 }

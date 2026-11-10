@@ -129,7 +129,7 @@ pub fn load_register_passable_operands(
     let mut next = function.n_regs;
     let mut types = Vec::new();
     let changed = load_in_blocks(
-        &mut function.blocks,
+        &mut function.body,
         &function.reg_types,
         &mut LoadContext {
             declarations,
@@ -200,7 +200,7 @@ fn address_function_operands(
     let mut definitions = HashMap::new();
     let mut operands = Vec::new();
     collect(
-        &function.blocks,
+        &function.body,
         callees,
         declarations,
         &mut definitions,
@@ -210,7 +210,7 @@ fn address_function_operands(
         return;
     }
     let mut reads = vec![0; function.n_regs as usize];
-    count_register_reads(&mut function.blocks, &mut reads);
+    count_register_reads(&mut function.body, &mut reads);
     let read_once = |register: Reg| reads.get(register.0 as usize) == Some(&1);
     let mut rewrites: HashMap<u32, Rewrite> = HashMap::new();
     for (operand, place, mutability) in operands {
@@ -253,7 +253,7 @@ fn address_function_operands(
         .values()
         .filter_map(|rewrite| rewrite.retired.map(|register| register.0))
         .collect();
-    rewrite_blocks(&mut function.blocks, &rewrites, &retired);
+    rewrite_blocks(&mut function.body, &rewrites, &retired);
 }
 
 /// Whether two places name the same storage, whatever local reference
@@ -274,89 +274,85 @@ fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
 }
 
 fn collect(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     callees: &Callees<'_>,
     declarations: &MirDeclarations,
     definitions: &mut HashMap<u32, Definition>,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::LoadPlace { dest, place } => {
-                    definitions.insert(dest.0, Definition::Load(place.clone()));
-                }
-                MirInstr::ReadRef { dest, reference } => {
-                    definitions.insert(dest.0, Definition::Read(*reference));
-                }
-                MirInstr::MakeRef { dest, place } => {
-                    definitions.insert(dest.0, Definition::Address(place.clone()));
-                }
-                MirInstr::Call {
-                    func,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    spread: None,
-                    ..
-                } => {
-                    let Some(declaration) = callees.get(&func.0) else {
+    for instruction in &block.instrs {
+        match instruction {
+            MirInstr::LoadPlace { dest, place } => {
+                definitions.insert(dest.0, Definition::Load(place.clone()));
+            }
+            MirInstr::ReadRef { dest, reference } => {
+                definitions.insert(dest.0, Definition::Read(*reference));
+            }
+            MirInstr::MakeRef { dest, place } => {
+                definitions.insert(dest.0, Definition::Address(place.clone()));
+            }
+            MirInstr::Call {
+                func,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread: None,
+                ..
+            } => {
+                let Some(declaration) = callees.get(&func.0) else {
+                    continue;
+                };
+                let Some(parameters) =
+                    call_operand_parameters(&func.0, declaration, args.len(), kwargs)
+                else {
+                    continue;
+                };
+                let registers = args
+                    .iter()
+                    .chain(kwargs.iter().map(|(_, register)| register));
+                let places = arg_places.iter().chain(kwarg_places);
+                for ((register, place), parameter) in registers.zip(places).zip(parameters) {
+                    let (Some(place), Some(parameter)) = (place, parameter) else {
                         continue;
                     };
-                    let Some(parameters) =
-                        call_operand_parameters(&func.0, declaration, args.len(), kwargs)
-                    else {
+                    if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
                         continue;
-                    };
-                    let registers = args
-                        .iter()
-                        .chain(kwargs.iter().map(|(_, register)| register));
-                    let places = arg_places.iter().chain(kwarg_places);
-                    for ((register, place), parameter) in registers.zip(places).zip(parameters) {
-                        let (Some(place), Some(parameter)) = (place, parameter) else {
-                            continue;
-                        };
-                        if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
-                            continue;
-                        }
-                        if let Some(mutability) =
-                            by_address_parameter(declaration, declarations, parameter)
-                        {
-                            operands.push((*register, place.clone(), mutability));
-                        }
+                    }
+                    if let Some(mutability) =
+                        by_address_parameter(declaration, declarations, parameter)
+                    {
+                        operands.push((*register, place.clone(), mutability));
                     }
                 }
-                _ => {}
             }
-            for region in instruction_regions(instruction) {
-                collect(region, callees, declarations, definitions, operands);
-            }
+            _ => {}
+        }
+        for region in instruction_regions(instruction) {
+            collect(region, callees, declarations, definitions, operands);
         }
     }
 }
 
-fn rewrite_blocks(blocks: &mut [MirBlock], rewrites: &HashMap<u32, Rewrite>, retired: &[u32]) {
-    for block in blocks {
-        block.instrs.retain(|instruction| {
-            !matches!(instruction, MirInstr::MakeRef { dest, .. } if retired.contains(&dest.0))
-        });
-        for instruction in &mut block.instrs {
-            let dest = match instruction {
-                MirInstr::LoadPlace { dest, .. } | MirInstr::ReadRef { dest, .. } => Some(*dest),
-                _ => None,
+fn rewrite_blocks(block: &mut MirBlock, rewrites: &HashMap<u32, Rewrite>, retired: &[u32]) {
+    block.instrs.retain(|instruction| {
+        !matches!(instruction, MirInstr::MakeRef { dest, .. } if retired.contains(&dest.0))
+    });
+    for instruction in &mut block.instrs {
+        let dest = match instruction {
+            MirInstr::LoadPlace { dest, .. } | MirInstr::ReadRef { dest, .. } => Some(*dest),
+            _ => None,
+        };
+        if let Some(dest) = dest
+            && let Some(rewrite) = rewrites.get(&dest.0)
+        {
+            *instruction = MirInstr::MakeRef {
+                dest,
+                place: rewrite.place.clone(),
             };
-            if let Some(dest) = dest
-                && let Some(rewrite) = rewrites.get(&dest.0)
-            {
-                *instruction = MirInstr::MakeRef {
-                    dest,
-                    place: rewrite.place.clone(),
-                };
-            }
-            for region in instruction_regions_mut(instruction) {
-                rewrite_blocks(region, rewrites, retired);
-            }
+        }
+        for region in instruction_regions_mut(instruction) {
+            rewrite_blocks(region, rewrites, retired);
         }
     }
 }
@@ -369,71 +365,67 @@ struct LoadContext<'a, 'b> {
 }
 
 fn load_in_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
     context: &mut LoadContext<'_, '_>,
 ) -> bool {
     let mut changed = false;
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            for region in instruction_regions_mut(&mut block.instrs[index]) {
-                changed |= load_in_blocks(region, reg_types, context);
-            }
-            let mut loads = Vec::new();
-            if let MirInstr::Call {
-                func,
-                args,
-                kwargs,
-                spread: None,
-                ..
-            } = &mut block.instrs[index]
-                && let Some(declaration) = context.callees.get(&func.0)
-                && let Some(parameters) =
-                    call_operand_parameters(&func.0, declaration, args.len(), kwargs)
-            {
-                let registers = args
-                    .iter_mut()
-                    .chain(kwargs.iter_mut().map(|(_, register)| register));
-                for (register, parameter) in registers.zip(parameters) {
-                    let Some(parameter) = parameter else {
-                        continue;
-                    };
-                    let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind)
-                    else {
-                        continue;
-                    };
-                    let by_value = !declaration
-                        .ref_params
-                        .get(parameter)
-                        .copied()
-                        .unwrap_or(true)
-                        && by_address_parameter(declaration, context.declarations, parameter)
-                            .is_none()
-                        && !matches!(
-                            declaration.param_types.get(parameter).map(Ty::kind),
-                            Some(TyKind::Ref(_))
-                        );
-                    if !by_value {
-                        continue;
-                    }
-                    let loaded = Reg(*context.next);
-                    *context.next += 1;
-                    context
-                        .types
-                        .push((loaded.0, reference.referent.clone(), register.0));
-                    loads.push(MirInstr::ReadRef {
-                        dest: loaded,
-                        reference: *register,
-                    });
-                    *register = loaded;
-                }
-            }
-            let inserted = loads.len();
-            changed |= inserted > 0;
-            block.instrs.splice(index..index, loads);
-            index += inserted + 1;
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            changed |= load_in_blocks(region, reg_types, context);
         }
+        let mut loads = Vec::new();
+        if let MirInstr::Call {
+            func,
+            args,
+            kwargs,
+            spread: None,
+            ..
+        } = &mut block.instrs[index]
+            && let Some(declaration) = context.callees.get(&func.0)
+            && let Some(parameters) =
+                call_operand_parameters(&func.0, declaration, args.len(), kwargs)
+        {
+            let registers = args
+                .iter_mut()
+                .chain(kwargs.iter_mut().map(|(_, register)| register));
+            for (register, parameter) in registers.zip(parameters) {
+                let Some(parameter) = parameter else {
+                    continue;
+                };
+                let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind) else {
+                    continue;
+                };
+                let by_value = !declaration
+                    .ref_params
+                    .get(parameter)
+                    .copied()
+                    .unwrap_or(true)
+                    && by_address_parameter(declaration, context.declarations, parameter).is_none()
+                    && !matches!(
+                        declaration.param_types.get(parameter).map(Ty::kind),
+                        Some(TyKind::Ref(_))
+                    );
+                if !by_value {
+                    continue;
+                }
+                let loaded = Reg(*context.next);
+                *context.next += 1;
+                context
+                    .types
+                    .push((loaded.0, reference.referent.clone(), register.0));
+                loads.push(MirInstr::ReadRef {
+                    dest: loaded,
+                    reference: *register,
+                });
+                *register = loaded;
+            }
+        }
+        let inserted = loads.len();
+        changed |= inserted > 0;
+        block.instrs.splice(index..index, loads);
+        index += inserted + 1;
     }
     changed
 }

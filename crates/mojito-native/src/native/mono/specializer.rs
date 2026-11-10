@@ -865,7 +865,7 @@ impl<'a> Specializer<'a> {
         };
         let function = &self.output_functions[position].1;
         let mut types: Vec<Ty> = function_types(function).cloned().collect();
-        push_instruction_types(&function.blocks, &mut types);
+        push_instruction_types(&function.body, &mut types);
         let mut references = Vec::new();
         while let Some(ty) = types.pop() {
             collect_nested_types(&ty, &mut types);
@@ -1079,7 +1079,7 @@ impl<'a> Specializer<'a> {
             ..self.error(Some(&key.template), construct)
         })?;
         self.discharge_rebinds(&key.template, &mut function)?;
-        let mut blocks = std::mem::take(&mut function.blocks);
+        let mut blocks = std::mem::take(&mut function.body);
         let answered = self.answer_param_constants(
             &key.template,
             &mut blocks,
@@ -1093,16 +1093,16 @@ impl<'a> Specializer<'a> {
             },
             true,
         );
-        function.blocks = blocks;
+        function.body = blocks;
         answered
-            .and_then(|()| failure::reached_failure(&function.blocks, unreached_failures))
+            .and_then(|()| failure::reached_failure(&function.body, unreached_failures))
             .map_err(|mut error| {
                 error.function.get_or_insert_with(|| key.template.clone());
                 error
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
         self.enclosing.clone_from(bindings);
-        self.instantiate_nested_bodies(&key.template, &mut function.blocks)?;
+        self.instantiate_nested_bodies(&key.template, &mut function.body)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
@@ -1113,10 +1113,10 @@ impl<'a> Specializer<'a> {
         );
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
-        let mut blocks = std::mem::take(&mut function.blocks);
+        let mut blocks = std::mem::take(&mut function.body);
         let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
-        function.blocks = blocks;
+        function.body = blocks;
         erase_dropped_argument_reads(&mut function, &arguments);
         if let Some(operands) = undefined_operands {
             shed_dropped_operand_types(&mut function, &operands);
@@ -1167,9 +1167,9 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<MirFunction, MonoError> {
         let mut function = template.clone();
-        default_construct_parameters(&mut function.blocks, bindings, &self.source.declarations)?;
+        default_construct_parameters(&mut function.body, bindings, &self.source.declarations)?;
         self.elaborate_comptime_ops(name, &mut function, bindings)?;
-        self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
+        self.erase_valueless_removed_arguments(&mut function.body, bindings);
         let conforms = |subject: &ParamExpr, trait_name: &str| {
             self.subject_conforms(subject, trait_name, bindings)
         };
@@ -1180,15 +1180,15 @@ impl<'a> Specializer<'a> {
         Ok(function)
     }
 
-    /// Erase (`_REMOVED_ARG`) each argument in `blocks` and their regions
+    /// Erase (`_REMOVED_ARG`) each argument in `block` and their regions
     /// that binds a parameter its callee removed and has no value under
     /// `bindings` (`10 // n` at `n == 0`), in a call's `instantiated_args`
     /// or its static receiver: upstream's `RemoveUnusedParams` rewrote the
     /// call without it, so nothing evaluates it. An application nothing has
     /// run is no value: upstream's call never evaluates it. One with a value
     /// stays, which binds the callee's removed parameter for inference.
-    fn erase_valueless_removed_arguments(&self, blocks: &mut [MirBlock], bindings: &Bindings) {
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    fn erase_valueless_removed_arguments(&self, block: &mut MirBlock, bindings: &Bindings) {
+        for instruction in &mut block.instrs {
             for region in mojito_mir::mir::instruction_regions_mut(instruction) {
                 self.erase_valueless_removed_arguments(region, bindings);
             }
@@ -2058,135 +2058,134 @@ impl<'a> Specializer<'a> {
     pub(super) fn answer_param_constants(
         &mut self,
         template: &str,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         bindings: &Bindings,
         frame: &mut FrameSlots<'_>,
         reached: bool,
     ) -> Result<(), MonoError> {
-        for block in blocks {
-            let mut instrs = Vec::with_capacity(block.instrs.len());
-            for mut instruction in std::mem::take(&mut block.instrs) {
-                let regions = mojito_mir::mir::instruction_regions_mut(&mut instruction);
-                if !regions.is_empty() {
-                    for region in regions {
-                        self.answer_param_constants(template, region, bindings, frame, reached)?;
-                    }
-                    instrs.push(instruction);
-                    continue;
+        let mut instrs = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            let regions = mojito_mir::mir::instruction_regions_mut(&mut instruction);
+            if !regions.is_empty() {
+                for region in regions {
+                    self.answer_param_constants(template, region, bindings, frame, reached)?;
                 }
-                // A bracket argument read off a local `comptime` binding
-                // (`g[e]()` after `comptime e = L[1]`) is the application
-                // the callee's instance is keyed by.
-                for argument in mojito_mir::mir::instruction_param_args_mut(&mut instruction) {
-                    if let Some(expr) = &argument.expr {
-                        argument.expr = Some(self.applied(template, expr, bindings)?);
-                    }
-                }
-                // A parameter list's static address names the list the
-                // instance binds.
-                if let MirInstr::ParamListAddress { dest, values } = &mut instruction
-                    && let Const::Param(list) = values
-                {
-                    let list = self.applied(template, list, bindings)?;
-                    match symbolic::eval_reached_ct(&list, bindings) {
-                        Ok(closed @ CtValue::Tuple(_)) => *values = Const::Value(closed),
-                        Ok(other) => {
-                            return Err(self.error(
-                                Some(template),
-                                format!(
-                                    "r{}: the parameter list `{list}` closes to `{other}`, not \
-                                     a list",
-                                    dest.0
-                                ),
-                            ));
-                        }
-                        Err(error) if error.kind == MonoErrorKind::Instantiation => {
-                            return Err(error);
-                        }
-                        Err(_) => {}
-                    }
-                }
-                // A `pop.array` op's index attribute is the instance's, and so
-                // is a `kgen.source_loc`'s inline count.
-                if let MirInstr::ArrayGet { index, .. }
-                | MirInstr::ArrayReplace { index, .. }
-                | MirInstr::SourceLoc {
-                    inline_count: index,
-                    ..
-                } = &mut instruction
-                    && let Const::Param(value) = index
-                {
-                    let value = self.applied(template, value, bindings)?;
-                    match symbolic::eval_reached_ct(&value, bindings) {
-                        Ok(closed) => *index = Const::Value(closed),
-                        Err(error) if error.kind == MonoErrorKind::Instantiation => {
-                            return Err(error);
-                        }
-                        Err(_) => {}
-                    }
-                }
-                if let Some(fastmath) = instruction.fastmath_mut() {
-                    self.close_fastmath(template, fastmath, bindings, reached)?;
-                }
-                if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
-                    self.close_llvm_intrinsic(
-                        template,
-                        &mut instruction,
-                        bindings,
-                        frame.reg_types,
-                        reached,
-                    )?;
-                }
-                let MirInstr::Const {
-                    dest,
-                    k: Const::Param(value),
-                } = &instruction
-                else {
-                    instrs.push(instruction);
-                    continue;
-                };
-                let dest = *dest;
-                let ty = frame.reg_types.get(&dest.0).cloned();
-                let constant = match self
-                    .answer_conformance_subjects(template, value, bindings)
-                    .and_then(|()| self.applied(template, value, bindings))
-                    .and_then(|value| self.param_constant(&value, bindings, ty.as_ref()))
-                {
-                    // An unrolled iteration's arm may be one the instance
-                    // never takes: its failure waits for the branches.
-                    // It keeps its value closed over the iteration's
-                    // binders, which the reached pass meets again.
-                    Err(error) if !reached && error.kind == MonoErrorKind::Instantiation => {
-                        self.unreached_failures.insert(dest.0, error);
-                        ParamContext::detached()
-                            .replace(value, &symbolic::ct_bindings(bindings))
-                            .ok()
-                            .map(Const::Param)
-                    }
-                    constant => constant?,
-                };
-                match constant {
-                    // A reflected field-name list read at an `Array` is
-                    // built by its list-literal initializer; any other value
-                    // is the constant typed by `dest`'s register.
-                    Some(k)
-                        if let Some(ty) = &ty
-                            && let Some(owned) = constructed_parameter_constant(&k, ty) =>
-                    {
-                        instrs.extend(array_display_construction(
-                            dest,
-                            &owned,
-                            ty,
-                            frame,
-                            self.construction_decls(),
-                        )?);
-                    }
-                    Some(k) => instrs.push(MirInstr::Const { dest, k }),
-                    None => instrs.push(instruction),
+                instrs.push(instruction);
+                continue;
+            }
+            // A bracket argument read off a local `comptime` binding
+            // (`g[e]()` after `comptime e = L[1]`) is the application
+            // the callee's instance is keyed by.
+            for argument in mojito_mir::mir::instruction_param_args_mut(&mut instruction) {
+                if let Some(expr) = &argument.expr {
+                    argument.expr = Some(self.applied(template, expr, bindings)?);
                 }
             }
-            block.instrs = instrs;
+            // A parameter list's static address names the list the
+            // instance binds.
+            if let MirInstr::ParamListAddress { dest, values } = &mut instruction
+                && let Const::Param(list) = values
+            {
+                let list = self.applied(template, list, bindings)?;
+                match symbolic::eval_reached_ct(&list, bindings) {
+                    Ok(closed @ CtValue::Tuple(_)) => *values = Const::Value(closed),
+                    Ok(other) => {
+                        return Err(self.error(
+                            Some(template),
+                            format!(
+                                "r{}: the parameter list `{list}` closes to `{other}`, not \
+                                 a list",
+                                dest.0
+                            ),
+                        ));
+                    }
+                    Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                        return Err(error);
+                    }
+                    Err(_) => {}
+                }
+            }
+            // A `pop.array` op's index attribute is the instance's, and so
+            // is a `kgen.source_loc`'s inline count.
+            if let MirInstr::ArrayGet { index, .. }
+            | MirInstr::ArrayReplace { index, .. }
+            | MirInstr::SourceLoc {
+                inline_count: index,
+                ..
+            } = &mut instruction
+                && let Const::Param(value) = index
+            {
+                let value = self.applied(template, value, bindings)?;
+                match symbolic::eval_reached_ct(&value, bindings) {
+                    Ok(closed) => *index = Const::Value(closed),
+                    Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                        return Err(error);
+                    }
+                    Err(_) => {}
+                }
+            }
+            if let Some(fastmath) = instruction.fastmath_mut() {
+                self.close_fastmath(template, fastmath, bindings, reached)?;
+            }
+            if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
+                self.close_llvm_intrinsic(
+                    template,
+                    &mut instruction,
+                    bindings,
+                    frame.reg_types,
+                    reached,
+                )?;
+            }
+            let MirInstr::Const {
+                dest,
+                k: Const::Param(value),
+            } = &instruction
+            else {
+                instrs.push(instruction);
+                continue;
+            };
+            let dest = *dest;
+            let ty = frame.reg_types.get(&dest.0).cloned();
+            let constant = match self
+                .answer_conformance_subjects(template, value, bindings)
+                .and_then(|()| self.applied(template, value, bindings))
+                .and_then(|value| self.param_constant(&value, bindings, ty.as_ref()))
+            {
+                // An unrolled iteration's arm may be one the instance
+                // never takes: its failure waits for the branches.
+                // It keeps its value closed over the iteration's
+                // binders, which the reached pass meets again.
+                Err(error) if !reached && error.kind == MonoErrorKind::Instantiation => {
+                    self.unreached_failures.insert(dest.0, error);
+                    ParamContext::detached()
+                        .replace(value, &symbolic::ct_bindings(bindings))
+                        .ok()
+                        .map(Const::Param)
+                }
+                constant => constant?,
+            };
+            match constant {
+                // A reflected field-name list read at an `Array` is
+                // built by its list-literal initializer; any other value
+                // is the constant typed by `dest`'s register.
+                Some(k)
+                    if let Some(ty) = &ty
+                        && let Some(owned) = constructed_parameter_constant(&k, ty) =>
+                {
+                    instrs.extend(array_display_construction(
+                        dest,
+                        &owned,
+                        ty,
+                        frame,
+                        self.construction_decls(),
+                    )?);
+                }
+                Some(k) => instrs.push(MirInstr::Const { dest, k }),
+                None => instrs.push(instruction),
+            }
         }
+        block.instrs = instrs;
+
         Ok(())
     }
 
@@ -2491,9 +2490,9 @@ impl<'a> Specializer<'a> {
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
     ) -> Result<(), MonoError> {
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for instruction in &mut block.instrs {
             match instruction {
                 MirInstr::MakeClosure {
                     function: target, ..
@@ -2740,341 +2739,340 @@ impl<'a> Specializer<'a> {
         &mut self,
         owner: &str,
         function: &mut MirFunction,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
     ) -> Result<(), MonoError> {
-        for block in blocks {
-            // Argument loads a devirtualized capturing call needs, spliced in
-            // ahead of the call once the walk over this block is done.
-            let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
-            // The results of calls rewritten to a cast, whose binding is no
-            // longer a call's result storage.
-            let mut casts = HashSet::new();
-            for (index, instruction) in block.instrs.iter_mut().enumerate() {
-                let regions = mojito_mir::mir::instruction_regions_mut(instruction);
-                if !regions.is_empty() {
-                    for region in regions {
-                        self.rewrite_blocks(owner, function, region)?;
-                    }
-                    continue;
+        // Argument loads a devirtualized capturing call needs, spliced in
+        // ahead of the call once the walk over this block is done.
+        let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
+        // The results of calls rewritten to a cast, whose binding is no
+        // longer a call's result storage.
+        let mut casts = HashSet::new();
+        for (index, instruction) in block.instrs.iter_mut().enumerate() {
+            let regions = mojito_mir::mir::instruction_regions_mut(instruction);
+            if !regions.is_empty() {
+                for region in regions {
+                    self.rewrite_blocks(owner, function, region)?;
                 }
-                if let MirInstr::DefVar { src, in_place, .. } = instruction
-                    && casts.contains(&src.0)
+                continue;
+            }
+            if let MirInstr::DefVar { src, in_place, .. } = instruction
+                && casts.contains(&src.0)
+            {
+                *in_place = false;
+            }
+            // A `def(...)` bound's `__call__` requirement called on a
+            // function value is the value's own indirect call: a
+            // function type has no witness table.
+            mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
+            // `abs` on a nominal receiver is a checker-typed dunder
+            // dispatch the VM performs by name (`call_dunder`); rewrite
+            // it into an ordinary method call so the shared resolver and
+            // the `MethodCall` arm below monomorphize the dunder instance
+            // like any other method.
+            // MIR's truthiness conversion `Bool(x)` (a spelled `Bool(x)`
+            // calls its declared initializer) over a scalar operand is its
+            // `scalar.cast`; other non-struct operands pass through for
+            // the backend's scalar interception.
+            if let MirInstr::Call {
+                dest,
+                func,
+                args,
+                kwargs,
+                raises,
+                ..
+            } = instruction
+            {
+                let dunder = match func.0.as_str() {
+                    "abs" => Some("__abs__"),
+                    // A truthiness `Bool(x)` over a nominal receiver
+                    // is the dunder's call.
+                    "Bool" => Some("__bool__"),
+                    _ => None,
+                };
+                let builtin = !self.functions.contains_key(func.0.as_str());
+                let operand = args
+                    .first()
+                    .and_then(|arg| function.reg_types.get(&arg.0))
+                    .map(peel_refs);
+                // A vector is no scalar cast's source: its `Bool(x)` is
+                // `SIMD`'s declared `__bool__`, whose instance asserts. A
+                // string literal's is `StringLiteral`'s.
+                let bool_cast = mojito_types::ct::ScalarConversion::Bool;
+                let vector = |operand: &Ty| {
+                    operand.is_simd()
+                        && func.0 == bool_cast.name()
+                        && !bool_cast.casts_from(operand)
+                };
+                if let Some(method) = dunder
+                    && builtin
+                    && kwargs.is_empty()
+                    && args.len() == 1
+                    && operand.is_some_and(|operand| {
+                        operand.is_non_simd_struct()
+                            || operand.kind().string_literal_value().is_some()
+                            || vector(operand)
+                    })
                 {
-                    *in_place = false;
+                    *instruction = dunder_method_call(
+                        *dest,
+                        args[0],
+                        method,
+                        None,
+                        raises.take(),
+                        args[1..].to_vec(),
+                    );
+                } else if builtin
+                    && raises.is_none()
+                    && kwargs.is_empty()
+                    && func.0 == bool_cast.name()
+                    && let [value] = args.as_slice()
+                    && function
+                        .reg_types
+                        .get(&value.0)
+                        .is_some_and(|ty| bool_cast.casts_from(ty))
+                {
+                    // A truthiness `Bool(x)` a template tests over a
+                    // type parameter is, at a scalar instance, the cast
+                    // MIR emits where the operand is spelled scalar.
+                    casts.insert(dest.0);
+                    *instruction = MirInstr::ScalarCast {
+                        dest: *dest,
+                        value: *value,
+                        target: bool_cast,
+                    };
                 }
-                // A `def(...)` bound's `__call__` requirement called on a
-                // function value is the value's own indirect call: a
-                // function type has no witness table.
-                mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
-                // `abs` on a nominal receiver is a checker-typed dunder
-                // dispatch the VM performs by name (`call_dunder`); rewrite
-                // it into an ordinary method call so the shared resolver and
-                // the `MethodCall` arm below monomorphize the dunder instance
-                // like any other method.
-                // MIR's truthiness conversion `Bool(x)` (a spelled `Bool(x)`
-                // calls its declared initializer) over a scalar operand is its
-                // `scalar.cast`; other non-struct operands pass through for
-                // the backend's scalar interception.
-                if let MirInstr::Call {
+            }
+            // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
+            // calls its dunder (`__neg__`/`__invert__`); `not` arrives
+            // already converted through `Bool(x)` by MIR.
+            if let MirInstr::UnOp {
+                op,
+                dest,
+                a,
+                raises,
+            } = instruction
+                && matches!(
+                    op,
+                    mojito_ast::ast::PrefixOp::Neg
+                        | mojito_ast::ast::PrefixOp::Invert
+                        | mojito_ast::ast::PrefixOp::Pos
+                )
+                && function
+                    .reg_types
+                    .get(&a.0)
+                    .map(peel_refs)
+                    .is_some_and(|ty| self.declares_prefix_dunder(ty, op.dunder()))
+            {
+                let raises = raises.take();
+                *instruction = dunder_method_call(*dest, *a, op.dunder(), None, raises, Vec::new());
+            }
+            // A comparison through a bound names its requirement, which a
+            // struct instance (a `SIMD` among them) answers with its
+            // witness dunder below; any other builtin answers it itself.
+            if let MirInstr::BinOp { a, resolved, .. } = instruction
+                && resolved
+                    .as_deref()
+                    .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                && !function
+                    .reg_types
+                    .get(&a.0)
+                    .map(peel_refs)
+                    .is_some_and(declared_operator_receiver)
+            {
+                *resolved = None;
+            }
+            // A binary operator on a struct left operand, a `SIMD` among
+            // them, calls its operator method, so the shared resolver
+            // monomorphizes the compiled instance (`String.__add__`,
+            // `SIMD.__lt__`, user `__eq__`, …).
+            // `in`/`not in` dispatch on the right operand and stay
+            // untouched (they keep their contextual rejection).
+            if let MirInstr::BinOp {
+                op,
+                dest,
+                a,
+                b,
+                resolved,
+                raises,
+                ..
+            } = instruction
+                && let Some(method) = mojito_mir::mir::operator_method(*op)
+                && function
+                    .reg_types
+                    .get(&a.0)
+                    .map(peel_refs)
+                    .is_some_and(declared_operator_receiver)
+            {
+                let (resolved, raises) = (resolved.take(), raises.take());
+                *instruction = dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
+            }
+            // A comparison requirement called on a builtin instance
+            // (`a.__lt__(b)`, or `a < b` through a bound) is the
+            // builtin's own comparison; a `SIMD` instance's is its
+            // declared dunder, which the witness resolves.
+            if let MirInstr::MethodCall {
+                dest,
+                recv,
+                method,
+                resolved,
+                args,
+                kwargs,
+                raises,
+                ..
+            } = instruction
+                && resolved
+                    .as_deref()
+                    .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                && kwargs.is_empty()
+                && let [other] = args.as_slice()
+                && let Some(op) = comparison_of_dunder(method)
+                && !(function.reg_types.get(&recv.0).map(peel_refs))
+                    .is_none_or(|ty| ty.kind().is_non_simd_struct() || ty.is_simd())
+            {
+                *instruction = MirInstr::BinOp {
+                    op,
+                    dest: *dest,
+                    a: *recv,
+                    b: *other,
+                    resolved: None,
+                    raises: raises.take(),
+                    refined_bound: None,
+                    fastmath: None,
+                };
+            }
+            match instruction {
+                MirInstr::Call {
                     dest,
                     func,
                     args,
                     kwargs,
-                    raises,
+                    arg_places,
+                    kwarg_places,
+                    param_arg_regs,
+                    receiver: static_receiver,
+                    instantiated_args,
+                    spread,
                     ..
-                } = instruction
-                {
-                    let dunder = match func.0.as_str() {
-                        "abs" => Some("__abs__"),
-                        // A truthiness `Bool(x)` over a nominal receiver
-                        // is the dunder's call.
-                        "Bool" => Some("__bool__"),
-                        _ => None,
-                    };
-                    let builtin = !self.functions.contains_key(func.0.as_str());
-                    let operand = args
-                        .first()
-                        .and_then(|arg| function.reg_types.get(&arg.0))
-                        .map(peel_refs);
-                    // A vector is no scalar cast's source: its `Bool(x)` is
-                    // `SIMD`'s declared `__bool__`, whose instance asserts. A
-                    // string literal's is `StringLiteral`'s.
-                    let bool_cast = mojito_types::ct::ScalarConversion::Bool;
-                    let vector = |operand: &Ty| {
-                        operand.is_simd()
-                            && func.0 == bool_cast.name()
-                            && !bool_cast.casts_from(operand)
-                    };
-                    if let Some(method) = dunder
-                        && builtin
-                        && kwargs.is_empty()
-                        && args.len() == 1
-                        && operand.is_some_and(|operand| {
-                            operand.is_non_simd_struct()
-                                || operand.kind().string_literal_value().is_some()
-                                || vector(operand)
-                        })
-                    {
-                        *instruction = dunder_method_call(
-                            *dest,
-                            args[0],
-                            method,
-                            None,
-                            raises.take(),
-                            args[1..].to_vec(),
-                        );
-                    } else if builtin
-                        && raises.is_none()
-                        && kwargs.is_empty()
-                        && func.0 == bool_cast.name()
-                        && let [value] = args.as_slice()
-                        && function
-                            .reg_types
-                            .get(&value.0)
-                            .is_some_and(|ty| bool_cast.casts_from(ty))
-                    {
-                        // A truthiness `Bool(x)` a template tests over a
-                        // type parameter is, at a scalar instance, the cast
-                        // MIR emits where the operand is spelled scalar.
-                        casts.insert(dest.0);
-                        *instruction = MirInstr::ScalarCast {
-                            dest: *dest,
-                            value: *value,
-                            target: bool_cast,
-                        };
+                } => {
+                    // A generic nested body's value is named as its
+                    // generator under the instance or unrolled region
+                    // copy it is declared in, whose bindings its
+                    // instance inherits.
+                    let region = self.nested_generators.get(func.0.as_str()).cloned();
+                    if let Some((template, _)) = &region {
+                        func.0.clone_from(template);
                     }
+                    if !self.functions.contains_key(func.0.as_str()) {
+                        // Every construction names the `__init__` its
+                        // check selected, as upstream's call names the
+                        // constructor's symbol; a call naming a struct
+                        // was never resolved.
+                        if self.structs.contains_key(nominal_template(&func.0))
+                            && !self.instance_names.contains_key(func.0.as_str())
+                        {
+                            return Err(self.error(
+                                Some(owner),
+                                format!(
+                                    "call names struct `{}`, not the `__init__` its check selected",
+                                    func.0
+                                ),
+                            ));
+                        }
+                        continue;
+                    }
+                    // A direct constructor call's destination is its
+                    // `out self`, not the declared `None` return — bind
+                    // it as the receiver.
+                    let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
+                        && function.reg_types.contains_key(&dest.0))
+                    .then_some(*dest);
+                    // A nested `def`'s direct call binds its enclosing
+                    // binders from this instance's, or from its region
+                    // copy's.
+                    let (target, mut bindings, arguments) = self.infer_call(
+                        owner,
+                        function,
+                        &func.0,
+                        receiver,
+                        *dest,
+                        (args, *spread),
+                        kwargs,
+                        param_arg_regs,
+                        instantiated_args,
+                        Some(
+                            region
+                                .as_ref()
+                                .map_or(&self.enclosing, |(_, bindings)| bindings),
+                        ),
+                    )?;
+                    // The instance identity carries the spelled receiver
+                    // of a static call, so the resolved call keeps none.
+                    if let Some(spelled) = static_receiver.take() {
+                        self.bind_static_receiver(owner, &target, &spelled, &mut bindings)?;
+                    }
+                    let reduced = bindings.reduced;
+                    func.0 = self.enqueue(&target, bindings, arguments)?;
+                    if reduced {
+                        self.drop_removed_arguments(
+                            owner,
+                            &target,
+                            mojito_mir::mir::CallOperands {
+                                args,
+                                arg_places,
+                                kwargs,
+                                kwarg_places,
+                                spread,
+                            },
+                        )?;
+                    }
+                    param_arg_regs.clear();
+                    instantiated_args.clear();
                 }
-                // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
-                // calls its dunder (`__neg__`/`__invert__`); `not` arrives
-                // already converted through `Bool(x)` by MIR.
-                if let MirInstr::UnOp {
-                    op,
-                    dest,
-                    a,
-                    raises,
-                } = instruction
-                    && matches!(
-                        op,
-                        mojito_ast::ast::PrefixOp::Neg
-                            | mojito_ast::ast::PrefixOp::Invert
-                            | mojito_ast::ast::PrefixOp::Pos
-                    )
-                    && function
-                        .reg_types
-                        .get(&a.0)
-                        .map(peel_refs)
-                        .is_some_and(|ty| self.declares_prefix_dunder(ty, op.dunder()))
-                {
-                    let raises = raises.take();
-                    *instruction =
-                        dunder_method_call(*dest, *a, op.dunder(), None, raises, Vec::new());
-                }
-                // A comparison through a bound names its requirement, which a
-                // struct instance (a `SIMD` among them) answers with its
-                // witness dunder below; any other builtin answers it itself.
-                if let MirInstr::BinOp { a, resolved, .. } = instruction
-                    && resolved
-                        .as_deref()
-                        .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
-                    && !function
-                        .reg_types
-                        .get(&a.0)
-                        .map(peel_refs)
-                        .is_some_and(declared_operator_receiver)
-                {
-                    *resolved = None;
-                }
-                // A binary operator on a struct left operand, a `SIMD` among
-                // them, calls its operator method, so the shared resolver
-                // monomorphizes the compiled instance (`String.__add__`,
-                // `SIMD.__lt__`, user `__eq__`, …).
-                // `in`/`not in` dispatch on the right operand and stay
-                // untouched (they keep their contextual rejection).
-                if let MirInstr::BinOp {
-                    op,
-                    dest,
-                    a,
-                    b,
-                    resolved,
-                    raises,
-                    ..
-                } = instruction
-                    && let Some(method) = mojito_mir::mir::operator_method(*op)
-                    && function
-                        .reg_types
-                        .get(&a.0)
-                        .map(peel_refs)
-                        .is_some_and(declared_operator_receiver)
-                {
-                    let (resolved, raises) = (resolved.take(), raises.take());
-                    *instruction =
-                        dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
-                }
-                // A comparison requirement called on a builtin instance
-                // (`a.__lt__(b)`, or `a < b` through a bound) is the
-                // builtin's own comparison; a `SIMD` instance's is its
-                // declared dunder, which the witness resolves.
-                if let MirInstr::MethodCall {
+                MirInstr::MethodCall {
                     dest,
                     recv,
                     method,
                     resolved,
+                    result_adapter,
+                    receiver_convention,
                     args,
                     kwargs,
-                    raises,
+                    param_arg_regs,
+                    param_decls,
+                    instantiated_args,
+                    spread,
                     ..
-                } = instruction
-                    && resolved
+                } => {
+                    let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
+                        self.error(Some(owner), "method receiver lacks a MIR type")
+                    })?;
+                    if let Some(dispatch) = resolved
                         .as_deref()
-                        .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
-                    && kwargs.is_empty()
-                    && let [other] = args.as_slice()
-                    && let Some(op) = comparison_of_dunder(method)
-                    && !(function.reg_types.get(&recv.0).map(peel_refs))
-                        .is_none_or(|ty| ty.kind().is_non_simd_struct() || ty.is_simd())
-                {
-                    *instruction = MirInstr::BinOp {
-                        op,
-                        dest: *dest,
-                        a: *recv,
-                        b: *other,
-                        resolved: None,
-                        raises: raises.take(),
-                        refined_bound: None,
-                        fastmath: None,
-                    };
-                }
-                match instruction {
-                    MirInstr::Call {
-                        dest,
-                        func,
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        param_arg_regs,
-                        receiver: static_receiver,
-                        instantiated_args,
-                        spread,
-                        ..
-                    } => {
-                        // A generic nested body's value is named as its
-                        // generator under the instance or unrolled region
-                        // copy it is declared in, whose bindings its
-                        // instance inherits.
-                        let region = self.nested_generators.get(func.0.as_str()).cloned();
-                        if let Some((template, _)) = &region {
-                            func.0.clone_from(template);
-                        }
-                        if !self.functions.contains_key(func.0.as_str()) {
-                            // Every construction names the `__init__` its
-                            // check selected, as upstream's call names the
-                            // constructor's symbol; a call naming a struct
-                            // was never resolved.
-                            if self.structs.contains_key(nominal_template(&func.0))
-                                && !self.instance_names.contains_key(func.0.as_str())
-                            {
-                                return Err(self.error(
-                                    Some(owner),
-                                    format!(
-                                        "call names struct `{}`, not the `__init__` its check selected",
-                                        func.0
-                                    ),
-                                ));
-                            }
-                            continue;
-                        }
-                        // A direct constructor call's destination is its
-                        // `out self`, not the declared `None` return — bind
-                        // it as the receiver.
-                        let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
-                            && function.reg_types.contains_key(&dest.0))
-                        .then_some(*dest);
-                        // A nested `def`'s direct call binds its enclosing
-                        // binders from this instance's, or from its region
-                        // copy's.
-                        let (target, mut bindings, arguments) = self.infer_call(
-                            owner,
-                            function,
-                            &func.0,
-                            receiver,
-                            *dest,
-                            (args, *spread),
-                            kwargs,
-                            param_arg_regs,
-                            instantiated_args,
-                            Some(
-                                region
-                                    .as_ref()
-                                    .map_or(&self.enclosing, |(_, bindings)| bindings),
-                            ),
-                        )?;
-                        // The instance identity carries the spelled receiver
-                        // of a static call, so the resolved call keeps none.
-                        if let Some(spelled) = static_receiver.take() {
-                            self.bind_static_receiver(owner, &target, &spelled, &mut bindings)?;
-                        }
-                        let reduced = bindings.reduced;
-                        func.0 = self.enqueue(&target, bindings, arguments)?;
-                        if reduced {
-                            self.drop_removed_arguments(
-                                owner,
-                                &target,
-                                mojito_mir::mir::CallOperands {
-                                    args,
-                                    arg_places,
-                                    kwargs,
-                                    kwarg_places,
-                                    spread,
-                                },
-                            )?;
-                        }
-                        param_arg_regs.clear();
+                        .filter(|symbol| mojito_symbol::symbol::is_trait_dispatch_symbol(symbol))
+                        && !peel_refs(receiver).kind().is_non_simd_struct()
+                        && !self.declares_witness(peel_refs(receiver), dispatch)
+                    {
+                        // The builtin answers the call itself and takes
+                        // none of the requirement's compile-time arguments.
+                        *resolved = None;
+                        param_decls.clear();
                         instantiated_args.clear();
+                        param_arg_regs.clear();
+                        continue;
                     }
-                    MirInstr::MethodCall {
-                        dest,
-                        recv,
-                        method,
-                        resolved,
-                        result_adapter,
-                        receiver_convention,
-                        args,
-                        kwargs,
-                        param_arg_regs,
-                        param_decls,
-                        instantiated_args,
-                        spread,
-                        ..
-                    } => {
-                        let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
-                            self.error(Some(owner), "method receiver lacks a MIR type")
-                        })?;
-                        if let Some(dispatch) = resolved.as_deref().filter(|symbol| {
-                            mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
-                        }) && !peel_refs(receiver).kind().is_non_simd_struct()
-                            && !self.declares_witness(peel_refs(receiver), dispatch)
-                        {
-                            // The builtin answers the call itself and takes
-                            // none of the requirement's compile-time arguments.
-                            *resolved = None;
-                            param_decls.clear();
-                            instantiated_args.clear();
-                            param_arg_regs.clear();
-                            continue;
-                        }
-                        // A borrowed receiver dispatches on its referent, as
-                        // the VM dereferences `Value::Ref` receivers.
-                        let Some((receiver_name, _)) =
-                            mojito_types::types::nominal_parts(peel_refs(receiver))
-                        else {
-                            continue;
-                        };
-                        // Source methods are declared under the template name;
-                        // an instance-named receiver (`List$mono$TInt`) still
-                        // resolves against `List.*` and gets its instance
-                        // identity from `infer_call`'s receiver binding.
-                        let target = match resolved.as_deref().filter(|symbol| {
+                    // A borrowed receiver dispatches on its referent, as
+                    // the VM dereferences `Value::Ref` receivers.
+                    let Some((receiver_name, _)) =
+                        mojito_types::types::nominal_parts(peel_refs(receiver))
+                    else {
+                        continue;
+                    };
+                    // Source methods are declared under the template name;
+                    // an instance-named receiver (`List$mono$TInt`) still
+                    // resolves against `List.*` and gets its instance
+                    // identity from `infer_call`'s receiver binding.
+                    let target =
+                        match resolved.as_deref().filter(|symbol| {
                             mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
                         }) {
                             // A `def(...)` bound spelled over the callee's
@@ -3100,380 +3098,376 @@ impl<'a> Specializer<'a> {
                                 args.len() + kwargs.len(),
                             ),
                         };
-                        if !self.functions.contains_key(target.as_str()) {
-                            continue;
-                        }
-                        // The adapter copies the element out of a reference
-                        // the method returns: one that returns the element
-                        // itself needs none.
-                        if !self
-                            .declarations
-                            .get(target.as_str())
-                            .is_some_and(|declaration| declaration.returns_reference)
-                        {
-                            *result_adapter = None;
-                        }
-                        let (target, bindings, arguments) = self.infer_call(
-                            owner,
-                            function,
-                            &target,
-                            Some(*recv),
-                            *dest,
-                            (args, *spread),
-                            kwargs,
-                            param_arg_regs,
-                            instantiated_args,
-                            None,
-                        )?;
-                        let reduced = bindings.reduced;
-                        let concrete = self.enqueue(&target, bindings, arguments)?;
-                        // A call through a bound records no receiver
-                        // convention; the call to the instance takes its
-                        // declaration's.
-                        if receiver_convention.is_none() {
-                            *receiver_convention = self
-                                .declarations
-                                .get(target.as_str())
-                                .and_then(|declaration| declaration.receiver_convention);
-                        }
-                        *resolved = Some(concrete);
-                        param_arg_regs.clear();
-                        instantiated_args.clear();
-                        // The instance's declaration keeps no compile-time
-                        // parameters, so the call to it keeps none either.
-                        param_decls.clear();
-                        if reduced {
-                            self.reduce_method_call(owner, &target, instruction)?;
-                        }
+                    if !self.functions.contains_key(target.as_str()) {
+                        continue;
                     }
-                    // An indirect call whose callee is a nominal callable
-                    // struct devirtualizes into a direct `__call__` method
-                    // call — the VM's `runtime_method_name` dispatch, made
-                    // static — so the ordinary method lowering (mut-receiver
-                    // write-back, outcome, sret) serves it. Func-typed
-                    // callees keep the instruction and lower through their
-                    // two-word `{invoke, env}` value.
-                    MirInstr::CallIndirect {
-                        dest,
-                        callee,
-                        raises,
-                        args,
+                    // The adapter copies the element out of a reference
+                    // the method returns: one that returns the element
+                    // itself needs none.
+                    if !self
+                        .declarations
+                        .get(target.as_str())
+                        .is_some_and(|declaration| declaration.returns_reference)
+                    {
+                        *result_adapter = None;
+                    }
+                    let (target, bindings, arguments) = self.infer_call(
+                        owner,
+                        function,
+                        &target,
+                        Some(*recv),
+                        *dest,
+                        (args, *spread),
                         kwargs,
-                        callee_place,
-                        arg_places,
-                        kwarg_places,
-                        capture_accesses,
                         param_arg_regs,
-                        param_decls: contract,
-                        resolved,
                         instantiated_args,
-                        spread,
-                        ..
-                    } => {
-                        let dependent_callable =
-                            function.reg_types.get(&callee.0).is_some_and(|ty| {
-                                matches!(
-                                    peel_refs(ty).kind(),
-                                    TyKind::GenericFunc(_)
-                                        | TyKind::Param {
-                                            callable_bound: Some(_),
-                                            ..
-                                        }
-                                )
-                            });
-                        // An instance method's value takes its receiver as
-                        // its first argument, which a direct call would bind
-                        // as a receiver: the call stays indirect.
-                        if let Some((callable, captures_are_empty)) =
-                            self.callable_targets.get(&callee.0).cloned()
-                            && (captures_are_empty || dependent_callable)
-                            && !self.declarations.get(callable.as_str()).is_some_and(
-                                |declaration| {
-                                    declaration.has_receiver
-                                        && declaration.receiver_convention
-                                            != Some(mojito_ast::ast::ArgConvention::Out)
-                                },
-                            )
-                        {
-                            let target = callable.clone();
-                            // The lifted body takes its environment as leading
-                            // reference parameters: the direct call passes the
-                            // captured places themselves.
-                            if !captures_are_empty {
-                                let captured =
-                                    self.capture_arguments(owner, function, &callable)?;
-                                arg_places.resize(args.len(), None);
-                                args.splice(0..0, captured.iter().map(|(reg, _)| *reg));
-                                arg_places.splice(
-                                    0..0,
-                                    captured.iter().map(|(_, place)| Some(place.clone())),
-                                );
-                                let loads = captured
-                                    .into_iter()
-                                    .map(|(dest, place)| MirInstr::LoadPlace { dest, place })
-                                    .collect();
-                                preludes.push((index, loads));
-                            }
-                            // A generic nested body's value is named as its
-                            // generator under the instance or unrolled
-                            // region copy it is declared in.
-                            // One with no generator is declared under no
-                            // binders, or in this body: a callable parameter
-                            // reaches a body nested elsewhere, which inherits
-                            // nothing from this instance.
-                            let (target, region) = match self.nested_generators.get(&target) {
-                                Some((template, bindings)) => {
-                                    (template.clone(), Some(bindings.clone()))
-                                }
-                                None => (target, None),
-                            };
-                            let scope = region.as_ref().or_else(|| {
-                                self.nested_within(&target, owner)
-                                    .then_some(&self.enclosing)
-                            });
-                            // A closure over folded value parameters already
-                            // names its lifted body's instance.
-                            let concrete = if self.functions.contains_key(target.as_str()) {
-                                // The call names the contract's parameters:
-                                // its supplied and defaulted values bind the
-                                // implementation's binders by position.
-                                // A spelled application of a generic nested
-                                // `def` carries its solved arguments.
-                                let contract_values = if instantiated_args.is_empty() {
-                                    self.contract_values(&target, contract, param_arg_regs)?
-                                } else {
-                                    instantiated_args.clone()
-                                };
-                                // An initializer read as a value returns
-                                // the struct its `out self` initializes, so
-                                // the call is that construction. A `def`
-                                // nested in an initializer is spelled under
-                                // it but declares no receiver.
-                                let receiver =
-                                    (mojito_symbol::symbol::is_initializer_symbol(&target)
-                                        && self.declarations.get(target.as_str()).is_some_and(
-                                            |declaration| {
-                                                declaration.has_receiver
-                                                    && declaration.receiver_convention
-                                                        == Some(mojito_ast::ast::ArgConvention::Out)
-                                            },
-                                        )
-                                        && function.reg_types.contains_key(&dest.0))
-                                    .then_some(*dest);
-                                // A generic `def` nested in this body binds
-                                // this instance's binders beside its own.
-                                let (target, bindings, arguments) = self.infer_call(
-                                    owner,
-                                    function,
-                                    &target,
-                                    receiver,
-                                    *dest,
-                                    (args, *spread),
-                                    kwargs,
-                                    param_arg_regs,
-                                    &contract_values,
-                                    scope.cloned().as_ref(),
-                                )?;
-                                let reduced = bindings.reduced;
-                                let concrete = self.enqueue(&target, bindings, arguments)?;
-                                if reduced {
-                                    self.drop_removed_arguments(
-                                        owner,
-                                        &target,
-                                        mojito_mir::mir::CallOperands {
-                                            args,
-                                            arg_places,
-                                            kwargs,
-                                            kwarg_places,
-                                            spread,
-                                        },
-                                    )?;
-                                }
-                                concrete
-                            } else {
-                                target
-                            };
-                            *instruction = MirInstr::Call {
-                                dest: *dest,
-                                func: mojito_mir::mir::FuncRef(concrete),
-                                raises: raises.clone(),
-                                args: std::mem::take(args),
-                                kwargs: std::mem::take(kwargs),
-                                arg_places: std::mem::take(arg_places),
-                                kwarg_places: std::mem::take(kwarg_places),
-                                capture_accesses: std::mem::take(capture_accesses),
-                                param_arg_regs: Vec::new(),
-                                receiver: None,
-                                instantiated_args: Vec::new(),
-                                spread: spread.take(),
-                            };
-                            continue;
-                        }
-                        let Some(receiver) = function.reg_types.get(&callee.0) else {
-                            continue;
-                        };
-                        // A callable contract's dispatch symbol spells its
-                        // parameter types, so a contract over the template's
-                        // binders names the instance's concrete ones.
-                        if let Some(target) = resolved.as_mut()
-                            && target.starts_with("__trait_dispatch.")
-                            && let Some(contract) =
-                                mojito_symbol::symbol::callable_contract_target(receiver)
-                        {
-                            *target = contract;
-                        }
-                        let Some((receiver_name, _)) =
-                            peel_refs(receiver).kind().as_non_simd_struct()
-                        else {
-                            continue;
-                        };
-                        // The struct's `def(...)` conformance records the
-                        // `__call__` answering the function type's one
-                        // requirement, as a declared trait's table does.
-                        let target = self.callable_witness(owner, receiver_name)?;
-                        let (target, bindings, arguments) = self.infer_call(
-                            owner,
-                            function,
-                            &target,
-                            Some(*callee),
-                            *dest,
-                            (args, *spread),
-                            kwargs,
-                            param_arg_regs,
-                            &[],
-                            None,
-                        )?;
-                        // A `__call__` returning a reference hands the call
-                        // the reference its destination register holds.
-                        let reference_result = self
-                            .declarations
-                            .get(target.as_str())
-                            .filter(|declaration| declaration.returns_reference)
-                            .and_then(|_| match function.reg_types.get(&dest.0).map(Ty::kind) {
-                                Some(TyKind::Ref(reference)) => Some(reference.clone()),
-                                _ => None,
-                            });
-                        let receiver_convention = self
+                        None,
+                    )?;
+                    let reduced = bindings.reduced;
+                    let concrete = self.enqueue(&target, bindings, arguments)?;
+                    // A call through a bound records no receiver
+                    // convention; the call to the instance takes its
+                    // declaration's.
+                    if receiver_convention.is_none() {
+                        *receiver_convention = self
                             .declarations
                             .get(target.as_str())
                             .and_then(|declaration| declaration.receiver_convention);
-                        let reduced = bindings.reduced;
-                        let concrete = self.enqueue(&target, bindings, arguments)?;
-                        *instruction = MirInstr::MethodCall {
+                    }
+                    *resolved = Some(concrete);
+                    param_arg_regs.clear();
+                    instantiated_args.clear();
+                    // The instance's declaration keeps no compile-time
+                    // parameters, so the call to it keeps none either.
+                    param_decls.clear();
+                    if reduced {
+                        self.reduce_method_call(owner, &target, instruction)?;
+                    }
+                }
+                // An indirect call whose callee is a nominal callable
+                // struct devirtualizes into a direct `__call__` method
+                // call — the VM's `runtime_method_name` dispatch, made
+                // static — so the ordinary method lowering (mut-receiver
+                // write-back, outcome, sret) serves it. Func-typed
+                // callees keep the instruction and lower through their
+                // two-word `{invoke, env}` value.
+                MirInstr::CallIndirect {
+                    dest,
+                    callee,
+                    raises,
+                    args,
+                    kwargs,
+                    callee_place,
+                    arg_places,
+                    kwarg_places,
+                    capture_accesses,
+                    param_arg_regs,
+                    param_decls: contract,
+                    resolved,
+                    instantiated_args,
+                    spread,
+                    ..
+                } => {
+                    let dependent_callable = function.reg_types.get(&callee.0).is_some_and(|ty| {
+                        matches!(
+                            peel_refs(ty).kind(),
+                            TyKind::GenericFunc(_)
+                                | TyKind::Param {
+                                    callable_bound: Some(_),
+                                    ..
+                                }
+                        )
+                    });
+                    // An instance method's value takes its receiver as
+                    // its first argument, which a direct call would bind
+                    // as a receiver: the call stays indirect.
+                    if let Some((callable, captures_are_empty)) =
+                        self.callable_targets.get(&callee.0).cloned()
+                        && (captures_are_empty || dependent_callable)
+                        && !self
+                            .declarations
+                            .get(callable.as_str())
+                            .is_some_and(|declaration| {
+                                declaration.has_receiver
+                                    && declaration.receiver_convention
+                                        != Some(mojito_ast::ast::ArgConvention::Out)
+                            })
+                    {
+                        let target = callable.clone();
+                        // The lifted body takes its environment as leading
+                        // reference parameters: the direct call passes the
+                        // captured places themselves.
+                        if !captures_are_empty {
+                            let captured = self.capture_arguments(owner, function, &callable)?;
+                            arg_places.resize(args.len(), None);
+                            args.splice(0..0, captured.iter().map(|(reg, _)| *reg));
+                            arg_places.splice(
+                                0..0,
+                                captured.iter().map(|(_, place)| Some(place.clone())),
+                            );
+                            let loads = captured
+                                .into_iter()
+                                .map(|(dest, place)| MirInstr::LoadPlace { dest, place })
+                                .collect();
+                            preludes.push((index, loads));
+                        }
+                        // A generic nested body's value is named as its
+                        // generator under the instance or unrolled
+                        // region copy it is declared in.
+                        // One with no generator is declared under no
+                        // binders, or in this body: a callable parameter
+                        // reaches a body nested elsewhere, which inherits
+                        // nothing from this instance.
+                        let (target, region) = match self.nested_generators.get(&target) {
+                            Some((template, bindings)) => {
+                                (template.clone(), Some(bindings.clone()))
+                            }
+                            None => (target, None),
+                        };
+                        let scope = region.as_ref().or_else(|| {
+                            self.nested_within(&target, owner)
+                                .then_some(&self.enclosing)
+                        });
+                        // A closure over folded value parameters already
+                        // names its lifted body's instance.
+                        let concrete = if self.functions.contains_key(target.as_str()) {
+                            // The call names the contract's parameters:
+                            // its supplied and defaulted values bind the
+                            // implementation's binders by position.
+                            // A spelled application of a generic nested
+                            // `def` carries its solved arguments.
+                            let contract_values = if instantiated_args.is_empty() {
+                                self.contract_values(&target, contract, param_arg_regs)?
+                            } else {
+                                instantiated_args.clone()
+                            };
+                            // An initializer read as a value returns
+                            // the struct its `out self` initializes, so
+                            // the call is that construction. A `def`
+                            // nested in an initializer is spelled under
+                            // it but declares no receiver.
+                            let receiver = (mojito_symbol::symbol::is_initializer_symbol(&target)
+                                && self.declarations.get(target.as_str()).is_some_and(
+                                    |declaration| {
+                                        declaration.has_receiver
+                                            && declaration.receiver_convention
+                                                == Some(mojito_ast::ast::ArgConvention::Out)
+                                    },
+                                )
+                                && function.reg_types.contains_key(&dest.0))
+                            .then_some(*dest);
+                            // A generic `def` nested in this body binds
+                            // this instance's binders beside its own.
+                            let (target, bindings, arguments) = self.infer_call(
+                                owner,
+                                function,
+                                &target,
+                                receiver,
+                                *dest,
+                                (args, *spread),
+                                kwargs,
+                                param_arg_regs,
+                                &contract_values,
+                                scope.cloned().as_ref(),
+                            )?;
+                            let reduced = bindings.reduced;
+                            let concrete = self.enqueue(&target, bindings, arguments)?;
+                            if reduced {
+                                self.drop_removed_arguments(
+                                    owner,
+                                    &target,
+                                    mojito_mir::mir::CallOperands {
+                                        args,
+                                        arg_places,
+                                        kwargs,
+                                        kwarg_places,
+                                        spread,
+                                    },
+                                )?;
+                            }
+                            concrete
+                        } else {
+                            target
+                        };
+                        *instruction = MirInstr::Call {
                             dest: *dest,
-                            recv: *callee,
-                            method: "__call__".to_string(),
-                            resolved: Some(concrete),
+                            func: mojito_mir::mir::FuncRef(concrete),
                             raises: raises.clone(),
-                            reference_result: reference_result.map(Box::new),
-                            result_adapter: None,
                             args: std::mem::take(args),
                             kwargs: std::mem::take(kwargs),
-                            recv_place: callee_place.take(),
-                            recv_writes: true,
-                            receiver_convention,
                             arg_places: std::mem::take(arg_places),
                             kwarg_places: std::mem::take(kwarg_places),
-                            capture_accesses: Vec::new(),
+                            capture_accesses: std::mem::take(capture_accesses),
                             param_arg_regs: Vec::new(),
-                            param_decls: Vec::new(),
+                            receiver: None,
                             instantiated_args: Vec::new(),
                             spread: spread.take(),
-                            refined_bound: None,
                         };
-                        if reduced {
-                            self.reduce_method_call(owner, &target, instruction)?;
-                        }
+                        continue;
                     }
-                    // A generic function's value names its instance at the
-                    // arguments its bracket bound.
-                    MirInstr::Const {
-                        dest,
-                        k:
-                            Const::FunctionInstance {
-                                function,
-                                arguments,
-                                receiver,
-                            },
-                    } => {
-                        let instance = self.function_value_instance(
-                            owner,
+                    let Some(receiver) = function.reg_types.get(&callee.0) else {
+                        continue;
+                    };
+                    // A callable contract's dispatch symbol spells its
+                    // parameter types, so a contract over the template's
+                    // binders names the instance's concrete ones.
+                    if let Some(target) = resolved.as_mut()
+                        && target.starts_with("__trait_dispatch.")
+                        && let Some(contract) =
+                            mojito_symbol::symbol::callable_contract_target(receiver)
+                    {
+                        *target = contract;
+                    }
+                    let Some((receiver_name, _)) = peel_refs(receiver).kind().as_non_simd_struct()
+                    else {
+                        continue;
+                    };
+                    // The struct's `def(...)` conformance records the
+                    // `__call__` answering the function type's one
+                    // requirement, as a declared trait's table does.
+                    let target = self.callable_witness(owner, receiver_name)?;
+                    let (target, bindings, arguments) = self.infer_call(
+                        owner,
+                        function,
+                        &target,
+                        Some(*callee),
+                        *dest,
+                        (args, *spread),
+                        kwargs,
+                        param_arg_regs,
+                        &[],
+                        None,
+                    )?;
+                    // A `__call__` returning a reference hands the call
+                    // the reference its destination register holds.
+                    let reference_result = self
+                        .declarations
+                        .get(target.as_str())
+                        .filter(|declaration| declaration.returns_reference)
+                        .and_then(|_| match function.reg_types.get(&dest.0).map(Ty::kind) {
+                            Some(TyKind::Ref(reference)) => Some(reference.clone()),
+                            _ => None,
+                        });
+                    let receiver_convention = self
+                        .declarations
+                        .get(target.as_str())
+                        .and_then(|declaration| declaration.receiver_convention);
+                    let reduced = bindings.reduced;
+                    let concrete = self.enqueue(&target, bindings, arguments)?;
+                    *instruction = MirInstr::MethodCall {
+                        dest: *dest,
+                        recv: *callee,
+                        method: "__call__".to_string(),
+                        resolved: Some(concrete),
+                        raises: raises.clone(),
+                        reference_result: reference_result.map(Box::new),
+                        result_adapter: None,
+                        args: std::mem::take(args),
+                        kwargs: std::mem::take(kwargs),
+                        recv_place: callee_place.take(),
+                        recv_writes: true,
+                        receiver_convention,
+                        arg_places: std::mem::take(arg_places),
+                        kwarg_places: std::mem::take(kwarg_places),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        param_decls: Vec::new(),
+                        instantiated_args: Vec::new(),
+                        spread: spread.take(),
+                        refined_bound: None,
+                    };
+                    if reduced {
+                        self.reduce_method_call(owner, &target, instruction)?;
+                    }
+                }
+                // A generic function's value names its instance at the
+                // arguments its bracket bound.
+                MirInstr::Const {
+                    dest,
+                    k:
+                        Const::FunctionInstance {
                             function,
                             arguments,
-                            receiver.as_ref(),
-                        )?;
-                        *instruction = MirInstr::Const {
-                            dest: *dest,
-                            k: Const::Function(instance),
-                        };
-                    }
-                    // A retained callable names its lifted body on the
-                    // instruction; enqueue it so the reachable graph carries
-                    // the compiled target the thunk will call. A body nested
-                    // in this one already names its instance
-                    // ([`Self::instantiate_nested_bodies`]). A generic nested
-                    // `def` is no body of its own: each call site binding its
-                    // parameters enqueues an instance.
-                    MirInstr::MakeClosure {
-                        function: target, ..
-                    }
-                    | MirInstr::Const {
-                        k: Const::Function(target),
-                        ..
-                    } => self.enqueue_function_value(target)?,
-                    // A pack of callables' static list holds the functions
-                    // it binds, each a function value the instance reaches.
-                    MirInstr::ParamListAddress {
-                        dest,
-                        values: Const::Value(CtValue::Tuple(items)),
-                    } if function.reg_types.get(&dest.0).is_some_and(|ty| {
-                        matches!(ty.kind(), TyKind::Pointer { element, .. }
-                            if matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
-                    }) =>
-                    {
-                        for item in items {
-                            if let CtValue::Str(target) = item {
-                                self.enqueue_function_value(target)?;
-                            }
+                            receiver,
+                        },
+                } => {
+                    let instance = self.function_value_instance(
+                        owner,
+                        function,
+                        arguments,
+                        receiver.as_ref(),
+                    )?;
+                    *instruction = MirInstr::Const {
+                        dest: *dest,
+                        k: Const::Function(instance),
+                    };
+                }
+                // A retained callable names its lifted body on the
+                // instruction; enqueue it so the reachable graph carries
+                // the compiled target the thunk will call. A body nested
+                // in this one already names its instance
+                // ([`Self::instantiate_nested_bodies`]). A generic nested
+                // `def` is no body of its own: each call site binding its
+                // parameters enqueues an instance.
+                MirInstr::MakeClosure {
+                    function: target, ..
+                }
+                | MirInstr::Const {
+                    k: Const::Function(target),
+                    ..
+                } => self.enqueue_function_value(target)?,
+                // A pack of callables' static list holds the functions
+                // it binds, each a function value the instance reaches.
+                MirInstr::ParamListAddress {
+                    dest,
+                    values: Const::Value(CtValue::Tuple(items)),
+                } if function.reg_types.get(&dest.0).is_some_and(|ty| {
+                    matches!(ty.kind(), TyKind::Pointer { element, .. }
+                        if matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
+                }) =>
+                {
+                    for item in items {
+                        if let CtValue::Str(target) = item {
+                            self.enqueue_function_value(target)?;
                         }
                     }
-                    // A value-parameter read (`Self.length`) resolves to
-                    // the bound constant carried by the receiver instance's
-                    // type arguments — the VM's `get_field` value-parameter
-                    // fallback over reified `value_params`.
-                    MirInstr::GetField { dest, base, field } => {
-                        let Some(receiver) = function.reg_types.get(&base.0) else {
-                            continue;
-                        };
-                        let Some(constant) = self.value_param_constant(
-                            receiver,
-                            field,
-                            function.reg_types.get(&dest.0),
-                        ) else {
-                            continue;
-                        };
-                        *instruction = MirInstr::Const {
-                            dest: *dest,
-                            k: constant,
-                        };
-                    }
-                    // A projection below a struct-typed parameter value
-                    // (`Self.e.rows`) folds through the bound value's fields.
-                    MirInstr::LoadPlace { dest, place }
-                        if !place.is_whole_root()
-                            && place.steps().all(|projection| {
-                                matches!(projection, mojito_mir::mir::Proj::Field(_))
-                            }) =>
-                    {
-                        let mut steps = place.steps();
-                        let Some(mojito_mir::mir::Proj::Field(field)) = steps.next() else {
-                            continue;
-                        };
-                        let Some(receiver) = function.var_tys.get(&place.root) else {
-                            continue;
-                        };
-                        let read = function.reg_types.get(&dest.0);
-                        let Some(constant) = steps
+                }
+                // A value-parameter read (`Self.length`) resolves to
+                // the bound constant carried by the receiver instance's
+                // type arguments — the VM's `get_field` value-parameter
+                // fallback over reified `value_params`.
+                MirInstr::GetField { dest, base, field } => {
+                    let Some(receiver) = function.reg_types.get(&base.0) else {
+                        continue;
+                    };
+                    let Some(constant) =
+                        self.value_param_constant(receiver, field, function.reg_types.get(&dest.0))
+                    else {
+                        continue;
+                    };
+                    *instruction = MirInstr::Const {
+                        dest: *dest,
+                        k: constant,
+                    };
+                }
+                // A projection below a struct-typed parameter value
+                // (`Self.e.rows`) folds through the bound value's fields.
+                MirInstr::LoadPlace { dest, place }
+                    if !place.is_whole_root()
+                        && place.steps().all(|projection| {
+                            matches!(projection, mojito_mir::mir::Proj::Field(_))
+                        }) =>
+                {
+                    let mut steps = place.steps();
+                    let Some(mojito_mir::mir::Proj::Field(field)) = steps.next() else {
+                        continue;
+                    };
+                    let Some(receiver) = function.var_tys.get(&place.root) else {
+                        continue;
+                    };
+                    let read = function.reg_types.get(&dest.0);
+                    let Some(constant) =
+                        steps
                             .try_fold(
                                 self.value_param_constant(receiver, field, read),
                                 |constant, projection| {
@@ -3490,109 +3484,109 @@ impl<'a> Specializer<'a> {
                                 },
                             )
                             .flatten()
-                        else {
-                            continue;
-                        };
-                        let dest = *dest;
-                        *instruction = MirInstr::Const { dest, k: constant };
-                    }
-                    // Checker-selected subscript invocations retarget to
-                    // their concrete instances exactly like method calls;
-                    // intrinsic storage subscripts carry no nominal call and
-                    // pass through.
-                    MirInstr::Index {
-                        dest,
-                        base,
-                        index,
-                        call: Some(contract),
-                        ..
-                    } => {
-                        let (dest, base, index) = (*dest, *base, *index);
-                        let dropped = self.rewrite_subscript_call(
-                            owner,
-                            function,
-                            base,
-                            SubscriptOperands {
-                                registers: &[index],
-                                positional: 1,
-                                keywords: &[],
-                            },
-                            Some(dest),
-                            contract,
-                        )?;
-                        if let Some(dropped) = dropped {
-                            self.shed_subscript_read(instruction, &dropped);
-                        }
-                    }
-                    MirInstr::MultiIndex {
-                        dest,
-                        object,
-                        args,
-                        kwargs,
-                        call: Some(call),
-                        ..
-                    } => {
-                        let (dest, object) = (*dest, *object);
-                        let keywords: Vec<&str> =
-                            kwargs.iter().map(|(name, _)| name.as_str()).collect();
-                        let dropped = self.rewrite_subscript_call(
-                            owner,
-                            function,
-                            object,
-                            SubscriptOperands {
-                                registers: &[],
-                                positional: args.len(),
-                                keywords: &keywords,
-                            },
-                            Some(dest),
-                            call,
-                        )?;
-                        if let Some(dropped) = dropped {
-                            self.shed_subscript_read(instruction, &dropped);
-                        }
-                    }
-                    // A store is the call of its setter: one naming the
-                    // generator without the setter's unused arguments
-                    // becomes that call, which passes none for them.
-                    MirInstr::MultiSet {
-                        receiver,
-                        args,
-                        value_keyword,
-                        call,
-                        ..
-                    } => {
-                        let receiver = *receiver;
-                        let keywords: &[&str] = &[value_keyword.as_str()];
-                        let dropped = self.rewrite_subscript_call(
-                            owner,
-                            function,
-                            receiver,
-                            SubscriptOperands {
-                                registers: &[],
-                                positional: args.len(),
-                                keywords,
-                            },
-                            None,
-                            call,
-                        )?;
-                        if let Some(dropped) = dropped
-                            && let Some(declared) = self.declarations.get(dropped.target.as_str())
-                        {
-                            let dest = Reg(function.n_regs);
-                            function.n_regs += 1;
-                            function.reg_types.insert(dest.0, Ty::none());
-                            mojito_mir::mir::subscript_store_call(instruction, dest, declared);
-                            self.reduce_method_call(owner, &dropped.target, instruction)?;
-                        }
-                    }
-                    _ => {}
+                    else {
+                        continue;
+                    };
+                    let dest = *dest;
+                    *instruction = MirInstr::Const { dest, k: constant };
                 }
-            }
-            block.instrs.iter_mut().for_each(drop_parameter_slots);
-            for (index, prelude) in preludes.into_iter().rev() {
-                block.instrs.splice(index..index, prelude);
+                // Checker-selected subscript invocations retarget to
+                // their concrete instances exactly like method calls;
+                // intrinsic storage subscripts carry no nominal call and
+                // pass through.
+                MirInstr::Index {
+                    dest,
+                    base,
+                    index,
+                    call: Some(contract),
+                    ..
+                } => {
+                    let (dest, base, index) = (*dest, *base, *index);
+                    let dropped = self.rewrite_subscript_call(
+                        owner,
+                        function,
+                        base,
+                        SubscriptOperands {
+                            registers: &[index],
+                            positional: 1,
+                            keywords: &[],
+                        },
+                        Some(dest),
+                        contract,
+                    )?;
+                    if let Some(dropped) = dropped {
+                        self.shed_subscript_read(instruction, &dropped);
+                    }
+                }
+                MirInstr::MultiIndex {
+                    dest,
+                    object,
+                    args,
+                    kwargs,
+                    call: Some(call),
+                    ..
+                } => {
+                    let (dest, object) = (*dest, *object);
+                    let keywords: Vec<&str> =
+                        kwargs.iter().map(|(name, _)| name.as_str()).collect();
+                    let dropped = self.rewrite_subscript_call(
+                        owner,
+                        function,
+                        object,
+                        SubscriptOperands {
+                            registers: &[],
+                            positional: args.len(),
+                            keywords: &keywords,
+                        },
+                        Some(dest),
+                        call,
+                    )?;
+                    if let Some(dropped) = dropped {
+                        self.shed_subscript_read(instruction, &dropped);
+                    }
+                }
+                // A store is the call of its setter: one naming the
+                // generator without the setter's unused arguments
+                // becomes that call, which passes none for them.
+                MirInstr::MultiSet {
+                    receiver,
+                    args,
+                    value_keyword,
+                    call,
+                    ..
+                } => {
+                    let receiver = *receiver;
+                    let keywords: &[&str] = &[value_keyword.as_str()];
+                    let dropped = self.rewrite_subscript_call(
+                        owner,
+                        function,
+                        receiver,
+                        SubscriptOperands {
+                            registers: &[],
+                            positional: args.len(),
+                            keywords,
+                        },
+                        None,
+                        call,
+                    )?;
+                    if let Some(dropped) = dropped
+                        && let Some(declared) = self.declarations.get(dropped.target.as_str())
+                    {
+                        let dest = Reg(function.n_regs);
+                        function.n_regs += 1;
+                        function.reg_types.insert(dest.0, Ty::none());
+                        mojito_mir::mir::subscript_store_call(instruction, dest, declared);
+                        self.reduce_method_call(owner, &dropped.target, instruction)?;
+                    }
+                }
+                _ => {}
             }
         }
+        block.instrs.iter_mut().for_each(drop_parameter_slots);
+        for (index, prelude) in preludes.into_iter().rev() {
+            block.instrs.splice(index..index, prelude);
+        }
+
         Ok(())
     }
 
@@ -3625,7 +3619,7 @@ impl<'a> Specializer<'a> {
         // the instruction; seed it so the element's struct lays out and its
         // lifecycle members join the walk even when no register or variable
         // carries the bare element type.
-        push_instruction_types(&function.blocks, &mut seeds);
+        push_instruction_types(&function.body, &mut seeds);
         // Each type beside whether a value of it is held: a struct's
         // argument and a pointee are not laid out by the type naming them.
         let mut types = seeds.into_iter().map(|ty| (ty, true)).collect::<Vec<_>>();
@@ -3922,7 +3916,7 @@ impl<'a> Specializer<'a> {
         let relocated = relocated_structs(function, &structs);
         let named = || {
             let mut types = function_types(function).cloned().collect::<Vec<_>>();
-            push_instruction_types(&function.blocks, &mut types);
+            push_instruction_types(&function.body, &mut types);
             let mut structs = Vec::new();
             while let Some(ty) = types.pop() {
                 collect_nested_types(&ty, &mut types);
@@ -3991,7 +3985,7 @@ impl<'a> Specializer<'a> {
     ) -> Result<(), MonoError> {
         let mut named: HashMap<(Ty, &'static str), Option<String>> = HashMap::new();
         for_each_lifecycle_site_mut(
-            &mut function.blocks,
+            &mut function.body,
             &function.var_tys,
             &function.reg_types,
             &mut |ty, member, symbol| {
@@ -4345,11 +4339,11 @@ fn drop_parameter_slots(instruction: &mut MirInstr) {
     }
 }
 
-/// Every register a compile-time argument slot in `blocks` holds, their
+/// Every register a compile-time argument slot in `block` holds, their
 /// regions included.
-fn parameter_argument_regs(blocks: &mut [MirBlock]) -> HashSet<u32> {
+fn parameter_argument_regs(block: &mut MirBlock) -> HashSet<u32> {
     let mut regs = HashSet::new();
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         regs.extend(
             mojito_mir::mir::instruction_param_args_mut(instruction)
                 .into_iter()
@@ -4371,14 +4365,14 @@ fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<
         return;
     }
     let mut reads = vec![0; function.n_regs as usize];
-    mojito_mir::mir::count_register_reads(&mut function.blocks, &mut reads);
+    mojito_mir::mir::count_register_reads(&mut function.body, &mut reads);
     let dead: HashSet<u32> = arguments
         .iter()
         .copied()
         .filter(|reg| reads.get(*reg as usize) == Some(&0))
         .collect();
     let mut erased = HashSet::new();
-    erase_constants(&mut function.blocks, &dead, &mut erased);
+    erase_constants(&mut function.body, &dead, &mut erased);
     for reg in erased {
         function.reg_types.remove(&reg);
         function.spans.0.remove(&reg);
@@ -4392,7 +4386,7 @@ fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<
 /// call passes none, so the instance holds no register for one.
 fn shed_dropped_operand_types(function: &mut MirFunction, operands: &[Reg]) {
     let mut reads = vec![0; function.n_regs as usize];
-    mojito_mir::mir::count_register_reads(&mut function.blocks, &mut reads);
+    mojito_mir::mir::count_register_reads(&mut function.body, &mut reads);
     for reg in operands {
         if reads.get(reg.0 as usize) == Some(&0) {
             function.reg_types.remove(&reg.0);
@@ -4403,19 +4397,17 @@ fn shed_dropped_operand_types(function: &mut MirFunction, operands: &[Reg]) {
 
 /// Remove each `Const` in `blocks`, their regions included, that defines
 /// one of `dead`, recording its register in `erased`.
-fn erase_constants(blocks: &mut [MirBlock], dead: &HashSet<u32>, erased: &mut HashSet<u32>) {
-    for block in blocks {
-        block.instrs.retain(|instruction| match instruction {
-            MirInstr::Const { dest, .. } if dead.contains(&dest.0) => {
-                erased.insert(dest.0);
-                false
-            }
-            _ => true,
-        });
-        for instruction in &mut block.instrs {
-            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                erase_constants(region, dead, erased);
-            }
+fn erase_constants(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashSet<u32>) {
+    block.instrs.retain(|instruction| match instruction {
+        MirInstr::Const { dest, .. } if dead.contains(&dest.0) => {
+            erased.insert(dest.0);
+            false
+        }
+        _ => true,
+    });
+    for instruction in &mut block.instrs {
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            erase_constants(region, dead, erased);
         }
     }
 }
@@ -4438,9 +4430,7 @@ fn effectful_callee(
             continue;
         };
         let mut referenced = Vec::new();
-        for block in &function.blocks {
-            collect_referenced_functions(&block.instrs, &mut referenced);
-        }
+        collect_referenced_functions(&function.body.instrs, &mut referenced);
         for callee in referenced {
             let template = template_of(&callee);
             if matches!(template.as_str(), "print" | "input") {
@@ -4468,10 +4458,7 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
             }
             MirInstr::MultiSet { call, .. } => referenced.push(call.target.clone()),
             instruction => {
-                for block in mojito_mir::mir::instruction_regions(instruction)
-                    .into_iter()
-                    .flatten()
-                {
+                for block in mojito_mir::mir::instruction_regions(instruction) {
                     collect_referenced_functions(&block.instrs, referenced);
                 }
             }
@@ -4580,91 +4567,87 @@ fn name_variant_destructors(
 /// `value.copy` of `blocks`, regions included, with the value's type, the
 /// member the site runs, and its `destructor` or `constructor`.
 fn for_each_lifecycle_site_mut(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var_tys: &HashMap<mojito_hir::hir::VarId, Ty>,
     reg_types: &HashMap<u32, Ty>,
     name: &mut LifecycleNamer<'_>,
 ) -> Result<(), MonoError> {
-    for block in blocks.iter_mut() {
-        for instruction in &mut block.instrs {
-            let site = match instruction {
-                MirInstr::DropVar { var, destructor } => {
-                    var_tys.get(var).map(|ty| (ty, "__deinit__", destructor))
-                }
-                MirInstr::DropPlace { place, destructor } => {
-                    place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
-                }
-                MirInstr::Drop { reg, destructor } => reg_types
-                    .get(&reg.0)
-                    .map(|ty| (ty, "__deinit__", destructor)),
-                MirInstr::UseVar {
-                    var,
-                    mode,
-                    constructor,
-                    ..
-                } => var_tys
-                    .get(var)
-                    .zip(mojito_mir::mir::use_constructor_member(*mode))
-                    .map(|(ty, member)| (ty, member, constructor)),
-                MirInstr::CopyValue {
-                    dest, constructor, ..
-                } => reg_types
-                    .get(&dest.0)
-                    .map(|ty| (ty, "__copyinit__", constructor)),
-                MirInstr::PointerStorageDestroy {
-                    element,
-                    destructor,
-                    ..
-                }
-                | MirInstr::UninitStorageDestroy {
-                    element,
-                    destructor,
-                    ..
-                } => Some((&*element, "__deinit__", destructor)),
-                MirInstr::MakeVariant {
-                    alternatives,
-                    index,
-                    constructor,
-                    ..
-                } => mojito_mir::mir::variant_payload_ty(alternatives, index)
-                    .map(|ty| (ty, "__moveinit__", constructor)),
-                MirInstr::VariantSet {
-                    place,
-                    index,
-                    constructor,
-                    destructors,
-                    ..
-                } => {
-                    if let Some(ty) =
-                        mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
-                    {
-                        name(ty, "__moveinit__", constructor)?;
-                    }
-                    name_variant_destructors(place, destructors, var_tys, name)?;
-                    None
-                }
-                MirInstr::VariantReplace {
-                    place,
-                    input_index: index,
-                    constructor,
-                    ..
-                } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
-                    .map(|ty| (ty, "__moveinit__", constructor)),
-                MirInstr::MethodCall {
-                    dest,
-                    result_adapter: Some(adapter),
-                    ..
-                } => reg_types
-                    .get(&dest.0)
-                    .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
-                _ => None,
-            };
-            if let Some((ty, member, symbol)) = site {
-                name(ty, member, symbol)?;
+    for instruction in &mut block.instrs {
+        let site = match instruction {
+            MirInstr::DropVar { var, destructor } => {
+                var_tys.get(var).map(|ty| (ty, "__deinit__", destructor))
             }
-            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                for_each_lifecycle_site_mut(region, var_tys, reg_types, name)?;
+            MirInstr::DropPlace { place, destructor } => {
+                place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
             }
+            MirInstr::Drop { reg, destructor } => reg_types
+                .get(&reg.0)
+                .map(|ty| (ty, "__deinit__", destructor)),
+            MirInstr::UseVar {
+                var,
+                mode,
+                constructor,
+                ..
+            } => var_tys
+                .get(var)
+                .zip(mojito_mir::mir::use_constructor_member(*mode))
+                .map(|(ty, member)| (ty, member, constructor)),
+            MirInstr::CopyValue {
+                dest, constructor, ..
+            } => reg_types
+                .get(&dest.0)
+                .map(|ty| (ty, "__copyinit__", constructor)),
+            MirInstr::PointerStorageDestroy {
+                element,
+                destructor,
+                ..
+            }
+            | MirInstr::UninitStorageDestroy {
+                element,
+                destructor,
+                ..
+            } => Some((&*element, "__deinit__", destructor)),
+            MirInstr::MakeVariant {
+                alternatives,
+                index,
+                constructor,
+                ..
+            } => mojito_mir::mir::variant_payload_ty(alternatives, index)
+                .map(|ty| (ty, "__moveinit__", constructor)),
+            MirInstr::VariantSet {
+                place,
+                index,
+                constructor,
+                destructors,
+                ..
+            } => {
+                if let Some(ty) = mojito_mir::mir::variant_place_payload_ty(place, index, var_tys) {
+                    name(ty, "__moveinit__", constructor)?;
+                }
+                name_variant_destructors(place, destructors, var_tys, name)?;
+                None
+            }
+            MirInstr::VariantReplace {
+                place,
+                input_index: index,
+                constructor,
+                ..
+            } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
+                .map(|ty| (ty, "__moveinit__", constructor)),
+            MirInstr::MethodCall {
+                dest,
+                result_adapter: Some(adapter),
+                ..
+            } => reg_types
+                .get(&dest.0)
+                .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
+            _ => None,
+        };
+        if let Some((ty, member, symbol)) = site {
+            name(ty, member, symbol)?;
+        }
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            for_each_lifecycle_site_mut(region, var_tys, reg_types, name)?;
         }
     }
     Ok(())

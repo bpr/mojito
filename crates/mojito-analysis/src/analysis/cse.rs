@@ -69,7 +69,7 @@ pub const CSE: BodyPass = BodyPass {
 /// matches, or a read that one earlier in its block matches with no write
 /// between; its result's reads are renamed to the matched one's result.
 pub fn cse(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let definitions = definition_counts(&mut function.body, function.n_regs);
     let mut table = Table {
         declarations,
         reg_types: &function.reg_types,
@@ -82,13 +82,13 @@ pub fn cse(_name: &str, function: &mut MirFunction, declarations: &MirDeclaratio
         blocks: 0,
         writes: 0,
     };
-    table.block_list(&function.blocks);
+    table.block_list(&function.body);
     let replaced = table.replaced;
     timing::count("erased_instructions", replaced.len() as u64);
     if replaced.is_empty() {
         return false;
     }
-    forward(&mut function.blocks, &replaced);
+    forward(&mut function.body, &replaced);
     function
         .reg_types
         .retain(|reg, _| !replaced.contains_key(reg));
@@ -214,10 +214,10 @@ struct Table<'f> {
 }
 
 impl Table<'_> {
-    /// Walk `blocks`, a region's one block, in a scope of its own: the
+    /// Walk `block`, a region's one block, in a scope of its own: the
     /// dominator tree of a one-block region is its block.
-    fn block_list(&mut self, blocks: &[MirBlock]) {
-        if let Some(block) = blocks.first() {
+    fn block_list(&mut self, block: &MirBlock) {
+        {
             let mark = self.scope.len();
             self.block(block);
             self.leave(mark);

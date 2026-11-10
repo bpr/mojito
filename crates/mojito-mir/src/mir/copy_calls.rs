@@ -38,54 +38,52 @@ pub type FunctionDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirFunctionDeclar
 /// `declarations` answers, decides how the call passes the value: a read
 /// of the source and the call, or the call alone for a register copy.
 pub fn lower_copies_and_moves(function: &mut MirFunction, declarations: &FunctionDeclarations<'_>) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     lower_blocks(&mut blocks, function, declarations);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 fn lower_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
 ) {
-    for block in blocks {
-        let spread: HashSet<u32> = block
-            .instrs
-            .iter()
-            .filter_map(|instruction| match instruction {
-                MirInstr::Call {
-                    args,
-                    spread: Some(position),
-                    ..
-                }
-                | MirInstr::MethodCall {
-                    args,
-                    spread: Some(position),
-                    ..
-                } => args.get(*position).map(|register| register.0),
-                _ => None,
-            })
-            .collect();
-        let mut lowered = Vec::with_capacity(block.instrs.len());
-        for mut instruction in std::mem::take(&mut block.instrs) {
-            for region in instruction_regions_mut(&mut instruction) {
-                lower_blocks(region, function, declarations);
+    let spread: HashSet<u32> = block
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                args,
+                spread: Some(position),
+                ..
             }
-            let kept = matches!(&instruction,
-                MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
-            match (!kept)
-                .then(|| call_of(&instruction, function, declarations))
-                .flatten()
-            {
-                Some((read, call)) => {
-                    lowered.extend(read);
-                    lowered.push(call);
-                }
-                None => lowered.push(instruction),
-            }
+            | MirInstr::MethodCall {
+                args,
+                spread: Some(position),
+                ..
+            } => args.get(*position).map(|register| register.0),
+            _ => None,
+        })
+        .collect();
+    let mut lowered = Vec::with_capacity(block.instrs.len());
+    for mut instruction in std::mem::take(&mut block.instrs) {
+        for region in instruction_regions_mut(&mut instruction) {
+            lower_blocks(region, function, declarations);
         }
-        block.instrs = lowered;
+        let kept = matches!(&instruction,
+            MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
+        match (!kept)
+            .then(|| call_of(&instruction, function, declarations))
+            .flatten()
+        {
+            Some((read, call)) => {
+                lowered.extend(read);
+                lowered.push(call);
+            }
+            None => lowered.push(instruction),
+        }
     }
+    block.instrs = lowered;
 }
 
 /// The read of the source, if the source is a slot, and the call of the

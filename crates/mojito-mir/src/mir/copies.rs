@@ -51,7 +51,7 @@ pub fn relocated_structs(function: &MirFunction, structs: &StructDeclarations<'_
         moved: Vec::new(),
         named: Vec::new(),
     };
-    walk.blocks(&function.blocks);
+    walk.block(&function.body);
     let (copied, copied_symbolic) = close_over_fields(walk.copied, "__copyinit__", structs);
     let (moved, moved_symbolic) = close_over_fields(walk.moved, "__moveinit__", structs);
     Relocated {
@@ -117,13 +117,11 @@ struct Walk<'f> {
 }
 
 impl Walk<'_> {
-    fn blocks(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                self.instruction(instruction);
-                for region in instruction_regions(instruction) {
-                    self.blocks(region);
-                }
+    fn block(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            self.instruction(instruction);
+            for region in instruction_regions(instruction) {
+                self.block(region);
             }
         }
     }

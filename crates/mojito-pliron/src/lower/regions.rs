@@ -71,8 +71,8 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         results: &[Reg],
         cond: Reg,
-        (then, elifs): (&[MirBlock], &[MirElif]),
-        (else_args, orelse): (&[Reg], &[MirBlock]),
+        (then, elifs): (&MirBlock, &[MirElif]),
+        (else_args, orelse): (&[Reg], &MirBlock),
     ) -> Result<(), PlironError> {
         let exit = self.carrier(ctx, results)?;
         let then_entry = self.carrier(ctx, &[])?;
@@ -115,7 +115,7 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         label: Option<LoopLabel>,
         (operands, args, results): (&[Reg], &[Reg], &[Reg]),
-        body: &[MirBlock],
+        body: &MirBlock,
     ) -> Result<(), PlironError> {
         let exit = self.carrier(ctx, results)?;
         let entry = self.carrier(ctx, args)?;
@@ -139,7 +139,7 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         results: &[Reg],
         cases: &[MirCase],
-        (else_args, orelse): (&[Reg], &[MirBlock]),
+        (else_args, orelse): (&[Reg], &MirBlock),
     ) -> Result<(), PlironError> {
         let exit = self.carrier(ctx, results)?;
         let mut entries = Vec::with_capacity(cases.len());
@@ -231,16 +231,16 @@ impl FnLowering<'_> {
         self.branch_carrying(ctx, carrier, values)
     }
 
-    /// A block of its own for the region `blocks`, entered from `entry`'s
+    /// A block of its own for the region `block`, entered from `entry`'s
     /// block; `self.current` is restored.
     pub(super) fn lower_region(
         &mut self,
         ctx: &mut Context,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         entry: usize,
         end: RegionEnd,
     ) -> Result<(), PlironError> {
-        self.lower_region_with(ctx, blocks, entry, true, end)
+        self.lower_region_with(ctx, block, entry, true, end)
     }
 
     /// A fresh block entered with no values, for a `try` part.
@@ -381,20 +381,11 @@ impl FnLowering<'_> {
     fn lower_region_with(
         &mut self,
         ctx: &mut Context,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         entry: usize,
         edges_known: bool,
         end: RegionEnd,
     ) -> Result<(), PlironError> {
-        let [block] = blocks else {
-            return Err(self.unsupported(
-                format!(
-                    "a region of {} blocks reached native lowering",
-                    blocks.len()
-                ),
-                None,
-            ));
-        };
         let saved = self.current.replace(self.carriers[entry].block);
         let binding = if edges_known {
             CarrierBinding::Complete(entry)
@@ -570,11 +561,11 @@ enum CarrierBinding {
 /// `inner` holds the labels of the loops between them, the innermost of
 /// which a `continue` naming it resumes instead.
 fn blocks_resume_loop(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     label: Option<LoopLabel>,
     inner: &mut Vec<Option<LoopLabel>>,
 ) -> bool {
-    blocks.iter().any(|block| {
+    {
         let resumes = matches!(region_exit(&block.term), Some((frame, true))
             if !inner.iter().any(|found| frame.names(RegionFrame::Loop(*found)))
                 && frame.names(RegionFrame::Loop(label)));
@@ -595,5 +586,5 @@ fn blocks_resume_loop(
                 }
                 found
             })
-    })
+    }
 }

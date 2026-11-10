@@ -122,7 +122,7 @@ pub fn remove_unused_params(
     callees: &Callees<'_>,
 ) -> bool {
     let mut forwarded = BTreeSet::new();
-    call_targets(&function.blocks, &mut forwarded);
+    call_targets(&function.body, &mut forwarded);
     let argument_removals: BTreeMap<&str, &[VarId]> = forwarded
         .iter()
         .filter_map(|&target| {
@@ -175,10 +175,10 @@ pub fn remove_unused_params(
     let body = reduced.as_ref().map_or(source, |(view, _)| view);
     let lifecycle = lifecycle_callees(body, declarations);
     let mut targets: BTreeSet<&str> = lifecycle.iter().map(String::as_str).collect();
-    call_targets(&body.blocks, &mut targets);
+    call_targets(&body.body, &mut targets);
     let mut called = BTreeSet::new();
     let mut valued = BTreeSet::new();
-    nested_bodies(&body.blocks, declarations, &mut called, &mut valued);
+    nested_bodies(&body.body, declarations, &mut called, &mut valued);
     let lifted_targets = named_lifted_bodies(name, body, declarations);
     // A nested body a closure or function value names keeps its full
     // generator beside the reduced one its direct calls name, which reads
@@ -309,13 +309,7 @@ fn self_forwarded_parameters(
     declarations: &MirDeclarations,
 ) -> Vec<ParamId> {
     let mut forwarded = None;
-    self_forwards(
-        name,
-        function,
-        &function.blocks,
-        declarations,
-        &mut forwarded,
-    );
+    self_forwards(name, function, &function.body, declarations, &mut forwarded);
     forwarded.unwrap_or_default()
 }
 
@@ -333,13 +327,13 @@ fn self_forwarded_arguments(
         return Vec::new();
     };
     let mut reads = HashMap::new();
-    whole_slot_reads(&function.blocks, &mut reads);
+    whole_slot_reads(&function.body, &mut reads);
     let mut forwarded = None;
     self_argument_forwards(
         name,
         declaration,
         function.n_params,
-        &function.blocks,
+        &function.body,
         &reads,
         &mut forwarded,
     );
@@ -365,9 +359,9 @@ fn has_parameters(declaration: &MirFunctionDeclaration, declarations: &MirDeclar
 }
 
 /// The callee of each call, resolved method call, subscript call,
-/// resolved operator, and iteration step in `blocks` and their regions.
-fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+/// resolved operator, and iteration step in `block` and their regions.
+fn call_targets<'a>(block: &'a MirBlock, targets: &mut BTreeSet<&'a str>) {
+    for instruction in &block.instrs {
         match instruction {
             MirInstr::Call { func, .. } => {
                 targets.insert(&func.0);
@@ -394,15 +388,15 @@ fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
     }
 }
 
-/// Each nested function `blocks` and their regions name: `called` by a
+/// Each nested function `block` and their regions name: `called` by a
 /// direct call, `valued` by a closure or a function value.
 fn nested_bodies<'a>(
-    blocks: &'a [MirBlock],
+    block: &'a MirBlock,
     declarations: &MirDeclarations,
     called: &mut BTreeSet<&'a str>,
     valued: &mut BTreeSet<&'a str>,
 ) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         let (body, by_call) = match instruction {
             MirInstr::Call { func, .. } => (Some(func.0.as_str()), true),
             MirInstr::MakeClosure { function, .. }
@@ -427,18 +421,18 @@ fn nested_bodies<'a>(
 }
 
 /// Narrow `forwarded` to the parameters each call of `name`, the body
-/// `function`, in `blocks` and their regions supplies as themselves
+/// `function`, in `block` and their regions supplies as themselves
 /// ([`self_forwarded_parameters`]); the first call sets it. A call
 /// supplies a parameter by an explicit argument or, inferred, by its
 /// `instantiated_args` entry when those align with the callee's binders.
 fn self_forwards(
     name: &str,
     function: &MirFunction,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     declarations: &MirDeclarations,
     forwarded: &mut Option<Vec<ParamId>>,
 ) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         let call = match instruction {
             MirInstr::Call {
                 func,
@@ -591,10 +585,10 @@ fn names_parameter(argument: &TyArg, id: &ParamId) -> bool {
     }
 }
 
-/// The slot each register of `blocks` and their regions reads whole, by a
+/// The slot each register of `block` and their regions reads whole, by a
 /// slot use or a load of its unprojected place.
-fn whole_slot_reads(blocks: &[MirBlock], reads: &mut HashMap<u32, VarId>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn whole_slot_reads(block: &MirBlock, reads: &mut HashMap<u32, VarId>) {
+    for instruction in &block.instrs {
         match instruction {
             MirInstr::UseVar { dest, var, .. } => {
                 reads.insert(dest.0, *var);
@@ -611,13 +605,13 @@ fn whole_slot_reads(blocks: &[MirBlock], reads: &mut HashMap<u32, VarId>) {
 }
 
 /// Narrow `forwarded` to the slots of `name`, declared with `n_params`
-/// slots, each call of `name` in `blocks` and their regions passes as
+/// slots, each call of `name` in `block` and their regions passes as
 /// themselves ([`self_forwarded_arguments`]); the first call sets it.
 fn self_argument_forwards(
     name: &str,
     declaration: &MirFunctionDeclaration,
     n_params: usize,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     reads: &HashMap<u32, VarId>,
     forwarded: &mut Option<Vec<VarId>>,
 ) {
@@ -625,7 +619,7 @@ fn self_argument_forwards(
         reg.is_some_and(|reg| reads.get(&reg.0) == Some(&slot))
             || place.is_some_and(|place| place.root == slot && place.proj.is_empty())
     };
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         if let Some(call) = SelfCall::of(name, instruction) {
             let keywords: Vec<&str> = call.kwargs.iter().map(|(name, _)| *name).collect();
             let passed: Vec<VarId> = (0..n_params as VarId)

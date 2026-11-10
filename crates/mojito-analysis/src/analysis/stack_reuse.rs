@@ -80,7 +80,7 @@ pub fn stack_reuse(
     }
     let mut kept: HashSet<usize> = HashSet::new();
     let outcome = loop {
-        let outcome = Scan::run(&function.blocks, &analysis, &kept);
+        let outcome = Scan::run(&function.body, &analysis, &kept);
         let staying: Vec<usize> = analysis
             .relocations
             .iter()
@@ -104,14 +104,14 @@ pub fn stack_reuse(
         erased_results: HashSet::new(),
         erased: 0,
     };
-    let mut blocks = std::mem::take(&mut function.blocks);
-    rewrite.blocks(&mut blocks);
+    let mut body = std::mem::take(&mut function.body);
+    rewrite.block(&mut body);
     let Rewrite {
         erased_results,
         erased,
         ..
     } = rewrite;
-    function.blocks = blocks;
+    function.body = body;
     function
         .reg_types
         .retain(|reg, _| !erased_results.contains(reg));
@@ -181,11 +181,11 @@ struct Allocation {
 
 impl Analysis {
     fn of(function: &mut MirFunction, declarations: &MirDeclarations) -> Self {
-        let definitions = definition_counts(&mut function.blocks, function.n_regs);
+        let definitions = definition_counts(&mut function.body, function.n_regs);
         let mut reads = vec![0_u32; function.n_regs as usize];
-        count_register_reads(&mut function.blocks, &mut reads);
+        count_register_reads(&mut function.body, &mut reads);
         let mut stores = vec![0_u32; function.n_regs as usize];
-        count_whole_stores(&function.blocks, &mut stores);
+        count_whole_stores(&function.body, &mut stores);
         let stored_once = (0..function.n_regs)
             .filter(|&reg| {
                 let at = reg as usize;
@@ -201,7 +201,7 @@ impl Analysis {
             mentions: HashMap::new(),
             escaped: HashSet::new(),
         };
-        census.region(&function.blocks, None);
+        census.region(&function.body, None);
         let Census {
             regions,
             mentions,
@@ -331,10 +331,10 @@ struct Census<'f> {
 }
 
 impl Census<'_> {
-    fn region(&mut self, blocks: &[MirBlock], parent: Option<(usize, usize)>) {
+    fn region(&mut self, block: &MirBlock, parent: Option<(usize, usize)>) {
         let region = self.regions.len();
         self.regions.push(parent);
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for instruction in &block.instrs {
             let id = self.next;
             self.next += 1;
             let slots = instruction_slots(instruction);
@@ -411,7 +411,7 @@ struct Scan<'a> {
 }
 
 impl Scan<'_> {
-    fn run(blocks: &[MirBlock], analysis: &Analysis, kept: &HashSet<usize>) -> Outcome {
+    fn run(block: &MirBlock, analysis: &Analysis, kept: &HashSet<usize>) -> Outcome {
         let mut scan = Scan {
             analysis,
             kept,
@@ -430,7 +430,7 @@ impl Scan<'_> {
         for &var in analysis.slots.keys() {
             scan.fresh(var);
         }
-        scan.region(blocks);
+        scan.region(block);
         let Scan {
             mut elidable,
             mut reuses,
@@ -452,8 +452,8 @@ impl Scan<'_> {
         }
     }
 
-    fn region(&mut self, blocks: &[MirBlock]) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    fn region(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
             let id = self.next;
             self.next += 1;
             if let Some(&(var, access)) = self.analysis.accesses.get(&id) {
@@ -565,29 +565,27 @@ struct Rewrite<'a> {
 }
 
 impl Rewrite<'_> {
-    fn blocks(&mut self, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            let mut out = Vec::with_capacity(block.instrs.len());
-            for mut instruction in std::mem::take(&mut block.instrs) {
-                let id = self.next;
-                self.next += 1;
-                if self.erases(id) {
-                    let mut results = Vec::new();
-                    instruction_result_regs(&instruction, &mut results);
-                    self.erased_results.extend(results.iter().map(|reg| reg.0));
-                    self.erased += 1;
-                    continue;
-                }
-                if let Some(&reuse) = self.outcome.reuses.get(&id) {
-                    self.redirect(&mut instruction, reuse);
-                }
-                for region in instruction_regions_mut(&mut instruction) {
-                    self.blocks(region);
-                }
-                out.push(instruction);
+    fn block(&mut self, block: &mut MirBlock) {
+        let mut out = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            let id = self.next;
+            self.next += 1;
+            if self.erases(id) {
+                let mut results = Vec::new();
+                instruction_result_regs(&instruction, &mut results);
+                self.erased_results.extend(results.iter().map(|reg| reg.0));
+                self.erased += 1;
+                continue;
             }
-            block.instrs = out;
+            if let Some(&reuse) = self.outcome.reuses.get(&id) {
+                self.redirect(&mut instruction, reuse);
+            }
+            for region in instruction_regions_mut(&mut instruction) {
+                self.block(region);
+            }
+            out.push(instruction);
         }
+        block.instrs = out;
     }
 
     /// Whether the instruction numbered `id` goes: a store or marker of an
@@ -718,10 +716,10 @@ fn access(
 }
 
 /// Count in `stores` each register's reads as the value of a whole store
-/// (`var.store`, or a `place.store` of a whole slot) in `blocks`, their
+/// (`var.store`, or a `place.store` of a whole slot) in `block`, their
 /// regions included.
-fn count_whole_stores(blocks: &[MirBlock], stores: &mut [u32]) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn count_whole_stores(block: &MirBlock, stores: &mut [u32]) {
+    for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
             count_whole_stores(region, stores);
         }

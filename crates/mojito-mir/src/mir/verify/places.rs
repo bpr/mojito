@@ -7,12 +7,11 @@ use mojito_types::types::TyKind;
 pub(super) fn verify_terminator(
     name: &str,
     function: &MirFunction,
-    block_index: usize,
     terminator: &MirTerm,
     context: &RegionContext,
     errors: &mut Vec<String>,
 ) {
-    let prefix = format!("MIR function '{name}' block {block_index}");
+    let prefix = format!("MIR function '{name}'");
     match terminator {
         MirTerm::Return(value) => {
             // `Return(None)` doubles as the lowering placeholder terminator, so
@@ -254,14 +253,13 @@ pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
 
 pub(super) fn verify_place(
     function_name: &str,
-    block: usize,
     function: &MirFunction,
     declarations: &MirDeclarations,
     place: &MirPlace,
     executable: bool,
     errors: &mut Vec<String>,
 ) {
-    let prefix = format!("MIR function '{function_name}' block {block}");
+    let prefix = format!("MIR function '{function_name}'");
     if place.root as usize >= function.n_vars {
         errors.push(format!(
             "{prefix} place has invalid root slot {}",

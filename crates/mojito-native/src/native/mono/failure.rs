@@ -13,16 +13,10 @@ use mojito_mir::mir::Const;
 /// [`Specializer::decide_comptime_op`] left, so one that failed — as
 /// upstream's `constraint failed: MESSAGE`.
 pub(super) fn discharge_comptime_asserts(function: &mut MirFunction) -> Result<(), String> {
-    if let Some(failed) = function
-        .blocks
-        .iter()
-        .find_map(|block| reached_assert(&block.instrs))
-    {
+    if let Some(failed) = reached_assert(&function.body.instrs) {
         return Err(failed);
     }
-    for block in &mut function.blocks {
-        erase_asserts(&mut block.instrs);
-    }
+    erase_asserts(&mut function.body.instrs);
     Ok(())
 }
 
@@ -30,15 +24,15 @@ pub(super) fn discharge_comptime_asserts(function: &mut MirFunction) -> Result<(
 /// compute ([`Specializer::answer_param_constants`]) whose read the
 /// instance still holds once its branches are decided.
 pub(super) fn reached_failure(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     mut failures: HashMap<u32, MonoError>,
 ) -> Result<(), MonoError> {
     if failures.is_empty() {
         return Ok(());
     }
-    blocks
+    block
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .try_for_each(|instruction| match instruction {
             MirInstr::Const {
                 dest,
@@ -62,8 +56,7 @@ fn reached_assert(instructions: &[MirInstr]) -> Option<String> {
             }),
             instruction => mojito_mir::mir::instruction_regions(instruction)
                 .into_iter()
-                .flatten()
-                .find_map(|block| reached_assert(&block.instrs)),
+                .find_map(|region| reached_assert(&region.instrs)),
         })
 }
 
@@ -72,9 +65,7 @@ fn erase_asserts(instructions: &mut Vec<MirInstr>) {
     instructions.retain(|instruction| !matches!(instruction, MirInstr::ComptimeAssert { .. }));
     for instruction in instructions {
         for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-            for block in region {
-                erase_asserts(&mut block.instrs);
-            }
+            erase_asserts(&mut region.instrs);
         }
     }
 }

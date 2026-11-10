@@ -45,7 +45,7 @@ impl Specializer<'_> {
         function: &mut MirFunction,
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
-        if !mojito_mir::mir::nested_instructions(&function.blocks)
+        if !mojito_mir::mir::nested_instructions(&function.body)
             .iter()
             .any(|instruction| {
                 matches!(
@@ -60,7 +60,7 @@ impl Specializer<'_> {
         }
         let dangling = dangling_registers(function);
         let MirFunction {
-            blocks,
+            body: blocks,
             n_regs,
             n_vars,
             var_names,
@@ -87,7 +87,7 @@ impl Specializer<'_> {
         }
         // The index is in scope in the body alone, so once the clones stand
         // nothing addresses a slot typed over it.
-        if let Some(&slot) = addressed_slots(&function.blocks)
+        if let Some(&slot) = addressed_slots(&function.body)
             .intersection(&retired)
             .next()
         {
@@ -113,35 +113,33 @@ impl Specializer<'_> {
     /// carried, which only `blocks` read.
     fn elaborate_in(
         &mut self,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
     ) -> Result<(), MonoError> {
         let mut decided = Decided::default();
-        for block in blocks.iter_mut() {
-            let mut index = 0;
-            while index < block.instrs.len() {
-                if let Some(step) =
-                    self.decide_comptime_op(frame.template, block, index, bindings, &mut decided)?
-                {
-                    index += step;
-                    continue;
-                }
-                let Some(op) = ComptimeForOp::take(&mut block.instrs, index) else {
-                    for region in instruction_regions_mut(&mut block.instrs[index]) {
-                        self.elaborate_in(region, frame, bindings, tables)?;
-                    }
-                    index += 1;
-                    continue;
-                };
-                let replacement =
-                    self.unroll_op(op, frame, bindings, tables, &mut decided.replaced)?;
-                let count = replacement.len();
-                block.instrs.splice(index..index, replacement);
-                index += count;
+        let mut index = 0;
+        while index < block.instrs.len() {
+            if let Some(step) =
+                self.decide_comptime_op(frame.template, block, index, bindings, &mut decided)?
+            {
+                index += step;
+                continue;
             }
+            let Some(op) = ComptimeForOp::take(&mut block.instrs, index) else {
+                for region in instruction_regions_mut(&mut block.instrs[index]) {
+                    self.elaborate_in(region, frame, bindings, tables)?;
+                }
+                index += 1;
+                continue;
+            };
+            let replacement = self.unroll_op(op, frame, bindings, tables, &mut decided.replaced)?;
+            let count = replacement.len();
+            block.instrs.splice(index..index, replacement);
+            index += count;
         }
+
         for binder in &decided.dead_binders {
             tables.retired.extend(
                 tables
@@ -151,7 +149,7 @@ impl Specializer<'_> {
                     .map(|(slot, _)| *slot),
             );
         }
-        decided.apply(blocks, tables.reg_types, tables.spans);
+        decided.apply(block, tables.reg_types, tables.spans);
         Ok(())
     }
 
@@ -168,19 +166,14 @@ impl Specializer<'_> {
         folded: &mut HashMap<u32, Reg>,
     ) -> Result<Vec<MirInstr>, MonoError> {
         let iterators = self.trip_elements(frame.template, &op.binder, &op.source, bindings)?;
-        let [mut body] = <[MirBlock; 1]>::try_from(op.body).map_err(|_| {
-            self.error(
-                Some(frame.template),
-                "comptime for body is not one block".to_string(),
-            )
-        })?;
+        let mut body = op.body;
         let over_binder: BTreeSet<VarId> = tables
             .var_tys
             .iter()
             .filter(|(_, ty)| mojito_types::types::names_binder(ty, &op.binder))
             .map(|(slot, _)| *slot)
             .collect();
-        let mut indexed: BTreeSet<VarId> = addressed_slots(std::slice::from_ref(&body))
+        let mut indexed: BTreeSet<VarId> = addressed_slots(&body)
             .intersection(&over_binder)
             .copied()
             .collect();
@@ -217,16 +210,16 @@ impl Specializer<'_> {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: results.clone(),
-                body: vec![clone],
+                body: Box::new(clone),
             });
             operands = results;
         }
         let mut dead = op.args;
-        defined_registers(std::slice::from_ref(&body), &mut dead);
+        defined_registers(&body, &mut dead);
         // A dangling operand typed over the index is each clone's own; one
         // of a closed type may be a shared default another call outside the
         // loop still reads.
-        for_each_register(std::slice::from_mut(&mut body), &mut |reg| {
+        for_each_register(&mut body, &mut |reg| {
             if tables.dangling.contains(&reg.0)
                 && tables
                     .reg_types
@@ -263,10 +256,10 @@ impl Specializer<'_> {
         for erased in iterations {
             let mut dead = Vec::new();
             defined_registers(
-                &[MirBlock {
+                &MirBlock {
                     instrs: vec![erased],
                     term: MirTerm::Unreachable,
-                }],
+                },
                 &mut dead,
             );
             tables.forget(&dead);
@@ -276,7 +269,7 @@ impl Specializer<'_> {
             operands: Vec::new(),
             args: Vec::new(),
             results: op.results,
-            body: vec![outer],
+            body: Box::new(outer),
         };
         Ok(match simplify_param_for_loop(outer, folded) {
             Simplified::Kept(outer) => vec![*outer],
@@ -287,7 +280,7 @@ impl Specializer<'_> {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results,
-                body: vec![body],
+                body: Box::new(body),
             }],
         })
     }
@@ -347,8 +340,8 @@ impl Specializer<'_> {
         splice_comptime_arm(&mut clone, 0, suite.then_some(0), &mut Decided::default())
             .map_err(|construct| self.error(Some(template), construct))?;
         let mut local = Vec::new();
-        defined_registers(std::slice::from_ref(&clone), &mut local);
-        for_each_register(std::slice::from_mut(&mut clone), &mut |reg| {
+        defined_registers(&clone, &mut local);
+        for_each_register(&mut clone, &mut |reg| {
             if tables.dangling.contains(&reg.0) {
                 local.push(*reg);
             }
@@ -370,27 +363,27 @@ impl Specializer<'_> {
             registers.insert(reg.0, new);
             fresh.push(new);
         }
-        for_each_register(std::slice::from_mut(&mut clone), &mut |reg| {
+        for_each_register(&mut clone, &mut |reg| {
             if let Some(&to) = registers.get(&reg.0) {
                 *reg = to;
             }
         });
-        retarget_comptime_exits(std::slice::from_mut(&mut clone));
-        let addressed: BTreeSet<VarId> = addressed_slots(std::slice::from_ref(&clone))
+        retarget_comptime_exits(&mut clone);
+        let addressed: BTreeSet<VarId> = addressed_slots(&clone)
             .intersection(indexed)
             .copied()
             .collect();
         let slots = fresh_slots(&addressed, tables, iteration);
         if !slots.is_empty() {
             let renumber = |var: VarId| slots.get(&var).copied().unwrap_or(var);
-            renumber_block_slots(std::slice::from_mut(&mut clone), &renumber);
+            renumber_block_slots(&mut clone, &renumber);
             for register in &fresh {
                 if let Some((_, Some(origin))) = tables.spans.0.get_mut(&register.0) {
                     *origin = renumber(*origin);
                 }
             }
         }
-        let blocks = std::slice::from_mut(&mut clone);
+        let blocks = &mut clone;
         // The ops nested in the clone first: their conditions, bounds, and
         // bodies are over this iteration's binding and their own, which
         // nothing else of the clone may be substituted without.
@@ -437,11 +430,11 @@ impl Specializer<'_> {
     fn instantiate_region_references(
         &mut self,
         template: &str,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         iteration: &Bindings,
         dropped: &mut Vec<Reg>,
     ) -> Result<(), MonoError> {
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        for instruction in &mut block.instrs {
             let (target, call) = match instruction {
                 MirInstr::MakeClosure {
                     function: target, ..
@@ -469,8 +462,8 @@ impl Specializer<'_> {
                     }),
                 ),
                 instruction => {
-                    for blocks in instruction_regions_mut(instruction) {
-                        self.instantiate_region_references(template, blocks, iteration, dropped)?;
+                    for block in instruction_regions_mut(instruction) {
+                        self.instantiate_region_references(template, block, iteration, dropped)?;
                     }
                     continue;
                 }
@@ -537,7 +530,7 @@ impl Specializer<'_> {
         binder: &ParamRef,
     ) -> BTreeSet<VarId> {
         let instructions: Vec<&MirInstr> = blocks
-            .flat_map(|block| nested_instructions(std::slice::from_ref(block)))
+            .flat_map(|block| nested_instructions(block))
             .collect();
         let generators: HashSet<u32> = instructions
             .iter()
@@ -654,8 +647,8 @@ struct ComptimeForOp {
     operands: Vec<Reg>,
     args: Vec<Reg>,
     results: Vec<Reg>,
-    body: Vec<MirBlock>,
-    orelse: Vec<MirBlock>,
+    body: MirBlock,
+    orelse: MirBlock,
 }
 
 impl ComptimeForOp {
@@ -680,8 +673,8 @@ impl ComptimeForOp {
             operands: std::mem::take(operands),
             args: std::mem::take(args),
             results: std::mem::take(results),
-            body: std::mem::take(body),
-            orelse: std::mem::take(orelse),
+            body: std::mem::take(&mut **body),
+            orelse: std::mem::take(&mut **orelse),
         };
         instrs.remove(index);
         Some(op)
@@ -781,36 +774,30 @@ fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>
     };
     let mut breaks = 0;
     loop_breaks_mut(&mut body, label, &mut |_, _| breaks += 1);
-    match <[MirBlock; 1]>::try_from(body) {
-        Ok([body]) if args.is_empty() && breaks == 0 => Simplified::Breakless { body, results },
-        Ok(
-            [
-                MirBlock {
-                    instrs,
-                    term:
-                        MirTerm::Break {
-                            label: named,
-                            values,
-                        },
+    if args.is_empty() && breaks == 0 {
+        return Simplified::Breakless {
+            body: *body,
+            results,
+        };
+    }
+    match *body {
+        MirBlock {
+            instrs,
+            term:
+                MirTerm::Break {
+                    label: named,
+                    values,
                 },
-            ],
-        ) if args.is_empty() && breaks == 1 && (named.is_none() || named == label) => {
+        } if args.is_empty() && breaks == 1 && (named.is_none() || named == label) => {
             folded.extend(results.iter().map(|reg| reg.0).zip(values));
             Simplified::Spliced(instrs)
         }
-        Ok(body) => Simplified::Kept(Box::new(MirInstr::Loop {
+        body => Simplified::Kept(Box::new(MirInstr::Loop {
             label,
             operands,
             args,
             results,
-            body: body.into(),
-        })),
-        Err(body) => Simplified::Kept(Box::new(MirInstr::Loop {
-            label,
-            operands,
-            args,
-            results,
-            body,
+            body: Box::new(body),
         })),
     }
 }
@@ -818,10 +805,10 @@ fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>
 /// The registers `function` reads that no instruction of it defines.
 fn dangling_registers(function: &mut MirFunction) -> HashSet<u32> {
     let mut defined = Vec::new();
-    defined_registers(&function.blocks, &mut defined);
+    defined_registers(&function.body, &mut defined);
     let defined: HashSet<u32> = defined.into_iter().map(|reg| reg.0).collect();
     let mut dangling = HashSet::new();
-    for_each_register(&mut function.blocks, &mut |reg| {
+    for_each_register(&mut function.body, &mut |reg| {
         if !defined.contains(&reg.0) {
             dangling.insert(reg.0);
         }
@@ -833,24 +820,22 @@ fn dangling_registers(function: &mut MirFunction) -> HashSet<u32> {
 /// and its `comptime.for.break`s into breaks of the outer loop, as
 /// `makeCompletion` does, skipping the `comptime for`s nested in it, whose
 /// own they are.
-fn retarget_comptime_exits(blocks: &mut [MirBlock]) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if !matches!(instruction, MirInstr::ComptimeFor { .. }) {
-                for region in instruction_regions_mut(instruction) {
-                    retarget_comptime_exits(region);
-                }
+fn retarget_comptime_exits(block: &mut MirBlock) {
+    for instruction in &mut block.instrs {
+        if !matches!(instruction, MirInstr::ComptimeFor { .. }) {
+            for region in instruction_regions_mut(instruction) {
+                retarget_comptime_exits(region);
             }
         }
-        let (label, values) = match &mut block.term {
-            MirTerm::ComptimeContinue(values) => (None, std::mem::take(values)),
-            MirTerm::ComptimeBreak(values) => {
-                (Some(LoopLabel::PARAM_FOR_OUTER), std::mem::take(values))
-            }
-            _ => continue,
-        };
-        block.term = MirTerm::Break { label, values };
     }
+    let (label, values) = match &mut block.term {
+        MirTerm::ComptimeContinue(values) => (None, std::mem::take(values)),
+        MirTerm::ComptimeBreak(values) => {
+            (Some(LoopLabel::PARAM_FOR_OUTER), std::mem::take(values))
+        }
+        _ => return,
+    };
+    block.term = MirTerm::Break { label, values };
 }
 
 /// Mint one clone's slot for each of the `indexed` slots, typed under the
@@ -902,7 +887,7 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results,
-            body: vec![body],
+            body: Box::new(body),
         }
     }
 
@@ -947,19 +932,17 @@ mod tests {
 
     #[test]
     fn a_loop_broken_inside_a_runtime_if_stays() {
-        let arm = |term| {
-            vec![MirBlock {
-                instrs: Vec::new(),
-                term,
-            }]
+        let arm = |term| MirBlock {
+            instrs: Vec::new(),
+            term,
         };
         let guarded = MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: arm(breaking(None, Vec::new())),
+            then: Box::new(arm(breaking(None, Vec::new()))),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: arm(MirTerm::Yield(Vec::new())),
+            orelse: Box::new(arm(MirTerm::Yield(Vec::new()))),
         };
         let body = MirBlock {
             instrs: vec![guarded],
@@ -1025,39 +1008,39 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: vec![MirBlock {
+            body: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::ComptimeContinue(Vec::new()),
-            }],
-            orelse: vec![MirBlock {
+            }),
+            orelse: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::Unreachable,
-            }],
+            }),
         };
-        let mut blocks = vec![MirBlock {
+        let mut blocks = MirBlock {
             instrs: vec![nested],
             term: MirTerm::ComptimeBreak(vec![Reg(3)]),
-        }];
+        };
         retarget_comptime_exits(&mut blocks);
         assert!(matches!(
-            &blocks[0].term,
+            &blocks.term,
             MirTerm::Break { label: Some(LoopLabel::PARAM_FOR_OUTER), values } if values == &[Reg(3)]
         ));
-        let MirInstr::ComptimeFor { body, .. } = &blocks[0].instrs[0] else {
+        let MirInstr::ComptimeFor { body, .. } = &blocks.instrs[0] else {
             panic!("the nested op stays");
         };
-        assert!(matches!(body[0].term, MirTerm::ComptimeContinue(_)));
+        assert!(matches!(body.term, MirTerm::ComptimeContinue(_)));
     }
 
     #[test]
     fn a_continue_breaks_its_iteration_loop() {
-        let mut blocks = vec![MirBlock {
+        let mut blocks = MirBlock {
             instrs: Vec::new(),
             term: MirTerm::ComptimeContinue(vec![Reg(1)]),
-        }];
+        };
         retarget_comptime_exits(&mut blocks);
         assert!(matches!(
-            &blocks[0].term,
+            &blocks.term,
             MirTerm::Break { label: None, values } if values == &[Reg(1)]
         ));
     }

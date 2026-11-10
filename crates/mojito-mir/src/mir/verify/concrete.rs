@@ -51,7 +51,7 @@ pub fn concrete_function_findings(
     for (register, ty) in registers {
         require_concrete_value(&head, &format!("register r{register}"), ty, &mut errors);
     }
-    concrete_blocks(name, function, declarations, &function.blocks, &mut errors);
+    concrete_block(name, function, declarations, &function.body, &mut errors);
     errors
 }
 
@@ -76,10 +76,10 @@ pub fn concrete_function_findings(
 /// [`LlvmIntrinsic::index_error`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_error
 pub fn llvm_translation_findings(function: &MirFunction) -> Vec<String> {
     let mut constants = HashMap::new();
-    integer_constants(&function.blocks, &mut constants);
+    integer_constants(&function.body, &mut constants);
     let mut errors = Vec::new();
     untranslatable_values(function, &mut errors);
-    translation_blocks(function, &function.blocks, &constants, &mut errors);
+    translation_blocks(function, &function.body, &constants, &mut errors);
     errors
 }
 
@@ -249,46 +249,44 @@ fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Ve
     }
 }
 
-fn concrete_blocks(
+fn concrete_block(
     name: &str,
     function: &MirFunction,
     declarations: Option<&MirDeclarations>,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     errors: &mut Vec<String>,
 ) {
-    for (index, block) in blocks.iter().enumerate() {
-        let head = format!("MIR function '{name}' block {index}");
-        for instruction in &block.instrs {
-            let regions = crate::mir::instruction_regions(instruction);
-            if !regions.is_empty() {
-                match instruction {
-                    MirInstr::ComptimeIf { values, .. } => errors.push(format!(
-                        "{head} keeps a compile-time branch on `{values:?}` in elaborated MIR"
-                    )),
-                    MirInstr::ComptimeFor { binder, .. } => errors.push(format!(
-                        "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
-                    )),
-                    _ => {}
-                }
-                for region in regions {
-                    concrete_blocks(name, function, declarations, region, errors);
-                }
-                continue;
+    let head = format!("MIR function '{name}'");
+    for instruction in &block.instrs {
+        let regions = crate::mir::instruction_regions(instruction);
+        if !regions.is_empty() {
+            match instruction {
+                MirInstr::ComptimeIf { values, .. } => errors.push(format!(
+                    "{head} keeps a compile-time branch on `{values:?}` in elaborated MIR"
+                )),
+                MirInstr::ComptimeFor { binder, .. } => errors.push(format!(
+                    "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
+                )),
+                _ => {}
             }
-            concrete_instruction(&head, instruction, errors);
-            reference_read(&head, function, instruction, errors);
-            bitcast_width(&head, function, instruction, errors);
-            concrete_llvm_intrinsic(&head, function, declarations, instruction, errors);
+            for region in regions {
+                concrete_block(name, function, declarations, region, errors);
+            }
+            continue;
         }
-        if matches!(
-            block.term,
-            MirTerm::ComptimeYield(_) | MirTerm::ComptimeBreak(_) | MirTerm::ComptimeContinue(_)
-        ) {
-            errors.push(format!(
-                "{head} keeps the region terminator `{}` in elaborated MIR",
-                crate::mir::text::terminator_mnemonic(&block.term)
-            ));
-        }
+        concrete_instruction(&head, instruction, errors);
+        reference_read(&head, function, instruction, errors);
+        bitcast_width(&head, function, instruction, errors);
+        concrete_llvm_intrinsic(&head, function, declarations, instruction, errors);
+    }
+    if matches!(
+        block.term,
+        MirTerm::ComptimeYield(_) | MirTerm::ComptimeBreak(_) | MirTerm::ComptimeContinue(_)
+    ) {
+        errors.push(format!(
+            "{head} keeps the region terminator `{}` in elaborated MIR",
+            crate::mir::text::terminator_mnemonic(&block.term)
+        ));
     }
 }
 
@@ -683,7 +681,7 @@ fn untranslatable_values(function: &MirFunction, errors: &mut Vec<String>) {
         errors.push("failed to convert func signature".to_string());
     }
     let mut call_results = HashMap::new();
-    for instruction in crate::mir::nested_instructions(&function.blocks) {
+    for instruction in crate::mir::nested_instructions(&function.body) {
         match instruction {
             MirInstr::Call { dest, func, .. } => {
                 call_results.insert(dest.0, format!("'{}'", func.0));
@@ -695,7 +693,7 @@ fn untranslatable_values(function: &MirFunction, errors: &mut Vec<String>) {
         }
     }
     let mut defined = Vec::new();
-    crate::mir::defined_registers(&function.blocks, &mut defined);
+    crate::mir::defined_registers(&function.body, &mut defined);
     for reg in defined {
         let Some(ty) = function
             .reg_types
@@ -721,98 +719,92 @@ fn untranslatable_values(function: &MirFunction, errors: &mut Vec<String>) {
 
 fn translation_blocks(
     function: &MirFunction,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     constants: &HashMap<u32, i128>,
     errors: &mut Vec<String>,
 ) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            for region in crate::mir::instruction_regions(instruction) {
-                translation_blocks(function, region, constants, errors);
-            }
-            if let MirInstr::SourceLoc { dest, .. } = instruction {
+    for instruction in &block.instrs {
+        for region in crate::mir::instruction_regions(instruction) {
+            translation_blocks(function, region, constants, errors);
+        }
+        if let MirInstr::SourceLoc { dest, .. } = instruction {
+            errors.push(format!(
+                "r{}: a `kgen.source_loc` the driver did not resolve",
+                dest.0
+            ));
+            continue;
+        }
+        let MirInstr::CallLlvmIntrinsic {
+            dest,
+            intrinsic,
+            args,
+            ..
+        } = instruction
+        else {
+            continue;
+        };
+        let Some((called, position)) = intrinsic.llvm_intrinsic().and_then(|called| {
+            called
+                .index_operand()
+                .map(|(position, _)| (called, position))
+        }) else {
+            continue;
+        };
+        let head = format!("'{}'", called.name());
+        let Some(index) = args
+            .get(position)
+            .and_then(|reg| constants.get(&reg.0).copied())
+        else {
+            if called.index_is_immediate() {
                 errors.push(format!(
-                    "r{}: a `kgen.source_loc` the driver did not resolve",
-                    dest.0
+                    "{head}: immarg operand has non-immediate parameter"
                 ));
-                continue;
             }
-            let MirInstr::CallLlvmIntrinsic {
-                dest,
-                intrinsic,
-                args,
-                ..
-            } = instruction
-            else {
-                continue;
-            };
-            let Some((called, position)) = intrinsic.llvm_intrinsic().and_then(|called| {
-                called
-                    .index_operand()
-                    .map(|(position, _)| (called, position))
-            }) else {
-                continue;
-            };
-            let head = format!("'{}'", called.name());
-            let Some(index) = args
-                .get(position)
-                .and_then(|reg| constants.get(&reg.0).copied())
-            else {
-                if called.index_is_immediate() {
-                    errors.push(format!(
-                        "{head}: immarg operand has non-immediate parameter"
-                    ));
-                }
-                continue;
-            };
-            let width = |reg: &Reg| {
-                function
-                    .reg_types
-                    .get(&reg.0)
-                    .map(mojito_types::types::storage_ty)
-                    .and_then(|ty| mojito_types::types::kgen_simd_slots(ty.kind()))
-                    .and_then(|(_, width)| width.known())
-                    .and_then(|width| usize::try_from(width).ok())
-            };
-            let widths = args
-                .iter()
-                .enumerate()
-                .filter(|(operand, _)| *operand != position)
-                .map(|(_, reg)| width(reg))
-                .collect::<Option<Vec<_>>>();
-            if let (Some(result), Some(widths)) = (width(dest), widths)
-                && let Some(reason) = called.index_error(result, &widths, index)
-            {
-                errors.push(format!("{head}: {reason}"));
-            }
+            continue;
+        };
+        let width = |reg: &Reg| {
+            function
+                .reg_types
+                .get(&reg.0)
+                .map(mojito_types::types::storage_ty)
+                .and_then(|ty| mojito_types::types::kgen_simd_slots(ty.kind()))
+                .and_then(|(_, width)| width.known())
+                .and_then(|width| usize::try_from(width).ok())
+        };
+        let widths = args
+            .iter()
+            .enumerate()
+            .filter(|(operand, _)| *operand != position)
+            .map(|(_, reg)| width(reg))
+            .collect::<Option<Vec<_>>>();
+        if let (Some(result), Some(widths)) = (width(dest), widths)
+            && let Some(reason) = called.index_error(result, &widths, index)
+        {
+            errors.push(format!("{head}: {reason}"));
         }
     }
 }
 
 /// Record in `constants` the integer each `const` of one integer lane in
 /// `blocks` and the regions they hold defines, by register number.
-fn integer_constants(blocks: &[MirBlock], constants: &mut HashMap<u32, i128>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            for region in crate::mir::instruction_regions(instruction) {
-                integer_constants(region, constants);
-            }
-            let MirInstr::Const { dest, k } = instruction else {
-                continue;
-            };
-            let value = match k {
-                Const::Int(value) => Some(i128::from(*value)),
-                Const::Value(mojito_types::ct::CtValue::Simd { lanes, .. }) => {
-                    match lanes.as_slice() {
-                        [mojito_types::ct::CtLane::Int(value)] => Some(*value),
-                        _ => None,
-                    }
-                }
-                Const::Value(mojito_types::ct::CtValue::UInt(value)) => Some(i128::from(*value)),
-                _ => None,
-            };
-            constants.extend(value.map(|value| (dest.0, value)));
+fn integer_constants(block: &MirBlock, constants: &mut HashMap<u32, i128>) {
+    for instruction in &block.instrs {
+        for region in crate::mir::instruction_regions(instruction) {
+            integer_constants(region, constants);
         }
+        let MirInstr::Const { dest, k } = instruction else {
+            continue;
+        };
+        let value = match k {
+            Const::Int(value) => Some(i128::from(*value)),
+            Const::Value(mojito_types::ct::CtValue::Simd { lanes, .. }) => match lanes.as_slice() {
+                [mojito_types::ct::CtLane::Int(value)] => Some(*value),
+                _ => None,
+            },
+            Const::Value(mojito_types::ct::CtValue::UInt(value)) => Some(i128::from(*value)),
+            _ => None,
+        };
+        constants.extend(value.map(|value| (dest.0, value)));
     }
 }
 
@@ -833,10 +825,10 @@ mod tests {
 
     fn function_with(instruction: MirInstr, dest_ty: Ty) -> MirFunction {
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs: vec![instruction],
                 term: MirTerm::TryYield(Vec::new()),
-            }],
+            },
             n_regs: 1,
             n_vars: 1,
             var_names: vec!["r".to_string()],
@@ -938,20 +930,18 @@ mod tests {
 
     #[test]
     fn runtime_structure_is_concrete() {
-        let arm = |term| {
-            vec![MirBlock {
-                instrs: Vec::new(),
-                term,
-            }]
+        let arm = |term| MirBlock {
+            instrs: Vec::new(),
+            term,
         };
         let function = function_with(
             MirInstr::If {
                 results: Vec::new(),
                 cond: Reg(0),
-                then: arm(MirTerm::Yield(Vec::new())),
+                then: Box::new(arm(MirTerm::Yield(Vec::new()))),
                 elifs: Vec::new(),
                 else_args: Vec::new(),
-                orelse: arm(MirTerm::Yield(Vec::new())),
+                orelse: Box::new(arm(MirTerm::Yield(Vec::new()))),
             },
             Ty::bool(),
         );

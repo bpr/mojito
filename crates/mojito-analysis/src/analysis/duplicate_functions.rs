@@ -71,7 +71,7 @@ pub fn eliminate_duplicate_functions(program: &mut MirProgram, exports: &[String
         }
         for (name, function) in &mut program.functions {
             let mut changed = false;
-            replace_symbol_uses(&mut function.blocks, &mut |symbol| {
+            replace_symbol_uses(&mut function.body, &mut |symbol| {
                 if let Some(survivor) = replaced.get(symbol.as_str()) {
                     symbol.clone_from(survivor);
                     changed = true;
@@ -176,7 +176,7 @@ fn duplicates(
 /// as no symbol is, so a recursive function matches its duplicate.
 fn identity(program: &MirProgram, name: &str, function: &MirFunction) -> Option<FunctionIdentity> {
     let mut function = function.clone();
-    replace_symbol_uses(&mut function.blocks, &mut |symbol| {
+    replace_symbol_uses(&mut function.body, &mut |symbol| {
         if symbol == name {
             symbol.clear();
         }
@@ -209,7 +209,7 @@ fn redirect_members(declaration: &mut MirStructDeclaration, replaced: &HashMap<S
 fn rewritten_uses(program: &mut MirProgram) -> HashMap<String, usize> {
     let mut rewritten: HashMap<String, usize> = HashMap::new();
     for (_, function) in &mut program.functions {
-        replace_symbol_uses(&mut function.blocks, &mut |name| {
+        replace_symbol_uses(&mut function.body, &mut |name| {
             *rewritten.entry(name.clone()).or_default() += 1;
         });
     }

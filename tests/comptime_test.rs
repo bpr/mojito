@@ -593,7 +593,7 @@ fn whole_pack_forwarding_reaches_mir_as_one_tuple_move() {
         .find(|(name, _)| name == "relay")
         .map(|(_, function)| function)
         .expect("relay's template body");
-    let instructions = mojito::mir::nested_instructions(&relay.blocks);
+    let instructions = mojito::mir::nested_instructions(&relay.body);
 
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,

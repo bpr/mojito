@@ -39,13 +39,11 @@ pub(super) struct InteriorState {
     invalidated: BTreeMap<u32, InteriorInvalidationState>,
 }
 
-/// Every `EstablishLoans` generation under `blocks`, at any region depth,
+/// Every `EstablishLoans` generation under `block`, at any region depth,
 /// that names at least one interior origin.
-pub(super) fn collect_interior_generations(
-    blocks: &[MirBlock],
-) -> BTreeMap<u32, InteriorGeneration> {
+pub(super) fn collect_interior_generations(block: &MirBlock) -> BTreeMap<u32, InteriorGeneration> {
     let mut generations = BTreeMap::new();
-    for_each_instr_deep(blocks, &mut |instr| {
+    for_each_instr_deep(block, &mut |instr| {
         if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
             let mut origins: Vec<_> = loans
                 .iter()

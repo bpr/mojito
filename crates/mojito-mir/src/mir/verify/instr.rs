@@ -10,12 +10,11 @@ pub(super) fn verify_instruction(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
-    block_index: usize,
     instruction: &MirInstr,
     context: &RegionContext,
     errors: &mut Vec<String>,
 ) {
-    let prefix = format!("MIR function '{name}' block {block_index}");
+    let prefix = format!("MIR function '{name}'");
     // Loan places are analytical origin paths and may name a nominal
     // collection element (`owner[index]`) even though executable collection
     // access retained its checked method call. Every other instruction place
@@ -24,7 +23,6 @@ pub(super) fn verify_instruction(
     for place in instruction_places(instruction) {
         verify_place(
             name,
-            block_index,
             function,
             declarations,
             place,

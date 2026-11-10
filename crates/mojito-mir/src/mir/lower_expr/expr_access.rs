@@ -105,7 +105,7 @@ impl<'a> Flatten<'a> {
     /// through to the referent, as a value use of a `ref` binding does.
     pub(in crate::mir) fn field_referent(&mut self, e: Node<'a>, value: Reg) -> Reg {
         let loads_field = matches!(
-            self.f.blocks[self.cur].instrs.last(),
+            self.f.body.instrs.last(),
             Some(MirInstr::LoadPlace { dest, .. }) if *dest == value
         );
         if loads_field

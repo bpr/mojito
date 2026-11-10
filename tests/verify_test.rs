@@ -34,9 +34,9 @@ use mojito::types::{FuncTy, GenericFuncTy};
 use mojito::{CtValue, ParamDecl, Ty, TyArg};
 use std::collections::HashMap;
 
-fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirFunction {
+fn function(blocks: MirBlock, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirFunction {
     MirFunction {
-        blocks,
+        body: blocks,
         n_regs,
         n_vars: 2,
         var_names: vec!["x".to_string(), "$try_error0".to_string()],
@@ -135,11 +135,11 @@ fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
     .into()
 }
 
-/// Every instruction of `blocks` that holds no region, at any depth, in
+/// Every instruction of `block` that holds no region, at any depth, in
 /// order.
-fn leaf_instructions_mut(blocks: &mut [MirBlock]) -> Vec<&mut MirInstr> {
+fn leaf_instructions_mut(block: &mut MirBlock) -> Vec<&mut MirInstr> {
     let mut leaves = Vec::new();
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in block.instrs.iter_mut() {
         if mojito::mir::instruction_regions(instruction).is_empty() {
             leaves.push(instruction);
         } else {
@@ -156,7 +156,7 @@ fn first_index_call(program: &mut MirProgram) -> &mut mojito::mir::MirSubscriptC
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::Index {
                 call: Some(call), ..
@@ -171,7 +171,7 @@ fn projected_reference_loan_place(program: &mut MirProgram) -> &mut MirPlace {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans { loans, .. } => loans.iter_mut().find_map(|loan| {
                 (loan.place.through.is_some()
@@ -257,13 +257,13 @@ fn verifier_checks_make_ref_capability_types() {
     let place = MirPlace::root(0, Some(Ty::int()));
 
     let non_capability = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: place.clone(),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::int())],
     );
@@ -273,13 +273,13 @@ fn verifier_checks_make_ref_capability_types() {
     );
 
     let wrong_referent = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: place.clone(),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(
             0,
@@ -292,13 +292,13 @@ fn verifier_checks_make_ref_capability_types() {
     );
 
     let raw_pointer = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: place.clone(),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(
             0,
@@ -315,13 +315,13 @@ fn verifier_checks_make_ref_capability_types() {
     );
 
     let tracked_pointer = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, tracked_pointer_ty(Ty::int(), true))],
     );
@@ -346,26 +346,26 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
     };
 
     let forwarded = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: stored_ref_place(mojito::Mutability::Mutable),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, reference_ty(Ty::int(), mojito::Mutability::Immutable))],
     );
     assert_eq!(verify(&program(forwarded)), Vec::<String>::new());
 
     let unrelated_referent = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: stored_ref_place(mojito::Mutability::Mutable),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(
             0,
@@ -378,13 +378,13 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
     );
 
     let stolen_mutability = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeRef {
                 dest: Reg(0),
                 place: stored_ref_place(mojito::Mutability::Immutable),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, reference_ty(Ty::int(), mojito::Mutability::Mutable))],
     );
@@ -397,13 +397,13 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
 #[test]
 fn verifier_checks_read_and_write_reference_capabilities() {
     let read_non_capability = function(
-        vec![block(
+        block(
             vec![MirInstr::ReadRef {
                 dest: Reg(0),
                 reference: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int()), (1, Ty::int())],
     );
@@ -413,13 +413,13 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
 
     let read_wrong_referent = function(
-        vec![block(
+        block(
             vec![MirInstr::ReadRef {
                 dest: Reg(0),
                 reference: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[
             (0, Ty::string_literal_of("s")),
@@ -432,13 +432,13 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
 
     let write_immutable_reference = function(
-        vec![block(
+        block(
             vec![MirInstr::WriteRef {
                 reference: Reg(0),
                 value: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[
             (0, reference_ty(Ty::int(), mojito::Mutability::Immutable)),
@@ -451,26 +451,26 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
 
     let write_immutable_pointer = function(
-        vec![block(
+        block(
             vec![MirInstr::WriteRef {
                 reference: Reg(0),
                 value: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, tracked_pointer_ty(Ty::int(), false)), (1, Ty::int())],
     );
     expect_finding(&program(write_immutable_pointer), "is immutable");
 
     let write_wrong_referent = function(
-        vec![block(
+        block(
             vec![MirInstr::WriteRef {
                 reference: Reg(0),
                 value: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[
             (0, tracked_pointer_ty(Ty::int(), true)),
@@ -483,13 +483,13 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
 
     let read_pointer = function(
-        vec![block(
+        block(
             vec![MirInstr::ReadRef {
                 dest: Reg(0),
                 reference: Reg(1),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int()), (1, tracked_pointer_ty(Ty::int(), false))],
     );
@@ -503,13 +503,13 @@ fn verifier_checks_store_ref_source_type_and_permission() {
 
     let store = |source: Ty| {
         function(
-            vec![block(
+            block(
                 vec![MirInstr::StoreRef {
                     place: MirPlace::root(0, Some(mutable_int.clone())),
                     reference: Reg(0),
                 }],
                 MirTerm::Return(None),
-            )],
+            ),
             1,
             &[(0, source)],
         )
@@ -632,13 +632,13 @@ fn concrete_callable(parameter: Ty) -> Ty {
 #[test]
 fn verifier_rejects_untyped_registers() {
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::Const {
                 dest: Reg(0),
                 k: Const::Int(1),
             }],
             MirTerm::Return(Some(Reg(0))),
-        )],
+        ),
         1,
         &[],
     );
@@ -650,7 +650,7 @@ fn verifier_rejects_untyped_registers() {
 fn storage_materialization_findings(literal: Const, found: Ty, target: &Ty) -> Vec<String> {
     let storage = mojito::types::storage_ty(target);
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -663,7 +663,7 @@ fn storage_materialization_findings(literal: Const, found: Ty, target: &Ty) -> V
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, found), (1, storage)],
     );
@@ -719,7 +719,7 @@ fn verifier_rejects_a_literal_materialized_at_a_struct() {
     // Upstream's literal conversion is typed at the `!pop.simd` storage;
     // the `Int` is a `struct.create` over it.
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -732,7 +732,7 @@ fn verifier_rejects_a_literal_materialized_at_a_struct() {
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int_literal_of(&0.into())), (1, Ty::int())],
     );
@@ -745,7 +745,7 @@ fn verifier_rejects_a_literal_materialized_at_a_struct() {
 #[test]
 fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -769,7 +769,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
                 },
             ],
             MirTerm::Return(Some(Reg(2))),
-        )],
+        ),
         3,
         &[(0, Ty::int()), (1, Ty::int()), (2, Ty::int())],
     );
@@ -863,7 +863,7 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
     for instruction in mir
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
     {
         match instruction {
             MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => *call = None,
@@ -885,7 +885,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
         let instruction = mir
             .functions
             .iter_mut()
-            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
             .find(|instruction| matches!(instruction, MirInstr::SimdExtract { .. }))
             .expect("SIMD lane read lowered");
         let MirInstr::SimdExtract { dest, value, index } = *instruction else {
@@ -912,7 +912,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
     conflicting
         .functions
         .iter_mut()
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::Index { intrinsic, .. } => Some(intrinsic),
             _ => None,
@@ -933,7 +933,7 @@ fn verifier_types_simd_lane_instructions() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find(|instruction| matches!(instruction, MirInstr::SimdSelect { .. }))
         .expect("SIMD select lowered");
     if let MirInstr::SimdSelect { mask, on_true, .. } = select {
@@ -960,7 +960,7 @@ fn verifier_reads_simd_lane_operands_as_storage() {
         .iter_mut()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let vector = leaf_instructions_mut(&mut main.blocks)
+    let vector = leaf_instructions_mut(&mut main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::SimdExtract { value, .. } => Some(*value),
@@ -985,7 +985,7 @@ fn verifier_types_select() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find(|instruction| matches!(instruction, MirInstr::Select { .. }))
         .expect("select lowered");
     if let MirInstr::Select {
@@ -1013,7 +1013,7 @@ fn verifier_checks_llvm_intrinsic_calls() {
             .functions
             .iter_mut()
             .filter(|(name, _)| name == "main")
-            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
             .find(|instruction| matches!(instruction, MirInstr::CallLlvmIntrinsic { .. }))
             .expect("LLVM intrinsic call lowered");
         edit(call);
@@ -1129,13 +1129,13 @@ fn verifier_rejects_an_invalid_constant_tuple_projection() {
     );
     place.project(Proj::ConstIndex(2), Ty::int());
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::LoadPlace {
                 dest: Reg(0),
                 place,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::int())],
     );
@@ -1157,13 +1157,13 @@ fn verifier_checks_constant_array_element_projections() {
         );
         place.project(Proj::ConstIndex(index), element.clone());
         program(function(
-            vec![block(
+            block(
                 vec![MirInstr::LoadPlace {
                     dest: Reg(0),
                     place,
                 }],
                 MirTerm::Return(None),
-            )],
+            ),
             1,
             &[(0, element)],
         ))
@@ -1190,13 +1190,13 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));
     wrong_element.project(Proj::Index(Reg(0)), Ty::string_literal_of("s"));
     let wrong_element = function(
-        vec![block(
+        block(
             vec![MirInstr::LoadPlace {
                 dest: Reg(1),
                 place: wrong_element,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int()), (1, Ty::string_literal_of("s"))],
     );
@@ -1208,13 +1208,13 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     let mut wrong_index = MirPlace::root(0, Some(pointer));
     wrong_index.project(Proj::Index(Reg(0)), Ty::int());
     let wrong_index = function(
-        vec![block(
+        block(
             vec![MirInstr::LoadPlace {
                 dest: Reg(1),
                 place: wrong_index,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::string_literal_of("s")), (1, Ty::int())],
     );
@@ -1224,13 +1224,13 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     let mut non_indexed = MirPlace::root(0, Some(Ty::bool()));
     non_indexed.project(Proj::Index(Reg(0)), Ty::int());
     let non_indexed = function(
-        vec![block(
+        block(
             vec![MirInstr::LoadPlace {
                 dest: Reg(1),
                 place: non_indexed,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int()), (1, Ty::int())],
     );
@@ -1243,7 +1243,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
 #[test]
 fn verifier_rejects_malformed_interior_loan_metadata() {
     let empty = function(
-        vec![block(
+        block(
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: Vec::new(),
@@ -1251,14 +1251,14 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 dest_interior: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::none())],
     );
     expect_finding(&program(empty), "loan generation has no owner loans");
 
     let malformed = function(
-        vec![block(
+        block(
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: vec![MirLoan {
@@ -1275,7 +1275,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 dest_interior: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::none())],
     );
@@ -1283,7 +1283,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
 
     let immutable = reference_ty(Ty::int(), mojito::Mutability::Immutable);
     let mut escalated = function(
-        vec![block(
+        block(
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: vec![MirLoan {
@@ -1297,7 +1297,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 dest_interior: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::none())],
     );
@@ -1308,7 +1308,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
     );
 
     let mismatched_root = function(
-        vec![block(
+        block(
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: vec![MirLoan {
@@ -1325,7 +1325,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 dest_interior: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::none())],
     );
@@ -1335,7 +1335,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
     );
 
     let unnamed_refresh = function(
-        vec![block(
+        block(
             vec![MirInstr::InvalidateInteriors {
                 base: MirInteriorOrigin {
                     root: 0,
@@ -1346,7 +1346,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
                 marker: Reg(0),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::none())],
     );
@@ -1359,14 +1359,14 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
 #[test]
 fn verifier_rejects_an_undeclared_lifted_closure_target() {
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::MakeClosure {
                 dest: Reg(0),
                 function: "missing$nested".to_string(),
                 captures: Vec::new(),
             }],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::int())],
     );
@@ -1375,19 +1375,15 @@ fn verifier_rejects_an_undeclared_lifted_closure_target() {
 
 #[test]
 fn verifier_rejects_a_top_level_try_yield() {
-    let f = function(
-        vec![block(Vec::new(), MirTerm::TryYield(Vec::new()))],
-        0,
-        &[],
-    );
+    let f = function(block(Vec::new(), MirTerm::TryYield(Vec::new())), 0, &[]);
     expect_finding(&program(f), "`try.yield` outside the region it ends");
 }
 
 #[test]
 fn verifier_rejects_a_non_bool_if_condition() {
-    let arm = || vec![block(Vec::new(), MirTerm::Yield(Vec::new()))];
+    let arm = || block(Vec::new(), MirTerm::Yield(Vec::new()));
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -1396,14 +1392,14 @@ fn verifier_rejects_a_non_bool_if_condition() {
                 MirInstr::If {
                     results: Vec::new(),
                     cond: Reg(0),
-                    then: arm(),
+                    then: Box::new(arm()),
                     elifs: Vec::new(),
                     else_args: Vec::new(),
-                    orelse: arm(),
+                    orelse: Box::new(arm()),
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, Ty::int())],
     );
@@ -1411,28 +1407,15 @@ fn verifier_rejects_a_non_bool_if_condition() {
 }
 
 #[test]
-fn verifier_rejects_a_body_of_two_blocks() {
-    let f = function(
-        vec![
-            block(Vec::new(), MirTerm::Return(None)),
-            block(Vec::new(), MirTerm::Return(None)),
-        ],
-        0,
-        &[],
-    );
-    expect_finding(&program(f), "body holds 2 blocks");
-}
-
-#[test]
 fn verifier_rejects_return_type_mismatches() {
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::Const {
                 dest: Reg(0),
                 k: Const::Str("no".to_string()),
             }],
             MirTerm::Return(Some(Reg(0))),
-        )],
+        ),
         1,
         &[(0, Ty::string_literal_of("s"))],
     );
@@ -1444,7 +1427,7 @@ fn verifier_rejects_return_type_mismatches() {
 
 #[test]
 fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
-    let mut f = function(vec![block(Vec::new(), MirTerm::Return(None))], 0, &[]);
+    let mut f = function(block(Vec::new(), MirTerm::Return(None)), 0, &[]);
     f.n_params = 1;
     f.param_types = vec![TyKind::RuntimePack(vec![Ty::int(), Ty::string_literal_of("s")]).into()];
     f.var_tys.insert(
@@ -1457,13 +1440,13 @@ fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
 #[test]
 fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::Const {
                 dest: Reg(0),
                 k: Const::Str("boom".to_string()),
             }],
             MirTerm::ErrorReturn,
-        )],
+        ),
         1,
         &[(0, Ty::string_literal_of("s"))],
     );
@@ -1474,7 +1457,7 @@ fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
 fn verifier_rejects_mismatched_declared_call_arguments() {
     use mojito::mir::MirFunctionDeclaration;
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -1496,7 +1479,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::string_literal_of("s")), (1, Ty::int())],
     );
@@ -1544,7 +1527,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
     use mojito::mir::MirFunctionDeclaration;
     let declaration = value_parameter("n", Ty::int());
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::Call {
                 dest: Reg(1),
                 func: FuncRef::named("callee"),
@@ -1564,7 +1547,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
                 spread: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::string_literal_of("s")), (1, Ty::int())],
     );
@@ -1601,7 +1584,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
     });
     expect_finding(&prog, "register type StringLiteral, declared Int");
 
-    let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.blocks[0].instrs[0] else {
+    let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.body.instrs[0] else {
         unreachable!()
     };
     param_arg_regs.clear();
@@ -1628,11 +1611,7 @@ fn verifier_checks_compile_time_arguments_under_the_call_and_receiver_arguments(
     );
 
     for (_, function) in &mut free.functions {
-        for instr in function
-            .blocks
-            .iter_mut()
-            .flat_map(|block| &mut block.instrs)
-        {
+        for instr in function.body.instrs.iter_mut() {
             if let MirInstr::Call {
                 func,
                 instantiated_args,
@@ -1652,7 +1631,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
     let declarations = vec![value_parameter("n", Ty::int())];
     let callable = generic_callable(declarations.clone());
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::CallIndirect {
                 dest: Reg(2),
                 callee: Reg(0),
@@ -1675,7 +1654,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
                 spread: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         3,
         &[
             (0, callable),
@@ -1690,7 +1669,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
         param_arg_regs,
         param_decls,
         ..
-    } = &mut prog.functions[0].1.blocks[0].instrs[0]
+    } = &mut prog.functions[0].1.body.instrs[0]
     else {
         unreachable!()
     };
@@ -1706,7 +1685,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
 fn verifier_substitutes_retained_dependent_callable_arguments() {
     let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::CallIndirect {
                 dest: Reg(3),
                 callee: Reg(0),
@@ -1729,7 +1708,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                 spread: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         4,
         &[
             (0, dependent_generic_callable("index")),
@@ -1746,7 +1725,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
 fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
     let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::CallIndirect {
                 dest: Reg(3),
                 callee: Reg(0),
@@ -1769,7 +1748,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                 spread: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         4,
         &[
             (0, dependent_generic_callable("index")),
@@ -1788,7 +1767,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
         instantiated_contract,
         instantiated_args,
         ..
-    } = &mut prog.functions[0].1.blocks[0].instrs[0]
+    } = &mut prog.functions[0].1.body.instrs[0]
     else {
         unreachable!()
     };
@@ -1832,7 +1811,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         mutability: mojito::Mutability::Immutable,
     });
     let f = function(
-        vec![block(
+        block(
             vec![MirInstr::CallIndirect {
                 dest: Reg(1),
                 callee: Reg(0),
@@ -1851,7 +1830,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
                 spread: None,
             }],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, contract.into()), (1, result.into())],
     );
@@ -1864,7 +1843,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
 #[test]
 fn verifier_rejects_misaligned_call_place_metadata() {
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -1886,7 +1865,7 @@ fn verifier_rejects_misaligned_call_place_metadata() {
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         2,
         &[(0, Ty::int()), (1, Ty::none())],
     );
@@ -1904,7 +1883,7 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "first")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1925,7 +1904,7 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "first")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1957,7 +1936,7 @@ fn verifier_rejects_a_missing_abstract_next_method_adapter() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "take")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -1985,7 +1964,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
     };
     let abstract_next = |reference_result, result_adapter| {
         function(
-            vec![block(
+            block(
                 vec![MirInstr::MethodCall {
                     dest: Reg(1),
                     recv: Reg(0),
@@ -2009,7 +1988,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     refined_bound: None,
                 }],
                 MirTerm::Return(None),
-            )],
+            ),
             2,
             &[
                 (
@@ -2045,7 +2024,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -2064,7 +2043,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -2094,7 +2073,7 @@ fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans {
                 dest_interior: Some(domain),
@@ -2123,13 +2102,13 @@ fn verifier_checks_stores_into_erased_instance_storage() {
     };
     let store = |storage: Ty, source: Ty| {
         program(function(
-            vec![block(
+            block(
                 vec![MirInstr::Store {
                     place: MirPlace::root(0, Some(storage)),
                     src: Reg(0),
                 }],
                 MirTerm::Return(None),
-            )],
+            ),
             1,
             &[(0, source)],
         ))
@@ -2169,7 +2148,7 @@ fn verifier_checks_stores_into_erased_instance_storage() {
 fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
     let spread_call = |resolved: Option<String>| {
         program(function(
-            vec![block(
+            block(
                 vec![MirInstr::MethodCall {
                     dest: Reg(2),
                     recv: Reg(0),
@@ -2193,7 +2172,7 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
                     refined_bound: None,
                 }],
                 MirTerm::Return(None),
-            )],
+            ),
             3,
             &[
                 (0, TyKind::Struct("Sink".to_string(), Vec::new()).into()),
@@ -2216,7 +2195,7 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
 fn verifier_rejects_in_place_binding_without_its_producer() {
     let in_place = |producer: MirInstr| {
         program(function(
-            vec![block(
+            block(
                 vec![
                     producer,
                     MirInstr::DefVar {
@@ -2227,7 +2206,7 @@ fn verifier_rejects_in_place_binding_without_its_producer() {
                     },
                 ],
                 MirTerm::Return(None),
-            )],
+            ),
             1,
             &[(0, Ty::int())],
         ))
@@ -2243,7 +2222,7 @@ fn verifier_rejects_in_place_binding_without_its_producer() {
 
 /// The slot-end findings `verify` reports for a function over slot 0 (`x`),
 /// registers r0 (Int), r1 (Bool), and r2 (Int).
-fn slot_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+fn slot_end_findings(blocks: MirBlock) -> Vec<String> {
     let f = function(
         blocks,
         5,
@@ -2320,7 +2299,7 @@ fn raising_call() -> Vec<MirInstr> {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(3),
-            then: vec![block(
+            then: Box::new(block(
                 vec![MirInstr::DefVar {
                     var: 1,
                     src: Reg(4),
@@ -2331,10 +2310,10 @@ fn raising_call() -> Vec<MirInstr> {
                     label: TRY,
                     values: Vec::new(),
                 },
-            )],
+            )),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: vec![block(Vec::new(), MirTerm::Yield(Vec::new()))],
+            orelse: Box::new(block(Vec::new(), MirTerm::Yield(Vec::new()))),
         },
     ]
 }
@@ -2343,14 +2322,14 @@ fn raising_call() -> Vec<MirInstr> {
 const TRY: TryLabel = TryLabel(0);
 
 /// A `try` labelled [`TRY`] around `body`, with `handler` as its handler.
-const fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
+fn try_region(body: MirBlock, handler: Option<MirBlock>) -> MirInstr {
     MirInstr::Try {
         label: TRY,
         error: Some(1),
         results: Vec::new(),
-        body,
+        body: Box::new(body),
         handler_args: Vec::new(),
-        handler,
+        handler: handler.map(Box::new),
         else_args: Vec::new(),
         orelse: None,
     }
@@ -2361,24 +2340,24 @@ const fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirI
 #[test]
 fn verifier_rejects_a_drop_of_an_ended_slot() {
     let doubled = [define_x(), vec![DROP_X, DROP_X]].concat();
-    let findings = slot_end_findings(vec![block(doubled, MirTerm::Return(None))]);
+    let findings = slot_end_findings(block(doubled, MirTerm::Return(None)));
     assert_eq!(
         findings,
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
+            "MIR function 'test': drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
     let consumed = [define_x(), vec![DROP_X, MirInstr::ConsumeVar { var: 0 }]].concat();
-    let findings = slot_end_findings(vec![block(consumed, MirTerm::Return(None))]);
+    let findings = slot_end_findings(block(consumed, MirTerm::Return(None)));
     assert!(
         findings[0].contains("var.consume of slot $v0"),
         "{findings:?}"
     );
-    let moved = || vec![block(vec![move_x()], MirTerm::Yield(Vec::new()))];
-    let both_arms = vec![block(
+    let moved = || block(vec![move_x()], MirTerm::Yield(Vec::new()));
+    let both_arms = block(
         [define_x(), vec![if_region(moved(), moved()), DROP_X]].concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(slot_end_findings(both_arms).len(), 1);
 }
 
@@ -2388,27 +2367,27 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
 /// initialized.
 #[test]
 fn verifier_rejects_a_drop_of_a_slot_some_path_does_not_hold() {
-    let one_arm = vec![block(
+    let one_arm = block(
         [
             define_x(),
             vec![
                 if_region(
-                    vec![block(vec![move_x()], MirTerm::Yield(Vec::new()))],
-                    vec![block(Vec::new(), MirTerm::Yield(Vec::new()))],
+                    block(vec![move_x()], MirTerm::Yield(Vec::new())),
+                    block(Vec::new(), MirTerm::Yield(Vec::new())),
                 ),
                 DROP_X,
             ],
         ]
         .concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(
         slot_end_findings(one_arm),
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
+            "MIR function 'test': drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
-    let declared = vec![block(
+    let declared = block(
         [
             define_x(),
             vec![
@@ -2419,23 +2398,23 @@ fn verifier_rejects_a_drop_of_a_slot_some_path_does_not_hold() {
         ]
         .concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(slot_end_findings(declared).len(), 1);
-    let never_stored = vec![block(vec![DROP_X], MirTerm::Return(None))];
+    let never_stored = block(vec![DROP_X], MirTerm::Return(None));
     assert_eq!(slot_end_findings(never_stored).len(), 1);
 }
 
 /// The findings of `blocks` about owned registers ended twice, in a
 /// function whose parameter `x` and local `y` hold a struct `S` whose drop
 /// runs code; `%r0` is `S` and `%r1` is `Bool`.
-fn register_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+fn register_end_findings(blocks: MirBlock) -> Vec<String> {
     register_end_findings_in(blocks, &[], MirDeclarations::default())
 }
 
 /// [`register_end_findings`] over `declarations`, the registers `more`
 /// typed besides `%r0` and `%r1`.
 fn register_end_findings_in(
-    blocks: Vec<MirBlock>,
+    blocks: MirBlock,
     more: &[(u32, Ty)],
     declarations: MirDeclarations,
 ) -> Vec<String> {
@@ -2447,7 +2426,7 @@ fn register_end_findings_in(
 
 /// The findings of `blocks` about owned registers read after their end,
 /// in [`register_end_findings`]' function; `%r2` is `S` too.
-fn register_read_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+fn register_read_findings(blocks: MirBlock) -> Vec<String> {
     let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
     owned_register_findings(blocks, &[(2, s)], MirDeclarations::default())
         .into_iter()
@@ -2458,7 +2437,7 @@ fn register_read_findings(blocks: Vec<MirBlock>) -> Vec<String> {
 /// Every verifier finding of `blocks` in [`register_end_findings`]'
 /// function.
 fn owned_register_findings(
-    blocks: Vec<MirBlock>,
+    blocks: MirBlock,
     more: &[(u32, Ty)],
     declarations: MirDeclarations,
 ) -> Vec<String> {
@@ -2511,7 +2490,7 @@ const STORE_R0_IN_Y: MirInstr = MirInstr::DefVar {
 #[test]
 fn verifier_rejects_an_owned_register_ended_twice() {
     let once = [copy_x_and_condition(), vec![STORE_R0_IN_Y]].concat();
-    assert!(register_end_findings(vec![block(once, MirTerm::Return(None))]).is_empty());
+    assert!(register_end_findings(block(once, MirTerm::Return(None))).is_empty());
     let each_arm = [
         copy_x_and_condition(),
         vec![if_region(
@@ -2520,12 +2499,12 @@ fn verifier_rejects_an_owned_register_ended_twice() {
         )],
     ]
     .concat();
-    assert!(register_end_findings(vec![block(each_arm, MirTerm::Return(None))]).is_empty());
+    assert!(register_end_findings(block(each_arm, MirTerm::Return(None))).is_empty());
     let twice = [copy_x_and_condition(), vec![STORE_R0_IN_Y, STORE_R0_IN_Y]].concat();
     assert_eq!(
-        register_end_findings(vec![block(twice, MirTerm::Return(None))]),
+        register_end_findings(block(twice, MirTerm::Return(None))),
         [
-            "MIR function 'test' block 0: var.store ends owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': var.store ends owned register %r0, which some path reaching it has ended"
         ]
     );
     let after_one_arm = [
@@ -2540,9 +2519,9 @@ fn verifier_rejects_an_owned_register_ended_twice() {
     ]
     .concat();
     assert_eq!(
-        register_end_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
+        register_end_findings(block(after_one_arm, MirTerm::Return(None))),
         [
-            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': drop.reg ends owned register %r0, which some path reaching it has ended"
         ]
     );
 }
@@ -2564,14 +2543,14 @@ fn verifier_rejects_a_read_of_an_ended_owned_register() {
         place: MirPlace::root(1, Some(Ty::new(TyKind::Struct("S".into(), Vec::new())))),
     };
     let before = [copy_x_and_condition(), vec![copy_r0.clone(), STORE_R0_IN_Y]].concat();
-    assert!(register_read_findings(vec![block(before, MirTerm::Return(None))]).is_empty());
+    assert!(register_read_findings(block(before, MirTerm::Return(None))).is_empty());
     let slot = [copy_x_and_condition(), vec![STORE_R0_IN_Y, load_y]].concat();
-    assert!(register_read_findings(vec![block(slot, MirTerm::Return(None))]).is_empty());
+    assert!(register_read_findings(block(slot, MirTerm::Return(None))).is_empty());
     let after = [copy_x_and_condition(), vec![STORE_R0_IN_Y, copy_r0.clone()]].concat();
     assert_eq!(
-        register_read_findings(vec![block(after, MirTerm::Return(None))]),
+        register_read_findings(block(after, MirTerm::Return(None))),
         [
-            "MIR function 'test' block 0: value.copy reads owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': value.copy reads owned register %r0, which some path reaching it has ended"
         ]
     );
     let after_one_arm = [
@@ -2583,9 +2562,9 @@ fn verifier_rejects_a_read_of_an_ended_owned_register() {
     ]
     .concat();
     assert_eq!(
-        register_read_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
+        register_read_findings(block(after_one_arm, MirTerm::Return(None))),
         [
-            "MIR function 'test' block 0: value.copy reads owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': value.copy reads owned register %r0, which some path reaching it has ended"
         ]
     );
 }
@@ -2656,12 +2635,12 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
     let instrs = [copy_x_and_condition(), vec![absorb, DROP_R0]].concat();
     assert_eq!(
         register_end_findings_in(
-            vec![block(instrs, MirTerm::Return(None))],
+            block(instrs, MirTerm::Return(None)),
             &[(2, bound), (3, Ty::none())],
             declarations,
         ),
         [
-            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': drop.reg ends owned register %r0, which some path reaching it has ended"
         ]
     );
 }
@@ -2689,7 +2668,7 @@ fn verifier_accepts_a_drop_of_an_element_a_borrowed_pack_holds() {
     let pair = Ty::new(TyKind::Tuple(vec![s.clone(), s.clone()]));
     assert!(
         register_end_findings_in(
-            vec![block(borrowed, MirTerm::Return(None))],
+            block(borrowed, MirTerm::Return(None)),
             &[(2, s.clone()), (3, pair)],
             MirDeclarations::default(),
         )
@@ -2698,12 +2677,12 @@ fn verifier_accepts_a_drop_of_an_element_a_borrowed_pack_holds() {
     let owned = [copy_x_and_condition(), vec![tuple(vec![Reg(0)]), DROP_R0]].concat();
     assert_eq!(
         register_end_findings_in(
-            vec![block(owned, MirTerm::Return(None))],
+            block(owned, MirTerm::Return(None)),
             &[(3, Ty::new(TyKind::Tuple(vec![s])))],
             MirDeclarations::default(),
         ),
         [
-            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+            "MIR function 'test': drop.reg ends owned register %r0, which some path reaching it has ended"
         ]
     );
 }
@@ -2744,7 +2723,7 @@ fn deinit_call(dest: u32, recv: u32) -> MirInstr {
 fn verifier_rejects_a_destroy_of_a_memory_only_register() {
     let findings = |instrs: Vec<MirInstr>| -> Vec<String> {
         owned_register_findings(
-            vec![block(instrs, MirTerm::Return(None))],
+            block(instrs, MirTerm::Return(None)),
             &[(2, Ty::int()), (3, Ty::none())],
             MirDeclarations::default(),
         )
@@ -2759,7 +2738,7 @@ fn verifier_rejects_a_destroy_of_a_memory_only_register() {
     assert_eq!(
         findings([copy_x_and_condition(), vec![named_drop(0)]].concat()),
         [
-            "MIR function 'test' block 0: drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
+            "MIR function 'test': drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
         ]
     );
     let unnamed_drop = MirInstr::Drop {
@@ -2769,13 +2748,13 @@ fn verifier_rejects_a_destroy_of_a_memory_only_register() {
     assert_eq!(
         findings([copy_x_and_condition(), vec![unnamed_drop]].concat()),
         [
-            "MIR function 'test' block 0: drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
+            "MIR function 'test': drop.reg destroys %r0 of memory-only type S, which upstream destroys through its storage"
         ]
     );
     assert_eq!(
         findings([copy_x_and_condition(), vec![deinit_call(3, 0)]].concat()),
         [
-            "MIR function 'test' block 0: call.method deinit receiver destroys %r0 of memory-only type S, which upstream destroys through its storage"
+            "MIR function 'test': call.method deinit receiver destroys %r0 of memory-only type S, which upstream destroys through its storage"
         ]
     );
     let int = MirInstr::Const {
@@ -2807,7 +2786,7 @@ fn store_x() -> Vec<MirInstr> {
 /// path.
 #[test]
 fn verifier_accepts_a_drop_of_a_slot_every_path_holds() {
-    let both_stored = vec![block(
+    let both_stored = block(
         [
             define_x(),
             vec![
@@ -2818,7 +2797,7 @@ fn verifier_accepts_a_drop_of_a_slot_every_path_holds() {
         ]
         .concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(slot_end_findings(both_stored), Vec::<String>::new());
     let restored = [
         define_x(),
@@ -2834,24 +2813,24 @@ fn verifier_accepts_a_drop_of_a_slot_every_path_holds() {
         ],
     ]
     .concat();
-    let restored = vec![block(restored, MirTerm::Return(None))];
+    let restored = block(restored, MirTerm::Return(None));
     assert_eq!(slot_end_findings(restored), Vec::<String>::new());
     // The body moves `x` after its last raise, so its handler still owns it.
-    let body = vec![block(
+    let body = block(
         [raising_call(), vec![move_x()]].concat(),
         MirTerm::TryYield(Vec::new()),
-    )];
-    let handler = vec![block(vec![DROP_X], MirTerm::TryYield(Vec::new()))];
-    let raising = vec![block(
+    );
+    let handler = block(vec![DROP_X], MirTerm::TryYield(Vec::new()));
+    let raising = block(
         [define_x(), vec![try_region(body, Some(handler))]].concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(slot_end_findings(raising), Vec::<String>::new());
 }
 
 /// The part-end findings `verify` reports for a function over slot 0
 /// (`x`) and the registers of [`slot_end_findings`].
-fn part_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+fn part_end_findings(blocks: MirBlock) -> Vec<String> {
     let f = function(
         blocks,
         5,
@@ -2892,12 +2871,12 @@ fn move_x_field(field: &str) -> MirInstr {
 fn verifier_rejects_a_destroy_after_a_part_end() {
     let whole = [define_x(), vec![move_x_field("a"), DROP_X]].concat();
     assert_eq!(
-        part_end_findings(vec![block(whole, MirTerm::Return(None))]),
+        part_end_findings(block(whole, MirTerm::Return(None))),
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') whose part `a` some path reaching it has ended"
+            "MIR function 'test': drop.var of slot $v0 ('x') whose part `a` some path reaching it has ended"
         ]
     );
-    let one_arm = vec![block(
+    let one_arm = block(
         [
             define_x(),
             vec![
@@ -2907,7 +2886,7 @@ fn verifier_rejects_a_destroy_after_a_part_end() {
         ]
         .concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(part_end_findings(one_arm).len(), 1);
     let part = [
         define_x(),
@@ -2920,7 +2899,7 @@ fn verifier_rejects_a_destroy_after_a_part_end() {
         ],
     ]
     .concat();
-    let findings = part_end_findings(vec![block(part, MirTerm::Return(None))]);
+    let findings = part_end_findings(block(part, MirTerm::Return(None)));
     assert!(
         findings[0].contains("drop.place of slot $v0"),
         "{findings:?}"
@@ -2945,7 +2924,7 @@ fn verifier_accepts_a_destroy_of_every_part_held() {
     ]
     .concat();
     assert_eq!(
-        part_end_findings(vec![block(refilled, MirTerm::Return(None))]),
+        part_end_findings(block(refilled, MirTerm::Return(None))),
         Vec::<String>::new()
     );
     let consumed = [
@@ -2961,7 +2940,7 @@ fn verifier_accepts_a_destroy_of_every_part_held() {
     ]
     .concat();
     assert_eq!(
-        part_end_findings(vec![block(consumed, MirTerm::Return(None))]),
+        part_end_findings(block(consumed, MirTerm::Return(None))),
         Vec::<String>::new()
     );
 }
@@ -2969,38 +2948,38 @@ fn verifier_accepts_a_destroy_of_every_part_held() {
 const LOOP: Option<LoopLabel> = Some(LoopLabel(0));
 
 /// An `if` on r1 with `then` and `orelse` as its arms.
-const fn if_region(then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+fn if_region(then: MirBlock, orelse: MirBlock) -> MirInstr {
     MirInstr::If {
         results: Vec::new(),
         cond: Reg(1),
-        then,
+        then: Box::new(then),
         elifs: Vec::new(),
         else_args: Vec::new(),
-        orelse,
+        orelse: Box::new(orelse),
     }
 }
 
 /// A loop labelled [`LOOP`] around `body`.
-const fn loop_region(body: Vec<MirBlock>) -> MirInstr {
+fn loop_region(body: MirBlock) -> MirInstr {
     MirInstr::Loop {
         label: LOOP,
         operands: Vec::new(),
         args: Vec::new(),
         results: Vec::new(),
-        body,
+        body: Box::new(body),
     }
 }
 
 /// One block running `instrs` and ending in `term`, as a region.
-fn region(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
-    vec![block(instrs, term)]
+fn region(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+    block(instrs, term)
 }
 
-fn yields(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+fn yields(instrs: Vec<MirInstr>) -> MirBlock {
     region(instrs, MirTerm::Yield(Vec::new()))
 }
 
-fn breaks(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
+fn breaks(instrs: Vec<MirInstr>) -> MirBlock {
     region(
         instrs,
         MirTerm::Break {
@@ -3011,11 +2990,11 @@ fn breaks(instrs: Vec<MirInstr>) -> Vec<MirBlock> {
 }
 
 /// `main`'s body: define `x`, run `ops`, then drop `x`.
-fn defined_then_dropped(ops: Vec<MirInstr>) -> Vec<MirBlock> {
-    vec![block(
+fn defined_then_dropped(ops: Vec<MirInstr>) -> MirBlock {
+    block(
         [define_x(), ops, vec![DROP_X]].concat(),
         MirTerm::Return(None),
-    )]
+    )
 }
 
 /// A slot some path through a region op ends is not held after it: an
@@ -3030,7 +3009,7 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
     assert_eq!(
         slot_end_findings(defined_then_dropped(vec![both_arms])),
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
+            "MIR function 'test': drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
     let looped = loop_region(breaks(vec![move_x()]));
@@ -3059,10 +3038,10 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
             values: Vec::new(),
         },
     ));
-    let redropped = vec![block(
+    let redropped = block(
         [define_x(), vec![redropped]].concat(),
         MirTerm::Return(None),
-    )];
+    );
     assert_eq!(slot_end_findings(redropped).len(), 1);
     let matched = MirInstr::Match {
         results: Vec::new(),
@@ -3071,7 +3050,7 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
             body: region(vec![move_x()], MirTerm::MatchComplete(Vec::new())),
         }],
         else_args: Vec::new(),
-        orelse: yields(vec![move_x()]),
+        orelse: Box::new(yields(vec![move_x()])),
     };
     assert_eq!(
         slot_end_findings(defined_then_dropped(vec![matched])).len(),
@@ -3085,14 +3064,14 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
         Some(region(vec![DROP_X], MirTerm::TryYield(Vec::new()))),
     );
     let in_arm = if_region(yields(vec![handled]), yields(Vec::new()));
-    let findings = slot_end_findings(vec![block(
+    let findings = slot_end_findings(block(
         [define_x(), vec![in_arm]].concat(),
         MirTerm::Return(None),
-    )]);
+    ));
     assert_eq!(
         findings,
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
+            "MIR function 'test': drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
 }
@@ -3110,10 +3089,7 @@ fn verifier_accepts_a_drop_of_a_slot_a_region_op_holds() {
             values: Vec::new(),
         },
     ));
-    let refilled = vec![block(
-        [define_x(), vec![looped]].concat(),
-        MirTerm::Return(None),
-    )];
+    let refilled = block([define_x(), vec![looped]].concat(), MirTerm::Return(None));
     assert_eq!(slot_end_findings(refilled), Vec::<String>::new());
     let test = if_region(
         region(vec![move_x()], MirTerm::MatchComplete(Vec::new())),
@@ -3126,12 +3102,9 @@ fn verifier_accepts_a_drop_of_a_slot_a_region_op_holds() {
             body: region(vec![test], MirTerm::Unreachable),
         }],
         else_args: Vec::new(),
-        orelse: yields(vec![DROP_X]),
+        orelse: Box::new(yields(vec![DROP_X])),
     };
-    let next = vec![block(
-        [define_x(), vec![matched]].concat(),
-        MirTerm::Return(None),
-    )];
+    let next = block([define_x(), vec![matched]].concat(), MirTerm::Return(None));
     assert_eq!(slot_end_findings(next), Vec::<String>::new());
 }
 
@@ -3142,7 +3115,7 @@ fn verifier_rejects_a_vector_bound_to_its_storage_slot() {
     let vector = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Int32, 1);
     let storage = mojito::types::storage_ty(&vector);
     let f = function(
-        vec![block(
+        block(
             vec![
                 MirInstr::Const {
                     dest: Reg(0),
@@ -3159,7 +3132,7 @@ fn verifier_rejects_a_vector_bound_to_its_storage_slot() {
                 },
             ],
             MirTerm::Return(None),
-        )],
+        ),
         1,
         &[(0, vector)],
     );
@@ -3183,7 +3156,7 @@ fn bound_call(program: &mut MirProgram) -> &mut MirInstr {
         .functions
         .iter_mut()
         .filter(|(name, _)| name == "apply")
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.body))
         .find(|instruction| {
             matches!(instruction, MirInstr::MethodCall { method, .. } if method == "__call__")
         })

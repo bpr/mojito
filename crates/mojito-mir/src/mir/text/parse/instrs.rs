@@ -56,10 +56,10 @@ impl Decoder {
         let spans = self.locations(self.field(fields, "locations").ok()?);
         self.unlabelled_tries = false;
         self.legacy_raises = false;
-        let mut blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
+        let mut body = self.body(self.field(fields, "blocks").ok()?, &name)?;
         let unlabelled = std::mem::take(&mut self.unlabelled_tries);
         if unlabelled {
-            infer_try_labels(&mut blocks, &mut 0, None);
+            infer_try_labels(&mut body, &mut 0, None);
         }
         let legacy_raises = std::mem::take(&mut self.legacy_raises) || unlabelled;
         let removed_params = self
@@ -130,7 +130,7 @@ impl Decoder {
             ],
         );
         let mut function = MirFunction {
-            blocks,
+            body,
             n_regs,
             n_vars,
             var_names,
@@ -268,38 +268,46 @@ impl Decoder {
             .collect()
     }
 
-    pub(super) fn blocks(&mut self, value: &Value, function: &str) -> Vec<MirBlock> {
-        let Ok(values) = self.list(value) else {
-            return Vec::new();
-        };
-        values
+    /// A function body: one block, spelled as a one-entry block list.
+    pub(super) fn body(&mut self, value: &Value, function: &str) -> Option<MirBlock> {
+        let value = self.sole_block(value, &format!("function `{function}` body"))?;
+        let fields = self.record(value, "bb0").ok()?;
+        self.mark(format!("function/{function}/bb0"), value.span);
+        let instrs = self
+            .list(self.field(fields, "instructions").ok()?)
+            .ok()?
             .iter()
             .enumerate()
-            .filter_map(|(id, value)| {
-                let fields = self.record(value, &format!("bb{id}")).ok()?;
-                self.mark(format!("function/{function}/bb{id}"), value.span);
-                let instrs = self
-                    .list(self.field(fields, "instructions").ok()?)
-                    .ok()?
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, value)| {
-                        self.mark(
-                            format!("function/{function}/bb{id}/instruction/{index}"),
-                            value.span,
-                        );
-                        self.instruction(value)
-                    })
-                    .collect();
-                let term_value = self.field(fields, "terminator").ok()?;
+            .filter_map(|(index, value)| {
                 self.mark(
-                    format!("function/{function}/bb{id}/terminator"),
-                    term_value.span,
+                    format!("function/{function}/bb0/instruction/{index}"),
+                    value.span,
                 );
-                let term = self.term(term_value)?;
-                Some(self.block_of(instrs, term))
+                self.instruction(value)
             })
-            .collect()
+            .collect();
+        let term_value = self.field(fields, "terminator").ok()?;
+        self.mark(
+            format!("function/{function}/bb0/terminator"),
+            term_value.span,
+        );
+        let term = self.term(term_value)?;
+        Some(self.block_of(instrs, term))
+    }
+
+    /// The one entry of a block list, upstream's `SizedRegion<1>`; a list
+    /// of any other length is an error naming `what`.
+    fn sole_block<'v>(&mut self, value: &'v Value, what: &str) -> Option<&'v Value> {
+        let values = self.list(value).ok()?;
+        if let [block] = values {
+            Some(block)
+        } else {
+            self.error(
+                value.span,
+                format!("{what} holds {} blocks, not one", values.len()),
+            );
+            None
+        }
     }
 
     pub(super) fn instruction(&mut self, value: &Value) -> Option<MirInstr> {
@@ -933,7 +941,7 @@ impl Decoder {
                 op: self.req(value, fields, "op", Self::simd_reduction)?,
             }),
             "try" => {
-                let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
+                let body = Box::new(self.req(value, fields, "body", Self::region)?);
                 let mut error = self
                     .field(fields, "error")
                     .ok()
@@ -949,19 +957,19 @@ impl Decoder {
                             error = self.req(inner, handler_fields, "error_var", |d, v| {
                                 Some(d.option_var(v))
                             })?;
-                            let blocks = self.req(inner, handler_fields, "blocks", |d, v| {
-                                Some(d.region_blocks(v))
-                            })?;
+                            let block = self.req(inner, handler_fields, "blocks", Self::region)?;
                             self.unknown(handler_fields, &["error_var", "blocks"]);
-                            Some(blocks)
+                            Some(Box::new(block))
                         }
-                        Some(inner) => Some(self.region_blocks(inner)),
+                        Some(inner) => Some(Box::new(self.region(inner)?)),
                     }
                 };
                 let orelse = {
                     let field = self.required(value, fields, "orelse")?;
-                    self.option_value(Some(field))
-                        .map(|v| self.region_blocks(v))
+                    match self.option_value(Some(field)) {
+                        Some(v) => Some(Box::new(self.region(v)?)),
+                        None => None,
+                    }
                 };
                 self.no_finally(fields)?;
                 let label = if let Ok(label) = self.field(fields, "label") {
@@ -984,17 +992,17 @@ impl Decoder {
             "if" => Some(MirInstr::If {
                 results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
                 cond: self.req(value, fields, "condition", Self::reg)?,
-                then: self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?,
+                then: Box::new(self.req(value, fields, "then", Self::region)?),
                 elifs: self.req(value, fields, "elifs", |d, v| Some(d.elifs(v)))?,
                 else_args: self.added_regs(fields, "else_arguments"),
-                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+                orelse: Box::new(self.req(value, fields, "else", Self::region)?),
             }),
             "loop" => Some(MirInstr::Loop {
                 label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
                 operands: self.added_regs(fields, "operands"),
                 args: self.added_regs(fields, "arguments"),
                 results: self.added_regs(fields, "results"),
-                body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
+                body: Box::new(self.req(value, fields, "body", Self::region)?),
             }),
             "comptime.if" => {
                 let values = if self.minor <= 166 {
@@ -1011,9 +1019,9 @@ impl Decoder {
                     values,
                     arms: self.req(value, fields, "arms", |d, v| {
                         let arms = d.list(v).ok()?;
-                        Some(arms.iter().map(|arm| d.region_blocks(arm)).collect())
+                        arms.iter().map(|arm| d.region(arm)).collect()
                     })?,
-                    orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+                    orelse: Box::new(self.req(value, fields, "else", Self::region)?),
                 })
             }
             "comptime.for" => Some(MirInstr::ComptimeFor {
@@ -1022,8 +1030,8 @@ impl Decoder {
                 operands: self.added_regs(fields, "operands"),
                 args: self.added_regs(fields, "arguments"),
                 results: self.added_regs(fields, "results"),
-                body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
-                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+                body: Box::new(self.req(value, fields, "body", Self::region)?),
+                orelse: Box::new(self.req(value, fields, "else", Self::region)?),
             }),
             "comptime.assert" => {
                 if self.minor <= 166 {
@@ -1041,7 +1049,7 @@ impl Decoder {
                 results: self.added_regs(fields, "results"),
                 cases: self.req(value, fields, "cases", |d, v| Some(d.cases(v)))?,
                 else_args: self.added_regs(fields, "else_arguments"),
-                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+                orelse: Box::new(self.req(value, fields, "else", Self::region)?),
             }),
             "drop.reg" => Some(MirInstr::Drop {
                 reg: self.req(value, fields, "reg", Self::reg)?,
@@ -1237,9 +1245,9 @@ impl Decoder {
             .filter_map(|value| {
                 let fields = self.record(value, "elif").ok()?;
                 let cond_args = self.added_regs(fields, "condition_arguments");
-                let cond = self.req(value, fields, "condition", |d, v| Some(d.region_blocks(v)))?;
+                let cond = self.req(value, fields, "condition", Self::region)?;
                 let then_args = self.added_regs(fields, "then_arguments");
-                let then = self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?;
+                let then = self.req(value, fields, "then", Self::region)?;
                 self.unknown(
                     fields,
                     &["condition_arguments", "condition", "then_arguments", "then"],
@@ -1266,12 +1274,12 @@ impl Decoder {
                 if matches!(value.kind, ValueKind::List(_)) {
                     return Some(MirCase {
                         args: Vec::new(),
-                        body: self.region_blocks(value),
+                        body: self.region(value)?,
                     });
                 }
                 let fields = self.record(value, "case").ok()?;
                 let args = self.added_regs(fields, "arguments");
-                let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
+                let body = self.req(value, fields, "body", Self::region)?;
                 self.unknown(fields, &["arguments", "body"]);
                 Some(MirCase { args, body })
             })
@@ -1345,33 +1353,24 @@ impl Decoder {
             .and_then(|value| self.loop_label(value))
     }
 
-    /// Blocks of one region. Each region carries its own dense
-    /// `bb0..bbN` namespace (see `docs/mir-text-format.md`); region-local
-    /// blocks are deliberately absent from the artifact source map — the
-    /// enclosing instruction's path already brackets them, and the canonical
-    /// verifier only resolves function-level block paths.
-    pub(super) fn region_blocks(&mut self, value: &Value) -> Vec<MirBlock> {
-        let Ok(values) = self.list(value) else {
-            return Vec::new();
+    /// The one block of a region, spelled as a one-entry block list (see
+    /// `docs/mir-text-format.md`); it is deliberately absent from the
+    /// artifact source map — the enclosing instruction's path already
+    /// brackets it.
+    pub(super) fn region(&mut self, value: &Value) -> Option<MirBlock> {
+        let value = self.sole_block(value, "region")?;
+        let fields = self.record(value, "bb0").ok()?;
+        let instrs = {
+            let field = self.required(value, fields, "instructions")?;
+            self.list(field)
+                .ok()?
+                .iter()
+                .filter_map(|v| self.instruction(v))
+                .collect()
         };
-        values
-            .iter()
-            .enumerate()
-            .filter_map(|(id, value)| {
-                let fields = self.record(value, &format!("bb{id}")).ok()?;
-                let instrs = {
-                    let field = self.required(value, fields, "instructions")?;
-                    self.list(field)
-                        .ok()?
-                        .iter()
-                        .filter_map(|v| self.instruction(v))
-                        .collect()
-                };
-                let term = self.req(value, fields, "terminator", Self::term)?;
-                self.unknown(fields, &["instructions", "terminator"]);
-                Some(self.block_of(instrs, term))
-            })
-            .collect()
+        let term = self.req(value, fields, "terminator", Self::term)?;
+        self.unknown(fields, &["instructions", "terminator"]);
+        Some(self.block_of(instrs, term))
     }
 }
 
@@ -1380,44 +1379,42 @@ impl Decoder {
 /// in preorder from `next`, and each `raise` the label of the nearest `try`
 /// whose body holds it and which has a handler, `target` here, as the old
 /// raise reached the nearest such handler.
-fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryLabel>) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if let MirInstr::Try {
-                label,
-                body,
-                handler,
-                orelse,
-                ..
-            } = instruction
-            {
-                *label = TryLabel(*next);
-                *next += 1;
-                let inner = if handler.is_some() {
-                    Some(*label)
-                } else {
-                    target
-                };
-                infer_try_labels(body, next, inner);
-                for region in handler.iter_mut().chain(orelse) {
-                    infer_try_labels(region, next, target);
-                }
-                continue;
-            }
-            for region in crate::mir::instruction_regions_mut(instruction) {
+fn infer_try_labels(block: &mut MirBlock, next: &mut u32, target: Option<TryLabel>) {
+    for instruction in &mut block.instrs {
+        if let MirInstr::Try {
+            label,
+            body,
+            handler,
+            orelse,
+            ..
+        } = instruction
+        {
+            *label = TryLabel(*next);
+            *next += 1;
+            let inner = if handler.is_some() {
+                Some(*label)
+            } else {
+                target
+            };
+            infer_try_labels(body, next, inner);
+            for region in handler.iter_mut().chain(orelse) {
                 infer_try_labels(region, next, target);
             }
+            continue;
         }
-        if let (MirTerm::ErrorReturn, Some(label)) = (&block.term, target)
-            && let Some(MirInstr::DefVar { var, .. }) = block.instrs.last_mut()
-            && *var == LEGACY_FUNCTION_ERROR_SLOT
-        {
-            *var = LEGACY_ERROR_SLOT;
-            block.term = MirTerm::TryRaise {
-                label,
-                values: Vec::new(),
-            };
+        for region in crate::mir::instruction_regions_mut(instruction) {
+            infer_try_labels(region, next, target);
         }
+    }
+    if let (MirTerm::ErrorReturn, Some(label)) = (&block.term, target)
+        && let Some(MirInstr::DefVar { var, .. }) = block.instrs.last_mut()
+        && *var == LEGACY_FUNCTION_ERROR_SLOT
+    {
+        *var = LEGACY_ERROR_SLOT;
+        block.term = MirTerm::TryRaise {
+            label,
+            values: Vec::new(),
+        };
     }
 }
 
@@ -1449,9 +1446,9 @@ const fn legacy_error_store(slot: VarId, src: crate::mir::Reg) -> MirInstr {
 /// or a fresh `$try_error<N>` typed as the first raise's error, declared
 /// before the `try`.
 pub(super) fn upgrade_error_slots(function: &mut MirFunction) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     upgrade_blocks(&mut blocks, function);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 /// Give `function`, read from text older than MIR 1.108, the error slot it
@@ -1461,7 +1458,7 @@ pub(super) fn upgrade_error_slots(function: &mut MirFunction) {
 pub(super) fn upgrade_function_error_slot(function: &mut MirFunction) {
     let slot = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
     let ty = function.error_ty.clone().unwrap_or_else(Ty::error);
-    if !name_function_error_slot(&mut function.blocks, slot, &ty) && !function.raises {
+    if !name_function_error_slot(&mut function.body, slot, &ty) && !function.raises {
         return;
     }
     function.n_vars += 1;
@@ -1475,9 +1472,9 @@ pub(super) fn upgrade_function_error_slot(function: &mut MirFunction) {
 /// as upstream's `#pop.int_literal_convert` is typed, into a fresh storage
 /// register the struct is then created over (`struct.create`).
 pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     storage_literal_targets(&mut blocks, function);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 /// Give each register of `registers`, typed by a bare literal atom older
@@ -1486,7 +1483,7 @@ pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
 pub(super) fn upgrade_bare_literals(function: &mut MirFunction, registers: &[u32]) -> Vec<u32> {
     let mut undefined = Vec::new();
     for &register in registers {
-        match literal_definition(&function.blocks, register) {
+        match literal_definition(&function.body, register) {
             Some(ty) => {
                 function.reg_types.insert(register, ty);
             }
@@ -1496,10 +1493,10 @@ pub(super) fn upgrade_bare_literals(function: &mut MirFunction, registers: &[u32
     undefined
 }
 
-fn literal_definition(blocks: &[MirBlock], register: u32) -> Option<Ty> {
-    blocks
+fn literal_definition(block: &MirBlock, register: u32) -> Option<Ty> {
+    block
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Const {
                 dest,
@@ -1521,98 +1518,92 @@ fn literal_definition(blocks: &[MirBlock], register: u32) -> Option<Ty> {
 
 /// Name `slot` in each store [`legacy_error_store`] made before a raise
 /// out of the function in `blocks`, typing it `ty`; whether there was one.
-fn name_function_error_slot(blocks: &mut [MirBlock], slot: VarId, ty: &Ty) -> bool {
+fn name_function_error_slot(block: &mut MirBlock, slot: VarId, ty: &Ty) -> bool {
     let mut named = false;
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if let MirInstr::DefVar {
-                var, binding_ty, ..
-            } = instruction
-                && *var == LEGACY_FUNCTION_ERROR_SLOT
-            {
-                *var = slot;
-                *binding_ty = Some(ty.clone());
-                named = true;
-            }
-            for region in crate::mir::instruction_regions_mut(instruction) {
-                named |= name_function_error_slot(region, slot, ty);
-            }
+    for instruction in &mut block.instrs {
+        if let MirInstr::DefVar {
+            var, binding_ty, ..
+        } = instruction
+            && *var == LEGACY_FUNCTION_ERROR_SLOT
+        {
+            *var = slot;
+            *binding_ty = Some(ty.clone());
+            named = true;
+        }
+        for region in crate::mir::instruction_regions_mut(instruction) {
+            named |= name_function_error_slot(region, slot, ty);
         }
     }
     named
 }
 
-fn storage_literal_targets(blocks: &mut [MirBlock], function: &mut MirFunction) {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
-                storage_literal_targets(region, function);
+fn storage_literal_targets(block: &mut MirBlock, function: &mut MirFunction) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+            storage_literal_targets(region, function);
+        }
+        if let MirInstr::MaterializeLiteral { dest, target, .. } = &mut block.instrs[index]
+            && let Some(storage_ty) = mojito_types::types::simd_storage(target)
+        {
+            let storage = crate::mir::Reg(function.n_regs);
+            function.n_regs += 1;
+            function.reg_types.insert(storage.0, storage_ty.clone());
+            if let Some(span) = function.spans.0.get(&dest.0).cloned() {
+                function.spans.0.insert(storage.0, span);
             }
-            if let MirInstr::MaterializeLiteral { dest, target, .. } = &mut block.instrs[index]
-                && let Some(storage_ty) = mojito_types::types::simd_storage(target)
-            {
-                let storage = crate::mir::Reg(function.n_regs);
-                function.n_regs += 1;
-                function.reg_types.insert(storage.0, storage_ty.clone());
-                if let Some(span) = function.spans.0.get(&dest.0).cloned() {
-                    function.spans.0.insert(storage.0, span);
-                }
-                let created = std::mem::replace(dest, storage);
-                *target = storage_ty;
-                block.instrs.insert(
-                    index + 1,
-                    MirInstr::MakeStruct {
-                        dest: created,
-                        fields: vec![storage],
-                    },
-                );
-                index += 1;
-            }
+            let created = std::mem::replace(dest, storage);
+            *target = storage_ty;
+            block.instrs.insert(
+                index + 1,
+                MirInstr::MakeStruct {
+                    dest: created,
+                    fields: vec![storage],
+                },
+            );
             index += 1;
         }
+        index += 1;
     }
 }
 
-fn upgrade_blocks(blocks: &mut [MirBlock], function: &mut MirFunction) {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            let mut declare = None;
-            if let MirInstr::Try {
-                label, error, body, ..
-            } = &mut block.instrs[index]
-            {
-                let mut slot = *error;
-                let mut fresh = false;
-                legacy_stores(body, *label, &mut |var, binding_ty, src| {
-                    let slot = *slot.get_or_insert_with(|| {
-                        fresh = true;
-                        let var = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
-                        function.n_vars += 1;
-                        function.var_names.push(format!("$try_error{}", label.0));
-                        if let Some(ty) = function.reg_types.get(&src.0).cloned() {
-                            function.var_tys.insert(var, ty);
-                        }
-                        var
-                    });
-                    *var = slot;
-                    *binding_ty = function.var_tys.get(&slot).cloned();
+fn upgrade_blocks(block: &mut MirBlock, function: &mut MirFunction) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        let mut declare = None;
+        if let MirInstr::Try {
+            label, error, body, ..
+        } = &mut block.instrs[index]
+        {
+            let mut slot = *error;
+            let mut fresh = false;
+            legacy_stores(body, *label, &mut |var, binding_ty, src| {
+                let slot = *slot.get_or_insert_with(|| {
+                    fresh = true;
+                    let var = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
+                    function.n_vars += 1;
+                    function.var_names.push(format!("$try_error{}", label.0));
+                    if let Some(ty) = function.reg_types.get(&src.0).cloned() {
+                        function.var_tys.insert(var, ty);
+                    }
+                    var
                 });
-                if fresh {
-                    *error = slot;
-                    declare = slot;
-                }
+                *var = slot;
+                *binding_ty = function.var_tys.get(&slot).cloned();
+            });
+            if fresh {
+                *error = slot;
+                declare = slot;
             }
-            for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
-                upgrade_blocks(region, function);
-            }
-            if let Some(var) = declare {
-                block.instrs.insert(index, MirInstr::DeclareVar { var });
-                index += 1;
-            }
+        }
+        for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+            upgrade_blocks(region, function);
+        }
+        if let Some(var) = declare {
+            block.instrs.insert(index, MirInstr::DeclareVar { var });
             index += 1;
         }
+        index += 1;
     }
 }
 
@@ -1620,41 +1611,39 @@ fn upgrade_blocks(blocks: &mut [MirBlock], function: &mut MirFunction) {
 /// naming the `try` labelled `label`, resolved as
 /// [`crate::mir::try_raises_mut`] resolves the raise.
 fn legacy_stores(
-    body: &mut [MirBlock],
+    block: &mut MirBlock,
     label: TryLabel,
     visit: &mut impl FnMut(&mut VarId, &mut Option<Ty>, crate::mir::Reg),
 ) {
-    for block in body {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::Try {
-                    label: inner,
-                    handler,
-                    orelse,
-                    ..
-                } if *inner == label => {
-                    for region in handler.iter_mut().chain(orelse) {
-                        legacy_stores(region, label, visit);
-                    }
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::Try {
+                label: inner,
+                handler,
+                orelse,
+                ..
+            } if *inner == label => {
+                for region in handler.iter_mut().chain(orelse) {
+                    legacy_stores(region, label, visit);
                 }
-                instruction => {
-                    for region in crate::mir::instruction_regions_mut(instruction) {
-                        legacy_stores(region, label, visit);
-                    }
+            }
+            instruction => {
+                for region in crate::mir::instruction_regions_mut(instruction) {
+                    legacy_stores(region, label, visit);
                 }
             }
         }
-        if matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
-            && let Some(MirInstr::DefVar {
-                var,
-                src,
-                binding_ty,
-                ..
-            }) = block.instrs.last_mut()
-            && *var == LEGACY_ERROR_SLOT
-        {
-            visit(var, binding_ty, *src);
-        }
+    }
+    if matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
+        && let Some(MirInstr::DefVar {
+            var,
+            src,
+            binding_ty,
+            ..
+        }) = block.instrs.last_mut()
+        && *var == LEGACY_ERROR_SLOT
+    {
+        visit(var, binding_ty, *src);
     }
 }
 

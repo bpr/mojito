@@ -49,7 +49,7 @@ pub const SIMPLIFY_CF: BodyPass = BodyPass {
 /// whether any of these applied.
 pub fn simplify_cf(_name: &str, function: &mut MirFunction, _: &MirDeclarations) -> bool {
     let mut census = Census::default();
-    census.walk(&function.blocks);
+    census.walk(&function.body);
     let mut removal = Removal {
         next_loop: census.jumps.len(),
         next_try: census.elidable.len(),
@@ -60,11 +60,11 @@ pub fn simplify_cf(_name: &str, function: &mut MirFunction, _: &MirDeclarations)
         erased_loops: 0,
         erased_tries_count: 0,
     };
-    removal.remove_loops(&mut function.blocks);
+    removal.remove_loops(&mut function.body);
     let mut survivors: Vec<usize> = (0..removal.erased_tries.len())
         .filter(|&id| !removal.erased_tries[id])
         .collect();
-    removal.remove_tries(&mut function.blocks, &mut survivors);
+    removal.remove_tries(&mut function.body, &mut survivors);
     let Removal {
         replaced,
         mut erased,
@@ -73,7 +73,7 @@ pub fn simplify_cf(_name: &str, function: &mut MirFunction, _: &MirDeclarations)
         ..
     } = removal;
     let resolved = resolve_replacements(&replaced);
-    replace_register_reads(&mut function.blocks, &resolved);
+    replace_register_reads(&mut function.body, &resolved);
     erased.extend(replaced.keys());
     function.reg_types.retain(|reg, _| !erased.contains(reg));
     function.spans.0.retain(|reg, _| !erased.contains(reg));
@@ -124,53 +124,52 @@ struct Census {
 }
 
 impl Census {
-    fn walk(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                match instruction {
-                    MirInstr::Loop { label, body, .. } => {
-                        let id = self.jumps.len();
-                        self.jumps.push(0);
-                        self.parents.push((*label, id));
-                        self.walk(body);
-                        self.parents.pop();
+    fn walk(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            match instruction {
+                MirInstr::Loop { label, body, .. } => {
+                    let id = self.jumps.len();
+                    self.jumps.push(0);
+                    self.parents.push((*label, id));
+                    self.walk(body);
+                    self.parents.pop();
+                }
+                MirInstr::Try {
+                    label,
+                    body,
+                    handler,
+                    orelse,
+                    ..
+                } => {
+                    let id = self.elidable.len();
+                    self.elidable.push(true);
+                    self.tries.push((*label, id));
+                    self.walk(body);
+                    self.tries.pop();
+                    for part in handler.iter().chain(orelse) {
+                        self.walk(part);
                     }
-                    MirInstr::Try {
-                        label,
-                        body,
-                        handler,
-                        orelse,
-                        ..
-                    } => {
-                        let id = self.elidable.len();
-                        self.elidable.push(true);
-                        self.tries.push((*label, id));
-                        self.walk(body);
-                        self.tries.pop();
-                        for part in handler.iter().chain(orelse) {
-                            self.walk(part);
-                        }
-                    }
-                    _ => {
-                        for region in instruction_regions(instruction) {
-                            self.walk(region);
-                        }
+                }
+                _ => {
+                    for region in instruction_regions(instruction) {
+                        self.walk(region);
                     }
                 }
             }
-            if let MirTerm::TryRaise { label, .. } = block.term
-                && let Some(&(_, id)) = self.tries.iter().rev().find(|(found, _)| *found == label)
-            {
-                self.elidable[id] = false;
-            }
-            if let MirTerm::Break { label, .. } | MirTerm::Continue { label, .. } = &block.term
-                && let Some(&(_, id)) =
-                    self.parents.iter().rev().find(|(found, _)| {
-                        RegionFrame::Loop(*label).names(RegionFrame::Loop(*found))
-                    })
-            {
-                self.jumps[id] += 1;
-            }
+        }
+        if let MirTerm::TryRaise { label, .. } = block.term
+            && let Some(&(_, id)) = self.tries.iter().rev().find(|(found, _)| *found == label)
+        {
+            self.elidable[id] = false;
+        }
+        if let MirTerm::Break { label, .. } | MirTerm::Continue { label, .. } = &block.term
+            && let Some(&(_, id)) = self
+                .parents
+                .iter()
+                .rev()
+                .find(|(found, _)| RegionFrame::Loop(*label).names(RegionFrame::Loop(*found)))
+        {
+            self.jumps[id] += 1;
         }
     }
 }
@@ -195,29 +194,27 @@ struct Removal {
 }
 
 impl Removal {
-    /// `tryRemovingLoop` over every loop of `blocks`; the `try`s a removal
+    /// `tryRemovingLoop` over every loop of `block`; the `try`s a removal
     /// erases are recorded, so that the `try` walk numbers the rest.
-    fn remove_loops(&mut self, blocks: &mut [MirBlock]) {
-        for block in blocks.iter_mut().rev() {
-            let block_end = self.next_try;
-            let mut at = block.instrs.len();
-            while at > 0 {
-                at -= 1;
-                let after_tail = self.next_try;
-                for region in instruction_regions_mut(&mut block.instrs[at])
-                    .into_iter()
-                    .rev()
-                {
-                    self.remove_loops(region);
+    fn remove_loops(&mut self, block: &mut MirBlock) {
+        let block_end = self.next_try;
+        let mut at = block.instrs.len();
+        while at > 0 {
+            at -= 1;
+            let after_tail = self.next_try;
+            for region in instruction_regions_mut(&mut block.instrs[at])
+                .into_iter()
+                .rev()
+            {
+                self.remove_loops(region);
+            }
+            match block.instrs[at] {
+                MirInstr::Loop { .. } => {
+                    self.next_loop -= 1;
+                    self.try_removing_loop(block, at, after_tail..block_end);
                 }
-                match block.instrs[at] {
-                    MirInstr::Loop { .. } => {
-                        self.next_loop -= 1;
-                        self.try_removing_loop(block, at, after_tail..block_end);
-                    }
-                    MirInstr::Try { .. } => self.next_try -= 1,
-                    _ => {}
-                }
+                MirInstr::Try { .. } => self.next_try -= 1,
+                _ => {}
             }
         }
     }
@@ -227,9 +224,9 @@ impl Removal {
     fn try_removing_loop(&mut self, block: &mut MirBlock, at: usize, tail: Range<usize>) {
         let count = self.census.jumps[self.next_loop];
         let single_break = match &block.instrs[at] {
-            MirInstr::Loop { label, body, .. } if body.len() == 1 => {
+            MirInstr::Loop { label, body, .. } => {
                 count == 1
-                    && matches!(&body[0].term, MirTerm::Break { label: named, .. }
+                    && matches!(&body.term, MirTerm::Break { label: named, .. }
                         if named.is_none() || named == label)
             }
             _ => return,
@@ -252,9 +249,7 @@ impl Removal {
         let arguments: HashMap<u32, Reg> = args.iter().map(|arg| arg.0).zip(operands).collect();
         replace_register_reads(&mut body, &arguments);
         self.erased.extend(arguments.keys());
-        let Some(MirBlock { instrs, term }) = body.pop() else {
-            return;
-        };
+        let MirBlock { instrs, term } = *body;
         self.erased_loops += 1;
         let inlined = instrs.len();
         block.instrs.splice(at..at, instrs);
@@ -273,25 +268,23 @@ impl Removal {
         }
     }
 
-    /// `removeTrivialTry` over every elidable `try` of `blocks`, numbered
+    /// `removeTrivialTry` over every elidable `try` of `block`, numbered
     /// by `survivors`, the `try`s the loop removals left, in preorder.
-    fn remove_tries(&mut self, blocks: &mut [MirBlock], survivors: &mut Vec<usize>) {
-        for block in blocks.iter_mut().rev() {
-            let mut at = block.instrs.len();
-            while at > 0 {
-                at -= 1;
-                for region in instruction_regions_mut(&mut block.instrs[at])
-                    .into_iter()
-                    .rev()
-                {
-                    self.remove_tries(region, survivors);
-                }
-                if matches!(block.instrs[at], MirInstr::Try { .. })
-                    && let Some(id) = survivors.pop()
-                    && self.census.elidable[id]
-                {
-                    self.remove_trivial_try(block, at);
-                }
+    fn remove_tries(&mut self, block: &mut MirBlock, survivors: &mut Vec<usize>) {
+        let mut at = block.instrs.len();
+        while at > 0 {
+            at -= 1;
+            for region in instruction_regions_mut(&mut block.instrs[at])
+                .into_iter()
+                .rev()
+            {
+                self.remove_tries(region, survivors);
+            }
+            if matches!(block.instrs[at], MirInstr::Try { .. })
+                && let Some(id) = survivors.pop()
+                && self.census.elidable[id]
+            {
+                self.remove_trivial_try(block, at);
             }
         }
     }
@@ -303,7 +296,7 @@ impl Removal {
         let instruction = block.instrs.remove(at);
         let MirInstr::Try {
             results,
-            mut body,
+            body,
             handler_args,
             handler,
             else_args,
@@ -315,7 +308,7 @@ impl Removal {
             return;
         };
         self.erased.extend(handler_args.iter().map(|arg| arg.0));
-        for handled in handler.iter().flatten() {
+        if let Some(handled) = &handler {
             for instruction in &handled.instrs {
                 erased_results(instruction, &mut self.erased);
             }
@@ -326,13 +319,11 @@ impl Removal {
         } else {
             results.clone()
         };
-        let parts = std::iter::once((body.pop(), completes))
-            .chain(orelse.map(|mut part| (part.pop(), results.clone())));
+        let parts =
+            std::iter::once((body, completes)).chain(orelse.map(|part| (part, results.clone())));
         let mut end = at;
         for (part, defined) in parts {
-            let Some(MirBlock { instrs, term }) = part else {
-                return;
-            };
+            let MirBlock { instrs, term } = *part;
             let inlined = instrs.len();
             block.instrs.splice(end..end, instrs);
             end += inlined;
@@ -352,7 +343,7 @@ impl Removal {
 /// `propagateImpliedCondition` over every `if` of `function`, in
 /// postorder; returns how many implied a condition.
 fn propagate_implied_conditions(function: &mut MirFunction) -> usize {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     let mut constants = HashSet::new();
     constant_registers(&blocks, &mut constants);
     let mut implication = Implication {
@@ -362,13 +353,13 @@ fn propagate_implied_conditions(function: &mut MirFunction) -> usize {
     };
     implication.walk(&mut blocks);
     let implied = implication.implied;
-    function.blocks = blocks;
+    function.body = blocks;
     implied
 }
 
-/// Collect the registers of `blocks`, at any depth, a `const` defines.
-fn constant_registers(blocks: &[MirBlock], constants: &mut HashSet<u32>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+/// Collect the registers of `block`, at any depth, a `const` defines.
+fn constant_registers(block: &MirBlock, constants: &mut HashSet<u32>) {
+    for instruction in &block.instrs {
         if let MirInstr::Const { dest, .. } = instruction {
             constants.insert(dest.0);
         }
@@ -387,20 +378,18 @@ struct Implication<'a> {
 }
 
 impl Implication<'_> {
-    fn walk(&mut self, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            let mut at = 0;
-            while at < block.instrs.len() {
-                for region in instruction_regions_mut(&mut block.instrs[at]) {
-                    self.walk(region);
-                }
-                if let Some((cond, value)) = self.implied_value(&block.instrs[at])
-                    && self.imply(block, at, cond, value)
-                {
-                    at += 1;
-                }
+    fn walk(&mut self, block: &mut MirBlock) {
+        let mut at = 0;
+        while at < block.instrs.len() {
+            for region in instruction_regions_mut(&mut block.instrs[at]) {
+                self.walk(region);
+            }
+            if let Some((cond, value)) = self.implied_value(&block.instrs[at])
+                && self.imply(block, at, cond, value)
+            {
                 at += 1;
             }
+            at += 1;
         }
     }
 
@@ -420,7 +409,7 @@ impl Implication<'_> {
         if self.constants.contains(&cond.0) {
             return None;
         }
-        let ends_early = |region: &[MirBlock]| region.first().is_some_and(|b| exits_early(&b.term));
+        let ends_early = |region: &MirBlock| exits_early(&region.term);
         if ends_early(then) {
             Some((*cond, false))
         } else if elifs.is_empty() && ends_early(orelse) {
@@ -434,10 +423,10 @@ impl Implication<'_> {
     /// depth and in its terminator, by a `const` of `value` inserted before
     /// the `if`; returns whether any read was.
     fn imply(&mut self, block: &mut MirBlock, at: usize, cond: Reg, value: bool) -> bool {
-        let mut tail = [MirBlock {
+        let mut tail = MirBlock {
             instrs: block.instrs.split_off(at + 1),
             term: std::mem::replace(&mut block.term, MirTerm::Unreachable),
-        }];
+        };
         let mut reads = vec![0_u32; cond.0 as usize + 1];
         count_register_reads(&mut tail, &mut reads);
         let read = reads[cond.0 as usize] > 0;
@@ -466,9 +455,8 @@ impl Implication<'_> {
             );
             self.implied += 1;
         }
-        let [MirBlock { instrs, term }] = tail;
-        block.instrs.extend(instrs);
-        block.term = term;
+        block.instrs.extend(tail.instrs);
+        block.term = tail.term;
         read
     }
 }

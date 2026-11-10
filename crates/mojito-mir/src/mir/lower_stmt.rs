@@ -170,10 +170,10 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::If {
                     results: Vec::new(),
                     cond,
-                    then,
+                    then: Box::new(then),
                     elifs,
                     else_args: Vec::new(),
-                    orelse,
+                    orelse: Box::new(orelse),
                 });
             }
             HirInstr::ComptimeIf {
@@ -188,7 +188,7 @@ impl<'a> Flatten<'a> {
                     results: Vec::new(),
                     values,
                     arms,
-                    orelse,
+                    orelse: Box::new(orelse),
                 });
             }
             HirInstr::ComptimeAssert { cond, message } => {
@@ -206,7 +206,7 @@ impl<'a> Flatten<'a> {
                     operands: Vec::new(),
                     args: Vec::new(),
                     results: Vec::new(),
-                    body,
+                    body: Box::new(body),
                 });
             }
             HirInstr::Match { cases, orelse } => {
@@ -222,7 +222,7 @@ impl<'a> Flatten<'a> {
                     results: Vec::new(),
                     cases,
                     else_args: Vec::new(),
-                    orelse,
+                    orelse: Box::new(orelse),
                 });
             }
             HirInstr::ComptimeFor {
@@ -1914,28 +1914,28 @@ impl<'a> Flatten<'a> {
             self.owner_vars.insert(binding, slot);
         }
         let enclosing = self.raise_target.replace((label, error));
-        let mut body = self.try_part(body);
+        let mut body = Box::new(self.try_part(body));
         self.raise_target = enclosing;
         self.var_types.entry(error).or_insert_with(Ty::error);
-        let mut handler = except.map(|except| self.try_part(&except.body));
-        let mut orelse = orelse.map(|part| self.try_part(part));
+        let mut handler = except.map(|except| Box::new(self.try_part(&except.body)));
+        let mut orelse = orelse.map(|part| Box::new(self.try_part(part)));
         if let Some(finalbody) = finalbody {
             let finalbody = self.try_part(finalbody);
             if handler.is_none() && raises_to(&body, label) {
-                handler = Some(self.reraising_handler(error, &body));
+                handler = Some(Box::new(self.reraising_handler(error, &body)));
             }
             let orelse = orelse.get_or_insert_with(|| {
-                vec![MirBlock {
+                Box::new(MirBlock {
                     instrs: Vec::new(),
                     term: MirTerm::TryYield(Vec::new()),
-                }]
+                })
             });
             self.lower_try_finally(
                 label,
                 &finalbody,
                 TryParts {
                     body: &mut body,
-                    handler: handler.as_mut(),
+                    handler: handler.as_deref_mut(),
                     orelse,
                 },
             );
@@ -1952,10 +1952,10 @@ impl<'a> Flatten<'a> {
         });
     }
 
-    /// Lower `try` part `part` to its own block list. What the part's
+    /// Lower `try` part `part` to its own block. What the part's
     /// statements record about aliases, loans, displays, packs, and call
     /// setup goes out of scope with it.
-    fn try_part(&mut self, part: &'a hir::HirRegion) -> Vec<MirBlock> {
+    fn try_part(&mut self, part: &'a hir::HirRegion) -> MirBlock {
         let aliases = self.aliases.clone();
         let displays = self.displays.clone();
         let parameter_reads = self.parameter_reads.clone();
@@ -1969,7 +1969,7 @@ impl<'a> Flatten<'a> {
         let call_setups = std::mem::take(&mut self.call_setups);
         let argument_depth = std::mem::replace(&mut self.argument_depth, 0);
         let allow_argument_anchors = std::mem::replace(&mut self.allow_argument_anchors, false);
-        let blocks = self.hir_region(part);
+        let block = self.hir_region(part);
         self.aliases = aliases;
         self.displays = displays;
         self.parameter_reads = parameter_reads;
@@ -1983,7 +1983,7 @@ impl<'a> Flatten<'a> {
         self.call_setups = call_setups;
         self.argument_depth = argument_depth;
         self.allow_argument_anchors = allow_argument_anchors;
-        blocks
+        block
     }
 
     /// A place for a call argument's *write-back* — a variable or a field chain,
@@ -3753,7 +3753,7 @@ impl<'a> Flatten<'a> {
                 results: Vec::new(),
                 values: vec![Const::Param(source.has_next.clone())],
                 arms: vec![suite],
-                orelse: stop,
+                orelse: Box::new(stop),
             };
             self.emit(MirInstr::ComptimeFor {
                 binder,
@@ -3761,14 +3761,14 @@ impl<'a> Flatten<'a> {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: vec![MirBlock {
+                body: Box::new(MirBlock {
                     instrs: vec![test],
                     term: MirTerm::Unreachable,
-                }],
-                orelse: vec![MirBlock {
+                }),
+                orelse: Box::new(MirBlock {
                     instrs: Vec::new(),
                     term: MirTerm::Unreachable,
-                }],
+                }),
             });
         } else {
             // The body still lowers, for the slots it types.
@@ -3791,45 +3791,30 @@ impl<'a> Flatten<'a> {
         iteration: &mojito_checked::checked::ComptimeIteration,
         binding: Option<mojito_types::origin::OwnerId>,
         body: &'a hir::HirRegion,
-    ) -> Vec<MirBlock> {
+    ) -> MirBlock {
         let outer = self.enclosing_binders.clone();
         self.enclosing_binders = outer.with_loops(&[LoopIndex::of(iteration, binding)]);
         self.comptime_thunks.enter_scope(&self.enclosing_binders);
-        let blocks = self.hir_region(body);
+        let block = self.hir_region(body);
         self.enclosing_binders = outer;
-        blocks
+        block
     }
 
-    /// Lower HIR region `region` to a block list of its own, its block ids
-    /// local (entry 0), sharing this function's registers and slots.
-    pub(super) fn hir_region(&mut self, region: &'a hir::HirRegion) -> Vec<MirBlock> {
-        let graph = &self.cfg.g;
-        let placeholders = region
-            .blocks
-            .iter()
-            .map(|_| MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::Unreachable,
-            })
-            .collect();
-        let outer = std::mem::replace(&mut self.f.blocks, placeholders);
-        let cur = self.cur;
+    /// Lower HIR region `region` to a block of its own, sharing this
+    /// function's registers and slots.
+    pub(super) fn hir_region(&mut self, region: &'a hir::HirRegion) -> MirBlock {
+        let outer = std::mem::take(&mut self.f.body);
         let reference = self.setup_reference.take();
-        for (index, block) in region.blocks.iter().enumerate() {
-            self.cur = index;
-            let block = &graph[*block];
-            for instr in &block.instrs {
-                self.lower_instr(instr);
-            }
-            let term = block.term.as_ref().map_or_else(
-                || MirTerm::TryYield(Vec::new()),
-                |term| self.lower_term(term),
-            );
-            self.f.blocks[self.cur].term = term;
+        let block = &self.cfg.g[region.block];
+        for instr in &block.instrs {
+            self.lower_instr(instr);
         }
+        self.f.body.term = block.term.as_ref().map_or_else(
+            || MirTerm::TryYield(Vec::new()),
+            |term| self.lower_term(term),
+        );
         self.setup_reference = reference;
-        self.cur = cur;
-        std::mem::replace(&mut self.f.blocks, outer)
+        std::mem::replace(&mut self.f.body, outer)
     }
 
     /// Lower a HIR block terminator; the branch/return operands are flattened into

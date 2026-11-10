@@ -510,37 +510,35 @@ fn followed_callees(
     declarations: &MirDeclarations,
     followed: impl Fn(&str) -> bool,
 ) -> Vec<String> {
-    fn walk(blocks: &[mojito_mir::mir::MirBlock], out: &mut Vec<String>) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                match instruction {
-                    MirInstr::Call { func, .. } => out.push(func.0.clone()),
-                    MirInstr::MethodCall {
-                        resolved: Some(target),
-                        ..
-                    }
-                    | MirInstr::BinOp {
-                        resolved: Some(target),
-                        ..
-                    } => out.push(target.clone()),
-                    MirInstr::MakeClosure { function, .. }
-                    | MirInstr::Const {
-                        k: Const::Function(function) | Const::FunctionInstance { function, .. },
-                        ..
-                    } => out.push(function.clone()),
-                    _ => out.extend(
-                        mojito_mir::mir::instruction_subscript_call(instruction)
-                            .map(|call| call.target.clone()),
-                    ),
+    fn walk(block: &mojito_mir::mir::MirBlock, out: &mut Vec<String>) {
+        for instruction in &block.instrs {
+            match instruction {
+                MirInstr::Call { func, .. } => out.push(func.0.clone()),
+                MirInstr::MethodCall {
+                    resolved: Some(target),
+                    ..
                 }
-                for region in instruction_regions(instruction) {
-                    walk(region, out);
-                }
+                | MirInstr::BinOp {
+                    resolved: Some(target),
+                    ..
+                } => out.push(target.clone()),
+                MirInstr::MakeClosure { function, .. }
+                | MirInstr::Const {
+                    k: Const::Function(function) | Const::FunctionInstance { function, .. },
+                    ..
+                } => out.push(function.clone()),
+                _ => out.extend(
+                    mojito_mir::mir::instruction_subscript_call(instruction)
+                        .map(|call| call.target.clone()),
+                ),
+            }
+            for region in instruction_regions(instruction) {
+                walk(region, out);
             }
         }
     }
     let mut callees = Vec::new();
-    walk(&function.blocks, &mut callees);
+    walk(&function.body, &mut callees);
     callees.extend(mojito_mir::mir::lifecycle_callees(function, declarations));
     callees.extend(mojito_mir::mir::named_lifted_bodies(
         name,

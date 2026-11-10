@@ -5,48 +5,39 @@ use super::*;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
-pub(super) fn verify_blocks(
+pub(super) fn verify_block(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     context: &RegionContext,
     errors: &mut Vec<String>,
 ) {
-    for (block_index, block) in blocks.iter().enumerate() {
-        let mut asserted = None;
-        for (index, instruction) in block.instrs.iter().enumerate() {
-            verify_instruction(
-                name,
-                function,
-                declarations,
-                block_index,
-                instruction,
-                asserted.as_ref().unwrap_or(context),
-                errors,
-            );
-            if asserted.is_none()
-                && !context.asserted
-                && matches!(instruction, MirInstr::ComptimeAssert { .. })
-            {
-                asserted = Some(RegionContext {
-                    asserted: true,
-                    ..context.clone()
-                });
-            }
-            verify_in_place_binding(
-                name,
-                block_index,
-                &block.instrs[..index],
-                instruction,
-                errors,
-            );
-            if let Some(raises) = instruction.raise_edge() {
-                verify_error_region(name, block_index, &block.instrs, index, raises, errors);
-            }
+    let mut asserted = None;
+    for (index, instruction) in block.instrs.iter().enumerate() {
+        verify_instruction(
+            name,
+            function,
+            declarations,
+            instruction,
+            asserted.as_ref().unwrap_or(context),
+            errors,
+        );
+        if asserted.is_none()
+            && !context.asserted
+            && matches!(instruction, MirInstr::ComptimeAssert { .. })
+        {
+            asserted = Some(RegionContext {
+                asserted: true,
+                ..context.clone()
+            });
         }
-        verify_terminator(name, function, block_index, &block.term, context, errors);
+        verify_in_place_binding(name, &block.instrs[..index], instruction, errors);
+        if let Some(raises) = instruction.raise_edge() {
+            verify_error_region(name, &block.instrs, index, raises, errors);
+        }
     }
+    verify_terminator(name, function, &block.term, context, errors);
 }
 
 pub(super) fn verify_call_instruction(
@@ -819,22 +810,16 @@ pub(super) fn verify_function(
     verify_scope(name, function, declarations, errors);
     verify_slot_ends(name, function, declarations, errors);
     verify_register_destroys(name, function, declarations, errors);
-    if function.blocks.len() != 1 {
-        errors.push(format!(
-            "MIR function '{name}' body holds {} blocks",
-            function.blocks.len()
-        ));
-    }
     let context = RegionContext {
         regions: vec![RegionKind::Function],
         protected: false,
         asserted: false,
     };
-    verify_blocks(
+    verify_block(
         name,
         function,
         declarations,
-        &function.blocks,
+        &function.body,
         &context,
         errors,
     );
@@ -1137,7 +1122,6 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
 /// drops elaboration splices after the binding's producer.
 fn verify_in_place_binding(
     name: &str,
-    block_index: usize,
     preceding: &[MirInstr],
     instruction: &MirInstr,
     errors: &mut Vec<String>,
@@ -1172,7 +1156,7 @@ fn verify_in_place_binding(
     });
     if !produced {
         errors.push(format!(
-            "MIR function '{name}' block {block_index}: in-place binding of r{} does not follow the call producing it",
+            "MIR function '{name}': in-place binding of r{} does not follow the call producing it",
             src.0
         ));
     }
@@ -1186,13 +1170,12 @@ fn verify_in_place_binding(
 /// raise path leaves undefined.
 fn verify_error_region(
     name: &str,
-    block_index: usize,
     instrs: &[MirInstr],
     index: usize,
     raises: &crate::mir::Raises,
     errors: &mut Vec<String>,
 ) {
-    let prefix = format!("{name}: block {block_index} instruction {index}");
+    let prefix = format!("{name}: instruction {index}");
     let Some(offset) = instrs[index + 1..].iter().position(
         |instruction| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag),
     ) else {
@@ -1224,7 +1207,7 @@ fn verify_error_region(
                 })
     };
     if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]
-        && (!elifs.is_empty() || !then.first().is_some_and(hands_on))
+        && (!elifs.is_empty() || !hands_on(then))
     {
         errors.push(format!(
             "{prefix}: error region on %r{} does not hand on %r{}",

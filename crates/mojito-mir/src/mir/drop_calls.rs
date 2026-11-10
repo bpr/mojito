@@ -31,28 +31,26 @@ use mojito_types::types::TyKind;
 /// a `where` clause holds, stays a drop for the elaborator to name per
 /// instance.
 pub fn lower_drops(function: &mut MirFunction, unconditional: &dyn Fn(&str) -> bool) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     lower_list(&mut blocks, unconditional, function);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 /// Lower the named drops of the block list `list` and of its regions.
 fn lower_list(
-    list: &mut [MirBlock],
+    block: &mut MirBlock,
     unconditional: &dyn Fn(&str) -> bool,
     function: &mut MirFunction,
 ) {
-    for block in list {
-        let instructions = std::mem::take(&mut block.instrs);
-        block.instrs = Vec::with_capacity(instructions.len());
-        for mut instruction in instructions {
-            for region in instruction_regions_mut(&mut instruction) {
-                lower_list(region, unconditional, function);
-            }
-            match lowered(&instruction, unconditional, function) {
-                Some(lowered) => block.instrs.extend(lowered),
-                None => block.instrs.push(instruction),
-            }
+    let instructions = std::mem::take(&mut block.instrs);
+    block.instrs = Vec::with_capacity(instructions.len());
+    for mut instruction in instructions {
+        for region in instruction_regions_mut(&mut instruction) {
+            lower_list(region, unconditional, function);
+        }
+        match lowered(&instruction, unconditional, function) {
+            Some(lowered) => block.instrs.extend(lowered),
+            None => block.instrs.push(instruction),
         }
     }
 }

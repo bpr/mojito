@@ -72,7 +72,7 @@ fn value_binder_has_no_slot_and_every_used_slot_is_typed() {
     // after it.
     let plain = mir_function(&mir, "plain");
     assert!(binder_slot_ty(plain, "n").is_none(), "{plain:#?}");
-    for var in nested_instructions(&plain.blocks)
+    for var in nested_instructions(&plain.body)
         .into_iter()
         .filter_map(|instr| match instr {
             MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
@@ -117,7 +117,7 @@ fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
         .iter()
         .position(|name| name == "a")
         .expect("a slot") as u32;
-    let instrs: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let instrs: Vec<_> = main.body.instrs.iter().collect();
     assert!(
         !instrs.iter().any(|instr| matches!(
             instr,
@@ -159,15 +159,12 @@ fn transfer_into_owned_parameter_forwards_and_binding_moves() {
             .unwrap_or_else(|| panic!("{name} slot")) as u32
     };
     let mode = |var: u32| {
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .find_map(|instr| match instr {
-                MirInstr::UseVar {
-                    var: used, mode, ..
-                } if *used == var => Some(*mode),
-                _ => None,
-            })
+        main.body.instrs.iter().find_map(|instr| match instr {
+            MirInstr::UseVar {
+                var: used, mode, ..
+            } if *used == var => Some(*mode),
+            _ => None,
+        })
     };
     assert_eq!(mode(slot("x")), Some(UseMode::Forward), "{main:#?}");
     assert_eq!(mode(slot("a")), Some(UseMode::Move), "{main:#?}");
@@ -183,11 +180,7 @@ fn dying_copy_at_read_parameter_lends_its_source() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let instrs = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = main.body.instrs.iter().collect::<Vec<_>>();
     let a = main
         .var_names
         .iter()
@@ -238,11 +231,7 @@ fn dying_copy_at_read_receiver_lends_its_source() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let instrs = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = main.body.instrs.iter().collect::<Vec<_>>();
     let a = main
         .var_names
         .iter()
@@ -299,11 +288,7 @@ fn display_at_read_parameter_binds_a_read_temporary() {
         }),
         "{main:#?}"
     );
-    let instrs = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(
         !instrs.iter().any(|instr| matches!(
             instr,
@@ -325,11 +310,7 @@ fn display_at_owned_parameter_binds_no_read_temporary() {
     let main = mir_function(compiled.elaborated_mir(), "main");
     let result_slot =
         |var: u32| main.var_names[var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT);
-    let instrs = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(
         instrs.iter().any(|instr| matches!(
             instr,
@@ -379,18 +360,14 @@ fn conversion_temporary_argument_binds_a_read_temporary() {
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
     let drops_a_call_result = |function: &MirFunction| {
-        function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instr| {
-                matches!(instr, MirInstr::DropVar { var, .. }
-                if function.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
-                    && function.var_tys.get(var).is_some_and(|ty| matches!(
-                        ty.kind(),
-                        TyKind::Struct(name, _) if name == "Optional"
-                    )))
-            })
+        function.body.instrs.iter().any(|instr| {
+            matches!(instr, MirInstr::DropVar { var, .. }
+            if function.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+                && function.var_tys.get(var).is_some_and(|ty| matches!(
+                    ty.kind(),
+                    TyKind::Struct(name, _) if name == "Optional"
+                )))
+        })
     };
     assert!(drops_a_call_result(main), "{main:#?}");
     let named = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef main():\n    var o = Optional(M(1))\n    print(Bool(o))\n";
@@ -413,11 +390,7 @@ fn dying_copy_receiver_forwards_its_source() {
         .expect("compile");
     let modes = |function: &str, name: &str| {
         let function = mir_function(compiled.elaborated_mir(), function);
-        let instrs = function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .collect::<Vec<_>>();
+        let instrs = function.body.instrs.iter().collect::<Vec<_>>();
         assert!(
             !instrs.iter().any(|instr| matches!(
                 instr,
@@ -472,18 +445,15 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
     };
     let slots = [slot("x"), slot(mojito::mir::CALL_RESULT_SLOT)];
     let body = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instr| match instr {
             MirInstr::Try { body, .. } => Some(body),
             _ => None,
         })
         .expect("try");
-    let instrs = body
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = body.instrs.iter().collect::<Vec<_>>();
     for var in slots {
         let forward_at = instrs
             .iter()
@@ -494,8 +464,8 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
                 )
             })
             .expect("forward");
-        let destroys = |then: &[MirBlock]| {
-            then.iter().flat_map(|block| &block.instrs).any(|instr| {
+        let destroys = |then: &MirBlock| {
+            then.instrs.iter().any(|instr| {
                 matches!(
                     instr,
                     MirInstr::UseVar { var: used, mode: UseMode::Forward, .. } if *used == var
@@ -503,7 +473,7 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
             })
         };
         assert!(
-            matches!(&instrs[forward_at - 1], MirInstr::If { then, .. } if destroys(then)),
+            matches!(&instrs[forward_at - 1], MirInstr::If { then, .. } if destroys(&then)),
             "{main:#?}"
         );
         assert!(
@@ -556,7 +526,7 @@ fn split_iterator_slot_is_typed_by_its_iter_result() {
     let main = mir_function(&mir, "main");
     assert!(slot_ty(main, "$compiterobj").is_some(), "{main:#?}");
     for function in [total, first_or, main] {
-        for var in nested_instructions(&function.blocks)
+        for var in nested_instructions(&function.body)
             .into_iter()
             .filter_map(|instr| match instr {
                 MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
@@ -599,7 +569,7 @@ fn owned_iteration_iterator_has_a_slot_of_its_own() {
         "{main:#?}"
     );
     // `(l^).__iter__()` moves the source into its owned receiver.
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     let receiver = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -622,7 +592,7 @@ fn raising_next_is_called_in_a_try_whose_handler_breaks() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
     let program = lower_program(&linked(source)).expect("checked lowering");
     let main = mir_function(&program, "main");
-    let element = nested_instructions(&main.blocks)
+    let element = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -634,7 +604,7 @@ fn raising_next_is_called_in_a_try_whose_handler_breaks() {
             _ => None,
         })
         .expect("raising `__next__` call");
-    let (body, handler) = nested_instructions(&main.blocks)
+    let (body, handler) = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::Try {
@@ -648,15 +618,12 @@ fn raising_next_is_called_in_a_try_whose_handler_breaks() {
     // The element is stored inside the `try`, whose handler leaves the loop
     // once the iterator is exhausted.
     assert!(
-        body.iter().flat_map(|block| &block.instrs).any(
+        body.instrs.iter().any(
             |instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element)
         ),
         "{main:#?}"
     );
-    assert!(
-        matches!(handler[0].term, MirTerm::Break { .. }),
-        "{main:#?}"
-    );
+    assert!(matches!(handler.term, MirTerm::Break { .. }), "{main:#?}");
 }
 
 #[test]
@@ -671,7 +638,7 @@ fn read_collector_list_is_not_destroyed() {
         .expect("compile");
     let destroys_list = |name: &str| {
         let function = mir_function(compiled.elaborated_mir(), name);
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| match instruction {
                 MirInstr::MethodCall { resolved, .. } => {
@@ -698,7 +665,7 @@ fn verify_rejects_an_untyped_used_slot() {
             functions: vec![(
                 "f".into(),
                 MirFunction {
-                    blocks: vec![MirBlock {
+                    body: MirBlock {
                         instrs: vec![
                             MirInstr::UseVar {
                                 dest: Reg(0),
@@ -718,7 +685,7 @@ fn verify_rejects_an_untyped_used_slot() {
                             },
                         ],
                         term: MirTerm::Return(Some(Reg(0))),
-                    }],
+                    },
                     n_regs: 1,
                     n_vars: 2,
                     var_names: vec!["value".into(), "local".into()],
@@ -805,7 +772,7 @@ fn bound_operator_calls<'m>(
     mir: &'m mojito::mir::MirProgram,
     function: &str,
 ) -> Vec<(&'m str, Option<&'m str>)> {
-    nested_instructions(&mir_function(mir, function).blocks)
+    nested_instructions(&mir_function(mir, function).body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -824,11 +791,7 @@ fn reads_a_read_temporary(
     function: &MirFunction,
     operands: impl Fn(&MirInstr) -> Option<Vec<Reg>>,
 ) -> bool {
-    let instrs = function
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = function.body.instrs.iter().collect::<Vec<_>>();
     let Some((call_at, operands)) = instrs
         .iter()
         .enumerate()
@@ -935,14 +898,9 @@ def main():
     var ys = [x for x in xs if x > 0]
     print(both, n, s, chained, len(ys))
 "#;
-    let (cfg, mir) = checked_main(source);
-    assert_eq!(
-        mir.blocks.len(),
-        cfg.root.blocks.len(),
-        "no expression adds a block"
-    );
+    let (_, mir) = checked_main(source);
     let mut ops = Vec::new();
-    region_ops(&mir.blocks, &mut ops);
+    region_ops(&mir.body, &mut ops);
     // `and`, the `Int` ternary, the `String` ternary (stored, not yielded),
     // the chain's two nested `if`s, then the comprehension loop, whose
     // `__next__` call raises out of it, with its filter.
@@ -966,9 +924,8 @@ def main():
         print("small")
 "#;
     let (_, mir) = checked_main(source);
-    assert_eq!(mir.blocks.len(), 1, "a comptime if adds no block");
     let mut ops = Vec::new();
-    region_ops(&mir.blocks, &mut ops);
+    region_ops(&mir.body, &mut ops);
     assert_eq!(ops, ["comptime.if 2"]);
 }
 
@@ -988,7 +945,7 @@ fn mir_named_functions(mir: &MirProgram, owner: &str) -> Vec<String> {
 /// The `Bool` values of every `comptime if` in `function`, in program
 /// order.
 fn comptime_values(function: &MirFunction) -> Vec<mojito::mir::Const> {
-    nested_instructions(&function.blocks)
+    nested_instructions(&function.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::ComptimeIf { values, .. } => Some(values.clone()),
@@ -1018,7 +975,7 @@ def main():
     let mojito::mir::Const::Param(condition) = condition else {
         panic!("the condition's value is its expression: {condition:?}");
     };
-    let argument = nested_instructions(&f.blocks)
+    let argument = nested_instructions(&f.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::Call { param_arg_regs, .. } => param_arg_regs
@@ -1089,7 +1046,7 @@ def main():
 ";
     let mir = checked_program_mir(source);
     let f = mir_function(&mir, "f");
-    let initials: Vec<_> = nested_instructions(&f.blocks)
+    let initials: Vec<_> = nested_instructions(&f.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::ComptimeFor { source, .. } => Some(source.initial.clone()),
@@ -1133,7 +1090,7 @@ def main():
 "#;
     let (_, mir) = checked_function(source, "pick");
     let mut ops = Vec::new();
-    region_ops(&mir.blocks, &mut ops);
+    region_ops(&mir.body, &mut ops);
     // The two parameter-valued conditions select an arm per instance, the
     // `String` arms storing their result; an ordinary call and an `and`
     // are run-time values, so their conditionals stay `if`s (the `and`
@@ -1143,9 +1100,9 @@ def main():
         ["comptime.if 1", "comptime.if 1", "if 1", "if 1", "if 1"]
     );
     let results: Vec<usize> = mir
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::ComptimeIf { results, .. } => Some(results.len()),
             _ => None,
@@ -1156,10 +1113,10 @@ def main():
 
 /// Push a description of each `if` (its result count), `comptime.if` (its
 /// condition count), and `loop` region op
-/// in `blocks`, outermost first, asserting each region is one block.
-fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        let regions: Vec<&Vec<MirBlock>> = match instruction {
+/// in `block`, outermost first.
+fn region_ops(block: &MirBlock, ops: &mut Vec<String>) {
+    for instruction in &block.instrs {
+        let regions: Vec<&MirBlock> = match instruction {
             MirInstr::If {
                 results,
                 then,
@@ -1169,7 +1126,7 @@ fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
             } => {
                 assert!(elifs.is_empty());
                 ops.push(format!("if {}", results.len()));
-                vec![then, orelse]
+                vec![&**then, &**orelse]
             }
             MirInstr::Loop { body, .. } => {
                 ops.push("loop".to_string());
@@ -1182,12 +1139,11 @@ fn region_ops(blocks: &[MirBlock], ops: &mut Vec<String>) {
                 ..
             } => {
                 ops.push(format!("comptime.if {}", values.len()));
-                arms.iter().chain([orelse]).collect()
+                arms.iter().chain([&**orelse]).collect()
             }
             _ => continue,
         };
         for region in regions {
-            assert_eq!(region.len(), 1, "a region op's region is one block");
             region_ops(region, ops);
         }
     }
@@ -1229,12 +1185,7 @@ fn checked_function(src: &str, name: &str) -> (Cfg, MirFunction) {
 /// block's instructions.
 fn instrs(src: &str) -> Vec<MirInstr> {
     let (_, mir) = checked_main(src);
-    assert_eq!(
-        mir.blocks.len(),
-        1,
-        "main should be one straight-line block"
-    );
-    mir.blocks.into_iter().next().unwrap().instrs
+    mir.body.instrs
 }
 
 /// A program declaring pointer storage `xs`, a struct `q` holding pointer
@@ -1259,11 +1210,7 @@ fn nominal_membership_retains_the_borrowed_container_place() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let membership_calls = instructions
         .iter()
         .filter_map(|instruction| match instruction {
@@ -1302,8 +1249,7 @@ fn consuming_nominal_element_read_retains_explicit_accessor_dispatch() {
         .functions
         .iter()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| &function.blocks)
-        .flat_map(|block| &block.instrs)
+        .flat_map(|(_, function)| &function.body.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
                 call, intrinsic, ..
@@ -1337,8 +1283,7 @@ fn consuming_dict_element_arguments_retain_explicit_accessor_dispatch() {
         .functions
         .iter()
         .filter(|(name, _)| name == "main")
-        .flat_map(|(_, function)| &function.blocks)
-        .flat_map(|block| &block.instrs)
+        .flat_map(|(_, function)| &function.body.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
                 call, intrinsic, ..
@@ -1376,11 +1321,7 @@ fn projected_nominal_reference_executes_accessor_before_extending_the_place() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let dict_calls = instructions
         .iter()
         .filter(|instruction| {
@@ -1432,11 +1373,7 @@ fn projected_pointer_actual_retains_one_accessor_handle_and_one_dynamic_index() 
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
 
     assert_eq!(
         instructions
@@ -1497,11 +1434,7 @@ fn augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
 
     let position = |predicate: &dyn Fn(&MirInstr) -> bool| {
         instructions
@@ -1597,11 +1530,7 @@ fn augmented_mutating_index_reloads_typed_source_before_setter() {
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}\n{instructions:#?}",
@@ -1668,9 +1597,9 @@ fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
         .expect("main MIR")
         .1;
     let calls = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method, recv_place, ..
@@ -1700,9 +1629,9 @@ fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
         .expect("pair variable") as u32;
     assert!(
         !main
-            .blocks
+            .body
+            .instrs
             .iter()
-            .flat_map(|block| &block.instrs)
             .any(|instruction| matches!(instruction, MirInstr::ConsumeVar { var } if *var == pair)),
         "an implicit receiver copy must not consume the source place"
     );
@@ -1712,7 +1641,7 @@ fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
         .position(|name| name == "suffix")
         .expect("suffix variable") as u32;
     assert!(
-        !main.blocks.iter().flat_map(|block| &block.instrs).any(
+        !main.body.instrs.iter().any(
             |instruction| matches!(instruction, MirInstr::ConsumeVar { var } if *var == suffix)
         ),
         "an implicitly copied deinit argument must not consume its source place"
@@ -1738,9 +1667,9 @@ fn parameterized_explicit_destroy_receiver_consumes_its_place() {
         .position(|name| name == "counter")
         .expect("counter variable") as u32;
     let place = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method, recv_place, ..
@@ -1751,14 +1680,10 @@ fn parameterized_explicit_destroy_receiver_consumes_its_place() {
         .expect("the explicit destroy keeps its receiver place");
     assert!(place.is_whole_root() && place.root == counter, "{main:#?}");
     assert!(
-        !main
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::UseVar { var, mode: UseMode::Forward, .. } if *var == counter
-            )),
+        !main.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { var, mode: UseMode::Forward, .. } if *var == counter
+        )),
         "{main:#?}"
     );
 }
@@ -1780,7 +1705,7 @@ fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
                 && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
         })
     };
-    let subscripts = nested_instructions(&main.blocks)
+    let subscripts = nested_instructions(&main.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::MultiIndex {
@@ -1808,7 +1733,7 @@ fn builtin_reads_a_string_parameter_in_place() {
         .expect("compile");
     for (function, builtin) in [("fail", "Error"), ("ask", "input")] {
         let body = mir_function(compiled.elaborated_mir(), function);
-        let instructions = nested_instructions(&body.blocks);
+        let instructions = nested_instructions(&body.body);
         let place = instructions
             .iter()
             .find_map(|instruction| match instruction {
@@ -1840,7 +1765,7 @@ fn converted_memory_only_subscript_key_reads_its_source_in_place() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     let (key, source_place) = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -1891,7 +1816,7 @@ fn intrinsic_repr_write_and_transferred_temporary_receiver() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let slot_backed = |function: &MirFunction, reg: Reg| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| match instruction {
                 MirInstr::UseVar { dest, var, .. }
@@ -1907,7 +1832,7 @@ fn intrinsic_repr_write_and_transferred_temporary_receiver() {
             })
     };
     let through = mir_function(compiled.elaborated_mir(), "through");
-    let receiver = nested_instructions(&through.blocks)
+    let receiver = nested_instructions(&through.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall { recv, method, .. } if method == "release" => Some(*recv),
@@ -1917,7 +1842,7 @@ fn intrinsic_repr_write_and_transferred_temporary_receiver() {
     assert!(slot_backed(through, receiver), "{through:#?}");
     let first = mir_function(compiled.elaborated_mir(), "first");
     assert!(
-        nested_instructions(&first.blocks)
+        nested_instructions(&first.body)
             .into_iter()
             .any(|instruction| matches!(
                 instruction,
@@ -1939,7 +1864,7 @@ fn implicitly_copied_consuming_receiver_is_consumed_in_its_call_result_slot() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let place = nested_instructions(&main.blocks)
+    let place = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -1966,7 +1891,7 @@ fn memory_only_slice_subscript_result_is_read_from_its_call_result_slot() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     let result = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -2003,9 +1928,9 @@ fn parameterized_implicit_receiver_copy_consumes_a_call_result_slot() {
         .expect("main MIR")
         .1;
     let call = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
@@ -2032,7 +1957,7 @@ fn parameterized_implicit_receiver_copy_consumes_a_call_result_slot() {
         .position(|name| name == "counter")
         .expect("counter variable") as u32;
     assert!(
-        !main.blocks.iter().flat_map(|block| &block.instrs).any(
+        !main.body.instrs.iter().any(
             |instruction| matches!(instruction, MirInstr::ConsumeVar { var } if *var == counter)
         )
     );
@@ -2043,7 +1968,7 @@ fn raising_iterator_lowers_to_a_typed_raising_next_call() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
     let program = lower_program(&linked(source)).expect("checked lowering");
     let main = mir_function(&program, "main");
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     let (dest, reference_result) = instructions
         .iter()
         .copied()
@@ -2081,7 +2006,7 @@ fn reference_yielding_next_call_retains_a_typed_reference_destination() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
     let main = mir_function(&program, "main");
-    let (dest, reference_result) = nested_instructions(&main.blocks)
+    let (dest, reference_result) = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -2124,7 +2049,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
         .find(|(name, _)| name == "take")
         .expect("generic take MIR")
         .1;
-    let direct = nested_instructions(&take.blocks)
+    let direct = nested_instructions(&take.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -2157,7 +2082,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
         .find(|(name, _)| name == "first")
         .expect("generic first MIR")
         .1;
-    let loop_adapter = nested_instructions(&first.blocks)
+    let loop_adapter = nested_instructions(&first.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -2186,7 +2111,7 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
         .1;
     // `range` is the library's nominal iterator: its element is the result
     // of its raising `__next__`.
-    let element = nested_instructions(&main.blocks)
+    let element = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall { dest, method, .. } if method == "__next__" => Some(*dest),
@@ -2195,7 +2120,7 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
         .expect("bounded iterator __next__");
     assert_eq!(main.reg_types.get(&element.0), Some(&Ty::int()));
     assert!(
-        nested_instructions(&main.blocks)
+        nested_instructions(&main.body)
             .into_iter()
             .any(|instruction| matches!(
                 instruction,
@@ -2211,21 +2136,16 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
 #[test]
 fn lowers_a_simple_function_body() {
     // `var x = 1 + 2; return x` — one block, flattened to ANF, returning a reg.
-    let (cfg, mir) = checked_main("def main() -> Int:\n    var x: Int = 1 + 2\n    return x\n");
+    let (_, mir) = checked_main("def main() -> Int:\n    var x: Int = 1 + 2\n    return x\n");
 
-    assert_eq!(
-        mir.blocks.len(),
-        cfg.node_count(),
-        "one MIR block per HIR block"
-    );
     assert!(
-        matches!(mir.blocks[0].term, MirTerm::Return(Some(_))),
+        matches!(mir.body.term, MirTerm::Return(Some(_))),
         "returns a value"
     );
     // The sum is one call of `IntLiteral`'s declared `__add__` over the two
     // constants, bound by one `DefVar`.
     let ops = |matches: fn(&MirInstr) -> bool| {
-        mir.blocks[0]
+        mir.body
             .instrs
             .iter()
             .filter(|instruction| matches(instruction))
@@ -2238,16 +2158,16 @@ fn lowers_a_simple_function_body() {
         )),
         1,
         "{:#?}",
-        mir.blocks[0].instrs
+        mir.body.instrs
     );
     assert_eq!(ops(|i| matches!(i, MirInstr::DefVar { .. })), 1);
 
     // VarId consistency: the `DefVar` and the returned `UseVar` name the same var.
-    let def = mir.blocks[0].instrs.iter().find_map(|i| match i {
+    let def = mir.body.instrs.iter().find_map(|i| match i {
         MirInstr::DefVar { var, .. } => Some(*var),
         _ => None,
     });
-    let used = mir.blocks[0].instrs.iter().find_map(|i| match i {
+    let used = mir.body.instrs.iter().find_map(|i| match i {
         MirInstr::UseVar { var, .. } => Some(*var),
         _ => None,
     });
@@ -2267,7 +2187,8 @@ fn temps_carry_real_source_spans() {
 
     // The `y` read and the `100` constant each get a fresh reg; find them and
     // confirm their spans point back at the real tokens (not the old `(0, 0)`).
-    let const_reg = mir.blocks[0]
+    let const_reg = mir
+        .body
         .instrs
         .iter()
         .find_map(|i| match i {
@@ -2298,12 +2219,8 @@ fn temps_carry_real_source_spans() {
 #[test]
 fn control_flow_block_count_matches_hir() {
     let source = "def main(a: Bool):\n    if a:\n        var x: Int = 1\n    else:\n        var y: Int = 2\n";
-    let (cfg, mir) = checked_main(source);
-    assert_eq!(mir.blocks.len(), cfg.root.blocks.len());
-    assert!(matches!(
-        mir.blocks[0].instrs.last(),
-        Some(MirInstr::If { .. })
-    ));
+    let (_, mir) = checked_main(source);
+    assert!(matches!(mir.body.instrs.last(), Some(MirInstr::If { .. })));
 }
 
 #[test]
@@ -2325,10 +2242,9 @@ def main():
         print(i)
 ";
     let (_, mir) = checked_main(source);
-    assert_eq!(mir.blocks.len(), 1, "run-time control flow adds no block");
     let mut labels = Vec::new();
     let mut leaves = Vec::new();
-    loop_labels(&mir.blocks, &mut labels, &mut leaves);
+    loop_labels(&mir.body, &mut labels, &mut leaves);
     assert_eq!(labels.len(), 2);
     assert_ne!(labels[0], labels[1], "every loop has its own label");
     assert!(!leaves.is_empty());
@@ -2342,36 +2258,30 @@ def main():
 
 /// Collect the label of each `loop` op in `blocks`, at any depth, and the
 /// label each `break`/`continue` names.
-fn loop_labels(
-    blocks: &[MirBlock],
-    labels: &mut Vec<LoopLabel>,
-    leaves: &mut Vec<Option<LoopLabel>>,
-) {
-    for block in blocks {
-        if let MirTerm::Break { label, .. } | MirTerm::Continue { label, .. } = &block.term {
-            leaves.push(*label);
-        }
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::Loop { label, body, .. } => {
-                    labels.extend(*label);
-                    loop_labels(body, labels, leaves);
-                }
-                MirInstr::If {
-                    then,
-                    elifs,
-                    orelse,
-                    ..
-                } => {
-                    loop_labels(then, labels, leaves);
-                    for elif in elifs {
-                        loop_labels(&elif.cond, labels, leaves);
-                        loop_labels(&elif.then, labels, leaves);
-                    }
-                    loop_labels(orelse, labels, leaves);
-                }
-                _ => {}
+fn loop_labels(block: &MirBlock, labels: &mut Vec<LoopLabel>, leaves: &mut Vec<Option<LoopLabel>>) {
+    if let MirTerm::Break { label, .. } | MirTerm::Continue { label, .. } = &block.term {
+        leaves.push(*label);
+    }
+    for instruction in &block.instrs {
+        match instruction {
+            MirInstr::Loop { label, body, .. } => {
+                labels.extend(*label);
+                loop_labels(body, labels, leaves);
             }
+            MirInstr::If {
+                then,
+                elifs,
+                orelse,
+                ..
+            } => {
+                loop_labels(then, labels, leaves);
+                for elif in elifs {
+                    loop_labels(&elif.cond, labels, leaves);
+                    loop_labels(&elif.then, labels, leaves);
+                }
+                loop_labels(orelse, labels, leaves);
+            }
+            _ => {}
         }
     }
 }
@@ -2461,9 +2371,9 @@ fn checked_mir_places_carry_root_projection_and_storage_types() {
         .unwrap();
     let place = function
         .1
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Store { place, .. } => Some(place),
             _ => None,
@@ -2525,9 +2435,9 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
         .expect("main MIR")
         .1;
     let calls = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 dest,
@@ -2539,7 +2449,7 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(calls.len(), 2, "{:#?}", main.blocks);
+    assert_eq!(calls.len(), 2, "{:#?}", main.body);
     assert!(calls.iter().all(|(dest, resolved, args)| {
         main.reg_types.get(&dest.0) == Some(&Ty::index())
             && resolved.as_deref() == Some("Offset.__mlir_index__")
@@ -2549,26 +2459,23 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
     // `index(idx)` does: a cast to `Int`'s `!kgen.simd` storage, which the
     // declared `SIMD` struct wraps.
     let casts = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
             MirInstr::BuiltinCast { dest, value } => Some((dest, value)),
             _ => None,
         })
         .collect::<Vec<_>>();
     let wrapped = |storage: &Reg| {
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| {
-                matches!(
-                    instruction,
-                    MirInstr::MakeStruct { dest, fields }
-                        if fields.as_slice() == [*storage]
-                            && main.reg_types.get(&dest.0) == Some(&Ty::int())
-                )
-            })
+        main.body.instrs.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::MakeStruct { dest, fields }
+                    if fields.as_slice() == [*storage]
+                        && main.reg_types.get(&dest.0) == Some(&Ty::int())
+            )
+        })
     };
     assert!(
         calls.iter().all(|(call, ..)| {
@@ -2577,7 +2484,7 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
                 .any(|(dest, value)| value == call && wrapped(dest))
         }),
         "{:#?}",
-        main.blocks
+        main.body
     );
 }
 
@@ -2710,20 +2617,13 @@ fn executable_mir_carries_checked_binding_and_parameter_types() {
         .expect("lowered function");
 
     assert_eq!(function.1.param_types, vec![Ty::uint()]);
-    assert!(
-        function
-            .1
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::DefVar {
-                    binding_ty: Some(binding_ty),
-                    ..
-                } if *binding_ty == Ty::float64()
-            ))
-    );
+    assert!(function.1.body.instrs.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::DefVar {
+            binding_ty: Some(binding_ty),
+            ..
+        } if *binding_ty == Ty::float64()
+    )));
 }
 
 #[test]
@@ -2739,7 +2639,7 @@ fn literal_materialization_is_explicit_in_typed_mir() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let instructions = main.blocks.iter().flat_map(|block| &block.instrs);
+    let instructions = main.body.instrs.iter();
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
         MirInstr::Const {
@@ -2794,7 +2694,7 @@ fn multi_lane_literal_materializes_at_the_vector_storage() {
     };
     let converts_at = |function: &mojito::mir::MirFunction, simd: &Ty| {
         let storage_ty = mojito::types::storage_ty(simd);
-        let instructions = function.blocks.iter().flat_map(|block| &block.instrs);
+        let instructions = function.body.instrs.iter();
         let storage = instructions
             .clone()
             .find_map(|instruction| match instruction {
@@ -2838,7 +2738,7 @@ fn scalar_literal_construction_calls_the_declared_initializer() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let instructions = main.blocks.iter().flat_map(|block| &block.instrs);
+    let instructions = main.body.instrs.iter();
     assert!(
         !instructions
             .clone()
@@ -2879,11 +2779,7 @@ fn production_tstrings_call_the_bundled_entry_point() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let instrs = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instrs = main.body.instrs.iter().collect::<Vec<_>>();
     let entry = mojito::checker::template_string_entry();
     assert!(
         instrs.iter().any(|instruction| matches!(
@@ -2929,9 +2825,9 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
     // (`Counter.size`), whose declaration the call's retained parameter
     // declarations mirror.
     let (target, call_decls) = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 resolved: Some(target),
@@ -2970,9 +2866,9 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
         .1;
     let int_storage = mojito::types::storage_ty(&Ty::int());
     let materializations = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter(|instruction| {
             matches!(
                 instruction,
@@ -3022,7 +2918,7 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
         .1;
 
     assert!(
-        nested_instructions(&invoke.blocks)
+        nested_instructions(&invoke.body)
             .into_iter()
             .any(|instruction| matches!(
                 instruction,
@@ -3295,7 +3191,7 @@ fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
     let src = "def main():\n    for i in range(3):\n        try:\n            break\n        finally:\n            print(i)\n";
     let prog = lower_program(&parse(src).expect("parse")).expect("type error");
     let main = mir_function(&prog, "main");
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     let (label, body) = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -3313,8 +3209,9 @@ fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
                 MirInstr::Try { body, .. } => Some(body),
                 _ => None,
             })
-            .any(|try_body| try_body.iter().any(
-                |block| matches!(block.term, MirTerm::Break { label: found, .. } if found == label)
+            .any(|try_body| matches!(
+                try_body.term,
+                MirTerm::Break { label: found, .. } if found == label
             )),
         "{main:#?}"
     );
@@ -3338,11 +3235,7 @@ fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instrs: Vec<&MirInstr> = main
-        .blocks
-        .iter()
-        .flat_map(|block| block.instrs.iter())
-        .collect();
+    let instrs: Vec<&MirInstr> = main.body.instrs.iter().collect();
     assert!(
         instrs
             .iter()
@@ -3379,11 +3272,7 @@ fn cast_pointer_deref_reads_through_its_handle() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instrs: Vec<&MirInstr> = main
-        .blocks
-        .iter()
-        .flat_map(|block| block.instrs.iter())
-        .collect();
+    let instrs: Vec<&MirInstr> = main.body.instrs.iter().collect();
     assert!(
         !instrs.iter().any(|instr| matches!(
             instr,
@@ -3412,11 +3301,7 @@ fn list_element_references_lower_with_interior_generation_metadata() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instrs: Vec<&MirInstr> = main
-        .blocks
-        .iter()
-        .flat_map(|block| block.instrs.iter())
-        .collect();
+    let instrs: Vec<&MirInstr> = main.body.instrs.iter().collect();
 
     let (establish_index, reference, owner) = instrs
         .iter()
@@ -3505,16 +3390,13 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
         .position(|name| name == "x")
         .expect("loop binding slot") as u32;
     let establishes = |reference: u32| {
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| {
-                matches!(
-                    instruction,
-                    MirInstr::EstablishLoans { reference: r, loans, .. }
-                        if *r == reference && loans.iter().any(|loan| loan.place.root == nums)
-                )
-            })
+        main.body.instrs.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference: r, loans, .. }
+                    if *r == reference && loans.iter().any(|loan| loan.place.root == nums)
+            )
+        })
     };
     assert!(
         establishes(iterator),
@@ -3552,11 +3434,7 @@ fn nested_call_transfer_installs_loans_on_the_carrier() {
         .iter()
         .position(|name| name == "local")
         .expect("local slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let call = instructions
         .iter()
         .position(|instruction| {
@@ -3604,14 +3482,11 @@ fn captured_owner_transfer_installs_loans_in_the_owning_frame() {
         .position(|name| name == "local")
         .expect("local slot") as u32;
     assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::EstablishLoans { reference, loans, .. }
-                    if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
-            )),
+        main.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::EstablishLoans { reference, loans, .. }
+                if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
+        )),
         "the captured owner's frame installs the transferred loan"
     );
 }
@@ -3641,22 +3516,19 @@ fn interior_destination_transfers_carry_their_domain() {
         .position(|name| name == "t")
         .expect("t slot") as u32;
     assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::EstablishLoans {
-                    reference,
-                    dest_interior: Some(domain),
-                    ..
-                } if *reference == t
-                    && domain.root == t
-                    && matches!(
-                        domain.path.first(),
-                        Some(mojito::OriginSeg::Field(field)) if field == "a"
-                    )
-            )),
+        main.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::EstablishLoans {
+                reference,
+                dest_interior: Some(domain),
+                ..
+            } if *reference == t
+                && domain.root == t
+                && matches!(
+                    domain.path.first(),
+                    Some(mojito::OriginSeg::Field(field)) if field == "a"
+                )
+        )),
         "the transferred generation carries its interior destination domain"
     );
 }
@@ -3683,14 +3555,10 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
         .position(|name| name == "sink")
         .expect("outer sink slot") as u32;
     assert!(
-        !outer
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::EstablishLoans { reference, .. } if *reference == outer_sink
-            )),
+        !outer.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::EstablishLoans { reference, .. } if *reference == outer_sink
+        )),
         "a parameter-rooted destination installs nothing locally"
     );
     let (_, main) = mir
@@ -3709,14 +3577,11 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
         .position(|name| name == "local")
         .expect("local slot") as u32;
     assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::EstablishLoans { reference, loans, .. }
-                    if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
-            )),
+        main.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::EstablishLoans { reference, loans, .. }
+                if *reference == sink && loans.iter().any(|loan| loan.place.root == local)
+        )),
         "the derived transitive effect installs the loan at the caller"
     );
 }
@@ -3749,11 +3614,7 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
         .iter()
         .position(|name| name.starts_with("$arg_loan"))
         .expect("hidden argument anchor slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(
         instructions.iter().any(|instruction| matches!(
             instruction,
@@ -3800,7 +3661,7 @@ def main():
 "#;
     let (_, main) = checked_main(source);
     let first_place = |callee: &str| {
-        nested_instructions(&main.blocks)
+        nested_instructions(&main.body)
             .into_iter()
             .find_map(|instruction| match instruction {
                 MirInstr::Call {
@@ -3841,7 +3702,7 @@ def main():
     print(check(String("/a"), 2))
 "#;
     let (_, check) = checked_function(source, "check");
-    let anchors: Vec<u32> = nested_instructions(&check.blocks)
+    let anchors: Vec<u32> = nested_instructions(&check.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::EstablishLoans { reference, .. }
@@ -3867,7 +3728,7 @@ def main():
             })
             .count()
     };
-    let in_arm: usize = nested_instructions(&check.blocks)
+    let in_arm: usize = nested_instructions(&check.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::If {
@@ -3878,12 +3739,12 @@ def main():
         .sum();
     assert!(in_arm > 0, "each anchor lives in the `or`'s arm");
     assert_eq!(
-        uses(nested_instructions(&check.blocks)),
+        uses(nested_instructions(&check.body)),
         in_arm,
         "no use of an anchor follows the `or`"
     );
     assert!(
-        !nested_instructions(&check.blocks).into_iter().any(
+        !nested_instructions(&check.body).into_iter().any(
             |instruction| matches!(instruction, MirInstr::KeepAlive { var } if anchors.contains(var))
         ),
         "a memory-only anchor dies at its call, not at the statement's end"
@@ -3909,11 +3770,7 @@ fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     for (list, callee) in [("a", "sum"), ("b", "total")] {
         let list_slot = main
             .var_names
@@ -3982,11 +3839,7 @@ fn assignment_flushes_temporary_argument_anchors_before_the_store() {
         .iter()
         .position(|name| name.starts_with("$arg_loan"))
         .expect("hidden argument anchor slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let keep_alive = instructions
         .iter()
         .position(
@@ -4058,7 +3911,7 @@ fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
         .iter()
         .position(|name| name.starts_with("$iterobj"))
         .expect("iterator-object slot") as u32;
-    let instructions = mojito::mir::nested_instructions(&main.blocks);
+    let instructions = mojito::mir::nested_instructions(&main.body);
 
     // The retained source is a genuine reference to the whole collection place
     // (never a value copy); interior granularity lives only in the loan.
@@ -4139,11 +3992,7 @@ fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
         .iter()
         .position(|name| name.starts_with("$iterobj"))
         .expect("iterator-object slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
 
     // Uniform shape with the collection case: `MakeRef` into a `TyKind::Ref`-typed
     // retained-source slot; the only difference is the loan granularity — a
@@ -4213,11 +4062,7 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
         .iter()
         .position(|name| name.starts_with("$compiterobj"))
         .expect("iterator-object slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == values && place.proj.is_empty()
@@ -4282,11 +4127,7 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
         .iter()
         .position(|name| name.starts_with("$compiterobj"))
         .expect("iterator-object slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == nums && place.proj.is_empty()
@@ -4343,7 +4184,7 @@ fn reference_row_iteration_loans_keep_the_invalidation_owner_domain() {
         .iter()
         .position(|name| name == "rows")
         .expect("rows slot") as u32;
-    let inner_loans: Vec<_> = mojito::mir::nested_instructions(&main.blocks)
+    let inner_loans: Vec<_> = mojito::mir::nested_instructions(&main.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::EstablishLoans { loans, .. } => Some(loans),
@@ -4422,7 +4263,7 @@ fn reference_list_iteration_lowers_through_the_generic_protocol() {
         other => panic!("loop binding is a mutable reference, got {other:?}"),
     }
 
-    let instructions = nested_instructions(&main.blocks);
+    let instructions = nested_instructions(&main.body);
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::MethodCall {
@@ -4462,9 +4303,9 @@ fn ref_returning_subscript_retains_a_typed_receiver_place() {
         .find(|(name, _)| name == "main")
         .expect("main lowered");
     let (receiver, call) = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Index {
                 base_place: Some(place),
@@ -4504,11 +4345,7 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
         main.var_tys.get(&reference_slot).map(Ty::kind),
         Some(TyKind::Ref(_))
     ));
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::EstablishLoans { reference, .. } if *reference == reference_slot
@@ -4546,7 +4383,7 @@ fn memory_only_read_argument_retains_its_place_and_register_passable_does_not() 
         .find(|(name, _)| name == "main")
         .expect("main lowered");
     let places = |callee: &str| {
-        nested_instructions(&main.blocks)
+        nested_instructions(&main.body)
             .into_iter()
             .find_map(|instruction| match instruction {
                 MirInstr::Call {
@@ -4593,7 +4430,7 @@ fn pack_element_read_argument_retains_its_place() {
         .iter()
         .position(|name| name == "value")
         .expect("slot value") as u32;
-    let instructions = nested_instructions(&build.blocks);
+    let instructions = nested_instructions(&build.body);
     let places = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -4664,11 +4501,7 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     assert_eq!(
         instructions
             .iter()
@@ -4712,11 +4545,7 @@ fn nominal_setter_mir_orders_receiver_index_and_rhs_evaluation() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let call_position = |name: &str| {
         instructions
             .iter()
@@ -4756,7 +4585,7 @@ fn union_interior_return_keeps_every_possible_generation() {
         .find(|(name, _)| name == "main")
         .expect("main lowered");
 
-    let loans = nested_instructions(&main.blocks)
+    let loans = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans {
@@ -4908,7 +4737,7 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let instructions: Vec<_> = main.body.instrs.iter().collect();
     let slot = |name: &str| {
         main.var_names
             .iter()
@@ -5005,7 +4834,7 @@ fn sibling_capture_holds_a_reference_to_the_sibling_storage() {
             .unwrap_or_else(|| panic!("{name} slot")) as u32
     };
     let helper_slot = slot(main, "helper");
-    let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let instructions: Vec<_> = main.body.instrs.iter().collect();
     assert!(
         !instructions
             .iter()
@@ -5046,11 +4875,7 @@ fn sibling_capture_holds_a_reference_to_the_sibling_storage() {
             if matches!(reference.referent.kind(), TyKind::Struct(name, _) if name == "main$helper$__storage"))
     ));
     let caller = function("main$caller$__storage.caller");
-    let caller_instructions: Vec<_> = caller
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect();
+    let caller_instructions: Vec<_> = caller.body.instrs.iter().collect();
     let argument = caller_instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -5104,7 +4929,7 @@ fn lifted_body_takes_its_storage_and_reads_captures_through_its_fields() {
         .expect("get lifted")
         .1;
     assert_eq!(get.n_params, 1);
-    assert!(get.blocks[0].instrs.iter().any(|instruction| matches!(
+    assert!(get.body.instrs.iter().any(|instruction| matches!(
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == 0
             && matches!(place.proj.as_slice(), [Proj::Field(name)] if name == "k")
@@ -5116,9 +4941,9 @@ fn lifted_body_takes_its_storage_and_reads_captures_through_its_fields() {
         .expect("twice lifted")
         .1;
     let calls = twice
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .filter(|instruction| {
             matches!(instruction, MirInstr::MethodCall { resolved: Some(resolved), args, .. }
                 if resolved == "main$get$__storage.get" && args.is_empty())
@@ -5151,9 +4976,9 @@ fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
     };
     assert!(storage(middle.var_tys.get(&helper_slot)));
     let capture = middle
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Call {
                 func, arg_places, ..
@@ -5177,7 +5002,7 @@ fn same_named_block_defs_call_distinct_lifted_bodies() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let callees: std::collections::HashSet<_> = nested_instructions(&main.blocks)
+    let callees: std::collections::HashSet<_> = nested_instructions(&main.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, .. } if func.0.starts_with("main$choose") => Some(&func.0),
@@ -5208,7 +5033,7 @@ fn nested_call_by_name_passes_its_closure_storage() {
             .position(|candidate| candidate == name)
             .unwrap_or_else(|| panic!("slot {name}")) as u32
     };
-    let instructions: Vec<_> = nested_instructions(&outer.blocks).into_iter().collect();
+    let instructions: Vec<_> = nested_instructions(&outer.body).into_iter().collect();
     assert!(
         !instructions.iter().any(|instruction| matches!(
             instruction,
@@ -5323,9 +5148,9 @@ fn closure_storage_carries_the_binders_its_body_names() {
         .collect();
     references.extend(
         body.1
-            .blocks
+            .body
+            .instrs
             .iter()
-            .flat_map(|block| &block.instrs)
             .filter_map(|instruction| match instruction {
                 MirInstr::Const {
                     k: mojito::mir::Const::Param(expr),
@@ -5373,7 +5198,7 @@ fn nested_def_closure_is_made_at_its_first_class_use() {
         .find(|(name, _)| name == "esc")
         .expect("esc lowered")
         .1;
-    let instructions: Vec<_> = esc.blocks.iter().flat_map(|block| &block.instrs).collect();
+    let instructions: Vec<_> = esc.body.instrs.iter().collect();
     let made = instructions
         .iter()
         .filter(|instruction| {
@@ -5401,11 +5226,7 @@ fn copied_capture_lives_in_the_storage_slot() {
         .find(|(name, _)| name == "outer")
         .expect("outer lowered")
         .1;
-    let instructions: Vec<_> = outer
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect();
+    let instructions: Vec<_> = outer.body.instrs.iter().collect();
     let storage = outer
         .var_names
         .iter()
@@ -5451,17 +5272,11 @@ fn closure_value_is_its_storage_struct() {
         outer.var_tys.get(&slot).map(Ty::kind),
         Some(TyKind::Struct(name, _)) if name == "outer$vc$__storage"
     ));
-    assert!(
-        outer
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::CallIndirect { resolved: Some(resolved), .. }
-                    if resolved == "outer$vc$__storage.__call__"
-            ))
-    );
+    assert!(outer.body.instrs.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::CallIndirect { resolved: Some(resolved), .. }
+            if resolved == "outer$vc$__storage.__call__"
+    )));
     assert!(
         mir.functions
             .iter()
@@ -5533,7 +5348,7 @@ fn origin_specialized_function_values_use_indirect_call_mir() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let mut instructions = main.blocks.iter().flat_map(|block| &block.instrs);
+    let mut instructions = main.body.instrs.iter();
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
         MirInstr::Const {
@@ -5564,21 +5379,16 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::Call {
-                    func,
-                    param_arg_regs,
-                    ..
-                } if func.0.contains("choose")
-                    && param_arg_regs.iter().all(|argument| argument.value.is_none())
-            ))
-    );
-    assert!(!main.blocks.iter().flat_map(|block| &block.instrs).any(
+    assert!(main.body.instrs.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::Call {
+            func,
+            param_arg_regs,
+            ..
+        } if func.0.contains("choose")
+            && param_arg_regs.iter().all(|argument| argument.value.is_none())
+    )));
+    assert!(!main.body.instrs.iter().any(
         |instruction| matches!(instruction, MirInstr::Call { func, .. } if func.0 == "origin_of")
     ));
 
@@ -5597,9 +5407,9 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
         .expect("main lowered")
         .1;
     let function_register = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Const {
                 dest,
@@ -5631,9 +5441,9 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
         .expect("generic apply lowered")
         .1;
     let (dest, callee, argument, target) = apply
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::CallIndirect {
                 dest,
@@ -5686,9 +5496,9 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .find(|(name, _)| name == "main")
             .expect("main lowered")
             .1
-            .blocks
+            .body
+            .instrs
             .iter_mut()
-            .flat_map(|block| &mut block.instrs)
             .find_map(|instruction| match instruction {
                 MirInstr::MethodCall {
                     method, resolved, ..
@@ -5708,9 +5518,9 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .find(|(name, _)| name == function_name)
             .expect("function lowered")
             .1
-            .blocks
+            .body
+            .instrs
             .iter_mut()
-            .flat_map(|block| &mut block.instrs)
             .find_map(|instruction| match instruction {
                 MirInstr::CallIndirect { resolved, .. } => Some(resolved),
                 _ => None,
@@ -5733,19 +5543,14 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .expect("function lowered")
             .1;
         function
-            .blocks
+            .body
+            .instrs
             .iter()
-            .flat_map(|block| &block.instrs)
             .find_map(|instruction| match instruction {
                 MirInstr::CallIndirect { resolved, .. } => resolved.as_deref(),
                 _ => None,
             })
-            .unwrap_or_else(|| {
-                panic!(
-                    "indirect call has a selected target: {:#?}",
-                    function.blocks
-                )
-            })
+            .unwrap_or_else(|| panic!("indirect call has a selected target: {:#?}", function.body))
             .to_string()
     };
     assert_eq!(nominal(&mut mir).as_deref(), Some("Choose.__call__$ov$Int"));
@@ -5794,9 +5599,9 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
     // checker's specialized callable type.
     assert!(!main.var_names.iter().any(|name| name == "borrow"));
     let specialized = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::MakeClosure { dest, function, .. } if function == "main$borrow" => {
                 main.reg_types.get(&dest.0)
@@ -5813,18 +5618,13 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
                 SigOrigin::Bound(Origin::Place(_))
             ))
     );
-    assert!(
-        main.blocks
-            .iter()
-            .flat_map(|block| &block.instrs)
-            .all(|instruction| !matches!(
-                instruction,
-                MirInstr::Const {
-                    k: mojito::mir::Const::Function(name),
-                    ..
-                } if name == "borrow"
-            ))
-    );
+    assert!(main.body.instrs.iter().all(|instruction| !matches!(
+        instruction,
+        MirInstr::Const {
+            k: mojito::mir::Const::Function(name),
+            ..
+        } if name == "borrow"
+    )));
 }
 
 #[test]
@@ -6001,9 +5801,9 @@ fn subtree_loan_shapes_verify_terminal_only() {
             .find(|(name, _)| name == "main")
             .expect("main lowered")
             .1
-            .blocks
+            .body
+            .instrs
             .iter_mut()
-            .flat_map(|block| &mut block.instrs)
             .find(|instruction| matches!(instruction, MirInstr::EstablishLoans { .. }))
             .expect("subtree binding establishes loans")
     }
@@ -6085,28 +5885,26 @@ fn subtree_loan_shapes_verify_terminal_only() {
 #[test]
 fn bare_element_call_lowers_subscript_then_call_method() {
     fn collect_instructions<'mir>(
-        blocks: &'mir [mojito::mir::MirBlock],
+        block: &'mir mojito::mir::MirBlock,
         out: &mut Vec<&'mir MirInstr>,
     ) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    ..
-                } = instruction
-                {
-                    collect_instructions(body, out);
-                    if let Some(handler) = handler {
-                        collect_instructions(handler, out);
-                    }
-                    if let Some(orelse) = orelse {
-                        collect_instructions(orelse, out);
-                    }
+        for instruction in &block.instrs {
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                ..
+            } = instruction
+            {
+                collect_instructions(&body, out);
+                if let Some(handler) = handler {
+                    collect_instructions(&handler, out);
                 }
-                out.push(instruction);
+                if let Some(orelse) = orelse {
+                    collect_instructions(&orelse, out);
+                }
             }
+            out.push(instruction);
         }
     }
 
@@ -6126,7 +5924,7 @@ fn bare_element_call_lowers_subscript_then_call_method() {
         .find(|(name, _)| name == "main")
         .expect("main lowered");
     let mut instructions = Vec::new();
-    collect_instructions(&main.blocks, &mut instructions);
+    collect_instructions(&main.body, &mut instructions);
     let getter = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -6175,11 +5973,7 @@ fn multi_index_element_call_lowers_variadic_subscript_then_call_method() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let args = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -6233,9 +6027,9 @@ fn stored_span_iterator_lends_the_span_place() {
     };
     let (xs, sp, it) = (var("xs"), var("sp"), var("it"));
     let loans = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::EstablishLoans {
                 reference, loans, ..
@@ -6279,13 +6073,13 @@ fn closed_aggregate_parameter_argument_has_no_runtime_form() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    assert!(!main.blocks.iter().flat_map(|block| &block.instrs).any(
+    assert!(!main.body.instrs.iter().any(
         |instruction| matches!(instruction, MirInstr::Call { func, .. } if func.0 == "Tuple" || func.0 == "Q")
     ));
     let arguments = main
-        .blocks
+        .body
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
             MirInstr::Call {
                 func,
@@ -6378,7 +6172,7 @@ fn chained_comparison_links_name_their_dunders() {
         mir.invariant_errors
     );
     // A later link runs in the `if` on the one before it.
-    let mut resolved = mojito::mir::nested_instructions(&mir_function(&mir, "main").blocks)
+    let mut resolved = mojito::mir::nested_instructions(&mir_function(&mir, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
@@ -6504,7 +6298,8 @@ def main():
     );
     let main = mir_function(&mir, "main");
     // `print`'s own omitted `file` default is the library's, not `Box`'s.
-    let defaults: Vec<(&str, usize)> = main.blocks[0]
+    let defaults: Vec<(&str, usize)> = main
+        .body
         .instrs
         .iter()
         .filter_map(|instruction| match instruction {
@@ -6526,7 +6321,8 @@ def main():
             ("$default$Box.make$k", 1),
         ]
     );
-    let get_arities: Vec<usize> = main.blocks[0]
+    let get_arities: Vec<usize> = main
+        .body
         .instrs
         .iter()
         .filter_map(|instruction| match instruction {
@@ -6557,7 +6353,7 @@ def main() raises:
 "#,
     );
     let calls = |name: &str| -> Vec<MirInstr> {
-        mojito::mir::nested_instructions(&mir_function(&mir, name).blocks)
+        mojito::mir::nested_instructions(&mir_function(&mir, name).body)
             .into_iter()
             .cloned()
             .collect()
@@ -6626,9 +6422,9 @@ fn augmented_reference_getter_store_calls_the_dunder_in_place() {
         .expect("compile");
     let instrs = |name| {
         mir_function(compiled.elaborated_mir(), name)
-            .blocks
+            .body
+            .instrs
             .iter()
-            .flat_map(|block| &block.instrs)
             .collect::<Vec<_>>()
     };
     let bump = instrs("bump");
@@ -6733,11 +6529,7 @@ def main():
         .find(|(name, _)| name == "main")
         .expect("main MIR")
         .1;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = main.body.instrs.iter().collect::<Vec<_>>();
     let writes = instructions
         .iter()
         .enumerate()

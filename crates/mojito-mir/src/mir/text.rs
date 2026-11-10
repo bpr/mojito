@@ -585,10 +585,9 @@ pub fn quote(value: &str) -> String {
 /// Candidate source-map paths for one verifier finding, most precise first
 /// and always ending at the artifact root.
 ///
-/// The canonical verifier locates findings textually with the prefixes
-/// `MIR function '<name>' block <n>` and `MIR function '<name>'` (see the
-/// module documentation of `crate::mir::verify`; this is the only consumer
-/// of that spelling). The name is matched against the program's own function
+/// The canonical verifier locates findings textually with the prefix
+/// `MIR function '<name>'` (see the module documentation of
+/// `crate::mir::verify`; this is the only consumer of that spelling). The name is matched against the program's own function
 /// identities — longest match wins — instead of re-parsing quote syntax, so
 /// a name containing a quote cannot mislocate a finding.
 fn finding_candidates<'a>(names: impl IntoIterator<Item = &'a str>, message: &str) -> Vec<String> {
@@ -602,15 +601,6 @@ fn finding_candidates<'a>(names: impl IntoIterator<Item = &'a str>, message: &st
             })
             .max_by_key(|name| name.len());
         if let Some(name) = matched {
-            let after = &rest[name.len() + 1..];
-            if let Some(block) = after.strip_prefix(" block ") {
-                let digits = &block[..block
-                    .find(|character: char| !character.is_ascii_digit())
-                    .unwrap_or(block.len())];
-                if !digits.is_empty() {
-                    candidates.push(format!("function/{name}/bb{digits}"));
-                }
-            }
             candidates.push(format!("function/{name}"));
         }
     }
@@ -675,13 +665,10 @@ mod tests {
     }
 
     #[test]
-    fn finding_candidates_rank_block_function_then_artifact() {
+    fn finding_candidates_rank_function_then_artifact() {
         assert_eq!(
-            finding_candidates(
-                ["main"],
-                "MIR function 'main' block 12: invalid register r9"
-            ),
-            ["function/main/bb12", "function/main", "artifact"]
+            finding_candidates(["main"], "MIR function 'main': invalid register r9"),
+            ["function/main", "artifact"]
         );
         assert_eq!(
             finding_candidates(
@@ -694,29 +681,18 @@ mod tests {
             finding_candidates(["main"], "program-level finding"),
             ["artifact"]
         );
-        // Unknown names and malformed block numbers never invent paths.
+        // Unknown names never invent paths.
         assert_eq!(
-            finding_candidates(["main"], "MIR function 'other' block 0: x"),
+            finding_candidates(["main"], "MIR function 'other': x"),
             ["artifact"]
-        );
-        assert_eq!(
-            finding_candidates(["main"], "MIR function 'main' block x: y"),
-            ["function/main", "artifact"]
         );
     }
 
     #[test]
     fn finding_candidates_match_quoted_names_longest_first() {
         assert_eq!(
-            finding_candidates(
-                ["tricky", "tricky' block 2"],
-                "MIR function 'tricky' block 2' block 0: x"
-            ),
-            [
-                "function/tricky' block 2/bb0",
-                "function/tricky' block 2",
-                "artifact"
-            ]
+            finding_candidates(["tricky", "tricky': 2"], "MIR function 'tricky': 2': x"),
+            ["function/tricky': 2", "artifact"]
         );
     }
 
@@ -727,11 +703,7 @@ mod tests {
             "empty.mir",
         )
         .expect("parse empty artifact");
-        let candidates = [
-            "function/missing/bb3".to_string(),
-            "function/missing".to_string(),
-            "artifact".to_string(),
-        ];
+        let candidates = ["function/missing".to_string(), "artifact".to_string()];
         let (path, span) = resolve_candidate_span(&parsed.source_map, &candidates);
         assert_eq!(path, "artifact");
         assert_eq!(span, parsed.source_map.span("artifact").unwrap());

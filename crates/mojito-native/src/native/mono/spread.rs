@@ -26,7 +26,7 @@ pub(super) fn expand_pack_spreads(
     function: &mut MirFunction,
 ) -> Result<(), MonoError> {
     let MirFunction {
-        blocks,
+        body,
         n_regs,
         var_tys,
         reg_types,
@@ -40,8 +40,8 @@ pub(super) fn expand_pack_spreads(
         reg_types,
         spans,
     };
-    expand_load_indirect(blocks, &mut tables);
-    expand_in_blocks(blocks, &mut tables)
+    expand_load_indirect(body, &mut tables);
+    expand_in_block(body, &mut tables)
 }
 
 /// Retire the bound list of a value pack spread into a bracket
@@ -58,7 +58,7 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
         return;
     }
     let mut retired = HashSet::new();
-    retire_in_blocks(&mut function.blocks, &forwarded, &mut retired);
+    retire_in_blocks(&mut function.body, &forwarded, &mut retired);
     function
         .reg_types
         .retain(|register, _| !retired.contains(register));
@@ -79,35 +79,20 @@ struct Collector {
     moved: bool,
 }
 
-fn expand_in_blocks(
-    blocks: &mut [MirBlock],
-    tables: &mut SpreadTables<'_>,
-) -> Result<(), MonoError> {
-    for at in 0..blocks.len() {
-        expand_in_block(blocks, at, tables)?;
-    }
-    Ok(())
-}
-
-/// Expand the spreads of the block `at` of `blocks`. A spread's collector
-/// is read once, in the block of the call or, once a pass has split that
-/// block, in one before it.
-fn expand_in_block(
-    blocks: &mut [MirBlock],
-    at: usize,
-    tables: &mut SpreadTables<'_>,
-) -> Result<(), MonoError> {
+/// Expand the spreads of `block` and its regions. A spread's collector is
+/// read once, before the call in its block.
+fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Result<(), MonoError> {
     let mut index = 0;
-    while index < blocks[at].instrs.len() {
-        let regions = mojito_mir::mir::instruction_regions_mut(&mut blocks[at].instrs[index]);
+    while index < block.instrs.len() {
+        let regions = mojito_mir::mir::instruction_regions_mut(&mut block.instrs[index]);
         if !regions.is_empty() {
             for region in regions {
-                expand_in_blocks(region, tables)?;
+                expand_in_block(region, tables)?;
             }
             index += 1;
             continue;
         }
-        let Some((position, pack)) = spread_operands(&mut blocks[at].instrs[index])
+        let Some((position, pack)) = spread_operands(&mut block.instrs[index])
             .and_then(|call| call.spread.map(|position| (position, call.args[position])))
         else {
             index += 1;
@@ -115,30 +100,21 @@ fn expand_in_block(
         };
         // A collector the callee no longer takes (an unused argument whose
         // read the removal erased) is dropped with the call's rewrite.
-        let Some((read_block, read)) = (0..=at).rev().find_map(|block| {
-            let end = if block == at {
-                index
-            } else {
-                blocks[block].instrs.len()
-            };
-            blocks[block].instrs[..end]
-                .iter()
-                .rposition(|instruction| defines(instruction, pack))
-                .map(|read| (block, read))
-        }) else {
+        let Some(read) = block.instrs[..index]
+            .iter()
+            .rposition(|instruction| defines(instruction, pack))
+        else {
             index += 1;
             continue;
         };
         // An LLVM intrinsic call over the loaded elements a tuple holds
         // (`get_loaded_kgen_pack`'s expanded `kgen.struct.load_indirect`)
         // passes them.
-        if matches!(
-            &blocks[at].instrs[index],
-            MirInstr::CallLlvmIntrinsic { .. }
-        ) && let MirInstr::MakeTuple { elems, .. } = &blocks[read_block].instrs[read]
+        if matches!(&block.instrs[index], MirInstr::CallLlvmIntrinsic { .. })
+            && let MirInstr::MakeTuple { elems, .. } = &block.instrs[read]
         {
             let elems = elems.clone();
-            let call = spread_operands(&mut blocks[at].instrs[index])
+            let call = spread_operands(&mut block.instrs[index])
                 .expect("the spread call was matched above");
             call.args.splice(position..=position, elems);
             *call.spread = None;
@@ -148,7 +124,7 @@ fn expand_in_block(
         // The collector the call builds is the one operand it passes, as
         // is a homogeneous collector's `VariadicList` and a forwarded
         // `VariadicPack`.
-        if matches!(blocks[read_block].instrs[read], MirInstr::MakeTuple { .. })
+        if matches!(block.instrs[read], MirInstr::MakeTuple { .. })
             || tables.reg_types.get(&pack.0).is_some_and(|ty| {
                 mojito_types::types::variadic_list_element(ty).is_some()
                     || mojito_types::types::variadic_pack_owned(ty).is_some()
@@ -163,14 +139,11 @@ fn expand_in_block(
         };
         // Any callee takes the caller's pack itself; an LLVM intrinsic call
         // passes the loaded pack's elements.
-        if !matches!(
-            &blocks[at].instrs[index],
-            MirInstr::CallLlvmIntrinsic { .. }
-        ) {
+        if !matches!(&block.instrs[index], MirInstr::CallLlvmIntrinsic { .. }) {
             index += 1;
             continue;
         }
-        let collector = collector_read(&blocks[read_block].instrs[read], pack, tables.var_tys)
+        let collector = collector_read(&block.instrs[read], pack, tables.var_tys)
             .ok_or_else(|| tables.error("a spread reads no collector"))?;
         let span = tables.spans.0.get(&pack.0).cloned();
         let mut loads = Vec::with_capacity(elements.len());
@@ -191,7 +164,6 @@ fn expand_in_block(
             });
             registers.push(dest);
         }
-        let block = &mut blocks[at];
         let call =
             spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
         let count = registers.len();
@@ -221,11 +193,8 @@ fn expand_in_block(
         let inserted = loads.len();
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
-        blocks[read_block].instrs.remove(read);
-        index += inserted;
-        if read_block == at {
-            index -= 1;
-        }
+        block.instrs.remove(read);
+        index = index + inserted - 1;
     }
     Ok(())
 }
@@ -277,80 +246,76 @@ const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_
 /// reference pack into a read of each element through its reference
 /// (`lit.ref.pack.extract`, then `ref.read`) and the `tuple.make` of the
 /// values, as upstream's LLVM lowering loads each pointer.
-fn expand_load_indirect(blocks: &mut [MirBlock], tables: &mut SpreadTables<'_>) {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            for region in mojito_mir::mir::instruction_regions_mut(&mut block.instrs[index]) {
-                expand_load_indirect(region, tables);
-            }
-            let MirInstr::LoadIndirect { dest, pack } = block.instrs[index] else {
-                index += 1;
-                continue;
-            };
-            let Some(TyKind::LitRefPack { elements, origin }) =
-                tables.reg_types.get(&pack.0).map(Ty::kind)
-            else {
-                index += 1;
-                continue;
-            };
-            if mojito_types::types::pack_spread(elements).is_some() {
-                index += 1;
-                continue;
-            }
-            let (elements, origin) = (elements.clone(), origin.clone());
-            let span = tables.spans.0.get(&dest.0).cloned();
-            let mut fresh = |ty: Ty| {
-                let register = Reg(*tables.n_regs);
-                *tables.n_regs += 1;
-                tables.reg_types.insert(register.0, ty);
-                if let Some(span) = &span {
-                    tables.spans.0.insert(register.0, span.clone());
-                }
-                register
-            };
-            let mut reads = Vec::with_capacity(elements.len() * 3 + 1);
-            let mut values = Vec::with_capacity(elements.len());
-            for (element_index, element) in elements.iter().enumerate() {
-                let at = fresh(Ty::int());
-                reads.push(MirInstr::Const {
-                    dest: at,
-                    k: Const::Int(
-                        i64::try_from(element_index).expect("a pack's arity fits an Int"),
-                    ),
-                });
-                let reference = fresh(
-                    TyKind::LitRef {
-                        element: element.clone(),
-                        origin: origin.clone(),
-                    }
-                    .into(),
-                );
-                reads.push(MirInstr::Index {
-                    dest: reference,
-                    base: pack,
-                    index: at,
-                    base_place: None,
-                    index_place: None,
-                    call: None,
-                    intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
-                });
-                let value = fresh(element.clone());
-                reads.push(MirInstr::ReadRef {
-                    dest: value,
-                    reference,
-                });
-                values.push(value);
-            }
-            reads.push(MirInstr::MakeTuple {
-                dest,
-                elems: values,
-                element_types: Some(elements),
-            });
-            let inserted = reads.len();
-            block.instrs.splice(index..=index, reads);
-            index += inserted;
+fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in mojito_mir::mir::instruction_regions_mut(&mut block.instrs[index]) {
+            expand_load_indirect(region, tables);
         }
+        let MirInstr::LoadIndirect { dest, pack } = block.instrs[index] else {
+            index += 1;
+            continue;
+        };
+        let Some(TyKind::LitRefPack { elements, origin }) =
+            tables.reg_types.get(&pack.0).map(Ty::kind)
+        else {
+            index += 1;
+            continue;
+        };
+        if mojito_types::types::pack_spread(elements).is_some() {
+            index += 1;
+            continue;
+        }
+        let (elements, origin) = (elements.clone(), origin.clone());
+        let span = tables.spans.0.get(&dest.0).cloned();
+        let mut fresh = |ty: Ty| {
+            let register = Reg(*tables.n_regs);
+            *tables.n_regs += 1;
+            tables.reg_types.insert(register.0, ty);
+            if let Some(span) = &span {
+                tables.spans.0.insert(register.0, span.clone());
+            }
+            register
+        };
+        let mut reads = Vec::with_capacity(elements.len() * 3 + 1);
+        let mut values = Vec::with_capacity(elements.len());
+        for (element_index, element) in elements.iter().enumerate() {
+            let at = fresh(Ty::int());
+            reads.push(MirInstr::Const {
+                dest: at,
+                k: Const::Int(i64::try_from(element_index).expect("a pack's arity fits an Int")),
+            });
+            let reference = fresh(
+                TyKind::LitRef {
+                    element: element.clone(),
+                    origin: origin.clone(),
+                }
+                .into(),
+            );
+            reads.push(MirInstr::Index {
+                dest: reference,
+                base: pack,
+                index: at,
+                base_place: None,
+                index_place: None,
+                call: None,
+                intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
+            });
+            let value = fresh(element.clone());
+            reads.push(MirInstr::ReadRef {
+                dest: value,
+                reference,
+            });
+            values.push(value);
+        }
+        reads.push(MirInstr::MakeTuple {
+            dest,
+            elems: values,
+            element_types: Some(elements),
+        });
+        let inserted = reads.len();
+        block.instrs.splice(index..=index, reads);
+        index += inserted;
     }
 }
 
@@ -402,22 +367,20 @@ impl SpreadTables<'_> {
     }
 }
 
-fn retire_in_blocks(blocks: &mut [MirBlock], forwarded: &HashSet<u32>, retired: &mut HashSet<u32>) {
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| match instruction {
-            MirInstr::Const {
-                dest,
-                k: Const::Value(CtValue::Tuple(_)),
-            } if forwarded.contains(&dest.0) => {
-                retired.insert(dest.0);
-                false
+fn retire_in_blocks(block: &mut MirBlock, forwarded: &HashSet<u32>, retired: &mut HashSet<u32>) {
+    block.instrs.retain_mut(|instruction| match instruction {
+        MirInstr::Const {
+            dest,
+            k: Const::Value(CtValue::Tuple(_)),
+        } if forwarded.contains(&dest.0) => {
+            retired.insert(dest.0);
+            false
+        }
+        instruction => {
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                retire_in_blocks(region, forwarded, retired);
             }
-            instruction => {
-                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                    retire_in_blocks(region, forwarded, retired);
-                }
-                true
-            }
-        });
-    }
+            true
+        }
+    });
 }

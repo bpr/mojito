@@ -391,32 +391,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1276 A region is a `Vec<MirBlock>` the verifier holds to one
-  block, where upstream's `hlcf` regions are `SizedRegion<1>`**
-
-  Since R1274 `mir::verify` rejects a body or region of more than one
-  block, but the type still admits any number, so every walker indexes a
-  block list it knows holds one.
-  - Lever: `MirFunction::blocks` and every region field of `MirInstr`
-    (`If`, `MirElif`, `Loop`, `ComptimeIf`, `ComptimeFor`, `MirCase`,
-    `Try`) become one `MirBlock` (boxed inside an instruction), and
-    `instruction_regions{,_mut}` return blocks; the "body/region holds N
-    blocks" findings go with the shape they guard.
-  - Probe: `MirBlockId` (`mir/ir.rs`) names nothing but block 0.
-  - Probe: the VM's `RegionLevel::block` (`backend/vm/regions.rs`) is
-    always 0.
-  - Probe: Pliron's `BlockKey` bookkeeping (`lower/regions.rs`,
-    `lower/release.rs`) keys blocks of one-block lists.
-  - Probe: `verify/drops.rs`'s `Walk::block` index names block 0 only.
-  - Probe: the `block N` finding prefix and `verify_artifact`'s block
-    locator name block 0 only.
-  - The MIR text may keep its `[bb0 { … }]` region spelling: MLIR prints a
-    region's entry block label only when it has arguments.
-  - Large but mechanical: each of the ~200 `instruction_regions` callers
-    loses a loop over a list.
-  - Depends on R1274.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1343 `Conforms` and `ConformsPack` are one proposition upstream**
 
   Upstream's `#kgen.type_conforms_to_trait` takes a type or a type list,

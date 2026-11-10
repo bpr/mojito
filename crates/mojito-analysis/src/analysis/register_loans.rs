@@ -530,7 +530,7 @@ impl DropFacts {
             },
         };
         // The observer never refuses an instruction.
-        let _ = walk_forward(&scan, DropFactsState::default(), &f.blocks, &mut observer);
+        let _ = walk_forward(&scan, DropFactsState::default(), &f.body, &mut observer);
         observer.facts
     }
 
@@ -548,18 +548,18 @@ impl DropFacts {
             .unwrap_or(&self.unused)
     }
 
+    /// Follow `from`'s block to `to`, where the caller moved it.
+    pub(super) fn moved_block(&mut self, from: *const MirBlock, to: &MirBlock) {
+        if let Some(moved) = self.blocks.remove(&from) {
+            self.blocks.insert(std::ptr::from_ref(to), moved);
+        }
+    }
+
     /// The generations entering `block`.
     pub(super) fn entry(&self, block: &MirBlock) -> &LoanGenerationState {
         self.blocks
             .get(&std::ptr::from_ref(block))
             .map_or(&self.unreached, |facts| &self.states[facts.entry])
-    }
-
-    /// The generations entering a region: its first block's.
-    pub(super) fn region_entry(&self, region: &[MirBlock]) -> &LoanGenerationState {
-        region
-            .first()
-            .map_or(&self.unreached, |block| self.entry(block))
     }
 
     /// The generations at `block`'s terminator; `None` when the walk never
@@ -1210,8 +1210,7 @@ impl ForwardScan for DropFactsScan<'_> {
             };
             let mut owners: BTreeSet<ValueRef> = regions
                 .iter()
-                .flat_map(|region| region.iter())
-                .filter_map(|block| handed_values(&block.term).get(index))
+                .filter_map(|region| handed_values(&region.term).get(index))
                 .flat_map(|value| state.registers.owners.get(&value.0).into_iter().flatten())
                 .filter(|part| part.root < first_register)
                 .copied()

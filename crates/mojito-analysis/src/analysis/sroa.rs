@@ -114,7 +114,7 @@ pub fn sroa(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
             split.insert(var, slots);
             retired.insert(var);
         }
-        let mut blocks = std::mem::take(&mut function.blocks);
+        let mut blocks = std::mem::take(&mut function.body);
         let makes = tuple_makes(&blocks);
         let mut splitter = Splitter {
             split,
@@ -134,7 +134,7 @@ pub fn sroa(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
             remove_tuple_makes(&mut blocks, &dead);
             function.reg_types.retain(|reg, _| !dead.contains(reg));
         }
-        function.blocks = blocks;
+        function.body = blocks;
     }
     if retired.is_empty() {
         return false;
@@ -254,48 +254,46 @@ struct Registers {
 impl Registers {
     /// Record how each instruction of `blocks` and the regions they hold
     /// defines and takes its registers.
-    fn record(&mut self, blocks: &[MirBlock]) {
+    fn record(&mut self, block: &MirBlock) {
         let mut regs = Vec::new();
-        for block in blocks {
-            for instruction in &block.instrs {
-                for region in instruction_regions(instruction) {
-                    self.record(region);
-                }
-                regs.clear();
-                instruction_result_regs(instruction, &mut regs);
-                let def = match (instruction, whole_mention(instruction)) {
-                    (_, Some((_, Whole::Read { .. })))
-                    | (MirInstr::MakeStruct { .. } | MirInstr::GetField { .. }, _) => Def::Value,
-                    _ => Def::Other,
-                };
-                self.defs.extend(regs.iter().map(|reg| (reg.0, def)));
-                regs.clear();
-                instruction_operand_regs(instruction, &mut regs);
-                let exempt: &[Reg] = match instruction {
-                    MirInstr::DefVar { src, .. } | MirInstr::Store { src, .. } => {
-                        std::slice::from_ref(src)
-                    }
-                    MirInstr::MakeStruct { fields, .. } => fields,
-                    MirInstr::GetField { base, .. } => std::slice::from_ref(base),
-                    _ => &[],
-                };
-                for reg in exempt {
-                    if let Some(at) = regs.iter().position(|taken| taken == reg) {
-                        regs.swap_remove(at);
-                    }
-                }
-                self.taken.extend(regs.iter().map(|reg| reg.0));
+        for instruction in &block.instrs {
+            for region in instruction_regions(instruction) {
+                self.record(region);
             }
-            if !matches!(
-                block.term,
-                MirTerm::Return(_)
-                    | MirTerm::Yield(_)
-                    | MirTerm::Break { .. }
-                    | MirTerm::Continue { .. }
-            ) {
-                self.taken
-                    .extend(terminator_regs(&block.term).iter().map(|reg| reg.0));
+            regs.clear();
+            instruction_result_regs(instruction, &mut regs);
+            let def = match (instruction, whole_mention(instruction)) {
+                (_, Some((_, Whole::Read { .. })))
+                | (MirInstr::MakeStruct { .. } | MirInstr::GetField { .. }, _) => Def::Value,
+                _ => Def::Other,
+            };
+            self.defs.extend(regs.iter().map(|reg| (reg.0, def)));
+            regs.clear();
+            instruction_operand_regs(instruction, &mut regs);
+            let exempt: &[Reg] = match instruction {
+                MirInstr::DefVar { src, .. } | MirInstr::Store { src, .. } => {
+                    std::slice::from_ref(src)
+                }
+                MirInstr::MakeStruct { fields, .. } => fields,
+                MirInstr::GetField { base, .. } => std::slice::from_ref(base),
+                _ => &[],
+            };
+            for reg in exempt {
+                if let Some(at) = regs.iter().position(|taken| taken == reg) {
+                    regs.swap_remove(at);
+                }
             }
+            self.taken.extend(regs.iter().map(|reg| reg.0));
+        }
+        if !matches!(
+            block.term,
+            MirTerm::Return(_)
+                | MirTerm::Yield(_)
+                | MirTerm::Break { .. }
+                | MirTerm::Continue { .. }
+        ) {
+            self.taken
+                .extend(terminator_regs(&block.term).iter().map(|reg| reg.0));
         }
     }
 }
@@ -368,16 +366,16 @@ fn unkept_census(
         return HashMap::new();
     }
     let mut census = HashMap::new();
-    take_census(&function.blocks, fields, &mut census);
+    take_census(&function.body, fields, &mut census);
     let collectors: Vec<VarId> = census
         .keys()
         .copied()
         .filter(|var| is_collector(function, *var))
         .collect();
     if !collectors.is_empty() {
-        let makes = tuple_makes(&function.blocks);
+        let makes = tuple_makes(&function.body);
         let mut spread = HashSet::new();
-        spread_packs(&function.blocks, &mut spread);
+        spread_packs(&function.body, &mut spread);
         for var in collectors {
             if let Some(entry) = census.get_mut(&var) {
                 entry.kept |= entry.stores.iter().any(|src| !makes.contains_key(&src.0))
@@ -387,7 +385,7 @@ fn unkept_census(
     }
     if fields.values().any(|(_, memory_only)| *memory_only) {
         let mut registers = Registers::default();
-        registers.record(&function.blocks);
+        registers.record(&function.body);
         keep_address_users(&mut census, fields, &registers);
     }
     census.retain(|_, entry| !entry.kept);
@@ -490,53 +488,51 @@ fn keep_address_users(
 /// Record every mention of the candidate slots `fields` names in `blocks`
 /// and the regions they hold in `census`.
 fn take_census(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     fields: &HashMap<VarId, Judged<'_>>,
     census: &mut HashMap<VarId, Census>,
 ) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            for region in instruction_regions(instruction) {
-                take_census(region, fields, census);
+    for instruction in &block.instrs {
+        for region in instruction_regions(instruction) {
+            take_census(region, fields, census);
+        }
+        let slots = instruction_slots(instruction);
+        if let Some((var, whole)) = whole_mention(instruction)
+            && slots == [var]
+        {
+            let entry = census.entry(var).or_default();
+            entry.defined |= matches!(whole, Whole::Store(_) | Whole::Declare);
+            match whole {
+                Whole::Store(src) => entry.stores.push(src),
+                Whole::Read { dest, .. } => entry.reads.push(dest),
+                _ => {}
             }
-            let slots = instruction_slots(instruction);
-            if let Some((var, whole)) = whole_mention(instruction)
-                && slots == [var]
-            {
-                let entry = census.entry(var).or_default();
-                entry.defined |= matches!(whole, Whole::Store(_) | Whole::Declare);
-                match whole {
-                    Whole::Store(src) => entry.stores.push(src),
-                    Whole::Read { dest, .. } => entry.reads.push(dest),
-                    _ => {}
-                }
+            continue;
+        }
+        let places = instruction_places(instruction);
+        let distinct: BTreeSet<VarId> = slots.iter().copied().collect();
+        for var in distinct {
+            let Some((declared, _)) = fields.get(&var) else {
                 continue;
-            }
-            let places = instruction_places(instruction);
-            let distinct: BTreeSet<VarId> = slots.iter().copied().collect();
-            for var in distinct {
-                let Some((declared, _)) = fields.get(&var) else {
-                    continue;
-                };
-                let mentions = slots.iter().filter(|&&slot| slot == var).count();
-                let projected = places
-                    .iter()
-                    .filter(|place| place.root == var && first_field(place, declared).is_some())
-                    .count();
-                let entry = census.entry(var).or_default();
-                entry.kept |= mentions != projected;
-                entry.ended.extend(
-                    ended_places(instruction)
-                        .filter(|place| {
-                            place.root == var
-                                && place.proj.get(1..).is_some_and(|rest| {
-                                    rest.iter().all(|step| matches!(step, Proj::Rebind))
-                                })
-                        })
-                        .and_then(|place| first_field(place, declared))
-                        .map(String::from),
-                );
-            }
+            };
+            let mentions = slots.iter().filter(|&&slot| slot == var).count();
+            let projected = places
+                .iter()
+                .filter(|place| place.root == var && first_field(place, declared).is_some())
+                .count();
+            let entry = census.entry(var).or_default();
+            entry.kept |= mentions != projected;
+            entry.ended.extend(
+                ended_places(instruction)
+                    .filter(|place| {
+                        place.root == var
+                            && place.proj.get(1..).is_some_and(|rest| {
+                                rest.iter().all(|step| matches!(step, Proj::Rebind))
+                            })
+                    })
+                    .and_then(|place| first_field(place, declared))
+                    .map(String::from),
+            );
         }
     }
 }
@@ -585,58 +581,52 @@ fn is_collector(function: &MirFunction, var: VarId) -> bool {
 /// Record in `packs` each register a call or an LLVM intrinsic call in
 /// `blocks` or the regions they hold spreads, which the elaborator expands
 /// by reading the collector it was read from element by element.
-fn spread_packs(blocks: &[MirBlock], packs: &mut HashSet<u32>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            for region in instruction_regions(instruction) {
-                spread_packs(region, packs);
-            }
-            let (MirInstr::Call { spread, args, .. }
-            | MirInstr::MethodCall { spread, args, .. }
-            | MirInstr::CallIndirect { spread, args, .. }
-            | MirInstr::CallLlvmIntrinsic { spread, args, .. }) = instruction
-            else {
-                continue;
-            };
-            packs.extend(
-                spread
-                    .and_then(|position| args.get(position))
-                    .map(|pack| pack.0),
-            );
+fn spread_packs(block: &MirBlock, packs: &mut HashSet<u32>) {
+    for instruction in &block.instrs {
+        for region in instruction_regions(instruction) {
+            spread_packs(region, packs);
         }
+        let (MirInstr::Call { spread, args, .. }
+        | MirInstr::MethodCall { spread, args, .. }
+        | MirInstr::CallIndirect { spread, args, .. }
+        | MirInstr::CallLlvmIntrinsic { spread, args, .. }) = instruction
+        else {
+            continue;
+        };
+        packs.extend(
+            spread
+                .and_then(|position| args.get(position))
+                .map(|pack| pack.0),
+        );
     }
 }
 
 /// Remove each `tuple.make` in `blocks` and the regions they hold whose
 /// register is one of `dead`.
-fn remove_tuple_makes(blocks: &mut [MirBlock], dead: &HashSet<u32>) {
+fn remove_tuple_makes(block: &mut MirBlock, dead: &HashSet<u32>) {
     if dead.is_empty() {
         return;
     }
-    for block in blocks {
-        block.instrs.retain(
-            |instruction| !matches!(instruction, MirInstr::MakeTuple { dest, .. } if dead.contains(&dest.0)),
-        );
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                remove_tuple_makes(region, dead);
-            }
+    block.instrs.retain(
+        |instruction| !matches!(instruction, MirInstr::MakeTuple { dest, .. } if dead.contains(&dest.0)),
+    );
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            remove_tuple_makes(region, dead);
         }
     }
 }
 
 /// The elements of each register a `tuple.make` in `blocks` or the
 /// regions they hold defines, by register number.
-fn tuple_makes(blocks: &[MirBlock]) -> HashMap<u32, Vec<Reg>> {
+fn tuple_makes(block: &MirBlock) -> HashMap<u32, Vec<Reg>> {
     let mut makes = HashMap::new();
-    for block in blocks {
-        for instruction in &block.instrs {
-            for region in instruction_regions(instruction) {
-                makes.extend(tuple_makes(region));
-            }
-            if let MirInstr::MakeTuple { dest, elems, .. } = instruction {
-                makes.insert(dest.0, elems.clone());
-            }
+    for instruction in &block.instrs {
+        for region in instruction_regions(instruction) {
+            makes.extend(tuple_makes(region));
+        }
+        if let MirInstr::MakeTuple { dest, elems, .. } = instruction {
+            makes.insert(dest.0, elems.clone());
         }
     }
     makes
@@ -693,25 +683,23 @@ struct Splitter<'a> {
 }
 
 impl Splitter<'_> {
-    fn rewrite(&mut self, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            let mut out = Vec::with_capacity(block.instrs.len());
-            for mut instruction in std::mem::take(&mut block.instrs) {
-                for region in instruction_regions_mut(&mut instruction) {
-                    self.rewrite(region);
-                }
-                if let Some((var, whole)) = whole_mention(&instruction)
-                    && let Some(fields) = self.split.get(&var).cloned()
-                {
-                    let collector = is_collector(self.function, var);
-                    self.expand(whole, &fields, collector, &mut out);
-                    continue;
-                }
-                self.reroot(&mut instruction);
-                out.push(instruction);
+    fn rewrite(&mut self, block: &mut MirBlock) {
+        let mut out = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            for region in instruction_regions_mut(&mut instruction) {
+                self.rewrite(region);
             }
-            block.instrs = out;
+            if let Some((var, whole)) = whole_mention(&instruction)
+                && let Some(fields) = self.split.get(&var).cloned()
+            {
+                let collector = is_collector(self.function, var);
+                self.expand(whole, &fields, collector, &mut out);
+                continue;
+            }
+            self.reroot(&mut instruction);
+            out.push(instruction);
         }
+        block.instrs = out;
     }
 
     /// The per-field instructions of the whole mention `whole` of a slot

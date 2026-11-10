@@ -14,39 +14,37 @@ use std::collections::HashMap;
 /// binding is no longer in place, as a `const` is no call-family producer.
 /// Terminators are left alone.
 pub(super) fn replace_folded(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     constant: &impl Fn(Reg) -> Option<Const>,
     reg_types: &HashMap<u32, Ty>,
     declarations: &MirDeclarations,
 ) -> usize {
     let mut folded = 0;
-    for block in blocks {
-        let mut folded_here = Vec::new();
-        for instruction in &mut block.instrs {
-            let regions = instruction_regions_mut(instruction);
-            if !regions.is_empty() {
-                for region in regions {
-                    folded += replace_folded(region, constant, reg_types, declarations);
-                }
-                continue;
+    let mut folded_here = Vec::new();
+    for instruction in &mut block.instrs {
+        let regions = instruction_regions_mut(instruction);
+        if !regions.is_empty() {
+            for region in regions {
+                folded += replace_folded(region, constant, reg_types, declarations);
             }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            if let (Some(k), [dest]) = (
-                instruction.folded_constant(constant, reg_types, declarations),
-                results.as_slice(),
-            ) {
-                folded_here.push(*dest);
-                *instruction = MirInstr::Const { dest: *dest, k };
-                folded += 1;
-            }
+            continue;
         }
-        for instruction in &mut block.instrs {
-            if let MirInstr::DefVar { src, in_place, .. } = instruction
-                && folded_here.contains(src)
-            {
-                *in_place = false;
-            }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        if let (Some(k), [dest]) = (
+            instruction.folded_constant(constant, reg_types, declarations),
+            results.as_slice(),
+        ) {
+            folded_here.push(*dest);
+            *instruction = MirInstr::Const { dest: *dest, k };
+            folded += 1;
+        }
+    }
+    for instruction in &mut block.instrs {
+        if let MirInstr::DefVar { src, in_place, .. } = instruction
+            && folded_here.contains(src)
+        {
+            *in_place = false;
         }
     }
     folded

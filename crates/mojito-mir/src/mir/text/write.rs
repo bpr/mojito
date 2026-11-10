@@ -789,36 +789,24 @@ fn write_function(
         writeln!(output, "{pad}    callee_removed_args: {},", list(callees)).unwrap();
     }
     writeln!(output, "{pad}    blocks: [").unwrap();
-    write_blocks(output, &function.blocks, indent + 3);
+    write_block(output, &function.body, indent + 3);
     writeln!(output, "{pad}    ]").unwrap();
     write!(output, "{pad}  }}").unwrap();
 }
 
-fn write_blocks(output: &mut String, blocks: &[MirBlock], indent: usize) {
+/// A body's one block, spelled as the one-entry block list the text keeps:
+/// MLIR prints a region's entry block label only when it has arguments,
+/// and the text names it `bb0` throughout.
+fn write_block(output: &mut String, block: &MirBlock, indent: usize) {
     let pad = "  ".repeat(indent);
-    for (block_id, block) in blocks.iter().enumerate() {
-        writeln!(output, "{pad}bb{block_id} {{").unwrap();
-        writeln!(output, "{pad}  instructions: [").unwrap();
-        for (index, instruction) in block.instrs.iter().enumerate() {
-            write!(output, "{pad}    {}", instruction_value(instruction)).unwrap();
-            writeln!(
-                output,
-                "{}",
-                if index + 1 == block.instrs.len() {
-                    ""
-                } else {
-                    ","
-                }
-            )
-            .unwrap();
-        }
-        writeln!(output, "{pad}  ],").unwrap();
-        writeln!(output, "{pad}  terminator: {}", term_value(&block.term)).unwrap();
-        write!(output, "{pad}}}").unwrap();
+    writeln!(output, "{pad}bb0 {{").unwrap();
+    writeln!(output, "{pad}  instructions: [").unwrap();
+    for (index, instruction) in block.instrs.iter().enumerate() {
+        write!(output, "{pad}    {}", instruction_value(instruction)).unwrap();
         writeln!(
             output,
             "{}",
-            if block_id + 1 == blocks.len() {
+            if index + 1 == block.instrs.len() {
                 ""
             } else {
                 ","
@@ -826,6 +814,10 @@ fn write_blocks(output: &mut String, blocks: &[MirBlock], indent: usize) {
         )
         .unwrap();
     }
+    writeln!(output, "{pad}  ],").unwrap();
+    writeln!(output, "{pad}  terminator: {}", term_value(&block.term)).unwrap();
+    write!(output, "{pad}}}").unwrap();
+    writeln!(output).unwrap();
 }
 
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
@@ -1743,14 +1735,11 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("label", try_label(*label)),
                 ("error", option(error.map(var_value))),
                 ("results", regs(results)),
-                ("body", blocks_value(body)),
+                ("body", region_value(body)),
                 ("handler_arguments", regs(handler_args)),
-                (
-                    "handler",
-                    option(handler.as_ref().map(|blocks| blocks_value(blocks))),
-                ),
+                ("handler", option(handler.as_deref().map(region_value))),
                 ("else_arguments", regs(else_args)),
-                ("orelse", option(orelse.as_ref().map(|v| blocks_value(v)))),
+                ("orelse", option(orelse.as_deref().map(region_value))),
             ],
         ),
         MirInstr::If {
@@ -1765,7 +1754,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("results", list(results.iter().map(|v| reg_value(*v)))),
                 ("condition", reg_value(*cond)),
-                ("then", blocks_value(then)),
+                ("then", region_value(then)),
                 (
                     "elifs",
                     list(elifs.iter().map(|elif| {
@@ -1773,15 +1762,15 @@ fn instruction_value(instruction: &MirInstr) -> String {
                             "elif",
                             &[
                                 ("condition_arguments", regs(&elif.cond_args)),
-                                ("condition", blocks_value(&elif.cond)),
+                                ("condition", region_value(&elif.cond)),
                                 ("then_arguments", regs(&elif.then_args)),
-                                ("then", blocks_value(&elif.then)),
+                                ("then", region_value(&elif.then)),
                             ],
                         )
                     })),
                 ),
                 ("else_arguments", regs(else_args)),
-                ("else", blocks_value(orelse)),
+                ("else", region_value(orelse)),
             ],
         ),
         MirInstr::Loop {
@@ -1797,7 +1786,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("label", option(label.map(loop_label))),
                 ("operands", list(operands.iter().map(|v| reg_value(*v)))),
                 ("arguments", list(args.iter().map(|v| reg_value(*v)))),
-                ("body", blocks_value(body)),
+                ("body", region_value(body)),
             ],
         ),
         MirInstr::ComptimeIf {
@@ -1810,8 +1799,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("results", list(results.iter().map(|v| reg_value(*v)))),
                 ("values", list(values.iter().map(const_value))),
-                ("arms", list(arms.iter().map(|arm| blocks_value(arm)))),
-                ("else", blocks_value(orelse)),
+                ("arms", list(arms.iter().map(region_value))),
+                ("else", region_value(orelse)),
             ],
         ),
         MirInstr::ComptimeFor {
@@ -1828,8 +1817,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             fields.extend([
                 ("operands", regs(operands)),
                 ("arguments", regs(args)),
-                ("body", blocks_value(body)),
-                ("else", blocks_value(orelse)),
+                ("body", region_value(body)),
+                ("else", region_value(orelse)),
             ]);
             record(tag, &fields)
         }
@@ -1856,13 +1845,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
                             "case",
                             &[
                                 ("arguments", regs(&case.args)),
-                                ("body", blocks_value(&case.body)),
+                                ("body", region_value(&case.body)),
                             ],
                         )
                     })),
                 ),
                 ("else_arguments", regs(else_args)),
-                ("else", blocks_value(orelse)),
+                ("else", region_value(orelse)),
             ],
         ),
         MirInstr::Drop { reg, destructor } => record(
@@ -2011,19 +2000,19 @@ fn try_label(label: TryLabel) -> String {
     format!("try{}", label.0)
 }
 
-fn blocks_value(blocks: &[MirBlock]) -> String {
-    list(blocks.iter().enumerate().map(|(id, block)| {
-        record(
-            &format!("bb{id}"),
-            &[
-                (
-                    "instructions",
-                    list(block.instrs.iter().map(instruction_value)),
-                ),
-                ("terminator", term_value(&block.term)),
-            ],
-        )
-    }))
+/// A region's one block, spelled as a one-entry block list, as
+/// [`write_block`] spells a body's.
+fn region_value(block: &MirBlock) -> String {
+    list(std::iter::once(record(
+        "bb0",
+        &[
+            (
+                "instructions",
+                list(block.instrs.iter().map(instruction_value)),
+            ),
+            ("terminator", term_value(&block.term)),
+        ],
+    )))
 }
 
 fn place_value(place: &MirPlace) -> String {

@@ -59,7 +59,7 @@ fn callable_value_parameter_is_a_hidden_typed_mir_local() {
     // The binder is read as its parameter reference, upstream's
     // `kgen.param.constant`, not from a frame slot.
     assert!(!invoke.var_names.iter().any(|name| name == "callback"));
-    let instructions = nested_instructions(&invoke.blocks);
+    let instructions = nested_instructions(&invoke.body);
     let callback = instructions
         .iter()
         .find_map(|instruction| match instruction {
@@ -145,7 +145,7 @@ fn generic_callable_contract_defaults_override_implementation_defaults() {
     // The call binds the contract's own default, `n = 2`, not the
     // implementation's.
     assert!(
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| {
                 matches!(instruction, MirInstr::CallIndirect { param_arg_regs, param_decls, .. }

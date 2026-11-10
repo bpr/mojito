@@ -88,7 +88,7 @@ pub fn used_slots(function: &MirFunction, declarations: &MirDeclarations) -> BTr
             .is_some_and(|ty| declarations.drop_runs_no_code(ty))
     };
     let mut used = BTreeSet::new();
-    collect_used(&function.blocks, &trivial, &mut used);
+    collect_used(&function.body, &trivial, &mut used);
     used
 }
 
@@ -107,7 +107,7 @@ pub fn without_removed_arguments(
 ) -> (MirFunction, MirFunctionDeclaration) {
     let retired: BTreeSet<VarId> = removed.iter().copied().collect();
     let mut view = function.clone();
-    remove_drops(&mut view.blocks, &retired);
+    remove_drops(&mut view.body, &retired);
     retire_parameters(&mut view, &retired);
     view.removed_args.clear();
     let mut declaration = declaration.clone();
@@ -526,31 +526,27 @@ fn names_a_place(ty: &Ty) -> bool {
 
 /// Add to `used` each slot `blocks` and their regions use ([`used_slots`]),
 /// where `trivial` answers whether dropping a slot runs no code.
-fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut BTreeSet<VarId>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::DropVar { var, .. } if trivial(*var) => {}
-                _ => used.extend(instruction_slots(instruction)),
-            }
-            for region in instruction_regions(instruction) {
-                collect_used(region, trivial, used);
-            }
+fn collect_used(block: &MirBlock, trivial: &dyn Fn(VarId) -> bool, used: &mut BTreeSet<VarId>) {
+    for instruction in &block.instrs {
+        match instruction {
+            MirInstr::DropVar { var, .. } if trivial(*var) => {}
+            _ => used.extend(instruction_slots(instruction)),
+        }
+        for region in instruction_regions(instruction) {
+            collect_used(region, trivial, used);
         }
     }
 }
 
 /// Remove from `blocks` and their regions every drop of a `retired` slot,
 /// a `drop.var`.
-fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
-    for block in blocks {
-        block.instrs.retain(
-            |instruction| !matches!(instruction, MirInstr::DropVar { var, .. } if retired.contains(var)),
-        );
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                remove_drops(region, retired);
-            }
+fn remove_drops(block: &mut MirBlock, retired: &BTreeSet<VarId>) {
+    block.instrs.retain(
+        |instruction| !matches!(instruction, MirInstr::DropVar { var, .. } if retired.contains(var)),
+    );
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            remove_drops(region, retired);
         }
     }
 }
@@ -583,7 +579,7 @@ fn argument_forwards_view<'a>(
     operands: Operands,
     module_scope: bool,
 ) -> Option<ArgumentForwards> {
-    if !calls_removing(&function.blocks, removed) {
+    if !calls_removing(&function.body, removed) {
         return None;
     }
     let mut view = function.clone();
@@ -591,7 +587,7 @@ fn argument_forwards_view<'a>(
     let mut discounted = BTreeSet::new();
     let mut dropped = BTreeSet::new();
     drop_removed_operands(
-        &mut view.blocks,
+        &mut view.body,
         &mut Receivers {
             n_regs: &mut view.n_regs,
             reg_types: &mut view.reg_types,
@@ -619,7 +615,7 @@ fn argument_forwards_view<'a>(
         view = function.clone();
         let mut kept = BTreeSet::new();
         drop_removed_operands(
-            &mut view.blocks,
+            &mut view.body,
             &mut Receivers {
                 n_regs: &mut view.n_regs,
                 reg_types: &mut view.reg_types,
@@ -631,8 +627,8 @@ fn argument_forwards_view<'a>(
             &mut kept,
         );
         erase_unpassed_defaults(&mut view, &kept, &original);
-        erase_results(&mut view.blocks, &erased);
-        erase_stored_slots(&mut view.blocks, &erased);
+        erase_results(&mut view.body, &erased);
+        erase_stored_slots(&mut view.body, &erased);
         undefined = kept
             .into_iter()
             .filter(|&reg| erased.contains(&reg) || reg >= function.n_regs)
@@ -649,29 +645,26 @@ fn argument_forwards_view<'a>(
     })
 }
 
-/// Whether `blocks` or their regions hold a direct call, a resolved method
+/// Whether `block` or their regions hold a direct call, a resolved method
 /// call, a resolved operator, or a subscript read or store of a callee
 /// `removed` names arguments of.
-fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
-    blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .any(|instruction| {
-            let target = match instruction {
-                MirInstr::Call { func, .. } => Some(func.0.as_str()),
-                MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
-                MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
-                    resolved.as_deref()
-                }
-                _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
-            };
-            target
-                .and_then(removed)
-                .is_some_and(|slots| !slots.is_empty())
-                || instruction_regions(instruction)
-                    .into_iter()
-                    .any(|region| calls_removing(region, removed))
-        })
+fn calls_removing<'a>(block: &MirBlock, removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
+    block.instrs.iter().any(|instruction| {
+        let target = match instruction {
+            MirInstr::Call { func, .. } => Some(func.0.as_str()),
+            MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+            MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
+                resolved.as_deref()
+            }
+            _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
+        };
+        target
+            .and_then(removed)
+            .is_some_and(|slots| !slots.is_empty())
+            || instruction_regions(instruction)
+                .into_iter()
+                .any(|region| calls_removing(region, removed))
+    })
 }
 
 /// Where a view takes a register no instruction defines, for a call's
@@ -701,7 +694,7 @@ impl Receivers<'_> {
     }
 }
 
-/// Drop from each direct call in `blocks` and their regions the operands
+/// Drop from each direct call in `block` and their regions the operands
 /// of its callee's removed arguments or, by `operands`, only their places,
 /// adding each callee that lost one to `discounted` and each operand's
 /// register to `dropped`.
@@ -718,7 +711,7 @@ impl Receivers<'_> {
 /// whose callee removed its receiver takes a register no instruction
 /// defines in its stead, as a method call does.
 fn drop_removed_operands<'a>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     receivers: &mut Receivers<'_>,
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [VarId]>,
@@ -731,7 +724,7 @@ fn drop_removed_operands<'a>(
             .filter(|slots| !slots.is_empty())
             .zip(declarations.function(target))
     };
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             drop_removed_operands(
                 region,
@@ -1057,12 +1050,12 @@ fn shed_indexes<T>(
     }
 }
 
-/// Erase from `blocks` and their regions each slot a store of an `erased`
+/// Erase from `block` and their regions each slot a store of an `erased`
 /// register defines, its stores, declarations, drops, and consumptions:
 /// a slot the view erased as only stored to, whose stored value it erased.
-fn erase_stored_slots(blocks: &mut [MirBlock], erased: &HashSet<u32>) {
-    fn stored(blocks: &[MirBlock], erased: &HashSet<u32>, slots: &mut BTreeSet<VarId>) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn erase_stored_slots(blocks: &mut MirBlock, erased: &HashSet<u32>) {
+    fn stored(block: &MirBlock, erased: &HashSet<u32>, slots: &mut BTreeSet<VarId>) {
+        for instruction in &block.instrs {
             if let MirInstr::DefVar { var, src, .. } = instruction
                 && erased.contains(&src.0)
             {
@@ -1073,16 +1066,13 @@ fn erase_stored_slots(blocks: &mut [MirBlock], erased: &HashSet<u32>) {
             }
         }
     }
-    fn erase(blocks: &mut [MirBlock], slots: &BTreeSet<VarId>) {
-        for block in blocks {
-            block.instrs.retain(|instruction| {
-                crate::mir::param_uses::slot_marker(instruction)
-                    .is_none_or(|var| !slots.contains(&var))
-            });
-            for instruction in &mut block.instrs {
-                for region in instruction_regions_mut(instruction) {
-                    erase(region, slots);
-                }
+    fn erase(block: &mut MirBlock, slots: &BTreeSet<VarId>) {
+        block.instrs.retain(|instruction| {
+            crate::mir::param_uses::slot_marker(instruction).is_none_or(|var| !slots.contains(&var))
+        });
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                erase(region, slots);
             }
         }
     }
@@ -1095,15 +1085,13 @@ fn erase_stored_slots(blocks: &mut [MirBlock], erased: &HashSet<u32>) {
 
 /// Remove from `blocks` and their regions each instruction that defines
 /// only `erased` registers.
-fn erase_results(blocks: &mut [MirBlock], erased: &HashSet<u32>) {
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| {
-            for region in instruction_regions_mut(instruction) {
-                erase_results(region, erased);
-            }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            results.is_empty() || !results.iter().all(|reg| erased.contains(&reg.0))
-        });
-    }
+fn erase_results(block: &mut MirBlock, erased: &HashSet<u32>) {
+    block.instrs.retain_mut(|instruction| {
+        for region in instruction_regions_mut(instruction) {
+            erase_results(region, erased);
+        }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        results.is_empty() || !results.iter().all(|reg| erased.contains(&reg.0))
+    });
 }

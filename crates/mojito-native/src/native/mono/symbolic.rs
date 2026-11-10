@@ -308,41 +308,39 @@ pub(super) fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty
 /// runtime ABI.
 pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
     pub(super) fn erase(
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         generic_regs: &HashSet<u32>,
         generic_vars: &HashSet<u32>,
     ) {
-        for block in blocks {
-            block.instrs.retain_mut(|instruction| {
-                let regions = mojito_mir::mir::instruction_regions_mut(instruction);
-                if !regions.is_empty() {
-                    for region in regions {
-                        erase(region, generic_regs, generic_vars);
-                    }
-                    return true;
+        block.instrs.retain_mut(|instruction| {
+            let regions = mojito_mir::mir::instruction_regions_mut(instruction);
+            if !regions.is_empty() {
+                for region in regions {
+                    erase(region, generic_regs, generic_vars);
                 }
-                match instruction {
-                    MirInstr::MakeClosure { dest, .. }
-                    | MirInstr::Const { dest, .. }
-                    | MirInstr::CopyValue { dest, .. }
-                    | MirInstr::UseVar { dest, .. }
-                    | MirInstr::LoadPlace { dest, .. }
-                        if generic_regs.contains(&dest.0) =>
-                    {
-                        *instruction = MirInstr::Const {
-                            dest: *dest,
-                            k: Const::Int(0),
-                        };
-                        true
-                    }
-                    // The erased slot holds nothing, so nothing ends there.
-                    MirInstr::DefVar { var, .. }
-                    | MirInstr::DropVar { var, .. }
-                    | MirInstr::ConsumeVar { var } => !generic_vars.contains(var),
-                    _ => true,
+                return true;
+            }
+            match instruction {
+                MirInstr::MakeClosure { dest, .. }
+                | MirInstr::Const { dest, .. }
+                | MirInstr::CopyValue { dest, .. }
+                | MirInstr::UseVar { dest, .. }
+                | MirInstr::LoadPlace { dest, .. }
+                    if generic_regs.contains(&dest.0) =>
+                {
+                    *instruction = MirInstr::Const {
+                        dest: *dest,
+                        k: Const::Int(0),
+                    };
+                    true
                 }
-            });
-        }
+                // The erased slot holds nothing, so nothing ends there.
+                MirInstr::DefVar { var, .. }
+                | MirInstr::DropVar { var, .. }
+                | MirInstr::ConsumeVar { var } => !generic_vars.contains(var),
+                _ => true,
+            }
+        });
     }
 
     let generic_regs = function
@@ -355,7 +353,7 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
         .iter()
         .filter_map(|(var, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*var))
         .collect::<HashSet<_>>();
-    erase(&mut function.blocks, &generic_regs, &generic_vars);
+    erase(&mut function.body, &generic_regs, &generic_vars);
     for reg in generic_regs {
         function.reg_types.insert(reg, Ty::int());
     }
@@ -379,21 +377,19 @@ pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
 /// Collect already-substituted types named only by instructions, recursing
 /// into every region. These types need layouts or lifecycle declarations even
 /// when no register or variable carries them.
-pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::ConstructType { ty, .. } => {
-                    out.push(ty.clone());
-                }
-                MirInstr::PointerStorageTake { element, .. }
-                | MirInstr::PointerStorageDestroy { element, .. }
-                | MirInstr::UninitStorageTake { element, .. }
-                | MirInstr::UninitStorageDestroy { element, .. } => out.push(element.clone()),
-                instruction => {
-                    for region in mojito_mir::mir::instruction_regions(instruction) {
-                        push_instruction_types(region, out);
-                    }
+pub(super) fn push_instruction_types(block: &MirBlock, out: &mut Vec<Ty>) {
+    for instruction in &block.instrs {
+        match instruction {
+            MirInstr::ConstructType { ty, .. } => {
+                out.push(ty.clone());
+            }
+            MirInstr::PointerStorageTake { element, .. }
+            | MirInstr::PointerStorageDestroy { element, .. }
+            | MirInstr::UninitStorageTake { element, .. }
+            | MirInstr::UninitStorageDestroy { element, .. } => out.push(element.clone()),
+            instruction => {
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    push_instruction_types(region, out);
                 }
             }
         }

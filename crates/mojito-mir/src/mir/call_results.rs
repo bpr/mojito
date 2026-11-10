@@ -148,7 +148,7 @@ impl<'a> Flatten<'a> {
         if !e.indirect_result()
             || mojito_checked::checked::materialized_borrow_owner(e.adjustments()).is_some()
             || matches!(
-                self.f.blocks[self.cur].instrs.last(),
+                self.f.body.instrs.last(),
                 Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
             )
         {
@@ -289,7 +289,7 @@ impl<'a> Flatten<'a> {
         if let Some(&slot) = self.call_result_slots.get(&value.0) {
             return CValue::Slot(slot);
         }
-        let last = self.f.blocks[self.cur].instrs.last();
+        let last = self.f.body.instrs.last();
         let forwarded = matches!(
             last,
             Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value

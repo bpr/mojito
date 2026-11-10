@@ -51,7 +51,7 @@ impl<'f> RegisterEnds<'f> {
             borrowed_packs: HashSet::new(),
         };
         let mut parameters = HashSet::new();
-        ends.collect(&function.blocks, &mut parameters);
+        ends.collect(&function.body, &mut parameters);
         ends.owned.retain(|reg| !parameters.contains(reg));
         ends
     }
@@ -333,12 +333,12 @@ impl<'f> RegisterEnds<'f> {
         }
     }
 
-    /// Record the owned registers and borrowed packs of `blocks`, at any
+    /// Record the owned registers and borrowed packs of `block`, at any
     /// depth, in one pre-order walk, so a pack's elements are classified
     /// before it, and the registers passed as compile-time arguments in
     /// `parameters`.
-    fn collect(&mut self, blocks: &[MirBlock], parameters: &mut HashSet<u32>) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    fn collect(&mut self, block: &MirBlock, parameters: &mut HashSet<u32>) {
+        for instruction in &block.instrs {
             parameters.extend(parameter_argument_regs(instruction));
             let mut defined = Vec::new();
             owned_result_regs(instruction, &mut defined);
@@ -935,10 +935,10 @@ mod tests {
     /// `reg_types` typed.
     fn function_of(instrs: Vec<MirInstr>, reg_types: Vec<(u32, Ty)>) -> MirFunction {
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             reg_types: reg_types.into_iter().collect(),
             ..MirFunction::default()
         }

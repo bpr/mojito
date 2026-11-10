@@ -17,15 +17,7 @@ impl FnLowering<'_> {
         self.region = Some(region);
         self.entry = Some(entry);
         let func = self.func;
-        let [body_block] = func.blocks.as_slice() else {
-            return Err(self.unsupported(
-                format!(
-                    "a body of {} blocks reached native lowering",
-                    self.func.blocks.len()
-                ),
-                None,
-            ));
-        };
+        let body_block = &func.body;
         // The body lowers into a block of its own, after the entry block's
         // storage.
         let body = BasicBlock::new(ctx, None, vec![]);

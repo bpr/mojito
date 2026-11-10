@@ -94,15 +94,14 @@ fn assert_all_sealed(cfg: &Cfg) {
     }
 }
 
-/// The instructions of `region`'s entry block.
+/// The instructions of `region`'s block.
 fn entry_instrs<'c>(cfg: &'c Cfg, region: &HirRegion) -> &'c [HirInstr] {
-    &cfg.block(region.blocks[0]).instrs
+    &cfg.block(region.block).instrs
 }
 
-/// The terminator of `region`'s last block.
+/// The terminator of `region`'s block.
 fn last_term<'c>(cfg: &'c Cfg, region: &HirRegion) -> &'c Terminator {
-    cfg.term(*region.blocks.last().expect("a region has a block"))
-        .expect("sealed")
+    cfg.term(region.block).expect("sealed")
 }
 
 /// The one `Loop` op of `region`'s entry block: its label and body.
@@ -137,7 +136,7 @@ fn straight_line_is_one_block_returning() {
     // No control flow ⇒ a single block, implicitly `return None`.
     let c = checked_cfg("var x: Int = 1\nvar y: Int = 2\n");
     assert_eq!(c.node_count(), 1);
-    assert_eq!(c.root.blocks, [c.entry]);
+    assert_eq!(c.root.block, c.entry);
     assert_eq!(c.edge_count(), 0);
     assert!(matches!(c.term(c.entry), Some(Terminator::Return(None))));
     assert_eq!(c.block(c.entry).instrs.len(), 2); // two Binds
@@ -147,11 +146,6 @@ fn straight_line_is_one_block_returning() {
 #[test]
 fn if_without_else_is_one_if_op_with_yielding_arms() {
     let c = checked_function_cfg("def main(a: Bool):\n    if a:\n        pass\n", "main");
-    assert_eq!(
-        c.root.blocks.len(),
-        1,
-        "the `if` adds no block to its region"
-    );
     assert_eq!(c.node_count(), 3);
     assert_eq!(c.edge_count(), 0);
     assert_all_sealed(&c);
@@ -199,7 +193,6 @@ fn elif_is_a_condition_region_not_a_nested_if() {
 fn while_loop_is_a_labelled_loop_that_tests_first() {
     let c = checked_function_cfg("def main(a: Bool):\n    while a:\n        pass\n", "main");
     assert_all_sealed(&c);
-    assert_eq!(c.root.blocks.len(), 1);
     let (label, body) = the_loop(&c, &c.root);
     let (cond, exit) = loop_test(&c, body);
     assert!(matches!(cond, HirCond::Expr(_)));
@@ -214,10 +207,7 @@ fn break_leaves_the_loop_without_continuing() {
     let (label, body) = the_loop(&c, &c.root);
     assert!(matches!(last_term(&c, body), Terminator::Break(l) if *l == label));
     assert!(
-        !body
-            .blocks
-            .iter()
-            .any(|b| matches!(c.term(*b), Some(Terminator::Continue(_)))),
+        !matches!(c.term(body.block), Some(Terminator::Continue(_))),
         "a body that always breaks never continues"
     );
     assert_all_sealed(&c);
@@ -261,12 +251,7 @@ fn a_break_in_a_loop_else_names_the_enclosing_loop() {
         matches!(last_term(&c, inner_else), Terminator::Break(l) if *l == outer),
         "the else body's own break leaves the outer loop"
     );
-    assert!(
-        !inner_else
-            .blocks
-            .iter()
-            .any(|b| matches!(c.term(*b), Some(Terminator::Break(l)) if *l == inner))
-    );
+    assert!(!matches!(c.term(inner_else.block), Some(Terminator::Break(l)) if *l == inner));
 }
 
 #[test]
@@ -298,7 +283,6 @@ fn a_comptime_if_is_one_comptime_if_op() {
         "def f[n: Int]() -> Int:\n    var r = 0\n    comptime if n > 0:\n        r = 1\n    elif n < 0:\n        r = 2\n    else:\n        r = 3\n    return r\n",
         "f",
     );
-    assert_eq!(c.root.blocks.len(), 1);
     let ops: Vec<_> = entry_instrs(&c, &c.root)
         .iter()
         .filter_map(|instruction| match instruction {
@@ -316,7 +300,6 @@ fn a_comptime_if_is_one_comptime_if_op() {
     assert_eq!(conds.len(), 2);
     assert_eq!(arms.len(), 2);
     for region in arms.iter().chain([*orelse]) {
-        assert_eq!(region.blocks.len(), 1);
         assert!(matches!(last_term(&c, region), Terminator::ComptimeYield));
     }
     assert_eq!(c.edge_count(), 0);
@@ -444,7 +427,6 @@ fn try_part_break_continue_name_the_enclosing_loop() {
         "def main():\n    while True:\n        try:\n            break\n        finally:\n            pass\n",
     );
     let body = loop_try(&cfg);
-    assert_eq!(body.blocks.len(), 1);
     assert!(matches!(last_term(&cfg, body), Terminator::Break(l) if *l == label));
     let (cfg, label) = try_in_loop(
         "def main():\n    while True:\n        try:\n            continue\n        finally:\n            pass\n",
@@ -472,7 +454,6 @@ fn dead_region_op_is_erased() {
         "def f(x: Int) -> Int:\n    return 1\n    if x > 0:\n        var y = x\n        print(y)\n    return 3\n",
         "f",
     );
-    assert_eq!(cfg.root.blocks.len(), 1);
     assert_eq!(cfg.g.node_count(), 1, "the dead arm lowers no block");
     assert!(!cfg.vars.iter().any(|name| name == "y"));
     assert!(

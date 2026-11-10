@@ -95,7 +95,7 @@ pub fn fill_omitted_arguments(
             declarations,
             targets,
         };
-        let mut blocks = std::mem::take(&mut function.blocks);
+        let mut blocks = std::mem::take(&mut function.body);
         fill_blocks(
             &mut blocks,
             function,
@@ -103,7 +103,7 @@ pub fn fill_omitted_arguments(
             &mut pending,
             invariant_errors,
         );
-        function.blocks = blocks;
+        function.body = blocks;
     }
 }
 
@@ -127,7 +127,7 @@ pub fn erase_unpassed_defaults(
 ) -> HashSet<u32> {
     let mut producers = HashMap::new();
     let mut bindings: HashMap<VarId, Vec<u32>> = HashMap::new();
-    collect_producers(&function.blocks, function, &mut producers, &mut bindings);
+    collect_producers(&function.body, function, &mut producers, &mut bindings);
     let once = |reg: u32| original.get(reg as usize) == Some(&1);
     let mut calls = HashSet::new();
     let mut slots = BTreeSet::new();
@@ -157,7 +157,7 @@ pub fn erase_unpassed_defaults(
     if calls.is_empty() {
         return erased;
     }
-    erase_slice(&mut function.blocks, &slots, &regs, &calls, &mut erased);
+    erase_slice(&mut function.body, &slots, &regs, &calls, &mut erased);
     erased
 }
 
@@ -202,71 +202,63 @@ struct Omitted {
 }
 
 fn fill_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     function: &mut MirFunction,
     caller: &Caller<'_>,
     pending: &mut HashMap<u32, LoweredCall>,
     invariant_errors: &mut Vec<String>,
 ) {
-    for block in blocks {
-        let instructions = std::mem::take(&mut block.instrs);
-        let mut filled = Vec::with_capacity(instructions.len());
-        // What follows a call goes after the in-place binding of its result,
-        // which must follow the call itself.
-        let mut deferred: Option<(Reg, Vec<MirInstr>)> = None;
-        for mut instruction in instructions {
-            if let Some((result, mut postlude)) = deferred.take() {
-                if matches!(instruction, MirInstr::DefVar { src, in_place: true, .. } if src == result)
-                {
-                    filled.push(instruction);
-                    filled.append(&mut postlude);
-                    continue;
-                }
-                filled.append(&mut postlude);
-            }
-            for region in instruction_regions_mut(&mut instruction) {
-                fill_blocks(region, function, caller, pending, invariant_errors);
-            }
-            let mut postlude = Vec::new();
-            if matches!(instruction, MirInstr::MultiSet { .. }) {
-                collect_subscript_store(
-                    &mut instruction,
-                    function,
-                    caller,
-                    (&mut filled, &mut postlude),
-                );
-            }
-            if let Some(record) =
-                result_register(&instruction).and_then(|dest| pending.remove(&dest.0))
+    let instructions = std::mem::take(&mut block.instrs);
+    let mut filled = Vec::with_capacity(instructions.len());
+    // What follows a call goes after the in-place binding of its result,
+    // which must follow the call itself.
+    let mut deferred: Option<(Reg, Vec<MirInstr>)> = None;
+    for mut instruction in instructions {
+        if let Some((result, mut postlude)) = deferred.take() {
+            if matches!(instruction, MirInstr::DefVar { src, in_place: true, .. } if src == result)
             {
-                instruction = fill_call(
-                    instruction,
-                    &record,
-                    function,
-                    caller,
-                    (&mut filled, &mut postlude),
-                    invariant_errors,
-                );
-            } else {
-                collect_through_contract(
-                    &mut instruction,
-                    function,
-                    caller.declarations,
-                    &mut filled,
-                );
+                filled.push(instruction);
+                filled.append(&mut postlude);
+                continue;
             }
-            let result = result_register(&instruction);
-            filled.push(instruction);
-            match result {
-                Some(result) if !postlude.is_empty() => deferred = Some((result, postlude)),
-                _ => filled.append(&mut postlude),
-            }
-        }
-        if let Some((_, mut postlude)) = deferred {
             filled.append(&mut postlude);
         }
-        block.instrs = filled;
+        for region in instruction_regions_mut(&mut instruction) {
+            fill_blocks(region, function, caller, pending, invariant_errors);
+        }
+        let mut postlude = Vec::new();
+        if matches!(instruction, MirInstr::MultiSet { .. }) {
+            collect_subscript_store(
+                &mut instruction,
+                function,
+                caller,
+                (&mut filled, &mut postlude),
+            );
+        }
+        if let Some(record) = result_register(&instruction).and_then(|dest| pending.remove(&dest.0))
+        {
+            instruction = fill_call(
+                instruction,
+                &record,
+                function,
+                caller,
+                (&mut filled, &mut postlude),
+                invariant_errors,
+            );
+        } else {
+            collect_through_contract(&mut instruction, function, caller.declarations, &mut filled);
+        }
+        let result = result_register(&instruction);
+        filled.push(instruction);
+        match result {
+            Some(result) if !postlude.is_empty() => deferred = Some((result, postlude)),
+            _ => filled.append(&mut postlude),
+        }
     }
+    if let Some((_, mut postlude)) = deferred {
+        filled.append(&mut postlude);
+    }
+    block.instrs = filled;
 }
 
 /// The register `instruction` writes, for the instruction kinds a checked
@@ -2335,15 +2327,15 @@ enum Producer {
     Temporary(VarId),
 }
 
-/// Record in `producers` each register `blocks` and their regions define by
+/// Record in `producers` each register `block` and their regions define by
 /// a [`Producer`], and in `bindings` each register a slot is bound to.
 fn collect_producers(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     function: &MirFunction,
     producers: &mut HashMap<u32, Producer>,
     bindings: &mut HashMap<VarId, Vec<u32>>,
 ) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         match instruction {
             MirInstr::Call { dest, func, .. }
                 if matches!(lifted_owner(&func.0), Some(LiftedOwner::Default { .. })) =>
@@ -2388,7 +2380,7 @@ fn temporary_slice(
     };
     loop {
         let before = (slice.slots.len(), slice.regs.len());
-        slice.grow(&mut function.blocks)?;
+        slice.grow(&mut function.body)?;
         if (slice.slots.len(), slice.regs.len()) == before {
             return Some((slice.slots, slice.regs));
         }
@@ -2406,52 +2398,51 @@ struct Slice<'a> {
 impl Slice<'_> {
     /// Add what each instruction of `blocks` serving the slice names and
     /// defines; `None` when the slice cannot be erased.
-    fn grow(&mut self, blocks: &mut [MirBlock]) -> Option<()> {
-        for block in blocks {
-            for instruction in &mut block.instrs {
-                let named = instruction_slots(instruction);
-                let serves = named.iter().any(|slot| self.slots.contains(slot))
-                    || register_operands(instruction)
-                        .iter()
-                        .any(|reg| self.regs.contains(reg));
-                if !instruction_regions(instruction).is_empty() {
-                    if serves {
-                        return None;
-                    }
-                    for region in instruction_regions_mut(instruction) {
-                        self.grow(region)?;
-                    }
-                    continue;
+    fn grow(&mut self, block: &mut MirBlock) -> Option<()> {
+        for instruction in &mut block.instrs {
+            let named = instruction_slots(instruction);
+            let serves = named.iter().any(|slot| self.slots.contains(slot))
+                || register_operands(instruction)
+                    .iter()
+                    .any(|reg| self.regs.contains(reg));
+            if !instruction_regions(instruction).is_empty() {
+                if serves {
+                    return None;
                 }
-                if !serves {
-                    continue;
+                for region in instruction_regions_mut(instruction) {
+                    self.grow(region)?;
                 }
-                for slot in named {
-                    let introduced = self
-                        .names
-                        .get(slot as usize)
-                        .is_some_and(|name| name.contains("$inline"));
-                    if !self.slots.contains(&slot) && !introduced {
-                        return None;
-                    }
-                    self.slots.insert(slot);
-                }
-                let mut results = Vec::new();
-                instruction_result_regs(instruction, &mut results);
-                self.regs.extend(
-                    results
-                        .into_iter()
-                        .map(|reg| reg.0)
-                        .filter(|reg| !self.dropped.contains(reg)),
-                );
+                continue;
             }
-            if terminator_regs_mut(&mut block.term)
-                .iter()
-                .any(|reg| self.regs.contains(&reg.0))
-            {
-                return None;
+            if !serves {
+                continue;
             }
+            for slot in named {
+                let introduced = self
+                    .names
+                    .get(slot as usize)
+                    .is_some_and(|name| name.contains("$inline"));
+                if !self.slots.contains(&slot) && !introduced {
+                    return None;
+                }
+                self.slots.insert(slot);
+            }
+            let mut results = Vec::new();
+            instruction_result_regs(instruction, &mut results);
+            self.regs.extend(
+                results
+                    .into_iter()
+                    .map(|reg| reg.0)
+                    .filter(|reg| !self.dropped.contains(reg)),
+            );
         }
+        if terminator_regs_mut(&mut block.term)
+            .iter()
+            .any(|reg| self.regs.contains(&reg.0))
+        {
+            return None;
+        }
+
         Some(())
     }
 }
@@ -2460,33 +2451,31 @@ impl Slice<'_> {
 /// slice `slots` and `regs` and each defining only `calls`, recording their
 /// results in `erased`, and every cleanup entry of a slot in `slots`.
 fn erase_slice(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     slots: &BTreeSet<VarId>,
     regs: &HashSet<u32>,
     calls: &HashSet<u32>,
     erased: &mut HashSet<u32>,
 ) {
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| {
-            if !instruction_regions(instruction).is_empty() {
-                for region in instruction_regions_mut(instruction) {
-                    erase_slice(region, slots, regs, calls, erased);
-                }
-                return true;
+    block.instrs.retain_mut(|instruction| {
+        if !instruction_regions(instruction).is_empty() {
+            for region in instruction_regions_mut(instruction) {
+                erase_slice(region, slots, regs, calls, erased);
             }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            let serves = instruction_slots(instruction)
+            return true;
+        }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        let serves = instruction_slots(instruction)
+            .iter()
+            .any(|slot| slots.contains(slot))
+            || register_operands(instruction)
                 .iter()
-                .any(|slot| slots.contains(slot))
-                || register_operands(instruction)
-                    .iter()
-                    .any(|reg| regs.contains(reg))
-                || (!results.is_empty() && results.iter().all(|reg| calls.contains(&reg.0)));
-            if serves {
-                erased.extend(results.iter().map(|reg| reg.0));
-            }
-            !serves
-        });
-    }
+                .any(|reg| regs.contains(reg))
+            || (!results.is_empty() && results.iter().all(|reg| calls.contains(&reg.0)));
+        if serves {
+            erased.extend(results.iter().map(|reg| reg.0));
+        }
+        !serves
+    });
 }

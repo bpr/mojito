@@ -48,7 +48,7 @@ pub(super) fn refine_receiver_drops(
     if observed.is_err() {
         ends.clear();
     }
-    rewrite_blocks(&mut f.blocks, &ends);
+    rewrite_blocks(&mut f.body, &ends);
 }
 
 /// What ends a receiver in state `node`: itself whole, when every field is
@@ -80,29 +80,27 @@ fn receiver_end(node: &Node, fields: &[(String, Ty)], root_ty: Option<&Ty>) -> V
 /// Replace each receiver drop in `ends` by its end, recursing into every
 /// region op's regions. A drop is looked up while it is still in place,
 /// before its block is rebuilt; a drop no state reached ends nothing.
-fn rewrite_blocks(blocks: &mut [MirBlock], ends: &HashMap<*const MirInstr, Vec<MirInstr>>) {
-    for block in blocks {
-        let replaced: Vec<Option<Vec<MirInstr>>> = block
-            .instrs
-            .iter()
-            .map(|instr| {
-                matches!(instr, MirInstr::DropVar { var: 0, .. }).then(|| {
-                    ends.get(&std::ptr::from_ref(instr))
-                        .cloned()
-                        .unwrap_or_default()
-                })
+fn rewrite_blocks(block: &mut MirBlock, ends: &HashMap<*const MirInstr, Vec<MirInstr>>) {
+    let replaced: Vec<Option<Vec<MirInstr>>> = block
+        .instrs
+        .iter()
+        .map(|instr| {
+            matches!(instr, MirInstr::DropVar { var: 0, .. }).then(|| {
+                ends.get(&std::ptr::from_ref(instr))
+                    .cloned()
+                    .unwrap_or_default()
             })
-            .collect();
-        for instr in &mut block.instrs {
-            for region in instruction_regions_mut(instr) {
-                rewrite_blocks(region, ends);
-            }
+        })
+        .collect();
+    for instr in &mut block.instrs {
+        for region in instruction_regions_mut(instr) {
+            rewrite_blocks(region, ends);
         }
-        let instrs = std::mem::take(&mut block.instrs);
-        block.instrs = instrs
-            .into_iter()
-            .zip(replaced)
-            .flat_map(|(instr, end)| end.unwrap_or_else(|| vec![instr]))
-            .collect();
     }
+    let instrs = std::mem::take(&mut block.instrs);
+    block.instrs = instrs
+        .into_iter()
+        .zip(replaced)
+        .flat_map(|(instr, end)| end.unwrap_or_else(|| vec![instr]))
+        .collect();
 }

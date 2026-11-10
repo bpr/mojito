@@ -1579,10 +1579,10 @@ fn lower_synthesized_member(
     functions.push((
         symbol,
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             n_regs: reg_types.len() as u32,
             n_vars: n_params,
             var_names,
@@ -1798,10 +1798,10 @@ fn lower_fieldwise_members(
     functions.push((
         symbol,
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             n_regs: reg_types.len() as u32,
             n_vars: n_params,
             var_names,
@@ -3197,11 +3197,10 @@ struct WalrusYield {
     copy: Option<Reg>,
 }
 
-/// Flattens nested `Expr`s into a block's instruction list. `cur` is the block
-/// currently being appended to.
+/// Flattens nested `Expr`s into the instruction list of the region being
+/// built, which `f.body` holds while it builds.
 struct Flatten<'a> {
     f: &'a mut MirFunction,
-    cur: MirBlockId,
     next_reg: u32,
     /// Interner: a variable name's first appearance assigns its `VarId`.
     vars: Vec<String>,
@@ -3921,14 +3920,14 @@ impl<'a> Flatten<'a> {
     /// when it raises.
     fn emit(&mut self, i: MirInstr) {
         let raises = i.raise_edge().cloned();
-        self.f.blocks[self.cur].instrs.push(i);
+        self.f.body.instrs.push(i);
         self.error_region(raises);
     }
 
     /// Emit a raising call whose error region the caller emits once the
     /// call's tail is in place.
     fn emit_call(&mut self, i: MirInstr) {
-        self.f.blocks[self.cur].instrs.push(i);
+        self.f.body.instrs.push(i);
     }
 
     /// The raise edge of a raising instruction about to be lowered, from its
@@ -3956,13 +3955,13 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
-            then: vec![MirBlock { instrs, term }],
+            then: Box::new(MirBlock { instrs, term }),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: vec![MirBlock {
+            orelse: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::Yield(Vec::new()),
-            }],
+            }),
         });
     }
 
@@ -4134,12 +4133,7 @@ impl<'a> Flatten<'a> {
     /// reference field's stored handle, which a `MakeRef` typed as it
     /// forwards, else a handle to the owned field.
     fn capture_storage_prologue(&mut self, storage: &CaptureStorage) -> Vec<MirInstr> {
-        let entry = MirBlock {
-            instrs: Vec::new(),
-            term: MirTerm::Unreachable,
-        };
-        let outer = std::mem::replace(&mut self.f.blocks, vec![entry]);
-        let cur = std::mem::replace(&mut self.cur, 0);
+        let outer = std::mem::take(&mut self.f.body);
         for (slot, field, field_ty, mutable) in &storage.fields {
             let reference_ty: Ty = match field_ty.kind() {
                 TyKind::Ref(_) => field_ty.clone(),
@@ -4171,11 +4165,7 @@ impl<'a> Flatten<'a> {
                 in_place: false,
             });
         }
-        self.cur = cur;
-        std::mem::replace(&mut self.f.blocks, outer)
-            .pop()
-            .map(|block| block.instrs)
-            .unwrap_or_default()
+        std::mem::replace(&mut self.f.body, outer).instrs
     }
 
     fn resolved_place(&mut self, name: &str) -> MirPlace {
@@ -4854,7 +4844,7 @@ fn lower_cfg_nested(
     error: Option<Ty>,
 ) -> MirFunction {
     let mut mir = MirFunction {
-        blocks: Vec::new(),
+        body: MirBlock::default(),
         n_regs: 0,
         n_vars: cfg.vars.len(),
         var_names: cfg.vars.clone(),
@@ -4888,7 +4878,6 @@ fn lower_cfg_nested(
     {
         let mut fl = Flatten {
             f: &mut mir,
-            cur: 0,
             next_reg: 0,
             vars: cfg.vars.clone(),
             var_types: declared,
@@ -4944,10 +4933,8 @@ fn lower_cfg_nested(
             .as_ref()
             .map(|storage| fl.capture_storage_prologue(storage))
             .unwrap_or_default();
-        fl.f.blocks = fl.hir_region(&cfg.root);
-        if let Some(entry) = fl.f.blocks.first_mut() {
-            entry.instrs.splice(0..0, prologue);
-        }
+        fl.f.body = fl.hir_region(&cfg.root);
+        fl.f.body.instrs.splice(0..0, prologue);
         fl.f.n_regs = fl.next_reg;
         // The MIR flattener may intern additional locals beyond the HIR's set
         // (conditional-result / iterator temporaries), so take the final interner.
@@ -5058,17 +5045,15 @@ fn name_spelling(
     }
 }
 
-/// Whether some raise in the lowered body `blocks`, at any depth, names the
+/// Whether some raise in the lowered body `block`, at any depth, names the
 /// `try` labelled `label`.
-fn raises_to(blocks: &[MirBlock], label: TryLabel) -> bool {
-    blocks.iter().any(|block| {
-        matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
-            || block
-                .instrs
-                .iter()
-                .flat_map(instruction_regions)
-                .any(|region| raises_to(region, label))
-    })
+fn raises_to(block: &MirBlock, label: TryLabel) -> bool {
+    matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
+        || block
+            .instrs
+            .iter()
+            .flat_map(instruction_regions)
+            .any(|region| raises_to(region, label))
 }
 
 /// Fill remaining register types by copying facts already present in the
@@ -5113,25 +5098,23 @@ fn close_register_types(
     /// yielded register's in the first arm that yields one typed, the arms
     /// taken in order and an elif's condition never among them.
     fn yielded_type<'a>(
-        mut arms: impl Iterator<Item = &'a Vec<MirBlock>>,
+        mut arms: impl Iterator<Item = &'a MirBlock>,
         index: usize,
         reg_types: &HashMap<u32, Ty>,
     ) -> Option<Ty> {
-        arms.find_map(|arm| {
-            arm.iter().find_map(|block| match &block.term {
-                MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values
-                    .get(index)
-                    .and_then(|value| reg_types.get(&value.0))
-                    .cloned(),
-                _ => None,
-            })
+        arms.find_map(|arm| match &arm.term {
+            MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values
+                .get(index)
+                .and_then(|value| reg_types.get(&value.0))
+                .cloned(),
+            _ => None,
         })
     }
     /// `const_ints` holds the compile-time integer registers seen so far,
     /// so a tuple index through a constant register can copy the selected
     /// element type.
     fn close_blocks(
-        blocks: &[MirBlock],
+        block: &MirBlock,
         reg_types: &mut HashMap<u32, Ty>,
         var_tys: &mut HashMap<VarId, Ty>,
         declarations: &MirDeclarations,
@@ -5148,359 +5131,345 @@ fn close_register_types(
                 false
             }
         };
-        for block in blocks {
-            for instr in &block.instrs {
-                let derived: Option<(&Reg, Option<Ty>)> = match instr {
-                    MirInstr::Const { dest, k } => {
-                        let ty = match k {
-                            Const::Int(value) => {
-                                const_ints.insert(dest.0, *value);
-                                Some(Ty::int())
-                            }
-                            Const::Float(_) => Some(Ty::float64()),
-                            Const::IntLiteral(value) => Some(Ty::int_literal_of(value)),
-                            Const::FloatLiteral(value) => Some(Ty::float_literal_of(value)),
-                            Const::Bool(_) => Some(Ty::bool()),
-                            Const::Str(text) => Some(Ty::string_literal_of(text)),
-                            Const::None => Some(Ty::none()),
-                            Const::Dtype(_) => Some(Ty::kgen_dtype()),
-                            // A callable constant's type needs the checked
-                            // expression; report rather than reconstruct.
-                            Const::Function(_) | Const::FunctionInstance { .. } => None,
-                            Const::Param(value) => value.meta().as_value().cloned(),
-                            Const::Value(value) => {
-                                mojito_types::param_expr::MetaTy::of_value(value)
-                                    .as_value()
-                                    .cloned()
-                            }
-                            // Typed by its register, as `UninitMemAttr` is.
-                            Const::UninitMem => None,
-                        };
-                        Some((dest, ty))
-                    }
-                    MirInstr::MaterializeLiteral { dest, target, .. } => {
-                        Some((dest, Some(target.clone())))
-                    }
-                    MirInstr::UseVar { dest, var, .. } => {
-                        Some((dest, var_tys.get(var).cloned().map(deref)))
-                    }
-                    MirInstr::DefVar {
-                        var,
-                        src,
-                        binding_ty,
-                        ..
-                    } => {
-                        // A synthetic binding (iterator, short-circuit carrier)
-                        // has no checked binding type; its slot type is the
-                        // initializing register's.
-                        if !var_tys.contains_key(var)
-                            && let Some(ty) = binding_ty
-                                .clone()
-                                .or_else(|| reg_types.get(&src.0).cloned())
-                        {
-                            var_tys.insert(*var, ty);
-                            changed = true;
+        for instr in &block.instrs {
+            let derived: Option<(&Reg, Option<Ty>)> = match instr {
+                MirInstr::Const { dest, k } => {
+                    let ty = match k {
+                        Const::Int(value) => {
+                            const_ints.insert(dest.0, *value);
+                            Some(Ty::int())
                         }
-                        None
+                        Const::Float(_) => Some(Ty::float64()),
+                        Const::IntLiteral(value) => Some(Ty::int_literal_of(value)),
+                        Const::FloatLiteral(value) => Some(Ty::float_literal_of(value)),
+                        Const::Bool(_) => Some(Ty::bool()),
+                        Const::Str(text) => Some(Ty::string_literal_of(text)),
+                        Const::None => Some(Ty::none()),
+                        Const::Dtype(_) => Some(Ty::kgen_dtype()),
+                        // A callable constant's type needs the checked
+                        // expression; report rather than reconstruct.
+                        Const::Function(_) | Const::FunctionInstance { .. } => None,
+                        Const::Param(value) => value.meta().as_value().cloned(),
+                        Const::Value(value) => mojito_types::param_expr::MetaTy::of_value(value)
+                            .as_value()
+                            .cloned(),
+                        // Typed by its register, as `UninitMemAttr` is.
+                        Const::UninitMem => None,
+                    };
+                    Some((dest, ty))
+                }
+                MirInstr::MaterializeLiteral { dest, target, .. } => {
+                    Some((dest, Some(target.clone())))
+                }
+                MirInstr::UseVar { dest, var, .. } => {
+                    Some((dest, var_tys.get(var).cloned().map(deref)))
+                }
+                MirInstr::DefVar {
+                    var,
+                    src,
+                    binding_ty,
+                    ..
+                } => {
+                    // A synthetic binding (iterator, short-circuit carrier)
+                    // has no checked binding type; its slot type is the
+                    // initializing register's.
+                    if !var_tys.contains_key(var)
+                        && let Some(ty) = binding_ty
+                            .clone()
+                            .or_else(|| reg_types.get(&src.0).cloned())
+                    {
+                        var_tys.insert(*var, ty);
+                        changed = true;
                     }
-                    MirInstr::LoadPlace { dest, place } => {
-                        Some((dest, place.ty.clone().map(deref)))
-                    }
-                    MirInstr::MovePlace { dest, place } => Some((dest, place.ty.clone())),
-                    MirInstr::MakeRef { dest, place } => {
-                        Some((dest, mir_place_handle_ty(place, None)))
-                    }
-                    MirInstr::ReadRef { dest, reference } => Some((
-                        dest,
-                        reg_types
-                            .get(&reference.0)
-                            .cloned()
-                            .map(|ty| match ty.kind() {
-                                TyKind::Ref(reference) => reference.referent.clone(),
-                                TyKind::Pointer { element, .. } => (*element).clone(),
-                                _ => ty,
-                            }),
-                    )),
-                    MirInstr::CopyValue { dest, value, .. } => {
-                        Some((dest, reg_types.get(&value.0).cloned()))
-                    }
-                    MirInstr::UnOp { op, dest, a, .. } => Some((
-                        dest,
-                        match op {
-                            PrefixOp::Not => Some(Ty::bool()),
-                            _ => reg_types.get(&a.0).cloned(),
-                        },
-                    )),
-                    MirInstr::BinOp { op, dest, a, b, .. } => Some((
-                        dest,
-                        match op {
-                            InfixOp::Eq
-                            | InfixOp::Ne
-                            | InfixOp::Lt
-                            | InfixOp::Gt
-                            | InfixOp::Le
-                            | InfixOp::Ge
-                            | InfixOp::And
-                            | InfixOp::Or
-                            | InfixOp::In
-                            | InfixOp::NotIn
-                            | InfixOp::Is
-                            | InfixOp::IsNot => Some(Ty::bool()),
-                            _ => reg_types.get(&a.0).or_else(|| reg_types.get(&b.0)).cloned(),
-                        },
-                    )),
-                    MirInstr::GetField {
-                        dest, base, field, ..
-                    } => Some((
-                        dest,
-                        reg_types
-                            .get(&base.0)
-                            .and_then(|base| struct_field(declarations, base, field))
+                    None
+                }
+                MirInstr::LoadPlace { dest, place } => Some((dest, place.ty.clone().map(deref))),
+                MirInstr::MovePlace { dest, place } => Some((dest, place.ty.clone())),
+                MirInstr::MakeRef { dest, place } => Some((dest, mir_place_handle_ty(place, None))),
+                MirInstr::ReadRef { dest, reference } => Some((
+                    dest,
+                    reg_types
+                        .get(&reference.0)
+                        .cloned()
+                        .map(|ty| match ty.kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            TyKind::Pointer { element, .. } => (*element).clone(),
+                            _ => ty,
+                        }),
+                )),
+                MirInstr::CopyValue { dest, value, .. } => {
+                    Some((dest, reg_types.get(&value.0).cloned()))
+                }
+                MirInstr::UnOp { op, dest, a, .. } => Some((
+                    dest,
+                    match op {
+                        PrefixOp::Not => Some(Ty::bool()),
+                        _ => reg_types.get(&a.0).cloned(),
+                    },
+                )),
+                MirInstr::BinOp { op, dest, a, b, .. } => Some((
+                    dest,
+                    match op {
+                        InfixOp::Eq
+                        | InfixOp::Ne
+                        | InfixOp::Lt
+                        | InfixOp::Gt
+                        | InfixOp::Le
+                        | InfixOp::Ge
+                        | InfixOp::And
+                        | InfixOp::Or
+                        | InfixOp::In
+                        | InfixOp::NotIn
+                        | InfixOp::Is
+                        | InfixOp::IsNot => Some(Ty::bool()),
+                        _ => reg_types.get(&a.0).or_else(|| reg_types.get(&b.0)).cloned(),
+                    },
+                )),
+                MirInstr::GetField {
+                    dest, base, field, ..
+                } => Some((
+                    dest,
+                    reg_types
+                        .get(&base.0)
+                        .and_then(|base| struct_field(declarations, base, field))
+                        .map(deref),
+                )),
+                MirInstr::Index {
+                    dest, base, index, ..
+                } => Some((
+                    dest,
+                    reg_types.get(&base.0).and_then(|base| match base.kind() {
+                        TyKind::Pointer { element, .. } => Some(element.clone()),
+                        kind if let Some((dtype, _)) = kind.as_simd() => {
+                            Some(Ty::simd(dtype, mojito_types::types::SimdWidth::Known(1)))
+                        }
+                        // A tuple element type needs the compile-time
+                        // index the checker already validated.
+                        TyKind::Tuple(elements) => const_ints
+                            .get(&index.0)
+                            .and_then(|value| usize::try_from(*value).ok())
+                            .and_then(|value| elements.get(value).cloned())
                             .map(deref),
-                    )),
-                    MirInstr::Index {
-                        dest, base, index, ..
-                    } => Some((
-                        dest,
-                        reg_types.get(&base.0).and_then(|base| match base.kind() {
-                            TyKind::Pointer { element, .. } => Some(element.clone()),
-                            kind if let Some((dtype, _)) = kind.as_simd() => {
-                                Some(Ty::simd(dtype, mojito_types::types::SimdWidth::Known(1)))
-                            }
-                            // A tuple element type needs the compile-time
-                            // index the checker already validated.
-                            TyKind::Tuple(elements) => const_ints
-                                .get(&index.0)
-                                .and_then(|value| usize::try_from(*value).ok())
-                                .and_then(|value| elements.get(value).cloned())
-                                .map(deref),
+                        _ => None,
+                    }),
+                )),
+                MirInstr::Call {
+                    dest,
+                    func: FuncRef(callee),
+                    ..
+                } => Some((dest, declared_return(declarations, callee))),
+                MirInstr::MethodCall {
+                    dest,
+                    resolved: Some(callee),
+                    ..
+                } => Some((dest, declared_return(declarations, callee))),
+                MirInstr::CallIndirect { dest, callee, .. } => Some((
+                    dest,
+                    reg_types
+                        .get(&callee.0)
+                        .and_then(mojito_types::types::callable_contract_ty)
+                        .and_then(|ty| match ty.kind() {
+                            TyKind::Func(func) => Some(func.ret.clone()),
                             _ => None,
                         }),
-                    )),
-                    MirInstr::Call {
-                        dest,
-                        func: FuncRef(callee),
-                        ..
-                    } => Some((dest, declared_return(declarations, callee))),
-                    MirInstr::MethodCall {
-                        dest,
-                        resolved: Some(callee),
-                        ..
-                    } => Some((dest, declared_return(declarations, callee))),
-                    MirInstr::CallIndirect { dest, callee, .. } => Some((
-                        dest,
-                        reg_types
-                            .get(&callee.0)
-                            .and_then(mojito_types::types::callable_contract_ty)
-                            .and_then(|ty| match ty.kind() {
-                                TyKind::Func(func) => Some(func.ret.clone()),
-                                _ => None,
-                            }),
-                    )),
-                    MirInstr::MakeTuple {
-                        dest,
-                        element_types: Some(elements),
-                        ..
-                    } => Some((dest, Some(TyKind::Tuple(elements.clone()).into()))),
-                    MirInstr::MakeTuple {
-                        dest,
-                        elems,
-                        element_types: None,
-                    } => {
-                        // A reference-carrying tuple has no inline element
-                        // types; its shape is its element registers' types.
-                        let elements: Option<Vec<Ty>> = elems
-                            .iter()
-                            .map(|element| reg_types.get(&element.0).cloned())
-                            .collect();
-                        Some((
-                            dest,
-                            elements.map(|elements| TyKind::Tuple(elements).into()),
-                        ))
-                    }
-                    MirInstr::MakeVariant {
-                        dest, alternatives, ..
-                    } => Some((dest, Some(TyKind::Variant(alternatives.clone()).into()))),
-                    MirInstr::MakeSimd {
-                        dest, dtype, width, ..
-                    }
-                    | MirInstr::SimdCast {
-                        dest, dtype, width, ..
-                    }
-                    | MirInstr::SimdBitcast {
-                        dest, dtype, width, ..
-                    } => Some((
-                        dest,
-                        mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone()).ok(),
-                    )),
-                    // A shuffle keeps the source dtype at a known mask's
-                    // width; a template's result is its checked type.
-                    MirInstr::SimdShuffle {
-                        dest, value, mask, ..
-                    } => {
-                        let dtype = reg_types
-                            .get(&value.0)
-                            .and_then(|ty| ty.as_simd())
-                            .map(|(dtype, _)| dtype);
-                        Some((
-                            dest,
-                            dtype.zip(mask.known()).map(|(dtype, mask)| {
-                                Ty::simd(
-                                    dtype,
-                                    mojito_types::types::SimdWidth::Known(mask.len() as i64),
-                                )
-                            }),
-                        ))
-                    }
-                    // A lane read and a reduction give one lane of the
-                    // vector's dtype; an insert and a select keep the
-                    // vector's and the cases' type.
-                    MirInstr::SimdExtract { dest, value, .. }
-                    | MirInstr::SimdReduce { dest, value, .. } => Some((
-                        dest,
-                        reg_types.get(&value.0).and_then(|ty| match ty.kind() {
-                            kind if let Some((dtype, _)) = kind.as_simd() => {
-                                Some(Ty::simd(dtype, mojito_types::types::SimdWidth::Known(1)))
-                            }
-                            _ => None,
-                        }),
-                    )),
-                    MirInstr::SimdInsert { dest, value, .. }
-                    | MirInstr::Select {
-                        dest,
-                        on_true: value,
-                        ..
-                    }
-                    | MirInstr::SimdSelect {
-                        dest,
-                        on_true: value,
-                        ..
-                    } => Some((dest, reg_types.get(&value.0).cloned())),
-                    MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::bool()))),
-                    MirInstr::VariantTag { dest, .. } => Some((dest, Some(Ty::int()))),
-                    MirInstr::VariantGet {
-                        dest,
-                        variant,
-                        index,
-                    }
-                    | MirInstr::VariantTake {
-                        dest,
-                        variant,
-                        index,
-                        ..
-                    } => Some((
-                        dest,
-                        reg_types.get(&variant.0).and_then(|ty| match ty.kind() {
-                            TyKind::Variant(alternatives) => index
-                                .known()
-                                .and_then(|index| alternatives.get(index))
-                                .cloned(),
-                            _ => None,
-                        }),
-                    )),
-                    MirInstr::VariantReplace {
-                        dest,
-                        place,
-                        output_index,
-                        ..
-                    } => Some((
-                        dest,
-                        place.ty.as_ref().and_then(|ty| match ty.kind() {
-                            TyKind::Variant(alternatives) => output_index
-                                .known()
-                                .and_then(|index| alternatives.get(index))
-                                .cloned(),
-                            _ => None,
-                        }),
-                    )),
-                    MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::bool()))),
-                    MirInstr::Next { dest, .. } => {
-                        // Compiler-private storage has no call contract, so the
-                        // element type comes from the slot the element binds.
-                        let result = blocks
-                            .iter()
-                            .flat_map(|candidate| candidate.instrs.iter())
-                            .find_map(|candidate| match candidate {
-                                MirInstr::DefVar {
-                                    src,
-                                    binding_ty: Some(ty),
-                                    ..
-                                } if src == dest => Some(ty.clone()),
-                                MirInstr::DefVar { src, var, .. } if src == dest => {
-                                    var_tys.get(var).cloned()
-                                }
-                                MirInstr::Store { place, src } if src == dest => place.ty.clone(),
-                                _ => None,
-                            });
-                        Some((dest, result))
-                    }
-                    MirInstr::EstablishLoans { marker, .. }
-                    | MirInstr::InvalidateInteriors { marker, .. } => {
-                        Some((marker, Some(Ty::none())))
-                    }
-                    _ => None,
-                };
-                if let Some((dest, ty)) = derived {
-                    changed |= record(reg_types, dest, ty);
-                }
-                for region in instruction_regions(instr) {
-                    changed |= close_blocks(region, reg_types, var_tys, declarations, const_ints);
-                }
-                let results = match instr {
-                    MirInstr::If {
-                        results,
-                        then,
-                        elifs,
-                        orelse,
-                        ..
-                    } => results
+                )),
+                MirInstr::MakeTuple {
+                    dest,
+                    element_types: Some(elements),
+                    ..
+                } => Some((dest, Some(TyKind::Tuple(elements.clone()).into()))),
+                MirInstr::MakeTuple {
+                    dest,
+                    elems,
+                    element_types: None,
+                } => {
+                    // A reference-carrying tuple has no inline element
+                    // types; its shape is its element registers' types.
+                    let elements: Option<Vec<Ty>> = elems
                         .iter()
-                        .enumerate()
-                        .map(|(index, result)| {
-                            let arms = std::iter::once(then)
-                                .chain(elifs.iter().map(|elif| &elif.then))
-                                .chain(std::iter::once(orelse));
-                            (result, yielded_type(arms, index, reg_types))
-                        })
-                        .collect(),
-                    MirInstr::ComptimeIf {
-                        results,
-                        arms,
-                        orelse,
-                        ..
-                    } => results
-                        .iter()
-                        .enumerate()
-                        .map(|(index, result)| {
-                            let arms = arms.iter().chain(std::iter::once(orelse));
-                            (result, yielded_type(arms, index, reg_types))
-                        })
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                for (result, ty) in results {
-                    changed |= record(reg_types, result, ty);
+                        .map(|element| reg_types.get(&element.0).cloned())
+                        .collect();
+                    Some((
+                        dest,
+                        elements.map(|elements| TyKind::Tuple(elements).into()),
+                    ))
                 }
+                MirInstr::MakeVariant {
+                    dest, alternatives, ..
+                } => Some((dest, Some(TyKind::Variant(alternatives.clone()).into()))),
+                MirInstr::MakeSimd {
+                    dest, dtype, width, ..
+                }
+                | MirInstr::SimdCast {
+                    dest, dtype, width, ..
+                }
+                | MirInstr::SimdBitcast {
+                    dest, dtype, width, ..
+                } => Some((
+                    dest,
+                    mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone()).ok(),
+                )),
+                // A shuffle keeps the source dtype at a known mask's
+                // width; a template's result is its checked type.
+                MirInstr::SimdShuffle {
+                    dest, value, mask, ..
+                } => {
+                    let dtype = reg_types
+                        .get(&value.0)
+                        .and_then(|ty| ty.as_simd())
+                        .map(|(dtype, _)| dtype);
+                    Some((
+                        dest,
+                        dtype.zip(mask.known()).map(|(dtype, mask)| {
+                            Ty::simd(
+                                dtype,
+                                mojito_types::types::SimdWidth::Known(mask.len() as i64),
+                            )
+                        }),
+                    ))
+                }
+                // A lane read and a reduction give one lane of the
+                // vector's dtype; an insert and a select keep the
+                // vector's and the cases' type.
+                MirInstr::SimdExtract { dest, value, .. }
+                | MirInstr::SimdReduce { dest, value, .. } => Some((
+                    dest,
+                    reg_types.get(&value.0).and_then(|ty| match ty.kind() {
+                        kind if let Some((dtype, _)) = kind.as_simd() => {
+                            Some(Ty::simd(dtype, mojito_types::types::SimdWidth::Known(1)))
+                        }
+                        _ => None,
+                    }),
+                )),
+                MirInstr::SimdInsert { dest, value, .. }
+                | MirInstr::Select {
+                    dest,
+                    on_true: value,
+                    ..
+                }
+                | MirInstr::SimdSelect {
+                    dest,
+                    on_true: value,
+                    ..
+                } => Some((dest, reg_types.get(&value.0).cloned())),
+                MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::bool()))),
+                MirInstr::VariantTag { dest, .. } => Some((dest, Some(Ty::int()))),
+                MirInstr::VariantGet {
+                    dest,
+                    variant,
+                    index,
+                }
+                | MirInstr::VariantTake {
+                    dest,
+                    variant,
+                    index,
+                    ..
+                } => Some((
+                    dest,
+                    reg_types.get(&variant.0).and_then(|ty| match ty.kind() {
+                        TyKind::Variant(alternatives) => index
+                            .known()
+                            .and_then(|index| alternatives.get(index))
+                            .cloned(),
+                        _ => None,
+                    }),
+                )),
+                MirInstr::VariantReplace {
+                    dest,
+                    place,
+                    output_index,
+                    ..
+                } => Some((
+                    dest,
+                    place.ty.as_ref().and_then(|ty| match ty.kind() {
+                        TyKind::Variant(alternatives) => output_index
+                            .known()
+                            .and_then(|index| alternatives.get(index))
+                            .cloned(),
+                        _ => None,
+                    }),
+                )),
+                MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::bool()))),
+                MirInstr::Next { dest, .. } => {
+                    // Compiler-private storage has no call contract, so the
+                    // element type comes from the slot the element binds.
+                    let result = block.instrs.iter().find_map(|candidate| match candidate {
+                        MirInstr::DefVar {
+                            src,
+                            binding_ty: Some(ty),
+                            ..
+                        } if src == dest => Some(ty.clone()),
+                        MirInstr::DefVar { src, var, .. } if src == dest => {
+                            var_tys.get(var).cloned()
+                        }
+                        MirInstr::Store { place, src } if src == dest => place.ty.clone(),
+                        _ => None,
+                    });
+                    Some((dest, result))
+                }
+                MirInstr::EstablishLoans { marker, .. }
+                | MirInstr::InvalidateInteriors { marker, .. } => Some((marker, Some(Ty::none()))),
+                _ => None,
+            };
+            if let Some((dest, ty)) = derived {
+                changed |= record(reg_types, dest, ty);
+            }
+            for region in instruction_regions(instr) {
+                changed |= close_blocks(region, reg_types, var_tys, declarations, const_ints);
+            }
+            let results = match instr {
+                MirInstr::If {
+                    results,
+                    then,
+                    elifs,
+                    orelse,
+                    ..
+                } => results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, result)| {
+                        let arms = std::iter::once(&**then)
+                            .chain(elifs.iter().map(|elif| &elif.then))
+                            .chain(std::iter::once(&**orelse));
+                        (result, yielded_type(arms, index, reg_types))
+                    })
+                    .collect(),
+                MirInstr::ComptimeIf {
+                    results,
+                    arms,
+                    orelse,
+                    ..
+                } => results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, result)| {
+                        let arms = arms.iter().chain(std::iter::once(&**orelse));
+                        (result, yielded_type(arms, index, reg_types))
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (result, ty) in results {
+                changed |= record(reg_types, result, ty);
             }
         }
+
         changed
     }
 
-    fn describe_defining_instr(blocks: &[MirBlock], reg: u32, out: &mut Option<String>) {
-        for block in blocks {
-            for instr in &block.instrs {
-                let mut regs = Vec::new();
-                verify::instruction_result_regs(instr, &mut regs);
-                if regs.iter().any(|candidate| candidate.0 == reg) {
-                    let debug = format!("{instr:?}");
-                    *out = Some(debug.chars().take(80).collect());
+    fn describe_defining_instr(block: &MirBlock, reg: u32, out: &mut Option<String>) {
+        for instr in &block.instrs {
+            let mut regs = Vec::new();
+            verify::instruction_result_regs(instr, &mut regs);
+            if regs.iter().any(|candidate| candidate.0 == reg) {
+                let debug = format!("{instr:?}");
+                *out = Some(debug.chars().take(80).collect());
+                return;
+            }
+            for region in instruction_regions(instr) {
+                describe_defining_instr(region, reg, out);
+                if out.is_some() {
                     return;
-                }
-                for region in instruction_regions(instr) {
-                    describe_defining_instr(region, reg, out);
-                    if out.is_some() {
-                        return;
-                    }
                 }
             }
         }
@@ -5513,7 +5482,7 @@ fn close_register_types(
     let mut const_ints = HashMap::new();
     for _ in 0..4 {
         if !close_blocks(
-            &f.blocks,
+            &f.body,
             &mut reg_types,
             &mut var_tys,
             declarations,
@@ -5525,7 +5494,7 @@ fn close_register_types(
     for reg in 0..f.n_regs {
         if !reg_types.contains_key(&reg) {
             let mut producer = None;
-            describe_defining_instr(&f.blocks, reg, &mut producer);
+            describe_defining_instr(&f.body, reg, &mut producer);
             invariant_errors.push(format!(
                 "fn '{name}': register r{reg} has no checked type ({})",
                 producer.as_deref().unwrap_or("no defining instruction")

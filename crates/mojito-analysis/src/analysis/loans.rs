@@ -110,7 +110,7 @@ pub(super) fn transfer_loan_generation(
 /// top-level-only walks).
 pub(super) fn loan_generation_dests(f: &MirFunction) -> BTreeMap<u32, Option<MirInteriorOrigin>> {
     let mut dests = BTreeMap::new();
-    for_each_instr_deep(&f.blocks, &mut |instruction| {
+    for_each_instr_deep(&f.body, &mut |instruction| {
         if let MirInstr::EstablishLoans {
             marker,
             dest_interior,
@@ -203,7 +203,7 @@ pub(super) fn analyze_loans(
     // The instructions outside every `try`, by address, which is stable
     // while `f` is borrowed: the only ones the walks apply and check.
     let mut outside = HashSet::new();
-    for_each_instr_outside_try(&f.blocks, &mut |instr| {
+    for_each_instr_outside_try(&f.body, &mut |instr| {
         outside.insert(std::ptr::from_ref(instr));
         if let MirInstr::EstablishLoans {
             reference,
@@ -238,7 +238,7 @@ pub(super) fn analyze_loans(
     let liveness = ReferenceLiveness { outside: &outside };
     walk_backward(
         &liveness,
-        &f.blocks,
+        &f.body,
         &mut |instr: &MirInstr, live: &HashSet<VarId>| {
             let mut active: Vec<VarId> = live
                 .iter()
@@ -264,7 +264,7 @@ pub(super) fn analyze_loans(
             .map_or(&[][..], Vec::as_slice);
         check_loans_at(f, callees, &generations, state, active, instr)
     };
-    walk_forward(&scan, LoanGenerationState::default(), &f.blocks, &mut check).map(|_| ())
+    walk_forward(&scan, LoanGenerationState::default(), &f.body, &mut check).map(|_| ())
 }
 
 /// Whether establishing `new` beside the live `existing` loan is a conflict:

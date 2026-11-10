@@ -159,10 +159,10 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: vec![d],
             cond,
-            then,
+            then: Box::new(then),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse,
+            orelse: Box::new(orelse),
         });
         d
     }
@@ -294,10 +294,10 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond,
-            then,
+            then: Box::new(then),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse,
+            orelse: Box::new(orelse),
         });
         let d = self.fresh(node.location(), None);
         self.emit(MirInstr::UseVar {
@@ -680,13 +680,13 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::If {
                     results: Vec::new(),
                     cond: condition,
-                    then,
+                    then: Box::new(then),
                     elifs: Vec::new(),
                     else_args: Vec::new(),
-                    orelse: vec![MirBlock {
+                    orelse: Box::new(MirBlock {
                         instrs: Vec::new(),
                         term: MirTerm::Yield(Vec::new()),
-                    }],
+                    }),
                 });
             }
             CheckedComprehensionClause::For {
@@ -820,7 +820,7 @@ impl<'a> Flatten<'a> {
                     operands: Vec::new(),
                     args: Vec::new(),
                     results: Vec::new(),
-                    body,
+                    body: Box::new(body),
                 });
                 if split_source
                     && !borrowed
@@ -881,15 +881,8 @@ impl<'a> Flatten<'a> {
     /// builds, so a read never starts inside the region. A temporary an
     /// argument of the region makes dies in the region, as upstream's does:
     /// its anchor's `lifetime.keep_alive` ends the region's block.
-    fn region(&mut self, build: impl FnOnce(&mut Self) -> MirTerm) -> Vec<MirBlock> {
-        let outer = std::mem::replace(
-            &mut self.f.blocks,
-            vec![MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::Unreachable,
-            }],
-        );
-        let cur = std::mem::replace(&mut self.cur, 0);
+    fn region(&mut self, build: impl FnOnce(&mut Self) -> MirTerm) -> MirBlock {
+        let outer = std::mem::take(&mut self.f.body);
         let reference = self.setup_reference.take();
         let anchors = std::mem::take(&mut self.pending_argument_anchors);
         let setups = self.call_setups.len();
@@ -897,10 +890,9 @@ impl<'a> Flatten<'a> {
         debug_assert_eq!(self.call_setups.len(), setups);
         self.flush_argument_anchors();
         self.pending_argument_anchors = anchors;
-        self.f.blocks[self.cur].term = term;
+        self.f.body.term = term;
         self.setup_reference = reference;
-        self.cur = cur;
-        std::mem::replace(&mut self.f.blocks, outer)
+        std::mem::replace(&mut self.f.body, outer)
     }
 
     /// A fresh label for a loop of this function, unique beside HIR's.
@@ -930,18 +922,18 @@ impl<'a> Flatten<'a> {
         });
         self.raise_target = enclosing;
         self.var_types.entry(slot).or_insert_with(|| error.clone());
-        let handler = vec![MirBlock {
+        let handler = Box::new(MirBlock {
             instrs: Vec::new(),
             term: MirTerm::Break {
                 label,
                 values: Vec::new(),
             },
-        }];
+        });
         self.emit(MirInstr::Try {
             label: try_label,
             error: Some(slot),
             results: Vec::new(),
-            body,
+            body: Box::new(body),
             handler_args: Vec::new(),
             handler: Some(handler),
             else_args: Vec::new(),
@@ -967,19 +959,19 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: has_next,
-            then: vec![MirBlock {
+            then: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::Yield(Vec::new()),
-            }],
+            }),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: vec![MirBlock {
+            orelse: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::Break {
                     label,
                     values: Vec::new(),
                 },
-            }],
+            }),
         });
         let element = self.fresh_typed(location, Some(iter), raw_ty.clone());
         self.emit(MirInstr::Next {
@@ -1026,18 +1018,22 @@ impl<'a> Flatten<'a> {
             // A whole slot the first link read is read again for the copy,
             // so the copy reads its source's memory as upstream's does, and
             // copy elision sees the source's death right after it.
-            let source = self.f.blocks[self.cur]
-                .instrs
-                .iter()
-                .rev()
-                .find_map(|instruction| match instruction {
-                    MirInstr::LoadPlace { dest, place }
-                        if *dest == value && place.proj.is_empty() && place.through.is_none() =>
-                    {
-                        Some(place.clone())
-                    }
-                    _ => None,
-                });
+            let source =
+                self.f
+                    .body
+                    .instrs
+                    .iter()
+                    .rev()
+                    .find_map(|instruction| match instruction {
+                        MirInstr::LoadPlace { dest, place }
+                            if *dest == value
+                                && place.proj.is_empty()
+                                && place.through.is_none() =>
+                        {
+                            Some(place.clone())
+                        }
+                        _ => None,
+                    });
             let copied_from = match source {
                 Some(place) => {
                     let reread = self.fresh_typed(operand.location(), Some(place.root), ty.clone());
@@ -1171,10 +1167,10 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: vec![d],
             cond: cmp,
-            then,
+            then: Box::new(then),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse,
+            orelse: Box::new(orelse),
         });
         d
     }
@@ -1197,21 +1193,21 @@ impl ArmTest {
     }
 
     /// The two-armed op selecting `then` or `orelse`, defining `results`.
-    fn op(self, results: Vec<Reg>, then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+    fn op(self, results: Vec<Reg>, then: MirBlock, orelse: MirBlock) -> MirInstr {
         match self {
             Self::Run(cond) => MirInstr::If {
                 results,
                 cond,
-                then,
+                then: Box::new(then),
                 elifs: Vec::new(),
                 else_args: Vec::new(),
-                orelse,
+                orelse: Box::new(orelse),
             },
             Self::Comptime(value) => MirInstr::ComptimeIf {
                 results,
                 values: vec![value],
                 arms: vec![then],
-                orelse,
+                orelse: Box::new(orelse),
             },
         }
     }

@@ -29,11 +29,7 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
     a.n_regs == b.n_regs
         && a.n_vars == b.n_vars
         && a.n_params == b.n_params
-        && a.blocks.len() == b.blocks.len()
-        && a.blocks
-            .iter()
-            .zip(&b.blocks)
-            .all(|(a, b)| a.instrs.len() == b.instrs.len())
+        && a.body.instrs.len() == b.body.instrs.len()
         && types_equivalent(&a.param_types, &b.param_types)
         && match (&a.ret_ty, &b.ret_ty) {
             (Some(a), Some(b)) => ty_equivalent(a, b),
@@ -88,14 +84,14 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
 pub(super) fn const_reg_value(function: &MirFunction, reg: Reg) -> Option<CtValue> {
     register_constant(
         &function.reg_types,
-        &nested_instructions(&function.blocks),
+        &nested_instructions(&function.body),
         reg,
         &mut HashSet::new(),
     )
 }
 
 pub(super) fn function_constant_values(function: &MirFunction) -> HashMap<u32, CtValue> {
-    let instructions = nested_instructions(&function.blocks);
+    let instructions = nested_instructions(&function.body);
     function
         .reg_types
         .keys()
@@ -117,7 +113,7 @@ pub(super) fn function_constant_values(function: &MirFunction) -> HashMap<u32, C
 pub(super) fn function_closure_captures(
     function: &MirFunction,
 ) -> HashMap<String, Vec<MirClosureCapture>> {
-    nested_instructions(&function.blocks)
+    nested_instructions(&function.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::MakeClosure {

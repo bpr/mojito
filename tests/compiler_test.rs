@@ -181,7 +181,7 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 
     let mir = mojito::mir::lower_checked_program(program.checked());
     assert!(mir.functions.iter().any(|(_, function)| {
-        mojito::mir::nested_instructions(&function.blocks)
+        mojito::mir::nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| {
                 matches!(
@@ -402,8 +402,7 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
         .drop_elaborated_mir()
         .functions
         .iter()
-        .flat_map(|(_, function)| &function.blocks)
-        .flat_map(|block| &block.instrs)
+        .flat_map(|(_, function)| &function.body.instrs)
         .collect();
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
@@ -4630,7 +4629,7 @@ fn dunder_unused_arguments_leave_the_instance_key() {
         .position(|(name, _)| name == "main")
         .expect("main")]
     .1;
-    let index_gets = mojito::mir::nested_instructions(&main.blocks)
+    let index_gets = mojito::mir::nested_instructions(&main.body)
         .into_iter()
         .filter(|instruction| {
             matches!(
@@ -4718,7 +4717,7 @@ fn post_elaboration_folds_parameter_arithmetic() {
             .iter()
             .find(|(name, _)| name == "f$mono$V5")
             .expect("the instance `f$mono$V5`");
-        let instructions = mojito::mir::nested_instructions(&instance.blocks);
+        let instructions = mojito::mir::nested_instructions(&instance.body);
         (
             // Unfolded arithmetic: a scalar operator is `SIMD`'s dunder call
             // until the pipeline inlines and folds it.
@@ -5048,7 +5047,7 @@ fn callable_binder_function_value_inlines_through_canonicalize() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main");
-    let instructions = mojito::mir::nested_instructions(&main.blocks);
+    let instructions = mojito::mir::nested_instructions(&main.body);
     assert!(
         !instructions
             .iter()
@@ -5090,7 +5089,7 @@ fn automatic_inline_inlines_an_undecorated_capturing_nested_def() {
             .functions
             .iter()
             .filter(|(name, _)| !name.contains("$__storage."))
-            .flat_map(|(_, function)| mojito::mir::nested_instructions(&function.blocks))
+            .flat_map(|(_, function)| mojito::mir::nested_instructions(&function.body))
             .filter_map(|instruction| match instruction {
                 mojito::mir::MirInstr::Call { func, .. } => Some(func.0.clone()),
                 mojito::mir::MirInstr::MethodCall {
@@ -5134,9 +5133,7 @@ fn a_reference_reached_through_a_bare_ref_parameter_carries_its_binder() {
             .find(|(lowered, _)| lowered == name)
             .unwrap_or_else(|| panic!("{name} MIR"))
             .1;
-        let Some(mojito::mir::MirTerm::Return(Some(register))) =
-            function.blocks.last().map(|block| &block.term)
-        else {
+        let Some(mojito::mir::MirTerm::Return(Some(register))) = Some(&function.body.term) else {
             panic!("{name} returns a register: {function:#?}");
         };
         match function.reg_types.get(&register.0).map(Ty::kind) {

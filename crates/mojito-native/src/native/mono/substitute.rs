@@ -70,11 +70,11 @@ impl FrameTables for FrameSlots<'_> {
 /// construction they leave open — an element whose `comptime for` index is
 /// not yet unrolled — stays for the copy that binds it.
 pub(super) fn default_construct_parameters(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     bindings: &Bindings,
     declarations: &MirDeclarations,
 ) -> Result<(), MonoError> {
-    mojito_mir::mir::construct_type_parameters(blocks, bindings, declarations)
+    mojito_mir::mir::construct_type_parameters(block, bindings, declarations)
 }
 
 /// Substitute `bindings` through `function`. Each read of a retained
@@ -88,7 +88,7 @@ pub(super) fn substitute_function(
     conforms: &ConformsAnswer<'_>,
 ) -> Result<(), MonoError> {
     substitute_callable_parameter_reads(
-        &mut function.blocks,
+        &mut function.body,
         &function.var_names,
         &bindings.callables,
     );
@@ -99,7 +99,7 @@ pub(super) fn substitute_function(
         },
         function,
     )?;
-    copy_builtin_receivers(&mut function.blocks, &function.reg_types);
+    copy_builtin_receivers(&mut function.body, &function.reg_types);
     Ok(())
 }
 
@@ -113,44 +113,42 @@ pub(super) type ConformsAnswer<'a> = dyn Fn(&ParamExpr, &str) -> Option<bool> + 
 /// `Self(copy=self)`, so at such a `Self` it is the [`MirInstr::CopyValue`]
 /// [`mojito_mir::mir::construct_type_parameters`] writes for `T(copy=x)`.
 /// The copy is no call, so a binding of its result is no longer in place.
-pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) {
-    for block in blocks {
-        let mut copied = HashSet::new();
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::MethodCall {
-                    dest,
-                    recv,
-                    method,
-                    resolved,
-                    raises: None,
-                    args,
-                    kwargs,
-                    ..
-                } if method == "copy"
-                    && args.is_empty()
-                    && kwargs.is_empty()
-                    && resolved
-                        .as_deref()
-                        .is_none_or(|target| target.starts_with("__trait_dispatch."))
-                    && reg_types.get(&recv.0).is_some_and(|ty| {
-                        mojito_types::types::builtin_copy_is_value_read(ty.kind())
-                    }) =>
-                {
-                    copied.insert(dest.0);
-                    *instruction = MirInstr::CopyValue {
-                        dest: *dest,
-                        value: *recv,
-                        constructor: None,
-                    };
-                }
-                MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
-                    *in_place = false;
-                }
-                instruction => {
-                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                        copy_builtin_receivers(region, reg_types);
-                    }
+pub(super) fn copy_builtin_receivers(block: &mut MirBlock, reg_types: &HashMap<u32, Ty>) {
+    let mut copied = HashSet::new();
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::MethodCall {
+                dest,
+                recv,
+                method,
+                resolved,
+                raises: None,
+                args,
+                kwargs,
+                ..
+            } if method == "copy"
+                && args.is_empty()
+                && kwargs.is_empty()
+                && resolved
+                    .as_deref()
+                    .is_none_or(|target| target.starts_with("__trait_dispatch."))
+                && reg_types.get(&recv.0).is_some_and(|ty| {
+                    mojito_types::types::builtin_copy_is_value_read(ty.kind())
+                }) =>
+            {
+                copied.insert(dest.0);
+                *instruction = MirInstr::CopyValue {
+                    dest: *dest,
+                    value: *recv,
+                    constructor: None,
+                };
+            }
+            MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
+                *in_place = false;
+            }
+            instruction => {
+                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                    copy_builtin_receivers(region, reg_types);
                 }
             }
         }
@@ -164,34 +162,32 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
 /// not a read of the parameter's value. A callable binder's read is its
 /// parameter constant, which the instance closes like any other.
 pub(super) fn substitute_callable_parameter_reads(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var_names: &[String],
     callables: &HashMap<String, String>,
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let read = match instruction {
-                MirInstr::UseVar { dest, var, .. } => Some((*dest, *var)),
-                MirInstr::LoadPlace { dest, place }
-                    if place.through.is_none() && place.proj.is_empty() =>
-                {
-                    Some((*dest, place.root))
-                }
-                _ => None,
-            };
-            if let Some((dest, var)) = read
-                && let Some(callable) = var_names
-                    .get(var as usize)
-                    .and_then(|name| callables.get(name))
+    for instruction in &mut block.instrs {
+        let read = match instruction {
+            MirInstr::UseVar { dest, var, .. } => Some((*dest, *var)),
+            MirInstr::LoadPlace { dest, place }
+                if place.through.is_none() && place.proj.is_empty() =>
             {
-                *instruction = MirInstr::Const {
-                    dest,
-                    k: Const::Function(callable.clone()),
-                };
-            } else {
-                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                    substitute_callable_parameter_reads(region, var_names, callables);
-                }
+                Some((*dest, place.root))
+            }
+            _ => None,
+        };
+        if let Some((dest, var)) = read
+            && let Some(callable) = var_names
+                .get(var as usize)
+                .and_then(|name| callables.get(name))
+        {
+            *instruction = MirInstr::Const {
+                dest,
+                k: Const::Function(callable.clone()),
+            };
+        } else {
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                substitute_callable_parameter_reads(region, var_names, callables);
             }
         }
     }
@@ -227,7 +223,7 @@ pub(super) fn substitute_declaration(
 }
 
 pub(super) fn substitute_blocks_metadata(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     walk_blocks_mut(
@@ -235,7 +231,7 @@ pub(super) fn substitute_blocks_metadata(
             bindings,
             conforms: None,
         },
-        blocks,
+        block,
     )
 }
 

@@ -120,7 +120,7 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
             for value in values {
                 comptime_test_value(cx, "comptime if", value, errors);
             }
-            for region in arms.iter().chain(std::iter::once(orelse)) {
+            for region in arms.iter().chain(std::iter::once(&**orelse)) {
                 let kind = RegionKind::ComptimeIfArm(results.clone());
                 verify_region(cx, kind, protected, region, errors);
             }
@@ -135,30 +135,20 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
             ..
         } => {
             comptime_for_values(cx, operands, args, results, errors);
-            let tests_has_next = matches!(
-                body.as_slice(),
-                [MirBlock {
-                    instrs,
-                    term: MirTerm::Unreachable,
-                }] if matches!(
-                    instrs.first(),
+            let tests_has_next = matches!(body.term, MirTerm::Unreachable)
+                && matches!(
+                    body.instrs.first(),
                     Some(MirInstr::ComptimeIf { values, .. })
                         if matches!(values.as_slice(), [Const::Param(test)] if *test == source.has_next)
-                )
-            );
+                );
             if !tests_has_next {
                 errors.push(format!(
                     "{}: comptime for body does not open with its has_next test",
                     cx.prefix
                 ));
             }
-            let unreachable_else = matches!(
-                orelse.as_slice(),
-                [MirBlock {
-                    instrs,
-                    term: MirTerm::Unreachable,
-                }] if instrs.is_empty()
-            );
+            let unreachable_else =
+                orelse.instrs.is_empty() && matches!(orelse.term, MirTerm::Unreachable);
             if !unreachable_else {
                 errors.push(format!(
                     "{}: comptime for else region is not one `unreachable` block",
@@ -366,16 +356,9 @@ fn verify_region(
     cx: &InstrCx<'_>,
     kind: RegionKind,
     protected: bool,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     errors: &mut Vec<String>,
 ) {
-    if blocks.len() != 1 {
-        errors.push(format!(
-            "{}: region holds {} blocks",
-            cx.prefix,
-            blocks.len()
-        ));
-    }
     let mut regions = cx.context.regions.clone();
     regions.push(kind);
     let context = RegionContext {
@@ -383,11 +366,11 @@ fn verify_region(
         protected,
         asserted: cx.context.asserted,
     };
-    verify_blocks(
+    verify_block(
         cx.name,
         cx.function,
         cx.declarations,
-        blocks,
+        block,
         &context,
         errors,
     );
@@ -547,15 +530,15 @@ mod tests {
     use mojito_checked::checked::ComptimeSequence;
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
 
-    fn one(instrs: Vec<MirInstr>, term: MirTerm) -> Vec<MirBlock> {
-        vec![MirBlock { instrs, term }]
+    fn one(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+        MirBlock { instrs, term }
     }
 
     /// A body of `instrs` over a `Bool` and two `Int` registers and one
     /// `Int` slot.
     fn function_with(instrs: Vec<MirInstr>) -> MirFunction {
         MirFunction {
-            blocks: one(instrs, MirTerm::Return(None)),
+            body: one(instrs, MirTerm::Return(None)),
             n_regs: 3,
             n_vars: 1,
             var_names: vec!["i".into()],
@@ -580,18 +563,18 @@ mod tests {
 
     /// A `comptime for` whose body opens with its `has_next` test, the
     /// test's arm `suite`.
-    fn comptime_for(suite: Vec<MirBlock>) -> MirInstr {
+    fn comptime_for(suite: MirBlock) -> MirInstr {
         let source = sequence();
         let test = MirInstr::ComptimeIf {
             results: Vec::new(),
             values: vec![Const::Param(source.has_next.clone())],
             arms: vec![suite],
-            orelse: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeBreak(Vec::new()))),
         };
         bare_comptime_for(source, one(vec![test], MirTerm::Unreachable))
     }
 
-    fn bare_comptime_for(source: ComptimeSequence, body: Vec<MirBlock>) -> MirInstr {
+    fn bare_comptime_for(source: ComptimeSequence, body: MirBlock) -> MirInstr {
         MirInstr::ComptimeFor {
             binder: ParamRef {
                 id: ParamId::new("$comptime_for@f:0..1", 0),
@@ -601,8 +584,8 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body,
-            orelse: one(Vec::new(), MirTerm::Unreachable),
+            body: Box::new(body),
+            orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
         }
     }
 
@@ -622,7 +605,7 @@ mod tests {
         let function = function_with(vec![MirInstr::If {
             results: vec![Reg(1)],
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            then: Box::new(one(Vec::new(), MirTerm::Yield(vec![Reg(2)]))),
             else_args: Vec::new(),
             elifs: vec![crate::mir::MirElif {
                 cond_args: Vec::new(),
@@ -636,7 +619,7 @@ mod tests {
                 ),
                 then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
             }],
-            orelse: one(Vec::new(), MirTerm::Unreachable),
+            orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
         }]);
         assert_eq!(findings(&function), Vec::<String>::new());
     }
@@ -648,22 +631,22 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            body: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }]);
         assert_finding(&findings(&misplaced), "`yield` outside the region it ends");
         let elif = function_with(vec![MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(
+            then: Box::new(one(
                 Vec::new(),
                 MirTerm::ElifCond {
                     cond: Reg(0),
                     values: Vec::new(),
                 },
-            ),
+            )),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))),
         }]);
         let found = findings(&elif);
         assert_finding(&found, "`if.elifcond.yield` outside the region it ends");
@@ -671,10 +654,10 @@ mod tests {
         let arity = function_with(vec![MirInstr::If {
             results: vec![Reg(1)],
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            then: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(vec![Reg(0)])),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(vec![Reg(0)]))),
         }]);
         let found = findings(&arity);
         assert_finding(&found, "`yield` yields 0 values for 1 results");
@@ -694,26 +677,26 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results,
-            body: one(
+            body: Box::new(one(
                 vec![MirInstr::If {
                     results: Vec::new(),
                     cond: Reg(0),
-                    then: one(
+                    then: Box::new(one(
                         Vec::new(),
                         MirTerm::Break {
                             label: inner,
                             values,
                         },
-                    ),
+                    )),
                     else_args: Vec::new(),
                     elifs: Vec::new(),
-                    orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                    orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
                 }],
                 MirTerm::Continue {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
         }
     }
 
@@ -740,13 +723,13 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: vec![Reg(1)],
-            body: one(
+            body: Box::new(one(
                 vec![valued_loop(None, Vec::new(), outer, Vec::new())],
                 MirTerm::Continue {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
         }]);
         let found = findings(&nested);
         assert_eq!(found.len(), 1, "{found:?}");
@@ -766,13 +749,13 @@ mod tests {
             operands,
             args,
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 Vec::new(),
                 MirTerm::Continue {
                     label: inner,
                     values,
                 },
-            ),
+            )),
         }
     }
 
@@ -804,7 +787,7 @@ mod tests {
             operands: vec![Reg(2)],
             args: vec![Reg(1)],
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 vec![carrying_loop(
                     None,
                     (Vec::new(), Vec::new()),
@@ -812,7 +795,7 @@ mod tests {
                     Vec::new(),
                 )],
                 MirTerm::Unreachable,
-            ),
+            )),
         }]);
         let found = findings(&nested);
         assert_eq!(found.len(), 1, "{found:?}");
@@ -847,10 +830,10 @@ mod tests {
         let test = MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            then: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::MatchNext(Vec::new()))),
         };
         MirInstr::Match {
             results: Vec::new(),
@@ -865,7 +848,7 @@ mod tests {
                     body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 },
             ],
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }
     }
 
@@ -886,31 +869,31 @@ mod tests {
                         operands: Vec::new(),
                         args: Vec::new(),
                         results: Vec::new(),
-                        body: one(
+                        body: Box::new(one(
                             vec![MirInstr::If {
                                 results: Vec::new(),
                                 cond: Reg(0),
-                                then: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
+                                then: Box::new(one(Vec::new(), MirTerm::MatchComplete(Vec::new()))),
                                 else_args: Vec::new(),
                                 elifs: Vec::new(),
-                                orelse: one(
+                                orelse: Box::new(one(
                                     Vec::new(),
                                     MirTerm::Break {
                                         label: None,
                                         values: Vec::new(),
                                     },
-                                ),
+                                )),
                             }],
                             MirTerm::Continue {
                                 label: None,
                                 values: Vec::new(),
                             },
-                        ),
+                        )),
                     }],
                     MirTerm::MatchNext(Vec::new()),
                 ),
             }],
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }]);
         assert_eq!(findings(&nested), Vec::<String>::new());
     }
@@ -920,10 +903,10 @@ mod tests {
         let next = function_with(vec![MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+            then: Box::new(one(Vec::new(), MirTerm::MatchNext(Vec::new()))),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::MatchComplete(Vec::new()))),
         }]);
         let found = findings(&next);
         assert_finding(&found, "`match.next` is not inside a match case");
@@ -936,7 +919,7 @@ mod tests {
                 args: Vec::new(),
                 body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
             }],
-            orelse: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::MatchNext(Vec::new()))),
         }]);
         assert_finding(
             &findings(&orelse),
@@ -946,7 +929,7 @@ mod tests {
             results: Vec::new(),
             else_args: Vec::new(),
             cases: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }]);
         assert_finding(&findings(&empty), "match holds no case");
     }
@@ -970,7 +953,7 @@ mod tests {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: arm(),
+            then: Box::new(arm()),
             elifs: elifs
                 .into_iter()
                 .map(|(cond_args, values, then_args)| crate::mir::MirElif {
@@ -987,7 +970,7 @@ mod tests {
                 })
                 .collect(),
             else_args,
-            orelse: arm(),
+            orelse: Box::new(arm()),
         }
     }
 
@@ -1039,10 +1022,10 @@ mod tests {
         let guard = MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            then: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::MatchNext(first.clone())),
+            orelse: Box::new(one(Vec::new(), MirTerm::MatchNext(first.clone()))),
         };
         MirInstr::Match {
             results: Vec::new(),
@@ -1057,7 +1040,7 @@ mod tests {
                 },
             ],
             else_args: vec![Reg(4)],
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }
     }
 
@@ -1096,7 +1079,7 @@ mod tests {
                     body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             }],
             &[Ty::int()],
         );
@@ -1116,7 +1099,7 @@ mod tests {
                     body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::MatchNext(vec![Reg(1)])),
+                orelse: Box::new(one(Vec::new(), MirTerm::MatchNext(vec![Reg(1)]))),
             };
             MirInstr::Match {
                 results: Vec::new(),
@@ -1131,7 +1114,7 @@ mod tests {
                     },
                 ],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             }
         };
         let carried = function_over(vec![outer(vec![Reg(3)])], &[Ty::int()]);
@@ -1153,7 +1136,7 @@ mod tests {
                 body: one(Vec::new(), MirTerm::MatchComplete(first)),
             }],
             else_args: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(orelse)),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(orelse))),
         }
     }
 
@@ -1195,7 +1178,7 @@ mod tests {
                     body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::MatchComplete(vec![Reg(1)])),
+                orelse: Box::new(one(Vec::new(), MirTerm::MatchComplete(vec![Reg(1)]))),
             };
             MirInstr::Match {
                 results,
@@ -1204,7 +1187,7 @@ mod tests {
                     body: one(vec![inner], MirTerm::MatchComplete(vec![Reg(2)])),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Unreachable),
+                orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
             }
         };
         let carried = function_over(vec![outer(vec![Reg(3)])], &[Ty::int()]);
@@ -1229,7 +1212,7 @@ mod tests {
             results: Vec::new(),
             values: vec![Const::Param(source.has_next.clone())],
             arms: vec![one(Vec::new(), MirTerm::ComptimeContinue(next))],
-            orelse: one(Vec::new(), MirTerm::ComptimeBreak(out)),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeBreak(out))),
         };
         let mut op = bare_comptime_for(source, one(vec![test], MirTerm::Unreachable));
         if let MirInstr::ComptimeFor {
@@ -1296,16 +1279,16 @@ mod tests {
         let unlabelled = function_with(vec![MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(
+            then: Box::new(one(
                 Vec::new(),
                 MirTerm::Break {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
             else_args: Vec::new(),
             elifs: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }]);
         assert_finding(&findings(&unlabelled), "`break` has no enclosing loop");
         let labelled = function_with(vec![MirInstr::Loop {
@@ -1313,13 +1296,13 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 Vec::new(),
                 MirTerm::Continue {
                     label: Some(LoopLabel(2)),
                     values: Vec::new(),
                 },
-            ),
+            )),
         }]);
         assert_finding(
             &findings(&labelled),
@@ -1330,25 +1313,25 @@ mod tests {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 vec![MirInstr::Loop {
                     label: None,
                     operands: Vec::new(),
                     args: Vec::new(),
                     results: Vec::new(),
-                    body: one(
+                    body: Box::new(one(
                         Vec::new(),
                         MirTerm::Break {
                             label: Some(LoopLabel(1)),
                             values: Vec::new(),
                         },
-                    ),
+                    )),
                 }],
                 MirTerm::Continue {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
         }]);
         assert_eq!(findings(&named), Vec::<String>::new());
     }
@@ -1361,7 +1344,7 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
+                body: Box::new(one(Vec::new(), MirTerm::ComptimeBreak(Vec::new()))),
             }],
             MirTerm::ComptimeContinue(Vec::new()),
         ))]);
@@ -1391,36 +1374,12 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_block_region_is_rejected() {
-        let function = function_with(vec![MirInstr::Loop {
-            label: None,
-            operands: Vec::new(),
-            args: Vec::new(),
-            results: Vec::new(),
-            body: vec![
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Break {
-                        label: None,
-                        values: Vec::new(),
-                    },
-                },
-                MirBlock {
-                    instrs: Vec::new(),
-                    term: MirTerm::Return(None),
-                },
-            ],
-        }]);
-        assert_finding(&findings(&function), "region holds 2 blocks");
-    }
-
-    #[test]
     fn concrete_mir_carries_no_compile_time_control_flow() {
         let function = function_with(vec![MirInstr::ComptimeIf {
             results: Vec::new(),
             values: vec![Const::Bool(true)],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
-            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))),
         }]);
         let program = MirProgram {
             functions: vec![("f".into(), function)],
@@ -1475,7 +1434,7 @@ mod tests {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(3),
-            then: one(
+            then: Box::new(one(
                 vec![MirInstr::DefVar {
                     var: 1,
                     src: error,
@@ -1483,10 +1442,10 @@ mod tests {
                     in_place: false,
                 }],
                 MirTerm::ErrorReturn,
-            ),
+            )),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         }
     }
 
@@ -1521,15 +1480,15 @@ mod tests {
                 label: crate::mir::TryLabel(0),
                 error: None,
                 results: Vec::new(),
-                body: one(
+                body: Box::new(one(
                     Vec::new(),
                     MirTerm::TryRaise {
                         label: crate::mir::TryLabel(label),
                         values: Vec::new(),
                     },
-                ),
+                )),
                 handler_args: Vec::new(),
-                handler: Some(one(Vec::new(), MirTerm::TryYield(Vec::new()))),
+                handler: Some(Box::new(one(Vec::new(), MirTerm::TryYield(Vec::new())))),
                 else_args: Vec::new(),
                 orelse: None,
             }])
@@ -1555,26 +1514,26 @@ mod tests {
         let raise = MirInstr::If {
             results: Vec::new(),
             cond: Reg(0),
-            then: one(
+            then: Box::new(one(
                 Vec::new(),
                 MirTerm::TryRaise {
                     label,
                     values: raised,
                 },
-            ),
+            )),
             elifs: Vec::new(),
             else_args: Vec::new(),
-            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
         };
         let mut function = function_with(vec![MirInstr::Try {
             label,
             error: None,
             results: vec![Reg(4)],
-            body: one(vec![raise], MirTerm::TryYield(yielded)),
+            body: Box::new(one(vec![raise], MirTerm::TryYield(yielded))),
             handler_args,
-            handler: Some(one(Vec::new(), MirTerm::TryYield(vec![Reg(5)]))),
+            handler: Some(Box::new(one(Vec::new(), MirTerm::TryYield(vec![Reg(5)])))),
             else_args: vec![Reg(3)],
-            orelse: Some(one(Vec::new(), MirTerm::TryYield(vec![Reg(3)]))),
+            orelse: Some(Box::new(one(Vec::new(), MirTerm::TryYield(vec![Reg(3)])))),
         }]);
         function.n_regs = 7;
         function.reg_types.extend([
@@ -1630,7 +1589,7 @@ mod tests {
     #[test]
     fn a_try_without_a_handler_taking_arguments_is_a_finding() {
         let mut function = valued_try(Vec::new(), vec![Reg(2)], vec![Reg(5)]);
-        if let MirInstr::Try { handler, .. } = &mut function.blocks[0].instrs[0] {
+        if let MirInstr::Try { handler, .. } = &mut function.body.instrs[0] {
             *handler = None;
         }
         assert_finding(
@@ -1723,7 +1682,7 @@ mod tests {
     #[test]
     fn a_literal_returned_unconverted_from_a_scalar_function_is_a_finding() {
         let mut function = function_with(Vec::new());
-        function.blocks = one(Vec::new(), MirTerm::Return(Some(Reg(1))));
+        function.body = one(Vec::new(), MirTerm::Return(Some(Reg(1))));
         function.ret_ty = Some(Ty::float64());
         function.reg_types.insert(
             1,

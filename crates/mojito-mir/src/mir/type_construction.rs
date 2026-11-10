@@ -90,47 +90,45 @@ impl std::error::Error for TypeConstructionError {}
 /// When the decided type cannot be constructed, or `types` cannot close a
 /// selected pack element.
 pub fn construct_type_parameters<C: ConstructionTypes>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     types: &C,
     declarations: &MirDeclarations,
 ) -> Result<(), C::Error> {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            let built = match &mut block.instrs[index] {
-                MirInstr::ConstructTypeParam {
-                    dest,
-                    param,
-                    kwargs,
-                    element,
-                    ..
-                } if kwargs.is_empty() => constructed_type(param, element.as_ref(), types)?
-                    .map(|ty| default_construction(*dest, &ty, declarations))
-                    .transpose()?,
-                MirInstr::ConstructType { dest, ty } => types
-                    .close(ty)
-                    .ok()
-                    .filter(|ty| !mojito_types::types::is_symbolic(ty))
-                    .map(|ty| default_construction(*dest, &ty, declarations))
-                    .transpose()?,
-                instruction @ MirInstr::ConstructTypeParam { .. } => {
-                    copy_construction(instruction, types, declarations).map(|copy| vec![copy])
+    let mut index = 0;
+    while index < block.instrs.len() {
+        let built = match &mut block.instrs[index] {
+            MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                element,
+                ..
+            } if kwargs.is_empty() => constructed_type(param, element.as_ref(), types)?
+                .map(|ty| default_construction(*dest, &ty, declarations))
+                .transpose()?,
+            MirInstr::ConstructType { dest, ty } => types
+                .close(ty)
+                .ok()
+                .filter(|ty| !mojito_types::types::is_symbolic(ty))
+                .map(|ty| default_construction(*dest, &ty, declarations))
+                .transpose()?,
+            instruction @ MirInstr::ConstructTypeParam { .. } => {
+                copy_construction(instruction, types, declarations).map(|copy| vec![copy])
+            }
+            instruction => {
+                for region in instruction_regions_mut(instruction) {
+                    construct_type_parameters(region, types, declarations)?;
                 }
-                instruction => {
-                    for region in instruction_regions_mut(instruction) {
-                        construct_type_parameters(region, types, declarations)?;
-                    }
-                    None
-                }
-            };
-            let Some(built) = built else {
-                index += 1;
-                continue;
-            };
-            let count = built.len();
-            block.instrs.splice(index..=index, built);
-            index += count;
-        }
+                None
+            }
+        };
+        let Some(built) = built else {
+            index += 1;
+            continue;
+        };
+        let count = built.len();
+        block.instrs.splice(index..=index, built);
+        index += count;
     }
     Ok(())
 }

@@ -67,7 +67,7 @@ impl DropValues {
                 stored.insert(var, (ty.clone(), paths));
             }
         }
-        for_each_instr_deep(&f.blocks, &mut |instr| {
+        for_each_instr_deep(&f.body, &mut |instr| {
             let MirInstr::Store { place, .. } = instr else {
                 return;
             };
@@ -385,7 +385,7 @@ fn register_anchors(f: &MirFunction, owned: &[Reg]) -> Vec<u32> {
     let mut anchors = vec![f.n_params as u32; owned.len()];
     let mut seen = f.n_params as u32;
     let mut results = Vec::new();
-    for_each_instr_deep(&f.blocks, &mut |instr| {
+    for_each_instr_deep(&f.body, &mut |instr| {
         if let Some(var) = var_def(instr).or(match instr {
             MirInstr::DeclareVar { var } => Some(*var),
             _ => None,
@@ -768,10 +768,10 @@ mod tests {
             })
             .collect();
         let function = MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             n_vars: 2,
             ..MirFunction::default()
         };

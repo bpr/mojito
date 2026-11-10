@@ -55,10 +55,10 @@ fn program_with(functions: Vec<(String, MirFunction)>) -> MirProgram {
 
 fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
     MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs,
             term: MirTerm::TryYield(Vec::new()),
-        }],
+        },
         n_regs: reg_types.len() as u32,
         n_vars: 0,
         var_names: Vec::new(),
@@ -1436,7 +1436,7 @@ fn instruction_families_reprint_byte_identically() {
         },
     ];
     let mut function = function_with(vec![Ty::int(); 43], instrs);
-    function.blocks[0].term = MirTerm::Return(Some(Reg(0)));
+    function.body.term = MirTerm::Return(Some(Reg(0)));
     let program = program_with(vec![("instructions".into(), function)]);
     assert_reprints(&program);
 }
@@ -1457,7 +1457,7 @@ fn error_return_terminator_reprints() {
     function.var_tys.insert(0, Ty::error());
     function.raises = true;
     function.error_slot = Some(0);
-    function.blocks[0].term = MirTerm::ErrorReturn;
+    function.body.term = MirTerm::ErrorReturn;
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
     let text = write::program(&program);
@@ -1481,7 +1481,7 @@ fn an_error_return_older_than_1_108_stores_into_the_function_error_slot() {
     assert_eq!(function.error_slot, Some(0));
     assert_eq!(function.var_names, ["$error"]);
     assert!(matches!(
-        function.blocks[0].instrs[..],
+        function.body.instrs[..],
         [
             _,
             MirInstr::DefVar {
@@ -1491,7 +1491,7 @@ fn an_error_return_older_than_1_108_stores_into_the_function_error_slot() {
             }
         ]
     ));
-    assert!(matches!(function.blocks[0].term, MirTerm::ErrorReturn));
+    assert!(matches!(function.body.term, MirTerm::ErrorReturn));
 }
 
 #[test]
@@ -1504,10 +1504,10 @@ fn nested_try_regions_reprint_without_region_source_marks() {
         label: TryLabel(1),
         error: None,
         results: Vec::new(),
-        body: vec![region_block(MirTerm::TryRaise {
+        body: Box::new(region_block(MirTerm::TryRaise {
             label: TryLabel(0),
             values: Vec::new(),
-        })],
+        })),
         handler_args: Vec::new(),
         handler: None,
         else_args: Vec::new(),
@@ -1517,14 +1517,14 @@ fn nested_try_regions_reprint_without_region_source_marks() {
         label: TryLabel(0),
         error: Some(3),
         results: Vec::new(),
-        body: vec![MirBlock {
+        body: Box::new(MirBlock {
             instrs: vec![inner_try],
             term: MirTerm::TryYield(Vec::new()),
-        }],
+        }),
         handler_args: Vec::new(),
-        handler: Some(vec![region_block(MirTerm::TryYield(Vec::new()))]),
+        handler: Some(Box::new(region_block(MirTerm::TryYield(Vec::new())))),
         else_args: Vec::new(),
-        orelse: Some(vec![region_block(MirTerm::TryYield(Vec::new()))]),
+        orelse: Some(Box::new(region_block(MirTerm::TryYield(Vec::new())))),
     };
     let program = program_with(vec![(
         "regions".into(),
@@ -1613,7 +1613,7 @@ fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
             handler: Some(handler),
             ..
         },
-    ] = &parsed.program.functions[0].1.blocks[0].instrs[..]
+    ] = &parsed.program.functions[0].1.body.instrs[..]
     else {
         panic!("the outer try reads");
     };
@@ -1623,29 +1623,29 @@ fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
         label: inner,
         body: inner_body,
         ..
-    } = &body[0].instrs[0]
+    } = &body.instrs[0]
     else {
         panic!("the inner try reads");
     };
     assert_eq!(*inner, TryLabel(1));
     assert!(matches!(
-        inner_body[0].term,
+        inner_body.term,
         MirTerm::TryRaise {
             label: TryLabel(0),
             ..
         }
     ));
     assert!(matches!(
-        inner_body[0].instrs[..],
+        inner_body.instrs[..],
         [MirInstr::DefVar { var, src: Reg(0), .. }] if var == *slot
     ));
     // The raise in the outer handler stores into the function's error
     // slot, which the upgrade adds past the `try`'s.
     let error_slot = parsed.program.functions[0].1.error_slot;
     assert!(error_slot.is_some_and(|error| error != *slot));
-    assert!(matches!(handler[0].term, MirTerm::ErrorReturn));
+    assert!(matches!(handler.term, MirTerm::ErrorReturn));
     assert!(matches!(
-        handler[0].instrs[..],
+        handler.instrs[..],
         [MirInstr::DefVar { var, src: Reg(0), .. }] if Some(var) == error_slot
     ));
 }
@@ -2199,7 +2199,7 @@ fn pop_array_size_and_constant_round_trip() {
     };
     let mask_ty = mask.pop_array_type().expect("a `#pop.array` is typed");
     let mut function = function_with(vec![symbolic.clone(), mask_ty], Vec::new());
-    function.blocks[0].instrs.push(MirInstr::Const {
+    function.body.instrs.push(MirInstr::Const {
         dest: Reg(1),
         k: Const::Value(mask.clone()),
     });
@@ -2209,7 +2209,7 @@ fn pop_array_size_and_constant_round_trip() {
     let parsed_function = &parsed.program.functions[0].1;
     assert_eq!(parsed_function.reg_types[&0], symbolic);
     assert!(matches!(
-        &parsed_function.blocks[0].instrs[..],
+        &parsed_function.body.instrs[..],
         [.., MirInstr::Const { k: Const::Value(value), .. }] if *value == mask
     ));
     assert_eq!(write::program(&parsed.program), text);
@@ -2457,7 +2457,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     assert!(older.contains("type.construct { dest: %r0, param: H,"));
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     assert!(matches!(
-        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        &parsed.program.functions[0].1.body.instrs[0],
         MirInstr::ConstructTypeParam { param, .. } if param.id == binder.id
     ));
 }
@@ -2486,7 +2486,7 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
     };
     let recorded = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        match &parsed.program.functions[0].1.body.instrs[0] {
             MirInstr::ConstructTypeParam { element, .. } => element.clone(),
             other => panic!("expected a type construction, read {other:?}"),
         }
@@ -2542,7 +2542,7 @@ fn type_expression_constructions_round_trip() {
     assert!(text.contains("type.construct_expr { dest: %r0, type: "));
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     assert!(matches!(
-        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        &parsed.program.functions[0].1.body.instrs[0],
         MirInstr::ConstructType { dest: Reg(0), ty: read } if *read == ty
     ));
 }
@@ -2914,7 +2914,7 @@ fn param_list_addresses_round_trip() {
         assert!(text.contains("param_list.address { dest: %r0, values: "));
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
         assert!(matches!(
-            &parsed.program.functions[0].1.blocks[0].instrs[0],
+            &parsed.program.functions[0].1.body.instrs[0],
             MirInstr::ParamListAddress { dest: Reg(0), values: read }
                 if format!("{read:?}") == format!("{values:?}")
         ));
@@ -2997,7 +2997,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
     };
     let recorded = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        match &parsed.program.functions[0].1.body.instrs[0] {
             MirInstr::MethodCall {
                 instantiated_args, ..
             } => instantiated_args.clone(),
@@ -3024,7 +3024,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
     assert!(!before_spread.contains("spread"));
     let parsed = artifact(before_spread.as_bytes(), "unit.mir".to_string()).expect("parse 1.23");
     assert!(matches!(
-        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        &parsed.program.functions[0].1.body.instrs[0],
         MirInstr::MethodCall { spread: None, .. }
     ));
 
@@ -3032,7 +3032,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
     // record only whether it is `deinit`, and an older artifact neither.
     let convention = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        match &parsed.program.functions[0].1.body.instrs[0] {
             MirInstr::MethodCall {
                 receiver_convention,
                 ..
@@ -3087,7 +3087,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
     };
     let recorded = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        match &parsed.program.functions[0].1.body.instrs[0] {
             MirInstr::Call { param_arg_regs, .. } => param_arg_regs[0].expr.clone(),
             other => panic!("expected a call, read {other:?}"),
         }
@@ -3132,7 +3132,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     };
     let recorded = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+        match &parsed.program.functions[0].1.body.instrs[0] {
             MirInstr::Call { receiver, .. } => receiver.clone(),
             other => panic!("expected a call, read {other:?}"),
         }
@@ -3597,7 +3597,7 @@ fn symbolic_variant_index_round_trips() {
     let text = write::program(&program);
     assert!(text.contains("pack_index_of("));
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    let instrs = &parsed.program.functions[0].1.blocks[0].instrs;
+    let instrs = &parsed.program.functions[0].1.body.instrs;
     assert!(matches!(&instrs[0], MirInstr::VariantIs { index: read, .. } if *read == index));
     assert!(matches!(&instrs[1], MirInstr::LoadPlace { place, .. }
         if matches!(place.proj.as_slice(), [Proj::Variant(read)] if *read == index)));
@@ -3625,7 +3625,7 @@ fn symbolic_field_step_round_trips() {
     let text = write::program(&program);
     assert!(text.contains("field_at(ct_expr("));
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    let instrs = &parsed.program.functions[0].1.blocks[0].instrs;
+    let instrs = &parsed.program.functions[0].1.body.instrs;
     assert!(matches!(&instrs[0], MirInstr::LoadPlace { place, .. }
         if matches!(place.proj.as_slice(), [Proj::FieldAt(read)] if *read == i)));
 }
@@ -3693,7 +3693,7 @@ fn param_apply_list_get_and_reflect_round_trip() {
 #[test]
 fn structured_region_ops_and_terminators_reprint() {
     use crate::mir::{LoopLabel, MirElif};
-    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| MirBlock { instrs, term };
     let binder = test_binder("i");
     let source = mojito_checked::checked::ComptimeSequence {
         initial: int_parameter("$test:it", 0, "it"),
@@ -3705,7 +3705,7 @@ fn structured_region_ops_and_terminators_reprint() {
         MirInstr::If {
             results: vec![Reg(1)],
             cond: Reg(0),
-            then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            then: Box::new(one(Vec::new(), MirTerm::Yield(vec![Reg(2)]))),
             else_args: vec![Reg(4)],
             elifs: vec![MirElif {
                 cond_args: Vec::new(),
@@ -3719,42 +3719,42 @@ fn structured_region_ops_and_terminators_reprint() {
                 ),
                 then: one(Vec::new(), MirTerm::Yield(vec![Reg(3)])),
             }],
-            orelse: one(Vec::new(), MirTerm::Unreachable),
+            orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
         },
         MirInstr::Loop {
             label: Some(LoopLabel(3)),
             operands: vec![Reg(2)],
             args: vec![Reg(1)],
             results: vec![Reg(2)],
-            body: one(
+            body: Box::new(one(
                 vec![MirInstr::If {
                     results: Vec::new(),
                     cond: Reg(0),
-                    then: one(
+                    then: Box::new(one(
                         Vec::new(),
                         MirTerm::Break {
                             label: Some(LoopLabel(3)),
                             values: vec![Reg(1)],
                         },
-                    ),
+                    )),
                     elifs: Vec::new(),
                     else_args: Vec::new(),
-                    orelse: one(
+                    orelse: Box::new(one(
                         Vec::new(),
                         MirTerm::Continue {
                             label: None,
                             values: vec![Reg(1)],
                         },
-                    ),
+                    )),
                 }],
                 MirTerm::Unreachable,
-            ),
+            )),
         },
         MirInstr::ComptimeIf {
             results: Vec::new(),
             values: vec![Const::Bool(true)],
             arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
-            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))),
         },
         MirInstr::ComptimeIf {
             results: Vec::new(),
@@ -3766,7 +3766,7 @@ fn structured_region_ops_and_terminators_reprint() {
                 one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
                 one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
             ],
-            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            orelse: Box::new(one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))),
         },
         MirInstr::ComptimeAssert {
             value: Const::Bool(true),
@@ -3793,7 +3793,7 @@ fn structured_region_ops_and_terminators_reprint() {
                     body: one(Vec::new(), MirTerm::MatchComplete(vec![Reg(5)])),
                 },
             ],
-            orelse: one(Vec::new(), MirTerm::Yield(vec![Reg(4)])),
+            orelse: Box::new(one(Vec::new(), MirTerm::Yield(vec![Reg(4)]))),
         },
     ];
     instrs.push(MirInstr::ComptimeFor {
@@ -3802,18 +3802,18 @@ fn structured_region_ops_and_terminators_reprint() {
         operands: vec![Reg(2)],
         args: vec![Reg(1)],
         results: vec![Reg(3)],
-        body: one(
+        body: Box::new(one(
             vec![MirInstr::If {
                 results: Vec::new(),
                 cond: Reg(0),
-                then: one(Vec::new(), MirTerm::ComptimeBreak(vec![Reg(1)])),
+                then: Box::new(one(Vec::new(), MirTerm::ComptimeBreak(vec![Reg(1)]))),
                 elifs: Vec::new(),
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::ComptimeContinue(vec![Reg(1)])),
+                orelse: Box::new(one(Vec::new(), MirTerm::ComptimeContinue(vec![Reg(1)]))),
             }],
             MirTerm::Unreachable,
-        ),
-        orelse: one(Vec::new(), MirTerm::Unreachable),
+        )),
+        orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
     });
     let types = vec![
         Ty::bool(),
@@ -3826,7 +3826,7 @@ fn structured_region_ops_and_terminators_reprint() {
     let mut function = function_with(types, instrs);
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
-    function.blocks[0].term = MirTerm::Return(None);
+    function.body.term = MirTerm::Return(None);
     let program = program_with(vec![("structured".into(), function)]);
     assert_reprints(&program);
     let text = write::program(&program);
@@ -3863,7 +3863,7 @@ fn structured_region_ops_and_terminators_reprint() {
 /// `values` field: the reader takes the op as carrying none.
 #[test]
 fn a_loop_and_break_without_values_read_as_carrying_none() {
-    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| MirBlock { instrs, term };
     let mut function = function_with(
         vec![Ty::bool()],
         vec![MirInstr::Loop {
@@ -3871,16 +3871,16 @@ fn a_loop_and_break_without_values_read_as_carrying_none() {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 Vec::new(),
                 MirTerm::Break {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
         }],
     );
-    function.blocks[0].term = MirTerm::Return(None);
+    function.body.term = MirTerm::Return(None);
     let program = program_with(vec![("old".into(), function)]);
     let text = write::program(&program);
     let old = text
@@ -3898,14 +3898,14 @@ fn a_loop_and_break_without_values_read_as_carrying_none() {
 #[test]
 fn an_if_and_match_without_arguments_read_as_carrying_none() {
     use crate::mir::{MirCase, MirElif};
-    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| MirBlock { instrs, term };
     let mut function = function_with(
         vec![Ty::bool()],
         vec![
             MirInstr::If {
                 results: Vec::new(),
                 cond: Reg(0),
-                then: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                then: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
                 elifs: vec![MirElif {
                     cond_args: Vec::new(),
                     cond: one(
@@ -3919,7 +3919,7 @@ fn an_if_and_match_without_arguments_read_as_carrying_none() {
                     then: one(Vec::new(), MirTerm::Yield(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             },
             MirInstr::Match {
                 results: Vec::new(),
@@ -3928,11 +3928,11 @@ fn an_if_and_match_without_arguments_read_as_carrying_none() {
                     body: one(Vec::new(), MirTerm::MatchNext(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             },
         ],
     );
-    function.blocks[0].term = MirTerm::Return(None);
+    function.body.term = MirTerm::Return(None);
     let program = program_with(vec![("old".into(), function)]);
     let text = write::program(&program);
     let (before, after) = text.split_at(text.find("match {").expect("a match record"));
@@ -3957,7 +3957,7 @@ fn an_if_and_match_without_arguments_read_as_carrying_none() {
 #[test]
 fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
     use crate::mir::MirCase;
-    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| MirBlock { instrs, term };
     let source = mojito_checked::checked::ComptimeSequence {
         initial: int_parameter("$test:it", 0, "it"),
         has_next: int_parameter("$test:has", 0, "has"),
@@ -3974,7 +3974,7 @@ fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
                     body: one(Vec::new(), MirTerm::MatchComplete(Vec::new())),
                 }],
                 else_args: Vec::new(),
-                orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+                orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
             },
             MirInstr::ComptimeFor {
                 binder: test_binder("i"),
@@ -3982,24 +3982,24 @@ fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
+                body: Box::new(one(
                     vec![MirInstr::If {
                         results: Vec::new(),
                         cond: Reg(0),
-                        then: one(Vec::new(), MirTerm::ComptimeBreak(Vec::new())),
+                        then: Box::new(one(Vec::new(), MirTerm::ComptimeBreak(Vec::new()))),
                         elifs: Vec::new(),
                         else_args: Vec::new(),
-                        orelse: one(Vec::new(), MirTerm::ComptimeContinue(Vec::new())),
+                        orelse: Box::new(one(Vec::new(), MirTerm::ComptimeContinue(Vec::new()))),
                     }],
                     MirTerm::Unreachable,
-                ),
-                orelse: one(Vec::new(), MirTerm::Unreachable),
+                )),
+                orelse: Box::new(one(Vec::new(), MirTerm::Unreachable)),
             },
         ],
     );
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
-    function.blocks[0].term = MirTerm::Return(None);
+    function.body.term = MirTerm::Return(None);
     let program = program_with(vec![("old".into(), function)]);
     let text = write::program(&program);
     let old = text
@@ -4022,7 +4022,7 @@ fn a_match_and_comptime_for_without_values_read_as_carrying_none() {
 /// arguments and the continue as carrying none.
 #[test]
 fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
-    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| MirBlock { instrs, term };
     let mut function = function_with(
         vec![Ty::bool()],
         vec![MirInstr::Loop {
@@ -4030,16 +4030,16 @@ fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
             operands: Vec::new(),
             args: Vec::new(),
             results: Vec::new(),
-            body: one(
+            body: Box::new(one(
                 Vec::new(),
                 MirTerm::Continue {
                     label: None,
                     values: Vec::new(),
                 },
-            ),
+            )),
         }],
     );
-    function.blocks[0].term = MirTerm::Return(None);
+    function.body.term = MirTerm::Return(None);
     let program = program_with(vec![("old".into(), function)]);
     let text = write::program(&program);
     let old = text.replace(", operands: [], arguments: []", "").replace(
@@ -4054,11 +4054,9 @@ fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
 /// A `comptime.if` artifact at MIR 1.166, the last minor whose
 /// compile-time tests carried a constraint, over `conds`, one arm each.
 fn legacy_comptime_if(conds: &[GenericConstraint]) -> String {
-    let block = |term: MirTerm| {
-        vec![MirBlock {
-            instrs: Vec::new(),
-            term,
-        }]
+    let block = |term: MirTerm| MirBlock {
+        instrs: Vec::new(),
+        term,
     };
     let program = program_with(vec![(
         "main".into(),
@@ -4070,7 +4068,7 @@ fn legacy_comptime_if(conds: &[GenericConstraint]) -> String {
                 arms: (0..conds.len())
                     .map(|_| block(MirTerm::ComptimeYield(Vec::new())))
                     .collect(),
-                orelse: block(MirTerm::ComptimeYield(Vec::new())),
+                orelse: Box::new(block(MirTerm::ComptimeYield(Vec::new()))),
             }],
         ),
     )]);
@@ -4098,7 +4096,7 @@ fn legacy_comptime_if(conds: &[GenericConstraint]) -> String {
 /// printed.
 fn comptime_if_values(text: &str) -> Vec<String> {
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+    match &parsed.program.functions[0].1.body.instrs[0] {
         MirInstr::ComptimeIf { values, .. } => {
             values.iter().map(|value| format!("{value:?}")).collect()
         }
@@ -4309,7 +4307,7 @@ fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
     };
     let current = read(&text);
     assert!(matches!(
-        current.blocks[0].instrs[1],
+        current.body.instrs[1],
         MirInstr::MaterializeLiteral { dest: Reg(1), ref target, .. } if *target == Ty::int()
     ));
     let older = text.replacen(
@@ -4323,7 +4321,7 @@ fn an_artifact_older_than_1_170_materializes_a_literal_at_its_storage() {
     assert_eq!(upgraded.n_regs, 3);
     assert_eq!(upgraded.reg_types.get(&2), Some(&storage));
     assert!(matches!(
-        &upgraded.blocks[0].instrs[1..],
+        &upgraded.body.instrs[1..],
         [
             MirInstr::MaterializeLiteral { dest: Reg(2), value: Reg(0), target },
             MirInstr::MakeStruct { dest: Reg(1), fields },

@@ -99,15 +99,15 @@ pub(super) struct Decided {
 }
 
 impl Decided {
-    /// Read each replaced result in `blocks` as its value, and drop the
+    /// Read each replaced result in `block` as its value, and drop the
     /// tables of every register no instruction defines any more.
     pub(super) fn apply(
         self,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         reg_types: &mut HashMap<u32, Ty>,
         spans: &mut SpanTable,
     ) {
-        mojito_mir::mir::replace_register_reads(blocks, &resolve_replacements(&self.replaced));
+        mojito_mir::mir::replace_register_reads(block, &resolve_replacements(&self.replaced));
         for reg in self
             .replaced
             .into_keys()
@@ -139,7 +139,7 @@ pub(super) fn splice_comptime_arm(
             orelse,
             ..
         } => {
-            arms.push(orelse);
+            arms.push(*orelse);
             (results, arms)
         }
         other => {
@@ -153,8 +153,6 @@ pub(super) fn splice_comptime_arm(
         defined_registers(region, &mut decided.dead);
         dead_loop_binders(region, &mut decided.dead_binders);
     }
-    let [arm] =
-        <[MirBlock; 1]>::try_from(arm).map_err(|_| "a `comptime if` arm is not one block")?;
     match arm.term {
         MirTerm::ComptimeYield(values) => {
             decided
@@ -168,8 +166,8 @@ pub(super) fn splice_comptime_arm(
                 instrs: block.instrs.split_off(index),
                 term: std::mem::replace(&mut block.term, term),
             };
-            defined_registers(std::slice::from_ref(&tail), &mut decided.dead);
-            dead_loop_binders(std::slice::from_ref(&tail), &mut decided.dead_binders);
+            defined_registers(&tail, &mut decided.dead);
+            dead_loop_binders(&tail, &mut decided.dead_binders);
             decided.dead.extend(results);
             block.instrs.extend(arm.instrs);
             Ok(Some(tail))
@@ -177,11 +175,11 @@ pub(super) fn splice_comptime_arm(
     }
 }
 
-/// Push the binder of every `comptime for` in the dropped `blocks`, at any
+/// Push the binder of every `comptime for` in the dropped `block`, at any
 /// depth: upstream never elaborates the dropped code, so a slot typed over
 /// one of those loop indices is no slot of the instance.
-fn dead_loop_binders(blocks: &[MirBlock], binders: &mut Vec<mojito_types::param_expr::ParamRef>) {
-    for instruction in mojito_mir::mir::nested_instructions(blocks) {
+fn dead_loop_binders(block: &MirBlock, binders: &mut Vec<mojito_types::param_expr::ParamRef>) {
+    for instruction in mojito_mir::mir::nested_instructions(block) {
         if let MirInstr::ComptimeFor { binder, .. } = instruction {
             binders.push(binder.clone());
         }
@@ -205,10 +203,7 @@ fn tail_asserts(instructions: &[MirInstr], asserts: &mut Vec<MirInstr>) {
                 ..
             } => {}
             instruction => {
-                for block in mojito_mir::mir::instruction_regions(instruction)
-                    .into_iter()
-                    .flatten()
-                {
+                for block in mojito_mir::mir::instruction_regions(instruction) {
                     tail_asserts(&block.instrs, asserts);
                 }
             }

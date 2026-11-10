@@ -70,7 +70,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         cases: Vec::new(),
     };
     while std::mem::take(&mut solver.changed) {
-        solver.visit_region(&function.blocks);
+        solver.visit_region(&function.body);
     }
     let lattice = solver.lattice;
     let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
@@ -78,7 +78,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         _ => None,
     };
     let folded = fold::replace_folded(
-        &mut function.blocks,
+        &mut function.body,
         &constant,
         &function.reg_types,
         declarations,
@@ -200,9 +200,9 @@ impl Solver<'_> {
         &mut self,
         results: &[Reg],
         cond: Reg,
-        then: &[MirBlock],
+        then: &MirBlock,
         elifs: &[MirElif],
-        (else_args, orelse): (&[Reg], &[MirBlock]),
+        (else_args, orelse): (&[Reg], &MirBlock),
     ) {
         let (taken, mut next) = self.targets(cond);
         if taken {
@@ -239,7 +239,7 @@ impl Solver<'_> {
 
     /// Evaluate an `if` arm, meeting each of `results` with the values its
     /// block yields.
-    fn visit_arm(&mut self, results: &[Reg], arm: &[MirBlock]) {
+    fn visit_arm(&mut self, results: &[Reg], arm: &MirBlock) {
         if let Some(MirTerm::Yield(values)) = self.visit_region(arm) {
             self.meet_values(results, values);
         }
@@ -261,7 +261,7 @@ impl Solver<'_> {
     /// case and `MatchNextOp::getBranchTargets` the next: a case, or the
     /// else region after the last, is executable once an executable
     /// `match.next` of the case before it enters it.
-    fn visit_match(&mut self, cases: &[MirCase], (else_args, orelse): (&[Reg], &[MirBlock])) {
+    fn visit_match(&mut self, cases: &[MirCase], (else_args, orelse): (&[Reg], &MirBlock)) {
         for (index, case) in cases.iter().enumerate() {
             let next_args = cases.get(index + 1).map_or(else_args, |next| &next.args);
             self.cases.push(CaseFrame {
@@ -314,8 +314,7 @@ impl Solver<'_> {
     /// Evaluate a region, one block in a structured body, and return its
     /// terminator when it ends the region for the op holding it: a
     /// `yield`, `comptime.yield`, or `if.elifcond.yield`.
-    fn visit_region<'b>(&mut self, blocks: &'b [MirBlock]) -> Option<&'b MirTerm> {
-        let block = blocks.first()?;
+    fn visit_region<'b>(&mut self, block: &'b MirBlock) -> Option<&'b MirTerm> {
         self.visit(block);
         matches!(
             block.term,

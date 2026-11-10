@@ -7,13 +7,13 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{LoopLabel, MirBlockId, RegionFrame, TryLabel, region_exit};
+use mojito_mir::mir::{LoopLabel, RegionFrame, TryLabel, region_exit};
 
 /// Where a frame executes next: upstream's interpreter `pc`, as the path
-/// from the function's block list through each region op it is inside.
+/// from the function's block through each region op it is inside.
 pub(super) struct RegionCursor {
-    /// One position per list, the root list first. Every level but the
-    /// innermost is at the region op the next level is a region of.
+    /// One position per region, the function's block first. Every level
+    /// but the innermost is at the region op the next level is a region of.
     levels: Vec<RegionLevel>,
 }
 
@@ -26,12 +26,10 @@ impl Default for RegionCursor {
 }
 
 impl RegionCursor {
-    /// The block of `root`'s lists the cursor is in.
-    pub(super) fn block<'p>(&self, root: &'p [MirBlock]) -> Result<&'p MirBlock, RuntimeError> {
-        let depth = self.levels.len() - 1;
-        self.list(root, depth)?
-            .get(self.levels[depth].block)
-            .ok_or_else(lost_position)
+    /// The block, `root` or one of its regions at any depth, the cursor is
+    /// in.
+    pub(super) fn block<'p>(&self, root: &'p MirBlock) -> Result<&'p MirBlock, RuntimeError> {
+        self.region_block(root, self.levels.len() - 1)
     }
 
     /// The index of the instruction the cursor is at in its
@@ -85,7 +83,7 @@ impl RegionCursor {
     /// it carries. A `return` or `raise` comes back for the driver to run.
     pub(super) fn transfer(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         term: &MirTerm,
         regs: &mut [Value],
     ) -> Result<Transfer, RuntimeError> {
@@ -141,7 +139,7 @@ impl RegionCursor {
     /// its arguments. The raise stored the error into the `try`'s slot.
     pub(super) fn catch(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         label: TryLabel,
         values: Vec<Value>,
         regs: &mut [Value],
@@ -181,7 +179,7 @@ impl RegionCursor {
     /// values it carries.
     fn resolve_leave(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         frame: RegionFrame,
         resume: bool,
         values: Vec<Value>,
@@ -230,7 +228,7 @@ impl RegionCursor {
     /// `values` defining the `else`'s arguments or the `try`'s results.
     fn try_yield(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         values: Vec<Value>,
         regs: &mut [Value],
     ) -> Result<(), RuntimeError> {
@@ -263,7 +261,7 @@ impl RegionCursor {
     /// results: `hlcf.yield`.
     fn complete(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         values: Vec<Value>,
         regs: &mut [Value],
     ) -> Result<(), RuntimeError> {
@@ -283,7 +281,7 @@ impl RegionCursor {
     /// last, `values` defining that region's arguments.
     fn elif(
         &mut self,
-        root: &[MirBlock],
+        root: &MirBlock,
         holds: bool,
         values: Vec<Value>,
         regs: &mut [Value],
@@ -314,17 +312,21 @@ impl RegionCursor {
     }
 
     /// The region op level `depth` (at least 1) is a region of.
-    fn op<'p>(&self, root: &'p [MirBlock], depth: usize) -> Result<&'p MirInstr, RuntimeError> {
-        op_at(self.list(root, depth - 1)?, &self.levels[depth - 1])
+    fn op<'p>(&self, root: &'p MirBlock, depth: usize) -> Result<&'p MirInstr, RuntimeError> {
+        op_at(self.region_block(root, depth - 1)?, &self.levels[depth - 1])
     }
 
-    /// The block list level `depth` is in.
-    fn list<'p>(&self, root: &'p [MirBlock], depth: usize) -> Result<&'p [MirBlock], RuntimeError> {
-        let mut blocks = root;
+    /// The block level `depth` is in.
+    fn region_block<'p>(
+        &self,
+        root: &'p MirBlock,
+        depth: usize,
+    ) -> Result<&'p MirBlock, RuntimeError> {
+        let mut block = root;
         for pair in self.levels[..=depth].windows(2) {
-            blocks = region(op_at(blocks, &pair[0])?, pair[1].region).ok_or_else(lost_position)?;
+            block = region(op_at(block, &pair[0])?, pair[1].region).ok_or_else(lost_position)?;
         }
-        Ok(blocks)
+        Ok(block)
     }
 }
 
@@ -342,12 +344,11 @@ pub(super) enum Transfer {
     ErrorReturn,
 }
 
-/// One list's position: a block and an instruction in it, and which region
-/// of the enclosing level's op the list is.
+/// One region's position: an instruction in its block, and which region
+/// of the enclosing level's op it is.
 #[derive(Clone, Copy)]
 struct RegionLevel {
     region: RegionRef,
-    block: MirBlockId,
     instruction: usize,
 }
 
@@ -355,7 +356,6 @@ impl RegionLevel {
     const fn entry(region: RegionRef) -> Self {
         Self {
             region,
-            block: 0,
             instruction: 0,
         }
     }
@@ -418,30 +418,30 @@ fn store(regs: &mut [Value], targets: &[Reg], values: Vec<Value>) {
     }
 }
 
-/// The instruction `level` is at in `blocks`.
-fn op_at<'p>(blocks: &'p [MirBlock], level: &RegionLevel) -> Result<&'p MirInstr, RuntimeError> {
-    blocks
-        .get(level.block)
-        .and_then(|block| block.instrs.get(level.instruction))
+/// The instruction `level` is at in `block`.
+fn op_at<'p>(block: &'p MirBlock, level: &RegionLevel) -> Result<&'p MirInstr, RuntimeError> {
+    block
+        .instrs
+        .get(level.instruction)
         .ok_or_else(lost_position)
 }
 
 /// The region `region` of the op `op`.
-fn region(op: &MirInstr, region: RegionRef) -> Option<&[MirBlock]> {
+fn region(op: &MirInstr, region: RegionRef) -> Option<&MirBlock> {
     match (op, region) {
         (MirInstr::If { then, .. }, RegionRef::Then) => Some(then),
         (MirInstr::If { elifs, .. }, RegionRef::ElifCond(index)) => {
-            elifs.get(index).map(|elif| elif.cond.as_slice())
+            elifs.get(index).map(|elif| &elif.cond)
         }
         (MirInstr::If { elifs, .. }, RegionRef::ElifThen(index)) => {
-            elifs.get(index).map(|elif| elif.then.as_slice())
+            elifs.get(index).map(|elif| &elif.then)
         }
         (MirInstr::If { orelse, .. } | MirInstr::Match { orelse, .. }, RegionRef::Else) => {
             Some(orelse)
         }
         (MirInstr::Loop { body, .. }, RegionRef::Body(_)) => Some(body),
         (MirInstr::Match { cases, .. }, RegionRef::Case(index)) => {
-            cases.get(index).map(|case| case.body.as_slice())
+            cases.get(index).map(|case| &case.body)
         }
         (MirInstr::Try { body, .. }, RegionRef::TryBody(_)) => Some(body),
         (MirInstr::Try { handler, .. }, RegionRef::TryHandler) => handler.as_deref(),

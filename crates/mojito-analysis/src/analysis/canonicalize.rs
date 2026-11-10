@@ -75,7 +75,7 @@ pub fn canonicalize(
 ) -> bool {
     let mut erased = HashSet::new();
     let mut folded_constants = 0;
-    let mut patterns = erase_trivial_drops(&mut function.blocks, &function.reg_types, declarations);
+    let mut patterns = erase_trivial_drops(&mut function.body, &function.reg_types, declarations);
     // A fold can expose another, as a struct copy whose fields were copies
     // does once they are forwarded, and a forwarded copy can expose a fold,
     // as a comparison of two copies of one value does: the greedy driver
@@ -129,7 +129,7 @@ pub fn canonicalize(
 /// holds no owned value ([`mojito_mir::mir::owned_register`]); returns how
 /// many went.
 fn erase_trivial_drops(
-    blocks: &mut [MirBlock],
+    blocks: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
     declarations: &MirDeclarations,
 ) -> usize {
@@ -149,7 +149,7 @@ fn erase_trivial_drops(
 
 /// How many times `blocks` and their regions define each of `n_regs`
 /// registers.
-pub(super) fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32> {
+pub(super) fn definition_counts(blocks: &mut MirBlock, n_regs: u32) -> Vec<u32> {
     let mut definitions = vec![0_u32; n_regs as usize];
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
@@ -180,7 +180,7 @@ fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) ->
         let constants = folded_constants(function);
         let constant = |reg: Reg| constants.get(&reg.0).cloned();
         let round = fold::replace_folded(
-            &mut function.blocks,
+            &mut function.body,
             &constant,
             &function.reg_types,
             declarations,
@@ -194,9 +194,9 @@ fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) ->
 
 /// The folded constant each singly defined register of `function` holds.
 fn folded_constants(function: &mut MirFunction) -> HashMap<u32, Const> {
-    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let definitions = definition_counts(&mut function.body, function.n_regs);
     let mut constants = HashMap::new();
-    visit_blocks(&mut function.blocks, &mut |block| {
+    visit_blocks(&mut function.body, &mut |block| {
         for instruction in &block.instrs {
             if let MirInstr::Const { dest, k } = instruction
                 && k.is_folded()
@@ -211,12 +211,10 @@ fn folded_constants(function: &mut MirFunction) -> HashMap<u32, Const> {
 
 /// Call `visit` on every block of `blocks`, then on the blocks of the `try`
 /// regions each holds.
-fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) {
-    for block in blocks {
-        visit(block);
-        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-            visit_blocks(region, visit);
-        }
+fn visit_blocks(block: &mut MirBlock, visit: &mut impl FnMut(&mut MirBlock)) {
+    visit(block);
+    for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
+        visit_blocks(region, visit);
     }
 }
 
@@ -236,7 +234,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let constants = folded_constants(function);
     let constant = |reg: Reg| constants.get(&reg.0).cloned();
     let MirFunction {
-        blocks,
+        body: blocks,
         reg_types,
         n_regs,
         ..
@@ -479,9 +477,9 @@ impl StructFolds<'_> {
 fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) {
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
-        count_register_reads(&mut function.blocks, &mut reads);
+        count_register_reads(&mut function.body, &mut reads);
         let before = erased.len();
-        erase_dead(&mut function.blocks, &reads, erased);
+        erase_dead(&mut function.body, &reads, erased);
         if erased.len() == before {
             break;
         }
@@ -490,25 +488,23 @@ fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) 
 
 /// Remove each instruction of `blocks` and their regions that would be
 /// trivially dead and defines only unread results, adding them to `erased`.
-fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>) {
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| {
-            for region in instruction_regions_mut(instruction) {
-                erase_dead(region, reads, erased);
-            }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            let dead = instruction.would_be_trivially_dead()
-                && !results.is_empty()
-                && results
-                    .iter()
-                    .all(|reg| reads.get(reg.0 as usize) == Some(&0));
-            if dead {
-                erased.extend(results.iter().map(|reg| reg.0));
-            }
-            !dead
-        });
-    }
+fn erase_dead(block: &mut MirBlock, reads: &[u32], erased: &mut HashSet<u32>) {
+    block.instrs.retain_mut(|instruction| {
+        for region in instruction_regions_mut(instruction) {
+            erase_dead(region, reads, erased);
+        }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        let dead = instruction.would_be_trivially_dead()
+            && !results.is_empty()
+            && results
+                .iter()
+                .all(|reg| reads.get(reg.0 as usize) == Some(&0));
+        if dead {
+            erased.extend(results.iter().map(|reg| reg.0));
+        }
+        !dead
+    });
 }
 
 /// Rewrite each `call.indirect` of `function` whose callee register is
@@ -523,9 +519,9 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
 /// callee was forwarded to its constant already; one read out of a slot
 /// is not a known callee.
 fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
-    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let definitions = definition_counts(&mut function.body, function.n_regs);
     let mut callees = HashMap::new();
-    visit_blocks(&mut function.blocks, &mut |block| {
+    visit_blocks(&mut function.body, &mut |block| {
         for instruction in &block.instrs {
             let (dest, callee) = match instruction {
                 MirInstr::Const {
@@ -550,7 +546,7 @@ fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations
     if callees.is_empty() {
         return 0;
     }
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     let mut folded = 0;
     visit_blocks(&mut blocks, &mut |block| {
         let mut instructions = Vec::with_capacity(block.instrs.len());
@@ -571,7 +567,7 @@ fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations
         }
         block.instrs = instructions;
     });
-    function.blocks = blocks;
+    function.body = blocks;
     folded
 }
 
@@ -780,29 +776,27 @@ fn capture_path(place: &MirPlace) -> Vec<OriginSeg> {
 
 /// Remove the instructions defining `roots`' keys from `blocks` and their
 /// regions, and rewrite every read of a key to its root.
-pub(super) fn forward(blocks: &mut [MirBlock], roots: &HashMap<u32, Reg>) {
+pub(super) fn forward(block: &mut MirBlock, roots: &HashMap<u32, Reg>) {
     let rewrite = |reg: &mut Reg| {
         if let Some(root) = roots.get(&reg.0) {
             *reg = *root;
         }
     };
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| {
-            for region in instruction_regions_mut(instruction) {
-                forward(region, roots);
-            }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            if results.iter().any(|reg| roots.contains_key(&reg.0)) {
-                return false;
-            }
-            instruction_regs_mut(instruction)
-                .into_iter()
-                .for_each(rewrite);
-            true
-        });
-        terminator_regs_mut(&mut block.term)
+    block.instrs.retain_mut(|instruction| {
+        for region in instruction_regions_mut(instruction) {
+            forward(region, roots);
+        }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        if results.iter().any(|reg| roots.contains_key(&reg.0)) {
+            return false;
+        }
+        instruction_regs_mut(instruction)
             .into_iter()
             .for_each(rewrite);
-    }
+        true
+    });
+    terminator_regs_mut(&mut block.term)
+        .into_iter()
+        .for_each(rewrite);
 }

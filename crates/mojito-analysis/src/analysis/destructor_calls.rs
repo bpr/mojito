@@ -29,7 +29,7 @@ use std::collections::HashMap;
 /// lower each named drop to the call of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(
-        &mut function.blocks,
+        &mut function.body,
         &function.var_tys,
         &function.reg_types,
         declarations,
@@ -43,7 +43,7 @@ pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclaratio
 }
 
 fn name_in_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     var_tys: &HashMap<VarId, Ty>,
     reg_tys: &HashMap<u32, Ty>,
     declarations: &MirDeclarations,
@@ -52,17 +52,15 @@ fn name_in_blocks(
         ty.and_then(|ty| declarations.destructor(ty))
             .map(str::to_owned)
     };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::DropVar { var, destructor } => *destructor = named(var_tys.get(var)),
-                MirInstr::DropPlace { place, destructor } => *destructor = named(place.ty.as_ref()),
-                MirInstr::Drop { reg, destructor } => *destructor = named(reg_tys.get(&reg.0)),
-                _ => {}
-            }
-            for region in instruction_regions_mut(instruction) {
-                name_in_blocks(region, var_tys, reg_tys, declarations);
-            }
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::DropVar { var, destructor } => *destructor = named(var_tys.get(var)),
+            MirInstr::DropPlace { place, destructor } => *destructor = named(place.ty.as_ref()),
+            MirInstr::Drop { reg, destructor } => *destructor = named(reg_tys.get(&reg.0)),
+            _ => {}
+        }
+        for region in instruction_regions_mut(instruction) {
+            name_in_blocks(region, var_tys, reg_tys, declarations);
         }
     }
 }

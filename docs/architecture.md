@@ -3868,10 +3868,10 @@ legacy statement snippets in phase-level tests.
 
 ### MIR Blocks And Terminators
 
-MIR blocks are simple, and a function body or region holds exactly one
-(`mir::verify` requires it, as upstream's `hlcf` regions are
-`SizedRegion<1>`); MIR has no CFG above a backend, as upstream has none
-above LLVM:
+MIR blocks are simple, and a function body or region is exactly one
+(`MirFunction::body`, and a region op's `Box<MirBlock>` fields, as
+upstream's `hlcf` regions are `SizedRegion<1>`); MIR has no CFG above a
+backend, as upstream has none above LLVM:
 
 ```rust
 pub struct MirBlock {
@@ -4110,10 +4110,10 @@ naming it join. A labelled raise must name an enclosing `try` body with a
 handler, and an unlabelled one sit in a raising function
 (`verify/places.rs`). A body that ends no slot (no `drop.var` or
 `var.consume`), as every pre-drop body is but for explicit destroys, has no
-finding without one. Every mode requires upstream's structured shape:
-every region, the body included, one block (a "body holds N blocks" or
-"region holds N blocks" finding), as `SizedRegion<1>` is an op verifier's
-constraint upstream. `verify_concrete` rejects every compile-time region
+finding without one. Upstream's structured shape is the data model's:
+every region, the body included, is one `MirBlock` by its type, as
+`SizedRegion<1>` constrains an op upstream, so no finding guards it and a
+finding names its function alone (`MIR function 'f': …`). `verify_concrete` rejects every compile-time region
 op and its region terminators.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
@@ -4876,18 +4876,19 @@ result—not permission for compatibility APIs to guess from unchecked input.
 ```rust
 Try {
     label: TryLabel,
+    error: Option<VarId>,
     results: Vec<Reg>,
-    body: Vec<MirBlock>,
+    body: Box<MirBlock>,
     handler_args: Vec<Reg>,
-    handler: Option<(Option<VarId>, Vec<MirBlock>)>,
+    handler: Option<Box<MirBlock>>,
     else_args: Vec<Reg>,
-    orelse: Option<Vec<MirBlock>>,
+    orelse: Option<Box<MirBlock>>,
 }
 ```
 
-Those regions share the enclosing function's register and variable spaces.
-Each block is its region's `bb0`, but its instructions address the same
-`regs` and `vars` vectors as the outer function frame.
+Those regions share the enclosing function's register and variable spaces:
+each block's instructions address the same `regs` and `vars` vectors as the
+outer function frame.
 
 The structure is upstream's `lit.try` once `lowerTryFinally` has run:
 

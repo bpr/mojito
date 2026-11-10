@@ -242,17 +242,11 @@ pub fn lifecycle_callees(
     function: &MirFunction,
     declarations: &MirDeclarations,
 ) -> BTreeSet<String> {
-    fn sites<'f>(
-        function: &'f MirFunction,
-        blocks: &'f [MirBlock],
-        out: &mut Vec<LifecycleSite<'f>>,
-    ) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                out.extend(lifecycle_site(function, instruction));
-                for region in instruction_regions(instruction) {
-                    sites(function, region, out);
-                }
+    fn sites<'f>(function: &'f MirFunction, block: &'f MirBlock, out: &mut Vec<LifecycleSite<'f>>) {
+        for instruction in &block.instrs {
+            out.extend(lifecycle_site(function, instruction));
+            for region in instruction_regions(instruction) {
+                sites(function, region, out);
             }
         }
     }
@@ -267,7 +261,7 @@ pub fn lifecycle_callees(
         .iter()
         .map(|ty| (ty, "__deinit__", None))
         .collect();
-    sites(function, &function.blocks, &mut found);
+    sites(function, &function.body, &mut found);
     found
         .into_iter()
         .flat_map(|(ty, member, named)| match named {
@@ -409,7 +403,7 @@ pub fn erase_forward_chains(
         let reads = register_reads(function);
         let before = erased.len();
         let MirFunction {
-            blocks,
+            body: blocks,
             var_tys,
             reg_types,
             n_params,
@@ -506,12 +500,12 @@ pub fn erase_forward_chains(
 pub fn retire_unnamed_storage(function: &mut MirFunction) {
     let reads = register_reads(function);
     let mut defined = HashSet::new();
-    defined_registers(&function.blocks, &mut defined);
+    defined_registers(&function.body, &mut defined);
     function.reg_types.retain(|reg, _| {
         defined.contains(reg) || reads.get(*reg as usize).is_some_and(|count| *count > 0)
     });
     let mut named = HashSet::new();
-    named_slots(&function.blocks, &mut named);
+    named_slots(&function.body, &mut named);
     for (slot, ty) in &mut function.var_tys {
         if (*slot as usize) >= function.n_params && !named.contains(slot) {
             *ty = Ty::int();
@@ -519,11 +513,11 @@ pub fn retire_unnamed_storage(function: &mut MirFunction) {
     }
 }
 
-/// Add every register an instruction of `blocks` or of their regions
+/// Add every register an instruction of `block` or of their regions
 /// defines, a region's arguments included, to `defined`.
-fn defined_registers(blocks: &[MirBlock], defined: &mut HashSet<u32>) {
+fn defined_registers(block: &MirBlock, defined: &mut HashSet<u32>) {
     let mut results = Vec::new();
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         results.clear();
         instruction_result_regs(instruction, &mut results);
         defined.extend(results.iter().map(|reg| reg.0));
@@ -542,8 +536,8 @@ fn defined_registers(blocks: &[MirBlock], defined: &mut HashSet<u32>) {
 /// which hand the stored error to the caller. Returns whether any slot had
 /// a mention.
 fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
-    fn census(blocks: &[MirBlock], read: &mut HashSet<VarId>) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    fn census(block: &MirBlock, read: &mut HashSet<VarId>) {
+        for instruction in &block.instrs {
             match instruction {
                 MirInstr::DefVar { .. }
                 | MirInstr::DeclareVar { .. }
@@ -557,20 +551,18 @@ fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarat
             }
         }
     }
-    fn erase(blocks: &mut [MirBlock], dead: &HashSet<VarId>) {
-        for block in blocks {
-            block.instrs.retain(|instruction| {
-                slot_marker(instruction).is_none_or(|var| !dead.contains(&var))
-            });
-            for instruction in &mut block.instrs {
-                for region in instruction_regions_mut(instruction) {
-                    erase(region, dead);
-                }
+    fn erase(block: &mut MirBlock, dead: &HashSet<VarId>) {
+        block
+            .instrs
+            .retain(|instruction| slot_marker(instruction).is_none_or(|var| !dead.contains(&var)));
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                erase(region, dead);
             }
         }
     }
     let mut read: HashSet<VarId> = function.error_slot.into_iter().collect();
-    census(&function.blocks, &mut read);
+    census(&function.body, &mut read);
     let dead: HashSet<VarId> = (function.n_params..function.var_names.len())
         .filter_map(|slot| VarId::try_from(slot).ok())
         .filter(|slot| {
@@ -582,18 +574,18 @@ fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarat
         })
         .collect();
     let mut marked = false;
-    for_each_slot_marker(&function.blocks, &mut |var| marked |= dead.contains(&var));
+    for_each_slot_marker(&function.body, &mut |var| marked |= dead.contains(&var));
     if !marked {
         return false;
     }
-    erase(&mut function.blocks, &dead);
+    erase(&mut function.body, &dead);
     true
 }
 
 /// Call `visit` with the slot of every store, declaration, drop, and
-/// consumption in `blocks` and their regions ([`slot_marker`]).
-fn for_each_slot_marker(blocks: &[MirBlock], visit: &mut dyn FnMut(VarId)) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+/// consumption in `block` and their regions ([`slot_marker`]).
+fn for_each_slot_marker(block: &MirBlock, visit: &mut dyn FnMut(VarId)) {
+    for instruction in &block.instrs {
         if let Some(var) = slot_marker(instruction) {
             visit(var);
         }
@@ -603,10 +595,10 @@ fn for_each_slot_marker(blocks: &[MirBlock], visit: &mut dyn FnMut(VarId)) {
     }
 }
 
-/// The slots `blocks` and their regions name, a `try`'s error slot
+/// The slots `block` and their regions name, a `try`'s error slot
 /// included.
-fn named_slots(blocks: &[MirBlock], named: &mut HashSet<VarId>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+fn named_slots(block: &MirBlock, named: &mut HashSet<VarId>) {
+    for instruction in &block.instrs {
         named.extend(instruction_slots(instruction));
         for region in instruction_regions(instruction) {
             named_slots(region, named);
@@ -630,7 +622,7 @@ pub const fn slot_marker(instruction: &MirInstr) -> Option<VarId> {
 /// How many times `function`'s body reads each of its registers.
 pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
     let mut reads = vec![0_u32; function.n_regs as usize];
-    count_register_reads(&mut function.blocks, &mut reads);
+    count_register_reads(&mut function.body, &mut reads);
     reads
 }
 
@@ -794,14 +786,14 @@ fn removed_forwards_view<'a>(
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
     spellings: Spellings,
 ) -> Option<(MirFunction, Vec<String>)> {
-    if !calls_with_removed(&function.blocks, removed) {
+    if !calls_with_removed(&function.body, removed) {
         return None;
     }
     let mut view = function.clone();
     let original = register_reads(&mut view);
     let mut discounted = BTreeSet::new();
     drop_removed_arguments(
-        &mut view.blocks,
+        &mut view.body,
         declarations,
         removed,
         spellings,
@@ -824,40 +816,37 @@ fn removed_forwards_view<'a>(
     Some((view, discounted.into_iter().collect()))
 }
 
-/// Whether `blocks` or their regions call a callee `removed` names
+/// Whether `block` or their regions call a callee `removed` names
 /// parameters of, by a call, a resolved method call, or a subscript call.
 fn calls_with_removed<'a>(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
 ) -> bool {
-    blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .any(|instruction| {
-            let target = match instruction {
-                MirInstr::Call { func, .. } => Some(func.0.as_str()),
-                MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
-                _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
-            };
-            target.and_then(removed).is_some_and(|ids| !ids.is_empty())
-                || instruction_regions(instruction)
-                    .into_iter()
-                    .any(|region| calls_with_removed(region, removed))
-        })
+    block.instrs.iter().any(|instruction| {
+        let target = match instruction {
+            MirInstr::Call { func, .. } => Some(func.0.as_str()),
+            MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+            _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
+        };
+        target.and_then(removed).is_some_and(|ids| !ids.is_empty())
+            || instruction_regions(instruction)
+                .into_iter()
+                .any(|region| calls_with_removed(region, removed))
+    })
 }
 
-/// Drop from each call in `blocks` and their regions the arguments of the
+/// Drop from each call in `block` and their regions the arguments of the
 /// callee's removed parameters, their `instantiated_args` entries and
 /// static receiver arguments as `spellings` says, adding each callee that
 /// lost one to `discounted`.
 fn drop_removed_arguments<'a>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     declarations: &MirDeclarations,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
     spellings: Spellings,
     discounted: &mut BTreeSet<String>,
 ) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             drop_removed_arguments(region, declarations, removed, spellings, discounted);
         }
@@ -1109,29 +1098,27 @@ fn drop_arguments(
 /// Remove each instruction of `blocks` and their regions that `erasable`
 /// accepts and that defines only unread results, adding them to `erased`.
 fn erase_unread(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     erasable: &mut dyn FnMut(&MirInstr) -> bool,
     reads: &[u32],
     erased: &mut HashSet<u32>,
 ) {
-    for block in blocks {
-        block.instrs.retain_mut(|instruction| {
-            for region in instruction_regions_mut(instruction) {
-                erase_unread(region, erasable, reads, erased);
-            }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            let dead = !results.is_empty()
-                && results
-                    .iter()
-                    .all(|reg| reads.get(reg.0 as usize) == Some(&0))
-                && erasable(instruction);
-            if dead {
-                erased.extend(results.iter().map(|reg| reg.0));
-            }
-            !dead
-        });
-    }
+    block.instrs.retain_mut(|instruction| {
+        for region in instruction_regions_mut(instruction) {
+            erase_unread(region, erasable, reads, erased);
+        }
+        let mut results = Vec::new();
+        instruction_result_regs(instruction, &mut results);
+        let dead = !results.is_empty()
+            && results
+                .iter()
+                .all(|reg| reads.get(reg.0 as usize) == Some(&0))
+            && erasable(instruction);
+        if dead {
+            erased.extend(results.iter().map(|reg| reg.0));
+        }
+        !dead
+    });
 }
 
 /// The names of the value parameters among `candidates` whose slot the body
@@ -1167,7 +1154,7 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
             callables: callable_parameter_slots(function, candidates.iter().copied()),
             reads: &mut reads,
         };
-        cx.blocks(&function.blocks);
+        cx.block(&function.body);
     }
     reads
 }
@@ -1236,13 +1223,11 @@ struct SlotReads<'a> {
 }
 
 impl SlotReads<'_> {
-    fn blocks(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                self.instruction(instruction);
-                for region in instruction_regions(instruction) {
-                    self.blocks(region);
-                }
+    fn block(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            self.instruction(instruction);
+            for region in instruction_regions(instruction) {
+                self.block(region);
             }
         }
     }
@@ -1466,10 +1451,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// The body: its blocks, and the types of its signature, slots, and
     /// registers.
     fn body(&mut self, function: &MirFunction) {
-        self.visit(&function.blocks);
+        self.visit(&function.body);
         // A slot no instruction names holds nothing the body reads.
         let mut named = HashSet::new();
-        named_slots(&function.blocks, &mut named);
+        named_slots(&function.body, &mut named);
         let slots = function
             .var_tys
             .iter()
@@ -1496,7 +1481,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             return;
         }
         let layout = std::mem::replace(&mut self.layout, false);
-        self.nominal_blocks(function, declarations, &function.blocks);
+        self.nominal_blocks(function, declarations, &function.body);
         let destroyed = destroyed_structs(function, &|name| {
             declarations
                 .structure(name)
@@ -1540,14 +1525,12 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         &mut self,
         function: &MirFunction,
         declarations: &MirDeclarations,
-        blocks: &[MirBlock],
+        block: &MirBlock,
     ) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                self.nominal_instruction(function, declarations, instruction);
-                for region in instruction_regions(instruction) {
-                    self.nominal_blocks(function, declarations, region);
-                }
+        for instruction in &block.instrs {
+            self.nominal_instruction(function, declarations, instruction);
+            for region in instruction_regions(instruction) {
+                self.nominal_blocks(function, declarations, region);
             }
         }
     }

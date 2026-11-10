@@ -10,9 +10,9 @@ use super::*;
 /// handler when it has one, and the `else`, which MIR lowering supplies
 /// when the source has none, as upstream's parser stubs it.
 pub(super) struct TryParts<'p> {
-    pub(super) body: &'p mut Vec<MirBlock>,
-    pub(super) handler: Option<&'p mut Vec<MirBlock>>,
-    pub(super) orelse: &'p mut Vec<MirBlock>,
+    pub(super) body: &'p mut MirBlock,
+    pub(super) handler: Option<&'p mut MirBlock>,
+    pub(super) orelse: &'p mut MirBlock,
 }
 
 impl Flatten<'_> {
@@ -30,24 +30,22 @@ impl Flatten<'_> {
     pub(super) fn lower_try_finally(
         &mut self,
         label: TryLabel,
-        finalbody: &[MirBlock],
+        finalbody: &MirBlock,
         parts: TryParts<'_>,
     ) {
-        let Some(finally) = finalbody.first().filter(|finally| {
-            !finally.instrs.is_empty() || !matches!(finally.term, MirTerm::TryYield(_))
-        }) else {
+        if finalbody.instrs.is_empty() && matches!(finalbody.term, MirTerm::TryYield(_)) {
             return;
+        }
+        let mut paste = Paste {
+            finally: finalbody,
+            count: 0,
         };
-        let mut paste = Paste { finally, count: 0 };
         let entered = &mut vec![RegionFrame::Try(label)];
         self.paste_before_exits(&mut paste, parts.body, entered);
         for part in parts.handler.into_iter().chain([parts.orelse]) {
             self.paste_before_exits(&mut paste, part, &mut Vec::new());
-            if let Some(block) = part
-                .first_mut()
-                .filter(|block| matches!(block.term, MirTerm::TryYield(_)))
-            {
-                self.paste_finally(&mut paste, block);
+            if matches!(part.term, MirTerm::TryYield(_)) {
+                self.paste_finally(&mut paste, part);
             }
         }
     }
@@ -69,7 +67,7 @@ impl Flatten<'_> {
     /// or the function's, and raises it there, so the `finally` can be
     /// copied before that raise. The moved register is located at the
     /// first store.
-    pub(super) fn reraising_handler(&mut self, error: VarId, body: &[MirBlock]) -> Vec<MirBlock> {
+    pub(super) fn reraising_handler(&mut self, error: VarId, body: &MirBlock) -> MirBlock {
         let ty = self
             .var_types
             .get(&error)
@@ -97,31 +95,29 @@ impl Flatten<'_> {
         })
         .chain(raise)
         .collect();
-        vec![MirBlock { instrs, term }]
+        MirBlock { instrs, term }
     }
 
-    /// Paste `finally` before every terminator of `blocks`, at any depth,
+    /// Paste `finally` before every terminator of `block`, at any depth,
     /// that leaves the region ops `entered` lists, each region op adding
     /// the frame its region's exits name while the walk is inside it.
     fn paste_before_exits(
         &mut self,
         paste: &mut Paste<'_>,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
         entered: &mut Vec<RegionFrame>,
     ) {
-        for block in blocks {
-            for instruction in &mut block.instrs {
-                for (frame, region) in framed_regions_mut(instruction) {
-                    entered.extend(frame);
-                    self.paste_before_exits(paste, region, entered);
-                    if frame.is_some() {
-                        entered.pop();
-                    }
+        for instruction in &mut block.instrs {
+            for (frame, region) in framed_regions_mut(instruction) {
+                entered.extend(frame);
+                self.paste_before_exits(paste, region, entered);
+                if frame.is_some() {
+                    entered.pop();
                 }
             }
-            if leaves(&block.term, entered) {
-                self.paste_finally(paste, block);
-            }
+        }
+        if leaves(&block.term, entered) {
+            self.paste_finally(paste, block);
         }
     }
 
@@ -168,9 +164,8 @@ impl Flatten<'_> {
     /// carrying the original's type and location, as `IRMapping` maps a
     /// cloned op's results.
     fn renumber_definitions(&mut self, copy: &mut MirBlock) {
-        let blocks = std::slice::from_mut(copy);
         let mut defined = Vec::new();
-        defined_registers(blocks, &mut defined);
+        defined_registers(copy, &mut defined);
         let mut renamed = HashMap::new();
         for register in defined {
             renamed.entry(register.0).or_insert_with(|| {
@@ -185,7 +180,7 @@ impl Flatten<'_> {
                 fresh
             });
         }
-        for_each_register(blocks, &mut |register| {
+        for_each_register(copy, &mut |register| {
             if let Some(&fresh) = renamed.get(&register.0) {
                 *register = Reg(fresh);
             }
@@ -231,9 +226,7 @@ fn leaves(term: &MirTerm, entered: &[RegionFrame]) -> bool {
 /// `match` case its case, and a `try` body its `try`; an `if` arm, a
 /// `comptime if` arm, a `match`'s or `comptime for`'s else region, and a
 /// `try`'s handler and `else` none.
-fn framed_regions_mut(
-    instruction: &mut MirInstr,
-) -> Vec<(Option<RegionFrame>, &mut Vec<MirBlock>)> {
+fn framed_regions_mut(instruction: &mut MirInstr) -> Vec<(Option<RegionFrame>, &mut MirBlock)> {
     match instruction {
         MirInstr::Loop { label, body, .. } => vec![(Some(RegionFrame::Loop(*label)), body)],
         MirInstr::ComptimeFor { body, orelse, .. } => {
@@ -242,7 +235,7 @@ fn framed_regions_mut(
         MirInstr::Match { cases, orelse, .. } => cases
             .iter_mut()
             .map(|case| (Some(RegionFrame::MatchCase), &mut case.body))
-            .chain(std::iter::once((None, orelse)))
+            .chain(std::iter::once((None, &mut **orelse)))
             .collect(),
         MirInstr::Try {
             label,
@@ -250,9 +243,9 @@ fn framed_regions_mut(
             handler,
             orelse,
             ..
-        } => std::iter::once((Some(RegionFrame::Try(*label)), body))
-            .chain(handler.iter_mut().map(|blocks| (None, blocks)))
-            .chain(orelse.iter_mut().map(|blocks| (None, blocks)))
+        } => std::iter::once((Some(RegionFrame::Try(*label)), &mut **body))
+            .chain(handler.iter_mut().map(|region| (None, &mut **region)))
+            .chain(orelse.iter_mut().map(|region| (None, &mut **region)))
             .collect(),
         instruction => instruction_regions_mut(instruction)
             .into_iter()

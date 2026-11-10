@@ -99,8 +99,8 @@ impl VmBackend {
             let mut frame = self.frames.pop().ok_or_else(|| {
                 RuntimeError::Unsupported("vm: frame stack underflow".to_string())
             })?;
-            let blocks = prog.mir.functions[frame.function].1.blocks.as_slice();
-            let block = frame.cursor.block(blocks)?;
+            let body = &prog.mir.functions[frame.function].1.body;
+            let block = frame.cursor.block(body)?;
             while let Some(instruction) = block.instrs.get(frame.cursor.instruction()) {
                 self.burn_ctfe()?;
                 if frame.cursor.enter(instruction, &mut frame.registers) {
@@ -128,7 +128,7 @@ impl VmBackend {
             self.burn_ctfe()?;
             let returned = match frame
                 .cursor
-                .transfer(blocks, &block.term, &mut frame.registers)?
+                .transfer(body, &block.term, &mut frame.registers)?
             {
                 Transfer::Moved => {
                     self.frames.push(frame);
@@ -140,7 +140,7 @@ impl VmBackend {
                 Transfer::TryRaise { label, values } => {
                     frame
                         .cursor
-                        .catch(blocks, label, values, &mut frame.registers)?;
+                        .catch(body, label, values, &mut frame.registers)?;
                     self.frames.push(frame);
                     continue;
                 }

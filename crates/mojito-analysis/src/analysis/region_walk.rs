@@ -79,14 +79,14 @@ where
 pub(super) fn walk_forward<S, O>(
     scan: &S,
     entry: S::State,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     observer: &mut O,
 ) -> Result<Flow<S::State>, OwnershipError>
 where
     S: ForwardScan,
     O: ForwardObserver<S::State>,
 {
-    walk_region(scan, Some(entry), blocks, Some(observer), &mut Vec::new())
+    walk_region(scan, Some(entry), block, Some(observer), &mut Vec::new())
 }
 
 /// A backward analysis the walk carries through regions.
@@ -105,7 +105,7 @@ pub(super) trait BackwardScan {
     fn terminate(&self, _live: &mut Self::State, _block: &MirBlock) {}
     /// `live`, the live-in of a `try` part, as the `try` sees it at the
     /// part's entry.
-    fn enter(&self, _live: &mut Self::State, _part: &[MirBlock]) {}
+    fn enter(&self, _live: &mut Self::State, _part: &MirBlock) {}
     /// `live`, a loop body's live-in in a dry run, as the loop's entry sees
     /// it: `checkLoopOp` counts the continue point reached even when no
     /// path through the body leaves the loop.
@@ -152,7 +152,7 @@ pub(super) struct BlockLiveness<'a, T> {
 /// walk enters every region op `scan` enters: a raise naming a `try` keeps
 /// live what its handler reads, and a `return` or a raise out of the
 /// function nothing.
-pub(super) fn walk_backward<S, R>(scan: &S, blocks: &[MirBlock], recorder: &mut R) -> S::State
+pub(super) fn walk_backward<S, R>(scan: &S, block: &MirBlock, recorder: &mut R) -> S::State
 where
     S: BackwardScan,
     R: BackwardRecorder<S::State>,
@@ -161,7 +161,7 @@ where
         scan,
         frames: Vec::new(),
     };
-    walk.region(blocks, &S::State::default(), Some(recorder))
+    walk.region(block, &S::State::default(), Some(recorder))
 }
 
 /// Whether `instr` is a region op the walks know.
@@ -253,7 +253,7 @@ fn enters<S: ForwardScan>(scan: &S, instr: &MirInstr) -> bool {
 fn walk_region<S, O>(
     scan: &S,
     entry: Option<S::State>,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Flow<S::State>, OwnershipError>
@@ -263,9 +263,6 @@ where
 {
     let Some(entry) = entry else {
         return Ok(Flow::unreachable());
-    };
-    let Some(block) = blocks.first() else {
-        return Ok(Flow::falls_off(entry));
     };
     let mut flow = Flow::unreachable();
     let Some(state) = walk_block(scan, entry, block, &mut flow, observer, frames)? else {
@@ -365,7 +362,7 @@ where
         MirInstr::ComptimeIf { arms, orelse, .. } => walk_arms(
             scan,
             &entry,
-            arms.iter().chain(std::iter::once(orelse)),
+            arms.iter().chain(std::iter::once(&**orelse)),
             observer,
             frames,
         ),
@@ -416,13 +413,13 @@ fn leave_to<S: ForwardScan>(
     }
 }
 
-/// Walk `blocks` from `entry` under a fresh frame of `kind`, returning the
+/// Walk `block` from `entry` under a fresh frame of `kind`, returning the
 /// region's flow and the frame its terminators filled.
 fn walk_framed<S, O>(
     scan: &S,
     entry: S::State,
     kind: RegionFrame,
-    blocks: &[MirBlock],
+    block: &MirBlock,
     observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Framed<S::State>, OwnershipError>
@@ -432,7 +429,7 @@ where
 {
     let depth = frames.len();
     frames.push(Frame::new(kind));
-    let flow = walk_region(scan, Some(entry), blocks, observer, frames)?;
+    let flow = walk_region(scan, Some(entry), block, observer, frames)?;
     Ok((flow, frames.remove(depth)))
 }
 
@@ -492,7 +489,7 @@ where
 fn walk_arms<'r, S, O>(
     scan: &S,
     entry: &S::State,
-    regions: impl Iterator<Item = &'r Vec<MirBlock>>,
+    regions: impl Iterator<Item = &'r MirBlock>,
     mut observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Flow<S::State>, OwnershipError>
@@ -522,7 +519,7 @@ fn walk_loop<S, O>(
     scan: &S,
     entry: S::State,
     kind: RegionFrame,
-    body: &[MirBlock],
+    body: &MirBlock,
     observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Flow<S::State>, OwnershipError>
@@ -559,7 +556,7 @@ fn walk_match<S, O>(
     scan: &S,
     entry: S::State,
     cases: &[MirCase],
-    orelse: &[MirBlock],
+    orelse: &MirBlock,
     mut observer: Option<&mut O>,
     frames: &mut Vec<Frame<S::State>>,
 ) -> Result<Flow<S::State>, OwnershipError>
@@ -663,13 +660,11 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// yields continue to, returning its live-in.
     fn region<R: BackwardRecorder<S::State>>(
         &mut self,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         exit: &S::State,
         recorder: Option<&mut R>,
     ) -> S::State {
-        blocks
-            .first()
-            .map_or_else(|| exit.clone(), |block| self.block(block, exit, recorder))
+        self.block(block, exit, recorder)
     }
 
     /// Walk one block from its terminator back, returning its live-in.
@@ -794,7 +789,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             }
             MirInstr::ComptimeIf { arms, orelse, .. } => {
                 let mut live = S::State::default();
-                for arm in arms.iter().chain(std::iter::once(orelse)) {
+                for arm in arms.iter().chain(std::iter::once(&**orelse)) {
                     let arm = self.region(arm, exit, recorder.as_deref_mut());
                     self.scan.join(&mut live, &arm);
                 }
@@ -843,7 +838,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     fn looped<R: BackwardRecorder<S::State>>(
         &mut self,
         kind: RegionFrame,
-        (body, args): (&[MirBlock], &[Reg]),
+        (body, args): (&MirBlock, &[Reg]),
         exit: &S::State,
         recorder: Option<&mut R>,
     ) -> S::State {
@@ -869,7 +864,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     fn framed<R: BackwardRecorder<S::State>>(
         &mut self,
         kind: RegionFrame,
-        body: &[MirBlock],
+        body: &MirBlock,
         exit: &S::State,
         resume: S::State,
         recorder: Option<&mut R>,

@@ -94,7 +94,7 @@ pub(super) fn verify_scope(
         .flatten();
     let function = view.as_ref().map_or(function, |(view, _)| view);
     let mut scope = Scope::of_function(name, declarations);
-    scope.declare_loop_binders(&function.blocks);
+    scope.declare_loop_binders(&function.body);
     // A removed parameter no longer exists: a reference to it is out of
     // scope but inside a struct argument, which an instance erases
     // (`_REMOVED_ARG`) as upstream's generator spells it, and its slot is
@@ -162,7 +162,7 @@ pub(super) fn verify_scope(
     for (register, ty) in registers {
         cx.walk(&format!("register r{register}"), ty);
     }
-    cx.blocks(&function.blocks);
+    cx.block(&function.body);
 }
 
 /// The types an instruction names outside its places and registers, each
@@ -330,15 +330,13 @@ impl Scope {
     /// Bring every `comptime for` binder of `blocks` into scope: a loop's
     /// own binder, of its sequence's element type, declared by no signature,
     /// that the body's types and conditions name.
-    fn declare_loop_binders(&mut self, blocks: &[MirBlock]) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                if let MirInstr::ComptimeFor { binder, source, .. } = instruction {
-                    self.kinds.insert(binder.id.clone(), source.binder_meta());
-                }
-                for region in crate::mir::instruction_regions(instruction) {
-                    self.declare_loop_binders(region);
-                }
+    fn declare_loop_binders(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            if let MirInstr::ComptimeFor { binder, source, .. } = instruction {
+                self.kinds.insert(binder.id.clone(), source.binder_meta());
+            }
+            for region in crate::mir::instruction_regions(instruction) {
+                self.declare_loop_binders(region);
             }
         }
     }
@@ -366,111 +364,105 @@ struct ScopeCx<'a> {
 }
 
 impl ScopeCx<'_> {
-    fn blocks(&mut self, blocks: &[MirBlock]) {
-        for (index, block) in blocks.iter().enumerate() {
-            for instruction in &block.instrs {
-                let regions = crate::mir::instruction_regions(instruction);
-                if !regions.is_empty() {
-                    match instruction {
-                        MirInstr::ComptimeIf { values, .. } => {
-                            let role = format!("block {index} compile-time if");
-                            for value in values {
-                                if let Const::Param(value) = value {
-                                    let mut nested = Vec::new();
-                                    self.expr_nodes(&role, "condition value", value, &mut nested);
-                                }
+    fn block(&mut self, block: &MirBlock) {
+        for instruction in &block.instrs {
+            let regions = crate::mir::instruction_regions(instruction);
+            if !regions.is_empty() {
+                match instruction {
+                    MirInstr::ComptimeIf { values, .. } => {
+                        let role = "compile-time if";
+                        for value in values {
+                            if let Const::Param(value) = value {
+                                let mut nested = Vec::new();
+                                self.expr_nodes(role, "condition value", value, &mut nested);
                             }
                         }
-                        MirInstr::ComptimeFor { binder, source, .. } => {
-                            self.comptime_loop(
-                                &format!("block {index} compile-time loop"),
-                                binder,
-                                source,
-                            );
-                        }
-                        _ => {}
                     }
-                    for region in regions {
-                        self.blocks(region);
+                    MirInstr::ComptimeFor { binder, source, .. } => {
+                        self.comptime_loop("compile-time loop", binder, source);
                     }
-                    continue;
+                    _ => {}
                 }
-                let role = format!("block {index} place");
-                for place in instruction_places(instruction) {
-                    let types = place
-                        .root_ty
-                        .iter()
-                        .chain(&place.projection_tys)
-                        .chain(place.ty.iter());
-                    for ty in types {
-                        self.walk(&role, ty);
-                    }
+                for region in regions {
+                    self.block(region);
                 }
-                for (what, ty) in instruction_named_types(instruction) {
-                    self.walk(&format!("block {index} {what}"), ty);
+                continue;
+            }
+            let role = "place";
+            for place in instruction_places(instruction) {
+                let types = place
+                    .root_ty
+                    .iter()
+                    .chain(&place.projection_tys)
+                    .chain(place.ty.iter());
+                for ty in types {
+                    self.walk(role, ty);
                 }
-                // A SIMD instruction's slots are the slots of the vector type
-                // it builds, checked as that type is.
-                if let MirInstr::MakeSimd { dtype, width, .. }
-                | MirInstr::SimdCast { dtype, width, .. }
-                | MirInstr::SimdBitcast { dtype, width, .. } = instruction
-                {
-                    let built = Ty::simd(dtype.clone(), width.clone());
-                    self.walk(&format!("block {index} vector slots"), &built);
-                }
-                let projected = instruction_places(instruction)
-                    .into_iter()
-                    .flat_map(|place| &place.proj)
-                    .filter_map(|projection| match projection {
-                        Proj::Variant(alternative) => Some(alternative),
-                        _ => None,
-                    });
-                for alternative in instruction_variant_indices(instruction)
-                    .into_iter()
-                    .chain(projected)
-                {
-                    if let mojito_types::types::VariantIndex::Expr(value) = alternative {
-                        let role = format!("block {index} variant alternative");
-                        let mut nested = Vec::new();
-                        self.expr_nodes(&role, "variant alternative", value, &mut nested);
-                    }
-                }
-                if let MirInstr::SimdShuffle { mask, .. } = instruction {
-                    let role = format!("block {index} lane mask");
-                    for value in mask.expressions() {
-                        let mut nested = Vec::new();
-                        self.expr_nodes(&role, "lane mask", value, &mut nested);
-                    }
-                }
-                if let MirInstr::ComptimeAssert { value, message } = instruction {
-                    let role = format!("block {index} compile-time assertion");
-                    if let Const::Param(value) = value {
-                        let mut nested = Vec::new();
-                        self.expr_nodes(&role, "condition value", value, &mut nested);
-                    }
-                    if let Some(Const::Param(value)) = message {
-                        let role = format!("block {index} compile-time assertion message");
-                        let mut nested = Vec::new();
-                        self.expr_nodes(&role, "assertion message", value, &mut nested);
-                    }
-                }
-                if let MirInstr::Const {
-                    k: Const::Param(value),
-                    ..
-                }
-                | MirInstr::ArrayGet {
-                    index: Const::Param(value),
-                    ..
-                }
-                | MirInstr::ArrayReplace {
-                    index: Const::Param(value),
-                    ..
-                } = instruction
-                {
-                    let role = format!("block {index} parameter constant");
+            }
+            for (what, ty) in instruction_named_types(instruction) {
+                self.walk(what, ty);
+            }
+            // A SIMD instruction's slots are the slots of the vector type
+            // it builds, checked as that type is.
+            if let MirInstr::MakeSimd { dtype, width, .. }
+            | MirInstr::SimdCast { dtype, width, .. }
+            | MirInstr::SimdBitcast { dtype, width, .. } = instruction
+            {
+                let built = Ty::simd(dtype.clone(), width.clone());
+                self.walk("vector slots", &built);
+            }
+            let projected = instruction_places(instruction)
+                .into_iter()
+                .flat_map(|place| &place.proj)
+                .filter_map(|projection| match projection {
+                    Proj::Variant(alternative) => Some(alternative),
+                    _ => None,
+                });
+            for alternative in instruction_variant_indices(instruction)
+                .into_iter()
+                .chain(projected)
+            {
+                if let mojito_types::types::VariantIndex::Expr(value) = alternative {
+                    let role = "variant alternative";
                     let mut nested = Vec::new();
-                    self.expr_nodes(&role, "parameter constant", value, &mut nested);
+                    self.expr_nodes(role, "variant alternative", value, &mut nested);
                 }
+            }
+            if let MirInstr::SimdShuffle { mask, .. } = instruction {
+                let role = "lane mask";
+                for value in mask.expressions() {
+                    let mut nested = Vec::new();
+                    self.expr_nodes(role, "lane mask", value, &mut nested);
+                }
+            }
+            if let MirInstr::ComptimeAssert { value, message } = instruction {
+                let role = "compile-time assertion";
+                if let Const::Param(value) = value {
+                    let mut nested = Vec::new();
+                    self.expr_nodes(role, "condition value", value, &mut nested);
+                }
+                if let Some(Const::Param(value)) = message {
+                    let role = "compile-time assertion message";
+                    let mut nested = Vec::new();
+                    self.expr_nodes(role, "assertion message", value, &mut nested);
+                }
+            }
+            if let MirInstr::Const {
+                k: Const::Param(value),
+                ..
+            }
+            | MirInstr::ArrayGet {
+                index: Const::Param(value),
+                ..
+            }
+            | MirInstr::ArrayReplace {
+                index: Const::Param(value),
+                ..
+            } = instruction
+            {
+                let role = "parameter constant";
+                let mut nested = Vec::new();
+                self.expr_nodes(role, "parameter constant", value, &mut nested);
             }
         }
     }
@@ -993,10 +985,10 @@ mod tests {
 
     fn function_with(reg_types: Vec<Ty>) -> MirFunction {
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::TryYield(Vec::new()),
-            }],
+            },
             n_regs: reg_types.len() as u32,
             n_vars: 0,
             var_names: Vec::new(),
@@ -1158,7 +1150,7 @@ mod tests {
     fn scope_rejects_a_method_argument_over_an_unbound_binder() {
         let declarations = declarations("f", Vec::new());
         let mut function = function_with(vec![Ty::none(), Ty::none()]);
-        function.blocks[0].instrs.push(MirInstr::MethodCall {
+        function.body.instrs.push(MirInstr::MethodCall {
             dest: Reg(1),
             recv: Reg(0),
             method: "show".into(),
@@ -1294,10 +1286,10 @@ mod tests {
         declaration.ref_params = vec![false];
         declaration.param_writes = vec![false];
         let with = |instrs: Vec<MirInstr>| MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             n_regs: 1,
             n_vars: 1,
             var_names: vec!["a".to_string()],
@@ -1346,7 +1338,7 @@ mod tests {
         callee.lowered_name = "g".to_string();
         declarations.functions.push(callee);
         let forward = |snapshot: Vec<(String, Vec<mojito_hir::hir::VarId>)>| MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs: vec![
                     MirInstr::UseVar {
                         dest: Reg(0),
@@ -1370,7 +1362,7 @@ mod tests {
                     },
                 ],
                 term: MirTerm::Return(None),
-            }],
+            },
             n_regs: 2,
             n_vars: 1,
             var_names: vec!["a".to_string()],

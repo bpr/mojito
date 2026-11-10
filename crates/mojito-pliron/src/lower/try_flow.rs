@@ -17,9 +17,9 @@ impl FnLowering<'_> {
     pub(super) fn lower_try(
         &mut self,
         ctx: &mut Context,
-        (label, results, body): (TryLabel, &[Reg], &[MirBlock]),
-        (handler_args, handler): (&[Reg], Option<&[MirBlock]>),
-        (else_args, orelse): (&[Reg], Option<&[MirBlock]>),
+        (label, results, body): (TryLabel, &[Reg], &MirBlock),
+        (handler_args, handler): (&[Reg], Option<&MirBlock>),
+        (else_args, orelse): (&[Reg], Option<&MirBlock>),
     ) -> Result<(), PlironError> {
         let exit = self.carrier(ctx, results)?;
         let landing = self.carrier(ctx, handler_args)?;
@@ -54,17 +54,17 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Lower the `try` part `blocks` into a block of its own, entered with
+    /// Lower the `try` part `block` into a block of its own, entered with
     /// no values, whose `lit.try.yield` enters the carrier `completed`;
     /// returns that block. `self.current` is restored.
     pub(super) fn lower_part(
         &mut self,
         ctx: &mut Context,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         completed: usize,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
         let entry = self.region_entry(ctx)?;
-        self.lower_region(ctx, blocks, entry, RegionEnd::TryPart(completed))?;
+        self.lower_region(ctx, block, entry, RegionEnd::TryPart(completed))?;
         Ok(self.carrier_block(entry))
     }
 

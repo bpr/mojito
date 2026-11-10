@@ -26,7 +26,7 @@ pub fn callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> 
         let mut variables = HashMap::new();
         let mut conflicting = HashSet::new();
         while visit_callables(
-            &function.blocks,
+            &function.body,
             &rebound,
             &mut registers,
             &mut variables,
@@ -41,14 +41,14 @@ pub fn callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> 
     }
 }
 
-/// Every instruction of `blocks` in order, each region op followed by its
+/// Every instruction of `block` in order, each region op followed by its
 /// regions' instructions.
-pub fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+pub fn nested_instructions(block: &MirBlock) -> Vec<&MirInstr> {
     let mut instructions = Vec::new();
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+    for instruction in &block.instrs {
         instructions.push(instruction);
-        for blocks in instruction_regions(instruction) {
-            instructions.extend(nested_instructions(blocks));
+        for region in instruction_regions(instruction) {
+            instructions.extend(nested_instructions(region));
         }
     }
     instructions
@@ -58,69 +58,67 @@ pub fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
 /// resolved anything new. A variable whose definitions hold different
 /// callables joins `conflicting` and resolves nothing.
 fn visit_callables(
-    blocks: &[MirBlock],
+    block: &MirBlock,
     rebound: &HashSet<u32>,
     registers: &mut HashMap<u32, (String, bool)>,
     variables: &mut HashMap<u32, (String, bool)>,
     conflicting: &mut HashSet<u32>,
 ) -> bool {
     let mut changed = false;
-    for block in blocks {
-        for instruction in &block.instrs {
-            let resolved = match instruction {
-                MirInstr::MakeClosure {
-                    dest,
-                    function,
-                    captures,
-                } => Some((dest.0, (function.clone(), captures.is_empty()))),
-                MirInstr::Const {
-                    dest,
-                    k: Const::Function(function),
-                } => Some((dest.0, (function.clone(), true))),
-                MirInstr::CopyValue { dest, value, .. } => registers
-                    .get(&value.0)
+    for instruction in &block.instrs {
+        let resolved = match instruction {
+            MirInstr::MakeClosure {
+                dest,
+                function,
+                captures,
+            } => Some((dest.0, (function.clone(), captures.is_empty()))),
+            MirInstr::Const {
+                dest,
+                k: Const::Function(function),
+            } => Some((dest.0, (function.clone(), true))),
+            MirInstr::CopyValue { dest, value, .. } => registers
+                .get(&value.0)
+                .cloned()
+                .map(|value| (dest.0, value)),
+            MirInstr::UseVar { dest, var, .. } => {
+                variables.get(var).cloned().map(|value| (dest.0, value))
+            }
+            MirInstr::LoadPlace { dest, place }
+                if place.through.is_none() && place.proj.is_empty() =>
+            {
+                variables
+                    .get(&place.root)
                     .cloned()
-                    .map(|value| (dest.0, value)),
-                MirInstr::UseVar { dest, var, .. } => {
-                    variables.get(var).cloned().map(|value| (dest.0, value))
-                }
-                MirInstr::LoadPlace { dest, place }
-                    if place.through.is_none() && place.proj.is_empty() =>
-                {
-                    variables
-                        .get(&place.root)
-                        .cloned()
-                        .map(|value| (dest.0, value))
-                }
-                _ => None,
-            };
-            if let Some((dest, value)) = resolved
-                && registers.get(&dest) != Some(&value)
-            {
-                registers.insert(dest, value);
-                changed = true;
+                    .map(|value| (dest.0, value))
             }
-            if let MirInstr::DefVar { var, src, .. } = instruction
-                && !rebound.contains(var)
-                && !conflicting.contains(var)
-                && let Some(value) = registers.get(&src.0).cloned()
-            {
-                match variables.get(var) {
-                    Some(existing) if *existing != value => {
-                        variables.remove(var);
-                        conflicting.insert(*var);
-                        changed = true;
-                    }
-                    Some(_) => {}
-                    None => {
-                        variables.insert(*var, value);
-                        changed = true;
-                    }
+            _ => None,
+        };
+        if let Some((dest, value)) = resolved
+            && registers.get(&dest) != Some(&value)
+        {
+            registers.insert(dest, value);
+            changed = true;
+        }
+        if let MirInstr::DefVar { var, src, .. } = instruction
+            && !rebound.contains(var)
+            && !conflicting.contains(var)
+            && let Some(value) = registers.get(&src.0).cloned()
+        {
+            match variables.get(var) {
+                Some(existing) if *existing != value => {
+                    variables.remove(var);
+                    conflicting.insert(*var);
+                    changed = true;
+                }
+                Some(_) => {}
+                None => {
+                    variables.insert(*var, value);
+                    changed = true;
                 }
             }
-            for blocks in instruction_regions(instruction) {
-                changed |= visit_callables(blocks, rebound, registers, variables, conflicting);
-            }
+        }
+        for region in instruction_regions(instruction) {
+            changed |= visit_callables(region, rebound, registers, variables, conflicting);
         }
     }
     changed
@@ -130,7 +128,7 @@ fn visit_callables(
 /// whole through a store, a reference, a `mut`/`ref` argument place, or a
 /// callable environment.
 fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
-    let instructions = nested_instructions(&function.blocks);
+    let instructions = nested_instructions(&function.body);
     let written_references: HashSet<u32> = instructions
         .iter()
         .filter_map(|instruction| match instruction {

@@ -49,33 +49,32 @@ pub fn fresh_register(function: &mut MirFunction, ty: Ty, span: Option<&SourceSp
     reg
 }
 
-/// Every region an instruction holds, each a block list with local block
-/// ids.
+/// Every region an instruction holds, each its one block.
 ///
 /// The order is fixed: an `if`'s then region, each elif's condition and
 /// then regions, and its else region; a loop's body; a `comptime if`'s arms
 /// and its else region; a `comptime for`'s body and else region; a `try`'s
 /// body, handler, and else parts.
-pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
+pub fn instruction_regions(instruction: &MirInstr) -> Vec<&MirBlock> {
     match instruction {
         MirInstr::If {
             then,
             elifs,
             orelse,
             ..
-        } => std::iter::once(then)
+        } => std::iter::once(&**then)
             .chain(elifs.iter().flat_map(|elif| [&elif.cond, &elif.then]))
-            .chain(std::iter::once(orelse))
+            .chain(std::iter::once(&**orelse))
             .collect(),
         MirInstr::Loop { body, .. } => vec![body],
         MirInstr::ComptimeIf { arms, orelse, .. } => {
-            arms.iter().chain(std::iter::once(orelse)).collect()
+            arms.iter().chain(std::iter::once(&**orelse)).collect()
         }
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
         MirInstr::Match { cases, orelse, .. } => cases
             .iter()
             .map(|case| &case.body)
-            .chain(std::iter::once(orelse))
+            .chain(std::iter::once(&**orelse))
             .collect(),
         MirInstr::Try {
             body,
@@ -85,36 +84,38 @@ pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
         } => std::iter::once(body)
             .chain(handler.iter())
             .chain(orelse.iter())
+            .map(|region| &**region)
             .collect(),
         _ => Vec::new(),
     }
 }
 
 /// [`instruction_regions`], mutably.
-pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
+pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut MirBlock> {
     match instruction {
         MirInstr::If {
             then,
             elifs,
             orelse,
             ..
-        } => std::iter::once(then)
+        } => std::iter::once(&mut **then)
             .chain(
                 elifs
                     .iter_mut()
                     .flat_map(|elif| [&mut elif.cond, &mut elif.then]),
             )
-            .chain(std::iter::once(orelse))
+            .chain(std::iter::once(&mut **orelse))
             .collect(),
         MirInstr::Loop { body, .. } => vec![body],
-        MirInstr::ComptimeIf { arms, orelse, .. } => {
-            arms.iter_mut().chain(std::iter::once(orelse)).collect()
-        }
+        MirInstr::ComptimeIf { arms, orelse, .. } => arms
+            .iter_mut()
+            .chain(std::iter::once(&mut **orelse))
+            .collect(),
         MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
         MirInstr::Match { cases, orelse, .. } => cases
             .iter_mut()
             .map(|case| &mut case.body)
-            .chain(std::iter::once(orelse))
+            .chain(std::iter::once(&mut **orelse))
             .collect(),
         MirInstr::Try {
             body,
@@ -124,34 +125,33 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
         } => std::iter::once(body)
             .chain(handler.iter_mut())
             .chain(orelse.iter_mut())
+            .map(|region| &mut **region)
             .collect(),
         _ => Vec::new(),
     }
 }
 
-/// Every register an instruction of `blocks` defines, at any depth: its
+/// Every register an instruction of `block` defines, at any depth: its
 /// results, and a region op's results and region arguments.
-pub fn defined_registers(blocks: &[MirBlock], out: &mut Vec<Reg>) {
-    for instruction in super::nested_instructions(blocks) {
+pub fn defined_registers(block: &MirBlock, out: &mut Vec<Reg>) {
+    for instruction in super::nested_instructions(block) {
         super::verify::instruction_result_regs(instruction, out);
     }
 }
 
 /// Visit every register `blocks` define or read, at any depth.
-pub fn for_each_register(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut Reg)) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            instruction_regs_mut(instruction)
-                .into_iter()
-                .for_each(&mut *visit);
-            for region in instruction_regions_mut(instruction) {
-                for_each_register(region, visit);
-            }
-        }
-        terminator_regs_mut(&mut block.term)
+pub fn for_each_register(block: &mut MirBlock, visit: &mut impl FnMut(&mut Reg)) {
+    for instruction in &mut block.instrs {
+        instruction_regs_mut(instruction)
             .into_iter()
             .for_each(&mut *visit);
+        for region in instruction_regions_mut(instruction) {
+            for_each_register(region, visit);
+        }
     }
+    terminator_regs_mut(&mut block.term)
+        .into_iter()
+        .for_each(&mut *visit);
 }
 
 /// Every register a terminator reads, mutably.
@@ -251,7 +251,7 @@ pub struct BreakSite {
 /// it: an unlabelled one leaves the nearest loop, a labelled one the
 /// nearest carrying its label.
 pub fn loop_breaks_mut(
-    body: &mut [MirBlock],
+    body: &mut MirBlock,
     label: Option<LoopLabel>,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
@@ -271,7 +271,7 @@ pub fn loop_breaks_mut(
 /// A continue resolves as [`loop_breaks_mut`]'s breaks do, as
 /// `RemoveUnusedLoopArgs`' `getParentLoop` resolves it.
 pub fn loop_continues_mut(
-    body: &mut [MirBlock],
+    body: &mut MirBlock,
     label: Option<LoopLabel>,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
@@ -291,7 +291,7 @@ pub fn loop_continues_mut(
 /// A `match.next` resolves as `MatchOp::getCaseRegionIndexContaining`
 /// resolves it: it names the nearest `match` whose case region holds it, so
 /// a nested match's cases capture their own and its `else` region does not.
-pub fn match_nexts_mut(case: &mut [MirBlock], visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite)) {
+pub fn match_nexts_mut(case: &mut MirBlock, visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite)) {
     case_exits_in(case, true, BreakSite::default(), visit);
 }
 
@@ -301,10 +301,7 @@ pub fn match_nexts_mut(case: &mut [MirBlock], visit: &mut impl FnMut(&mut Vec<Re
 /// A `match.complete` resolves as `MatchCompleteOp::isParentNode`
 /// (`containsInCaseRegion`) resolves it, as [`match_nexts_mut`]'s
 /// `match.next`s do.
-pub fn match_completes_mut(
-    case: &mut [MirBlock],
-    visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
-) {
+pub fn match_completes_mut(case: &mut MirBlock, visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite)) {
     case_exits_in(case, false, BreakSite::default(), visit);
 }
 
@@ -316,38 +313,36 @@ pub fn match_completes_mut(
 /// `try` carrying the same label captures its body's raises, and its
 /// handler's and `else`'s reach this one.
 pub fn try_raises_mut(
-    body: &mut [MirBlock],
+    block: &mut MirBlock,
     label: TryLabel,
     visit: &mut impl FnMut(&mut Vec<Reg>),
 ) {
-    for block in body {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::Try {
-                    label: inner,
-                    handler,
-                    orelse,
-                    ..
-                } if *inner == label => {
-                    for region in handler.iter_mut().chain(orelse) {
-                        try_raises_mut(region, label, visit);
-                    }
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::Try {
+                label: inner,
+                handler,
+                orelse,
+                ..
+            } if *inner == label => {
+                for region in handler.iter_mut().chain(orelse) {
+                    try_raises_mut(region, label, visit);
                 }
-                _ => {
-                    for region in instruction_regions_mut(instruction) {
-                        try_raises_mut(region, label, visit);
-                    }
+            }
+            _ => {
+                for region in instruction_regions_mut(instruction) {
+                    try_raises_mut(region, label, visit);
                 }
             }
         }
-        if let MirTerm::TryRaise {
-            label: found,
-            values,
-        } = &mut block.term
-            && *found == label
-        {
-            visit(values);
-        }
+    }
+    if let MirTerm::TryRaise {
+        label: found,
+        values,
+    } = &mut block.term
+        && *found == label
+    {
+        visit(values);
     }
 }
 
@@ -358,7 +353,7 @@ pub fn try_raises_mut(
 /// (`isa<ComptimeForOp>`) resolves it: it names the nearest enclosing
 /// `comptime for`.
 pub fn comptime_for_breaks_mut(
-    body: &mut [MirBlock],
+    body: &mut MirBlock,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
     comptime_exits_in(body, false, BreakSite::default(), visit);
@@ -368,7 +363,7 @@ pub fn comptime_for_breaks_mut(
 /// `comptime for` whose body is `body`, with what lies between them,
 /// resolved as [`comptime_for_breaks_mut`]'s breaks are.
 pub fn comptime_for_continues_mut(
-    body: &mut [MirBlock],
+    body: &mut MirBlock,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
     comptime_exits_in(body, true, BreakSite::default(), visit);
@@ -396,31 +391,29 @@ pub fn resolve_replacements<S: std::hash::BuildHasher>(
 /// Rewrite every read in `blocks`, at any depth, of a key of `roots` to its
 /// root; definitions are left alone.
 pub fn replace_register_reads<S: std::hash::BuildHasher>(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     roots: &HashMap<u32, Reg, S>,
 ) {
     if roots.is_empty() {
         return;
     }
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            verify::instruction_result_regs(instruction, &mut results);
-            for reg in instruction_regs_mut(instruction) {
-                if let Some(at) = results.iter().position(|result| result == reg) {
-                    results.swap_remove(at);
-                } else if let Some(root) = roots.get(&reg.0) {
-                    *reg = *root;
-                }
-            }
-            for region in instruction_regions_mut(instruction) {
-                replace_register_reads(region, roots);
-            }
-        }
-        for reg in terminator_regs_mut(&mut block.term) {
-            if let Some(root) = roots.get(&reg.0) {
+    for instruction in &mut block.instrs {
+        let mut results = Vec::new();
+        verify::instruction_result_regs(instruction, &mut results);
+        for reg in instruction_regs_mut(instruction) {
+            if let Some(at) = results.iter().position(|result| result == reg) {
+                results.swap_remove(at);
+            } else if let Some(root) = roots.get(&reg.0) {
                 *reg = *root;
             }
+        }
+        for region in instruction_regions_mut(instruction) {
+            replace_register_reads(region, roots);
+        }
+    }
+    for reg in terminator_regs_mut(&mut block.term) {
+        if let Some(root) = roots.get(&reg.0) {
+            *reg = *root;
         }
     }
 }
@@ -655,31 +648,29 @@ pub fn instruction_subscript_call_mut(instruction: &mut MirInstr) -> Option<&mut
 /// Add every register read in `blocks`, their regions included, to
 /// `reads`. Each register an instruction names counts as a read but its
 /// own results, so an operand no enumeration classifies is kept alive.
-pub fn count_register_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
+pub fn count_register_reads(block: &mut MirBlock, reads: &mut [u32]) {
     let count = |reads: &mut [u32], reg: &Reg| {
         if let Some(count) = reads.get_mut(reg.0 as usize) {
             *count += 1;
         }
     };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let mut results = Vec::new();
-            verify::instruction_result_regs(instruction, &mut results);
-            for reg in instruction_regs_mut(instruction) {
-                match results.iter().position(|result| result == reg) {
-                    Some(at) => {
-                        results.swap_remove(at);
-                    }
-                    None => count(reads, reg),
+    for instruction in &mut block.instrs {
+        let mut results = Vec::new();
+        verify::instruction_result_regs(instruction, &mut results);
+        for reg in instruction_regs_mut(instruction) {
+            match results.iter().position(|result| result == reg) {
+                Some(at) => {
+                    results.swap_remove(at);
                 }
-            }
-            for region in instruction_regions_mut(instruction) {
-                count_register_reads(region, reads);
+                None => count(reads, reg),
             }
         }
-        for reg in terminator_regs_mut(&mut block.term) {
-            count(reads, reg);
+        for region in instruction_regions_mut(instruction) {
+            count_register_reads(region, reads);
         }
+    }
+    for reg in terminator_regs_mut(&mut block.term) {
+        count(reads, reg);
     }
 }
 
@@ -1155,13 +1146,11 @@ pub fn for_each_instruction_slot_mut(
 
 /// Renumber every slot `blocks` name: each instruction's
 /// ([`for_each_instruction_slot_mut`]) and every region's.
-pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
-            for region in instruction_regions_mut(instruction) {
-                renumber_block_slots(region, renumber);
-            }
+pub fn renumber_block_slots(block: &mut MirBlock, renumber: &dyn Fn(VarId) -> VarId) {
+    for instruction in &mut block.instrs {
+        for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
+        for region in instruction_regions_mut(instruction) {
+            renumber_block_slots(region, renumber);
         }
     }
 }
@@ -1169,7 +1158,7 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
 /// Renumber every slot `function` names ([`renumber_block_slots`]), its
 /// error slot, and each span origin.
 pub fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {
-    renumber_block_slots(&mut function.blocks, renumber);
+    renumber_block_slots(&mut function.body, renumber);
     if let Some(slot) = &mut function.error_slot {
         *slot = renumber(*slot);
     }
@@ -1234,12 +1223,10 @@ pub fn retire_parameters(function: &mut MirFunction, retired: &BTreeSet<VarId>) 
     retire(function, retired);
 }
 
-/// The slots `blocks` address, the regions they hold included.
-pub fn addressed_slots<'a>(blocks: impl IntoIterator<Item = &'a MirBlock>) -> BTreeSet<VarId> {
+/// The slots `block` addresses, the regions it holds included.
+pub fn addressed_slots(block: &MirBlock) -> BTreeSet<VarId> {
     let mut addressed = BTreeSet::new();
-    for block in blocks {
-        collect_block_slots(block, &mut addressed);
-    }
+    collect_block_slots(block, &mut addressed);
     addressed
 }
 
@@ -1302,7 +1289,7 @@ fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
 fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
     for instruction in &block.instrs {
         addressed.extend(instruction_slots(instruction));
-        for inner in instruction_regions(instruction).into_iter().flatten() {
+        for inner in instruction_regions(instruction) {
             collect_block_slots(inner, addressed);
         }
     }
@@ -1449,9 +1436,6 @@ pub struct MirParamArg {
     /// bindings. `value` still carries the runtime register the VM reads.
     pub expr: Option<mojito_types::param_expr::ParamExpr>,
 }
-
-/// Index of a basic block within a [`MirFunction`]'s `blocks`.
-pub type MirBlockId = usize;
 
 /// A source byte range `(start, end)` — re-exported from [`mojito_common::token`], the
 /// canonical span type stamped by the parser onto every AST node.
@@ -2813,11 +2797,11 @@ pub enum MirInstr {
         label: TryLabel,
         error: Option<VarId>,
         results: Vec<Reg>,
-        body: Vec<MirBlock>,
+        body: Box<MirBlock>,
         handler_args: Vec<Reg>,
-        handler: Option<Vec<MirBlock>>,
+        handler: Option<Box<MirBlock>>,
         else_args: Vec<Reg>,
-        orelse: Option<Vec<MirBlock>>,
+        orelse: Option<Box<MirBlock>>,
     },
     /// `hlcf.if`: run `then` when `cond` holds; otherwise try each `elifs`
     /// arm in order, running its `cond` region (ended by
@@ -2834,10 +2818,10 @@ pub enum MirInstr {
     If {
         results: Vec<Reg>,
         cond: Reg,
-        then: Vec<MirBlock>,
+        then: Box<MirBlock>,
         elifs: Vec<MirElif>,
         else_args: Vec<Reg>,
-        orelse: Vec<MirBlock>,
+        orelse: Box<MirBlock>,
     },
     /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it, its
     /// values defining `results`; [`MirTerm::Continue`] starts the next
@@ -2851,7 +2835,7 @@ pub enum MirInstr {
         operands: Vec<Reg>,
         args: Vec<Reg>,
         results: Vec<Reg>,
-        body: Vec<MirBlock>,
+        body: Box<MirBlock>,
     },
     /// `hlcf.comptime.if`: run the arm of the first of `values` that holds,
     /// else `orelse`. Each value is the `Bool` parameter value upstream's op
@@ -2862,8 +2846,8 @@ pub enum MirInstr {
     ComptimeIf {
         results: Vec<Reg>,
         values: Vec<Const>,
-        arms: Vec<Vec<MirBlock>>,
-        orelse: Vec<MirBlock>,
+        arms: Vec<MirBlock>,
+        orelse: Box<MirBlock>,
     },
     /// `hlcf.comptime.for`: run `body` once per iterator the compile-time
     /// sequence `source` steps through, binding it to the parameter binder
@@ -2886,8 +2870,8 @@ pub enum MirInstr {
         operands: Vec<Reg>,
         args: Vec<Reg>,
         results: Vec<Reg>,
-        body: Vec<MirBlock>,
-        orelse: Vec<MirBlock>,
+        body: Box<MirBlock>,
+        orelse: Box<MirBlock>,
     },
     /// `kgen.param.assert`: a compile-time assertion over its `Bool`
     /// parameter value, the `i1` attribute upstream's op takes, as a
@@ -2916,7 +2900,7 @@ pub enum MirInstr {
         results: Vec<Reg>,
         cases: Vec<MirCase>,
         else_args: Vec<Reg>,
-        orelse: Vec<MirBlock>,
+        orelse: Box<MirBlock>,
     },
     /// Destroy the owned value in `reg`, upstream's direct `ValueToDestroy`:
     /// drop elaboration's death of an owned register that no instruction
@@ -3613,7 +3597,7 @@ pub struct MirCaptureAccess {
 /// How a region's one block hands off control: a return, the end of a
 /// `try` part, or one of upstream's `hlcf` region terminators. Values are
 /// registers.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum MirTerm {
     Return(Option<Reg>),
     /// `lit.try.yield`: a `try` part completed (see
@@ -3682,6 +3666,7 @@ pub enum MirTerm {
     /// both end in one outside every `try` body.
     ErrorReturn,
     /// `hlcf.unreachable`: control never reaches here.
+    #[default]
     Unreachable,
 }
 
@@ -3694,9 +3679,9 @@ pub enum MirTerm {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirElif {
     pub cond_args: Vec<Reg>,
-    pub cond: Vec<MirBlock>,
+    pub cond: MirBlock,
     pub then_args: Vec<Reg>,
-    pub then: Vec<MirBlock>,
+    pub then: MirBlock,
 }
 
 /// One case region of a [`MirInstr::Match`].
@@ -3706,7 +3691,7 @@ pub struct MirElif {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirCase {
     pub args: Vec<Reg>,
-    pub body: Vec<MirBlock>,
+    pub body: MirBlock,
 }
 
 /// The label of a [`MirInstr::Loop`]: upstream's string attribute, spelled
@@ -3738,7 +3723,9 @@ impl LoopLabel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TryLabel(pub u32);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// A region's one block, upstream's `SizedRegion<1>`: a function body and
+/// every region of a region op hold exactly one.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MirBlock {
     pub instrs: Vec<MirInstr>,
     pub term: MirTerm,
@@ -3746,7 +3733,7 @@ pub struct MirBlock {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MirFunction {
-    pub blocks: Vec<MirBlock>,
+    pub body: MirBlock,
     pub n_regs: u32,
     /// Number of variable slots (the interner size). A frame allocates this many
     /// var cells; `UseVar`/`DefVar` index into them.
@@ -3892,27 +3879,24 @@ impl MirFunction {
     /// The instructions of this body at any depth: a region op counts once,
     /// and its regions' instructions with it. Terminators are not counted.
     pub fn instruction_count(&self) -> usize {
-        region_counts(&self.blocks).0
+        region_counts(&self.body).0
     }
 
     /// The blocks of this body at any depth: its own, and every region's.
     pub fn block_count(&self) -> usize {
-        region_counts(&self.blocks).1
+        region_counts(&self.body).1
     }
 }
 
-/// The instructions and the blocks of `blocks` at any depth.
-fn region_counts(blocks: &[MirBlock]) -> (usize, usize) {
-    blocks
+/// The instructions and the blocks of `block` at any depth.
+fn region_counts(block: &MirBlock) -> (usize, usize) {
+    block
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .flat_map(instruction_regions)
-        .map(|region| region_counts(region))
+        .map(region_counts)
         .fold(
-            (
-                blocks.iter().map(|block| block.instrs.len()).sum(),
-                blocks.len(),
-            ),
+            (block.instrs.len(), 1),
             |(instructions, blocks), (held_instructions, held_blocks)| {
                 (instructions + held_instructions, blocks + held_blocks)
             },
@@ -4031,49 +4015,47 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
 /// `blocks`, which sit inside the loops labelled `nested` (innermost last)
 /// between them and the loop labelled `label`.
 fn exits_in(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     label: Option<LoopLabel>,
     resume: bool,
     nested: &mut Vec<Option<LoopLabel>>,
     site: BreakSite,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let inner = match instruction {
-                MirInstr::Loop { label, .. } => Some(*label),
-                _ => None,
-            };
-            let site = BreakSite {
-                in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
-            };
-            nested.extend(inner);
-            for region in instruction_regions_mut(instruction) {
-                exits_in(region, label, resume, nested, site, visit);
-            }
-            if inner.is_some() {
-                nested.pop();
-            }
-        }
-        let exit = match &mut block.term {
-            MirTerm::Break {
-                label: named,
-                values,
-            } if !resume => Some((named, values)),
-            MirTerm::Continue {
-                label: named,
-                values,
-            } if resume => Some((named, values)),
+    for instruction in &mut block.instrs {
+        let inner = match instruction {
+            MirInstr::Loop { label, .. } => Some(*label),
             _ => None,
         };
-        if let Some((named, values)) = exit
-            && match named {
-                None => nested.is_empty(),
-                Some(_) => !nested.contains(named) && *named == label,
-            }
-        {
-            visit(values, site);
+        let site = BreakSite {
+            in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
+        };
+        nested.extend(inner);
+        for region in instruction_regions_mut(instruction) {
+            exits_in(region, label, resume, nested, site, visit);
         }
+        if inner.is_some() {
+            nested.pop();
+        }
+    }
+    let exit = match &mut block.term {
+        MirTerm::Break {
+            label: named,
+            values,
+        } if !resume => Some((named, values)),
+        MirTerm::Continue {
+            label: named,
+            values,
+        } if resume => Some((named, values)),
+        _ => None,
+    };
+    if let Some((named, values)) = exit
+        && match named {
+            None => nested.is_empty(),
+            Some(_) => !nested.contains(named) && *named == label,
+        }
+    {
+        visit(values, site);
     }
 }
 
@@ -4182,30 +4164,28 @@ fn region_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
 /// [`match_nexts_mut`] (or, unless `resume`, [`match_completes_mut`]) over
 /// `blocks`, which sit at `site` in the case.
 fn case_exits_in(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     resume: bool,
     site: BreakSite,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            let site = BreakSite {
-                in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
-            };
-            match instruction {
-                MirInstr::Match { orelse, .. } => case_exits_in(orelse, resume, site, visit),
-                _ => {
-                    for region in instruction_regions_mut(instruction) {
-                        case_exits_in(region, resume, site, visit);
-                    }
+    for instruction in &mut block.instrs {
+        let site = BreakSite {
+            in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
+        };
+        match instruction {
+            MirInstr::Match { orelse, .. } => case_exits_in(orelse, resume, site, visit),
+            _ => {
+                for region in instruction_regions_mut(instruction) {
+                    case_exits_in(region, resume, site, visit);
                 }
             }
         }
-        match &mut block.term {
-            MirTerm::MatchNext(values) if resume => visit(values, site),
-            MirTerm::MatchComplete(values) if !resume => visit(values, site),
-            _ => {}
-        }
+    }
+    match &mut block.term {
+        MirTerm::MatchNext(values) if resume => visit(values, site),
+        MirTerm::MatchComplete(values) if !resume => visit(values, site),
+        _ => {}
     }
 }
 
@@ -4213,28 +4193,26 @@ fn case_exits_in(
 /// [`comptime_for_continues_mut`]) over `blocks`, which sit at `site` in
 /// the body; a nested `comptime for` captures its own.
 fn comptime_exits_in(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     resume: bool,
     site: BreakSite,
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if matches!(instruction, MirInstr::ComptimeFor { .. }) {
-                continue;
-            }
-            let site = BreakSite {
-                in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
-            };
-            for region in instruction_regions_mut(instruction) {
-                comptime_exits_in(region, resume, site, visit);
-            }
+    for instruction in &mut block.instrs {
+        if matches!(instruction, MirInstr::ComptimeFor { .. }) {
+            continue;
         }
-        match &mut block.term {
-            MirTerm::ComptimeContinue(values) if resume => visit(values, site),
-            MirTerm::ComptimeBreak(values) if !resume => visit(values, site),
-            _ => {}
+        let site = BreakSite {
+            in_try_part: site.in_try_part || matches!(instruction, MirInstr::Try { .. }),
+        };
+        for region in instruction_regions_mut(instruction) {
+            comptime_exits_in(region, resume, site, visit);
         }
+    }
+    match &mut block.term {
+        MirTerm::ComptimeContinue(values) if resume => visit(values, site),
+        MirTerm::ComptimeBreak(values) if !resume => visit(values, site),
+        _ => {}
     }
 }
 

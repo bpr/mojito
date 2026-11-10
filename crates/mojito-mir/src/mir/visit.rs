@@ -145,21 +145,19 @@ pub fn walk_function_mut<V: MutTypeVisitor + ?Sized>(
     if let Some(ty) = &mut function.error_ty {
         visitor.visit_ty(ty, TySite::Error)?;
     }
-    walk_blocks_mut(visitor, &mut function.blocks)
+    walk_blocks_mut(visitor, &mut function.body)
 }
 
 /// Visit each block's instructions, each followed by its regions. A
 /// terminator names no type or parameter site.
 pub fn walk_blocks_mut<V: MutTypeVisitor + ?Sized>(
     visitor: &mut V,
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
 ) -> Result<(), V::Error> {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            visitor.visit_instruction(instruction)?;
-            for region in instruction_regions_mut(instruction) {
-                walk_blocks_mut(visitor, region)?;
-            }
+    for instruction in &mut block.instrs {
+        visitor.visit_instruction(instruction)?;
+        for region in instruction_regions_mut(instruction) {
+            walk_blocks_mut(visitor, region)?;
         }
     }
     Ok(())
@@ -631,19 +629,19 @@ mod tests {
         let int = || Ty::int();
         let mut place = MirPlace::root(0, Some(int()));
         place.project(Proj::Variant(VariantIndex::Known(0)), Ty::bool());
-        let region = vec![MirBlock {
+        let region = MirBlock {
             instrs: vec![MirInstr::MaterializeLiteral {
                 dest: Reg(5),
                 value: Reg(0),
                 target: mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int, 1),
             }],
             term: MirTerm::TryYield(Vec::new()),
-        }];
+        };
         let mut function = MirFunction {
             param_types: vec![int()],
             ret_ty: Some(int()),
             reg_types: std::iter::once((0, int())).collect(),
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs: vec![
                     MirInstr::Const {
                         dest: Reg(0),
@@ -676,7 +674,7 @@ mod tests {
                         label: TryLabel(0),
                         error: None,
                         results: Vec::new(),
-                        body: region,
+                        body: Box::new(region),
                         handler_args: Vec::new(),
                         handler: None,
                         else_args: Vec::new(),
@@ -685,18 +683,18 @@ mod tests {
                     MirInstr::ComptimeIf {
                         results: Vec::new(),
                         values: vec![Const::Bool(true)],
-                        arms: vec![vec![MirBlock {
-                            instrs: Vec::new(),
-                            term: MirTerm::ComptimeYield(Vec::new()),
-                        }]],
-                        orelse: vec![MirBlock {
+                        arms: vec![MirBlock {
                             instrs: Vec::new(),
                             term: MirTerm::ComptimeYield(Vec::new()),
                         }],
+                        orelse: Box::new(MirBlock {
+                            instrs: Vec::new(),
+                            term: MirTerm::ComptimeYield(Vec::new()),
+                        }),
                     },
                 ],
                 term: MirTerm::Return(None),
-            }],
+            },
             ..MirFunction::default()
         };
         let mut counter = Counter::default();

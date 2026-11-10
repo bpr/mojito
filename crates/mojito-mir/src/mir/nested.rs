@@ -337,8 +337,8 @@ fn follow_moved_contracts(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
 ) {
-    fn follow(blocks: &mut [MirBlock], moved: &HashSet<String>, declarations: &MirDeclarations) {
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+    fn follow(block: &mut MirBlock, moved: &HashSet<String>, declarations: &MirDeclarations) {
+        for instruction in &mut block.instrs {
             if let MirInstr::MethodCall {
                 resolved: Some(callee),
                 param_decls,
@@ -358,7 +358,7 @@ fn follow_moved_contracts(
         return;
     }
     for (_, function) in functions {
-        follow(&mut function.blocks, moved, declarations);
+        follow(&mut function.body, moved, declarations);
     }
 }
 
@@ -1104,7 +1104,7 @@ fn lower_storage_call_witness(
         refined_bound: None,
     });
     if let Some(raises) = &raises {
-        let region = |instrs, term| vec![MirBlock { instrs, term }];
+        let region = |instrs, term| Box::new(MirBlock { instrs, term });
         instrs.push(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
@@ -1158,10 +1158,10 @@ fn lower_storage_call_witness(
     functions.push((
         symbol,
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(returned),
-            }],
+            },
             n_regs: reg_types.len() as u32,
             n_vars: n_params + usize::from(error_slot.is_some()),
             var_names: std::iter::once("self".to_string())
@@ -1641,9 +1641,9 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
         .iter()
         .position(|name| name == result)
         .expect("named result was seeded into the function variables") as VarId;
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     materialize_named_result_exits(&mut blocks, slot, &mut function.n_regs);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 /// Make each `return value` exit of an initializer store the value into
@@ -1657,50 +1657,46 @@ fn initialize_receiver_returns(function: &mut MirFunction) {
         .iter()
         .position(|name| name == "self")
         .expect("an initializer's receiver leads its variables") as VarId;
-    initialize_receiver_exits(&mut function.blocks, receiver);
+    initialize_receiver_exits(&mut function.body, receiver);
 }
 
-fn initialize_receiver_exits(blocks: &mut [MirBlock], receiver: VarId) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if !matches!(instruction, MirInstr::Try { .. }) {
-                for region in instruction_regions_mut(instruction) {
-                    initialize_receiver_exits(region, receiver);
-                }
+fn initialize_receiver_exits(block: &mut MirBlock, receiver: VarId) {
+    for instruction in &mut block.instrs {
+        if !matches!(instruction, MirInstr::Try { .. }) {
+            for region in instruction_regions_mut(instruction) {
+                initialize_receiver_exits(region, receiver);
             }
         }
-        if let MirTerm::Return(Some(value)) = block.term {
-            block.instrs.push(MirInstr::DefVar {
-                var: receiver,
-                src: value,
-                binding_ty: None,
-                in_place: false,
-            });
-            block.term = MirTerm::Return(None);
-        }
+    }
+    if let MirTerm::Return(Some(value)) = block.term {
+        block.instrs.push(MirInstr::DefVar {
+            var: receiver,
+            src: value,
+            binding_ty: None,
+            in_place: false,
+        });
+        block.term = MirTerm::Return(None);
     }
 }
 
-fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: &mut u32) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if !matches!(instruction, MirInstr::Try { .. }) {
-                for region in instruction_regions_mut(instruction) {
-                    materialize_named_result_exits(region, slot, n_regs);
-                }
+fn materialize_named_result_exits(block: &mut MirBlock, slot: VarId, n_regs: &mut u32) {
+    for instruction in &mut block.instrs {
+        if !matches!(instruction, MirInstr::Try { .. }) {
+            for region in instruction_regions_mut(instruction) {
+                materialize_named_result_exits(region, slot, n_regs);
             }
         }
-        if matches!(block.term, MirTerm::Return(None) | MirTerm::TryYield(_)) {
-            let register = Reg(*n_regs);
-            *n_regs += 1;
-            block.instrs.push(MirInstr::UseVar {
-                dest: register,
-                var: slot,
-                mode: UseMode::Move,
-                constructor: None,
-            });
-            block.term = MirTerm::Return(Some(register));
-        }
+    }
+    if matches!(block.term, MirTerm::Return(None) | MirTerm::TryYield(_)) {
+        let register = Reg(*n_regs);
+        *n_regs += 1;
+        block.instrs.push(MirInstr::UseVar {
+            dest: register,
+            var: slot,
+            mode: UseMode::Move,
+            constructor: None,
+        });
+        block.term = MirTerm::Return(Some(register));
     }
 }
 

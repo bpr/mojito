@@ -29,11 +29,11 @@ impl Specializer<'_> {
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
         let mut aliases = HashMap::new();
-        judge_blocks(&mut function.blocks, &function.reg_types, &mut aliases)
+        judge_blocks(&mut function.body, &function.reg_types, &mut aliases)
             .map_err(|mismatch| self.rebind_mismatch(template, &mismatch.0, &mismatch.1))?;
         if !aliases.is_empty() {
             let mut reads = vec![0; function.n_regs as usize];
-            count_register_reads(&mut function.blocks, &mut reads);
+            count_register_reads(&mut function.body, &mut reads);
             for value in aliases.values() {
                 if let Some(count) = reads.get_mut(value.0 as usize) {
                     *count += 1;
@@ -59,7 +59,7 @@ impl Specializer<'_> {
                 })
                 .collect();
             function.reg_types.extend(retyped);
-            rename_blocks(&mut function.blocks, &aliases);
+            rename_blocks(&mut function.body, &aliases);
         }
         Ok(())
     }
@@ -82,33 +82,30 @@ type Mismatch = Box<(Ty, Ty)>;
 /// each value rebind's `dest → value` and removing the instruction or place
 /// step; the first mismatch is returned as its `(input, result)` types.
 fn judge_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
     aliases: &mut HashMap<u32, Reg>,
 ) -> Result<(), Mismatch> {
-    for block in blocks {
-        let mut judged = Vec::with_capacity(block.instrs.len());
-        for mut instruction in std::mem::take(&mut block.instrs) {
-            for region in instruction_regions_mut(&mut instruction) {
-                judge_blocks(region, reg_types, aliases)?;
-            }
-            for place in instruction_places_mut(&mut instruction) {
-                discharge_place(place)?;
-            }
-            if let MirInstr::Rebind { dest, value } = instruction {
-                if let (Some(input), Some(result)) =
-                    (reg_types.get(&value.0), reg_types.get(&dest.0))
-                    && !types_agree(input, result)
-                {
-                    return Err(Box::new((input.clone(), result.clone())));
-                }
-                aliases.insert(dest.0, value);
-                continue;
-            }
-            judged.push(instruction);
+    let mut judged = Vec::with_capacity(block.instrs.len());
+    for mut instruction in std::mem::take(&mut block.instrs) {
+        for region in instruction_regions_mut(&mut instruction) {
+            judge_blocks(region, reg_types, aliases)?;
         }
-        block.instrs = judged;
+        for place in instruction_places_mut(&mut instruction) {
+            discharge_place(place)?;
+        }
+        if let MirInstr::Rebind { dest, value } = instruction {
+            if let (Some(input), Some(result)) = (reg_types.get(&value.0), reg_types.get(&dest.0))
+                && !types_agree(input, result)
+            {
+                return Err(Box::new((input.clone(), result.clone())));
+            }
+            aliases.insert(dest.0, value);
+            continue;
+        }
+        judged.push(instruction);
     }
+    block.instrs = judged;
     Ok(())
 }
 
@@ -132,23 +129,21 @@ fn discharge_place(place: &mut MirPlace) -> Result<(), Mismatch> {
 }
 
 /// Read every use of a judged value rebind's `dest` as its operand.
-fn rename_blocks(blocks: &mut [MirBlock], aliases: &HashMap<u32, Reg>) {
+fn rename_blocks(block: &mut MirBlock, aliases: &HashMap<u32, Reg>) {
     let resolve = |reg: &mut Reg| {
         while let Some(value) = aliases.get(&reg.0) {
             *reg = *value;
         }
     };
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                rename_blocks(region, aliases);
-            }
-            instruction_regs_mut(instruction)
-                .into_iter()
-                .for_each(resolve);
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            rename_blocks(region, aliases);
         }
-        terminator_regs_mut(&mut block.term)
+        instruction_regs_mut(instruction)
             .into_iter()
             .for_each(resolve);
     }
+    terminator_regs_mut(&mut block.term)
+        .into_iter()
+        .for_each(resolve);
 }

@@ -101,15 +101,14 @@ mod tests {
     });
 
     fn double_drops(_: &str, function: &mut MirFunction, _: &MirDeclarations) -> bool {
-        for block in &mut function.blocks {
-            block.instrs = std::mem::take(&mut block.instrs)
-                .into_iter()
-                .flat_map(|instruction| match instruction {
-                    MirInstr::DropVar { .. } => vec![instruction.clone(), instruction],
-                    other => vec![other],
-                })
-                .collect();
-        }
+        let block = &mut function.body;
+        block.instrs = std::mem::take(&mut block.instrs)
+            .into_iter()
+            .flat_map(|instruction| match instruction {
+                MirInstr::DropVar { .. } => vec![instruction.clone(), instruction],
+                other => vec![other],
+            })
+            .collect();
         true
     }
 

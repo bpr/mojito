@@ -608,7 +608,7 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
     let scan = LifetimeScan {
         f,
         context: move_context(f),
-        interior: collect_interior_generations(&f.blocks),
+        interior: collect_interior_generations(&f.body),
     };
     // The entry starts every variable `Owned` — the checker guarantees definite
     // assignment before use, so this never causes a false negative for our
@@ -627,7 +627,7 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
         }
         Ok(())
     };
-    let flow = walk_forward(&scan, entry, &f.blocks, &mut check)?;
+    let flow = walk_forward(&scan, entry, &f.body, &mut check)?;
     // A reference parameter is the caller's storage, so it holds a whole
     // value again on each channel that leaves the function.
     for (state, raising) in [
@@ -676,7 +676,7 @@ pub(super) fn observe_move_states(
         observer(&state.moves, instr);
         Ok(())
     };
-    walk_forward(&scan, entry, &f.blocks, &mut observe).map(|_| ())
+    walk_forward(&scan, entry, &f.body, &mut observe).map(|_| ())
 }
 
 /// The span recorded for a use's register, or an empty span when the
@@ -792,7 +792,7 @@ fn move_context(f: &MirFunction) -> MoveContext {
         call_operands: HashSet::new(),
     };
     let mut parameter_references = HashSet::new();
-    for_each_instr_deep(&f.blocks, &mut |instr| match instr {
+    for_each_instr_deep(&f.body, &mut |instr| match instr {
         MirInstr::Call { args, kwargs, .. } => {
             context.call_operands.extend(
                 args.iter()
@@ -917,7 +917,7 @@ fn partial_move_span(
     path: &[Key],
 ) -> mojito_common::token::SourceSpan {
     let mut reg = None;
-    for_each_instr_deep(&f.blocks, &mut |instr| {
+    for_each_instr_deep(&f.body, &mut |instr| {
         let moved = match instr {
             MirInstr::MovePlace { dest, place } => Some((*dest, place)),
             MirInstr::MethodCall { recv, .. } => {

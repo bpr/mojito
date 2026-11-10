@@ -45,7 +45,7 @@ pub const LOWER_LIT: BodyPass = BodyPass {
 /// erased.
 pub fn lower_lit(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) -> bool {
     let mut erased_markers = HashSet::new();
-    let erased = erase_markers(&mut function.blocks, &mut erased_markers);
+    let erased = erase_markers(&mut function.body, &mut erased_markers);
     function
         .reg_types
         .retain(|reg, _| !erased_markers.contains(reg));
@@ -57,32 +57,26 @@ pub fn lower_lit(_name: &str, function: &mut MirFunction, _declarations: &MirDec
     erased > 0
 }
 
-/// Erase the lifetime-only markers of `blocks` and their regions, adding
+/// Erase the lifetime-only markers of `block` and its regions, adding
 /// each erased marker register to `erased_markers`, and return how many
 /// instructions went.
-fn erase_markers(blocks: &mut [MirBlock], erased_markers: &mut HashSet<u32>) -> usize {
-    blocks
+fn erase_markers(block: &mut MirBlock, erased_markers: &mut HashSet<u32>) -> usize {
+    let before = block.instrs.len();
+    block.instrs.retain(|instruction| match instruction {
+        MirInstr::KeepAlive { .. }
+        | MirInstr::MarkInitialized { .. }
+        | MirInstr::MarkDestroyed { .. } => false,
+        MirInstr::EstablishLoans { marker, .. } | MirInstr::InvalidateInteriors { marker, .. } => {
+            erased_markers.insert(marker.0);
+            false
+        }
+        _ => true,
+    });
+    let nested: usize = block
+        .instrs
         .iter_mut()
-        .map(|block| {
-            let before = block.instrs.len();
-            block.instrs.retain(|instruction| match instruction {
-                MirInstr::KeepAlive { .. }
-                | MirInstr::MarkInitialized { .. }
-                | MirInstr::MarkDestroyed { .. } => false,
-                MirInstr::EstablishLoans { marker, .. }
-                | MirInstr::InvalidateInteriors { marker, .. } => {
-                    erased_markers.insert(marker.0);
-                    false
-                }
-                _ => true,
-            });
-            let nested: usize = block
-                .instrs
-                .iter_mut()
-                .flat_map(instruction_regions_mut)
-                .map(|region| erase_markers(region, erased_markers))
-                .sum();
-            before - block.instrs.len() + nested
-        })
-        .sum()
+        .flat_map(instruction_regions_mut)
+        .map(|region| erase_markers(region, erased_markers))
+        .sum();
+    before - block.instrs.len() + nested
 }

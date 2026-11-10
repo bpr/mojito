@@ -163,36 +163,34 @@ pub fn collect_aliased_load_regs(
     mir_declarations: &MirDeclarations,
 ) -> HashSet<u32> {
     fn visit(
-        blocks: &[MirBlock],
+        block: &MirBlock,
         declarations: &HashMap<String, MirFunctionDeclaration>,
         owning: &mut HashSet<u32>,
     ) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                let borrowed = borrowed_operands(instruction, declarations);
-                let mut operands = Vec::new();
-                mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
-                owning.extend(
-                    operands
-                        .iter()
-                        .map(|reg| reg.0)
-                        .filter(|reg| !borrowed.contains(reg)),
-                );
-                for region in mojito_mir::mir::instruction_regions(instruction) {
-                    visit(region, declarations, owning);
-                }
-            }
+        for instruction in &block.instrs {
+            let borrowed = borrowed_operands(instruction, declarations);
+            let mut operands = Vec::new();
+            mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
             owning.extend(
-                mojito_mir::mir::terminator_regs(&block.term)
+                operands
                     .iter()
-                    .map(|reg| reg.0),
+                    .map(|reg| reg.0)
+                    .filter(|reg| !borrowed.contains(reg)),
             );
+            for region in mojito_mir::mir::instruction_regions(instruction) {
+                visit(region, declarations, owning);
+            }
         }
+        owning.extend(
+            mojito_mir::mir::terminator_regs(&block.term)
+                .iter()
+                .map(|reg| reg.0),
+        );
     }
 
     let mut owning = HashSet::new();
-    visit(&function.blocks, declarations, &mut owning);
-    collect_loaded_places(&function.blocks)
+    visit(&function.body, declarations, &mut owning);
+    collect_loaded_places(&function.body)
         .into_keys()
         .filter(|reg| !owning.contains(reg))
         .filter(|reg| {
@@ -205,16 +203,14 @@ pub fn collect_aliased_load_regs(
         .collect()
 }
 
-pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
-    pub(super) fn visit(blocks: &[MirBlock], output: &mut HashMap<u32, MirPlace>) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                if let MirInstr::LoadPlace { dest, place } = instruction {
-                    output.insert(dest.0, place.clone());
-                }
-                for region in mojito_mir::mir::instruction_regions(instruction) {
-                    visit(region, output);
-                }
+pub fn collect_loaded_places(blocks: &MirBlock) -> HashMap<u32, MirPlace> {
+    pub(super) fn visit(block: &MirBlock, output: &mut HashMap<u32, MirPlace>) {
+        for instruction in &block.instrs {
+            if let MirInstr::LoadPlace { dest, place } = instruction {
+                output.insert(dest.0, place.clone());
+            }
+            for region in mojito_mir::mir::instruction_regions(instruction) {
+                visit(region, output);
             }
         }
     }

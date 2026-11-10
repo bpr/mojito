@@ -881,25 +881,23 @@ fn simd_instance<'s>(
 /// the held field is the struct's whole storage, as upstream's
 /// `LowerKGENToLLVM` makes a one-element struct's `struct_gep` the
 /// struct's own address.
-fn hold_register_fields(structs: &HashMap<String, StructDef>, blocks: &mut [MirBlock]) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for place in mojito_mir::mir::verify::instruction_places_mut(instruction) {
-                for position in 0..place.proj.len() {
-                    let base = match position {
-                        0 => mojito_mir::mir::verify::place_base_ty(place),
-                        _ => place.projection_tys.get(position - 1),
-                    };
-                    if matches!(place.proj[position], Proj::Field(_))
-                        && base.is_some_and(|base| field_is_whole(structs, peel_references(base)))
-                    {
-                        place.proj[position] = Proj::Rebind;
-                    }
+fn hold_register_fields(structs: &HashMap<String, StructDef>, block: &mut MirBlock) {
+    for instruction in &mut block.instrs {
+        for place in mojito_mir::mir::verify::instruction_places_mut(instruction) {
+            for position in 0..place.proj.len() {
+                let base = match position {
+                    0 => mojito_mir::mir::verify::place_base_ty(place),
+                    _ => place.projection_tys.get(position - 1),
+                };
+                if matches!(place.proj[position], Proj::Field(_))
+                    && base.is_some_and(|base| field_is_whole(structs, peel_references(base)))
+                {
+                    place.proj[position] = Proj::Rebind;
                 }
             }
-            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                hold_register_fields(structs, region);
-            }
+        }
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            hold_register_fields(structs, region);
         }
     }
 }
@@ -911,7 +909,7 @@ impl Prog {
             .iter()
             .map(|(_, function)| {
                 let mut errors = HashSet::new();
-                edge_errors(&function.blocks, &mut errors);
+                edge_errors(&function.body, &mut errors);
                 errors
             })
             .collect();
@@ -919,7 +917,7 @@ impl Prog {
             .functions
             .iter()
             .map(|(_, function)| {
-                mojito_mir::mir::nested_instructions(&function.blocks)
+                mojito_mir::mir::nested_instructions(&function.body)
                     .into_iter()
                     .filter_map(|instruction| match instruction {
                         MirInstr::Try { error, .. } => *error,
@@ -931,7 +929,7 @@ impl Prog {
         let structs = build_structs(&mir.declarations);
         let mut mir = mir;
         for (_, function) in &mut mir.functions {
-            hold_register_fields(&structs, &mut function.blocks);
+            hold_register_fields(&structs, &mut function.body);
         }
         Self {
             structs,
@@ -1548,15 +1546,13 @@ struct ReturnContinuation {
 
 /// Add to `errors` the error register of every raise edge in `blocks`, at
 /// any depth.
-fn edge_errors(blocks: &[MirBlock], errors: &mut HashSet<u32>) {
-    for block in blocks {
-        for instruction in &block.instrs {
-            if let Some(raises) = instruction.raise_edge() {
-                errors.insert(raises.error.0);
-            }
-            for region in mojito_mir::mir::instruction_regions(instruction) {
-                edge_errors(region, errors);
-            }
+fn edge_errors(block: &MirBlock, errors: &mut HashSet<u32>) {
+    for instruction in &block.instrs {
+        if let Some(raises) = instruction.raise_edge() {
+            errors.insert(raises.error.0);
+        }
+        for region in mojito_mir::mir::instruction_regions(instruction) {
+            edge_errors(region, errors);
         }
     }
 }
@@ -1903,10 +1899,10 @@ mod held_struct_tests {
             (0..fields as u32).map(|at| (at, Ty::int())).collect();
         reg_types.insert(built.0, struct_ty());
         let make = MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(Some(built)),
-            }],
+            },
             n_regs: built.0 + 1,
             ret_ty: Some(struct_ty()),
             reg_types,

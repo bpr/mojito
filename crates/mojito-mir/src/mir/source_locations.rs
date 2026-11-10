@@ -67,42 +67,40 @@ pub fn resolve_source_locations(
     function: &mut MirFunction,
     locate: &dyn Fn(&SourceSpan) -> Option<SourcePoint>,
 ) -> bool {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     let changed = resolve_blocks(&mut blocks, function, locate);
-    function.blocks = blocks;
+    function.body = blocks;
     changed
 }
 
 fn resolve_blocks(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     function: &mut MirFunction,
     locate: &dyn Fn(&SourceSpan) -> Option<SourcePoint>,
 ) -> bool {
     let mut changed = false;
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            for region in instruction_regions_mut(&mut block.instrs[index]) {
-                changed |= resolve_blocks(region, function, locate);
-            }
-            let MirInstr::SourceLoc {
-                dest,
-                inline_count,
-                location,
-            } = &block.instrs[index]
-            else {
-                index += 1;
-                continue;
-            };
-            let dest = *dest;
-            let site = resolved_site(function, dest, inline_count, location);
-            let point = site.and_then(locate).unwrap_or_else(SourcePoint::unknown);
-            let replacement = constant_tuple(function, dest, &point);
-            let length = replacement.len();
-            block.instrs.splice(index..=index, replacement);
-            index += length;
-            changed = true;
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            changed |= resolve_blocks(region, function, locate);
         }
+        let MirInstr::SourceLoc {
+            dest,
+            inline_count,
+            location,
+        } = &block.instrs[index]
+        else {
+            index += 1;
+            continue;
+        };
+        let dest = *dest;
+        let site = resolved_site(function, dest, inline_count, location);
+        let point = site.and_then(locate).unwrap_or_else(SourcePoint::unknown);
+        let replacement = constant_tuple(function, dest, &point);
+        let length = replacement.len();
+        block.instrs.splice(index..=index, replacement);
+        index += length;
+        changed = true;
     }
     changed
 }

@@ -69,7 +69,7 @@ impl<'t> SymbolTable<'t> {
     /// registers.
     pub fn function_uses(&mut self, function: &MirFunction) -> Vec<&'t str> {
         let MirFunction {
-            blocks,
+            body: blocks,
             param_types,
             var_tys,
             ret_ty,
@@ -110,17 +110,17 @@ impl<'t> SymbolTable<'t> {
         uses
     }
 
-    /// The functions the static lists of `blocks`, their regions included,
+    /// The functions the static lists of `block`, their regions included,
     /// hold: a list of a function type (a pack of callables' values) holds
     /// each function's symbol, upstream's `#kgen.symbol.constant` element,
     /// which a closed compile-time value spells as its name.
     fn function_list_uses(
         &self,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         reg_types: &HashMap<u32, Ty>,
         uses: &mut Vec<&'t str>,
     ) {
-        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for instruction in &block.instrs {
             if let MirInstr::ParamListAddress {
                 dest,
                 values: Const::Value(CtValue::Tuple(items)),
@@ -210,97 +210,95 @@ impl<'t> SymbolTable<'t> {
 /// type, a compile-time value, or a declaration is not visited, so a
 /// client that must reach every use of a symbol counts the references this
 /// reaches against [`SymbolTable::function_uses`].
-pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut String)) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::Call { func, .. } => replace(&mut func.0),
-                MirInstr::MakeClosure { function, .. } => replace(function),
-                MirInstr::Const {
-                    k: Const::Function(function) | Const::FunctionInstance { function, .. },
-                    ..
-                }
-                | MirInstr::ParamListAddress {
-                    values: Const::Function(function),
-                    ..
-                } => replace(function),
-                MirInstr::BinOp {
-                    resolved: Some(target),
-                    ..
-                }
-                | MirInstr::CallIndirect {
-                    resolved: Some(target),
-                    ..
-                } => replace(target),
-                MirInstr::MethodCall {
-                    resolved,
-                    result_adapter,
-                    ..
-                } => {
-                    resolved.iter_mut().for_each(&mut *replace);
-                    result_adapter
-                        .iter_mut()
-                        .filter_map(|adapter| adapter.constructor.as_mut())
-                        .for_each(&mut *replace);
-                }
-                MirInstr::Index {
-                    call: Some(call), ..
-                }
-                | MirInstr::MultiIndex {
-                    call: Some(call), ..
-                }
-                | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
-                MirInstr::DropVar {
-                    destructor: Some(target),
-                    ..
-                }
-                | MirInstr::Drop {
-                    destructor: Some(target),
-                    ..
-                }
-                | MirInstr::DropPlace {
-                    destructor: Some(target),
-                    ..
-                }
-                | MirInstr::UseVar {
-                    constructor: Some(target),
-                    ..
-                }
-                | MirInstr::CopyValue {
-                    constructor: Some(target),
-                    ..
-                }
-                | MirInstr::MakeVariant {
-                    constructor: Some(target),
-                    ..
-                }
-                | MirInstr::VariantReplace {
-                    constructor: Some(target),
-                    ..
-                }
-                | MirInstr::PointerStorageDestroy {
-                    destructor: Some(target),
-                    ..
-                }
-                | MirInstr::UninitStorageDestroy {
-                    destructor: Some(target),
-                    ..
-                } => replace(target),
-                MirInstr::VariantSet {
-                    constructor,
-                    destructors,
-                    ..
-                } => {
-                    constructor
-                        .iter_mut()
-                        .chain(destructors.iter_mut().flatten())
-                        .for_each(&mut *replace);
-                }
-                _ => {}
+pub fn replace_symbol_uses(block: &mut MirBlock, replace: &mut dyn FnMut(&mut String)) {
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::Call { func, .. } => replace(&mut func.0),
+            MirInstr::MakeClosure { function, .. } => replace(function),
+            MirInstr::Const {
+                k: Const::Function(function) | Const::FunctionInstance { function, .. },
+                ..
             }
-            for region in instruction_regions_mut(instruction) {
-                replace_symbol_uses(region, replace);
+            | MirInstr::ParamListAddress {
+                values: Const::Function(function),
+                ..
+            } => replace(function),
+            MirInstr::BinOp {
+                resolved: Some(target),
+                ..
             }
+            | MirInstr::CallIndirect {
+                resolved: Some(target),
+                ..
+            } => replace(target),
+            MirInstr::MethodCall {
+                resolved,
+                result_adapter,
+                ..
+            } => {
+                resolved.iter_mut().for_each(&mut *replace);
+                result_adapter
+                    .iter_mut()
+                    .filter_map(|adapter| adapter.constructor.as_mut())
+                    .for_each(&mut *replace);
+            }
+            MirInstr::Index {
+                call: Some(call), ..
+            }
+            | MirInstr::MultiIndex {
+                call: Some(call), ..
+            }
+            | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
+            MirInstr::DropVar {
+                destructor: Some(target),
+                ..
+            }
+            | MirInstr::Drop {
+                destructor: Some(target),
+                ..
+            }
+            | MirInstr::DropPlace {
+                destructor: Some(target),
+                ..
+            }
+            | MirInstr::UseVar {
+                constructor: Some(target),
+                ..
+            }
+            | MirInstr::CopyValue {
+                constructor: Some(target),
+                ..
+            }
+            | MirInstr::MakeVariant {
+                constructor: Some(target),
+                ..
+            }
+            | MirInstr::VariantReplace {
+                constructor: Some(target),
+                ..
+            }
+            | MirInstr::PointerStorageDestroy {
+                destructor: Some(target),
+                ..
+            }
+            | MirInstr::UninitStorageDestroy {
+                destructor: Some(target),
+                ..
+            } => replace(target),
+            MirInstr::VariantSet {
+                constructor,
+                destructors,
+                ..
+            } => {
+                constructor
+                    .iter_mut()
+                    .chain(destructors.iter_mut().flatten())
+                    .for_each(&mut *replace);
+            }
+            _ => {}
+        }
+        for region in instruction_regions_mut(instruction) {
+            replace_symbol_uses(region, replace);
         }
     }
 }
@@ -635,10 +633,10 @@ mod tests {
 
     fn body(instrs: Vec<MirInstr>) -> MirFunction {
         MirFunction {
-            blocks: vec![MirBlock {
+            body: MirBlock {
                 instrs,
                 term: MirTerm::Return(None),
-            }],
+            },
             ..MirFunction::default()
         }
     }
@@ -713,18 +711,18 @@ mod tests {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body: vec![MirBlock {
+            body: Box::new(MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::TryYield(Vec::new()),
-            }],
+            }),
             handler_args: Vec::new(),
-            handler: Some(vec![MirBlock {
+            handler: Some(Box::new(MirBlock {
                 instrs: vec![MirInstr::ConstructType {
                     dest: Reg(0),
                     ty: Ty::new(TyKind::Struct("Box".to_string(), Vec::new())),
                 }],
                 term: MirTerm::TryYield(Vec::new()),
-            }]),
+            })),
             else_args: Vec::new(),
             orelse: None,
         }]);

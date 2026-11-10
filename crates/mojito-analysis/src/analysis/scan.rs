@@ -286,43 +286,34 @@ pub(super) fn handed_values(term: &MirTerm) -> &[Reg] {
 
 /// Visit every instruction under `blocks`, recursing into every region op's
 /// regions.
-pub(super) fn for_each_instr_deep(blocks: &[MirBlock], visit: &mut impl FnMut(&MirInstr)) {
-    for block in blocks {
-        for instr in &block.instrs {
-            visit(instr);
-            for region in instruction_regions(instr) {
-                for_each_instr_deep(region, visit);
-            }
+pub(super) fn for_each_instr_deep(block: &MirBlock, visit: &mut impl FnMut(&MirInstr)) {
+    for instr in &block.instrs {
+        visit(instr);
+        for region in instruction_regions(instr) {
+            for_each_instr_deep(region, visit);
         }
     }
 }
 
 /// Visit every instruction under `blocks` outside any `try`: a `try` is
 /// visited, its regions are not.
-pub(super) fn for_each_instr_outside_try(blocks: &[MirBlock], visit: &mut impl FnMut(&MirInstr)) {
-    for block in blocks {
-        for instr in &block.instrs {
-            visit(instr);
-            if !matches!(instr, MirInstr::Try { .. }) {
-                for region in instruction_regions(instr) {
-                    for_each_instr_outside_try(region, visit);
-                }
+pub(super) fn for_each_instr_outside_try(block: &MirBlock, visit: &mut impl FnMut(&MirInstr)) {
+    for instr in &block.instrs {
+        visit(instr);
+        if !matches!(instr, MirInstr::Try { .. }) {
+            for region in instruction_regions(instr) {
+                for_each_instr_outside_try(region, visit);
             }
         }
     }
 }
 
 /// Mutable counterpart of [`for_each_instr_deep`].
-pub(super) fn for_each_instr_deep_mut(
-    blocks: &mut [MirBlock],
-    visit: &mut impl FnMut(&mut MirInstr),
-) {
-    for block in blocks {
-        for instr in &mut block.instrs {
-            visit(instr);
-            for region in instruction_regions_mut(instr) {
-                for_each_instr_deep_mut(region, visit);
-            }
+pub(super) fn for_each_instr_deep_mut(block: &mut MirBlock, visit: &mut impl FnMut(&mut MirInstr)) {
+    for instr in &mut block.instrs {
+        visit(instr);
+        for region in instruction_regions_mut(instr) {
+            for_each_instr_deep_mut(region, visit);
         }
     }
 }

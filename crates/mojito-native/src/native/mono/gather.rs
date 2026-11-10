@@ -33,11 +33,11 @@ impl Specializer<'_> {
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
         if self.array_element_failure.is_none()
-            && let Err(message) = self.verify_array_elements(&function.blocks, &function.reg_types)
+            && let Err(message) = self.verify_array_elements(&function.body, &function.reg_types)
         {
             self.array_element_failure = Some(self.instantiation_failure(template, message));
         }
-        close_blocks(&mut function.blocks, &function.reg_types)
+        close_blocks(&mut function.body, &function.reg_types)
             .map_err(|message| self.instantiation_failure(template, message))
     }
 
@@ -56,94 +56,91 @@ impl Specializer<'_> {
     /// elements' code.
     fn verify_array_elements(
         &self,
-        blocks: &[MirBlock],
+        block: &MirBlock,
         reg_types: &HashMap<u32, Ty>,
     ) -> Result<(), String> {
-        for block in blocks {
-            for instruction in &block.instrs {
-                let site = match instruction {
-                    MirInstr::ArrayRepeat { dest, .. } => Some(("repeat", *dest)),
-                    MirInstr::ArrayGet { array, .. } => Some(("get", *array)),
-                    MirInstr::ArrayReplace { array, .. } => Some(("replace", *array)),
-                    MirInstr::ArrayGep { array, .. } => Some(("gep", *array)),
-                    _ => None,
-                };
-                let element = site.and_then(|(op, register)| {
-                    let mut ty = reg_types.get(&register.0)?;
-                    if let TyKind::KgenPointer(pointee) = ty.kind() {
-                        ty = pointee;
-                    }
-                    match ty.kind() {
-                        TyKind::PopArray { element, .. } => Some((op, element)),
-                        _ => None,
-                    }
-                });
-                if let Some((op, element)) = element {
-                    let trivial = [
-                        TrivialLifecycle::Copyable,
-                        TrivialLifecycle::Movable,
-                        TrivialLifecycle::Deinitable,
-                    ]
-                    .into_iter()
-                    .all(|kind| self.trivially(kind, element, &mut HashSet::new()) != Some(false));
-                    if !trivial {
-                        return Err(format!(
-                            "'pop.array.{op}' over '{element}' is outside the subset: Mojito's \
-                             '!pop.array' holds trivially register-passable elements"
-                        ));
-                    }
+        for instruction in &block.instrs {
+            let site = match instruction {
+                MirInstr::ArrayRepeat { dest, .. } => Some(("repeat", *dest)),
+                MirInstr::ArrayGet { array, .. } => Some(("get", *array)),
+                MirInstr::ArrayReplace { array, .. } => Some(("replace", *array)),
+                MirInstr::ArrayGep { array, .. } => Some(("gep", *array)),
+                _ => None,
+            };
+            let element = site.and_then(|(op, register)| {
+                let mut ty = reg_types.get(&register.0)?;
+                if let TyKind::KgenPointer(pointee) = ty.kind() {
+                    ty = pointee;
                 }
-                for region in mojito_mir::mir::instruction_regions(instruction) {
-                    self.verify_array_elements(region, reg_types)?;
+                match ty.kind() {
+                    TyKind::PopArray { element, .. } => Some((op, element)),
+                    _ => None,
+                }
+            });
+            if let Some((op, element)) = element {
+                let trivial = [
+                    TrivialLifecycle::Copyable,
+                    TrivialLifecycle::Movable,
+                    TrivialLifecycle::Deinitable,
+                ]
+                .into_iter()
+                .all(|kind| self.trivially(kind, element, &mut HashSet::new()) != Some(false));
+                if !trivial {
+                    return Err(format!(
+                        "'pop.array.{op}' over '{element}' is outside the subset: Mojito's \
+                         '!pop.array' holds trivially register-passable elements"
+                    ));
                 }
             }
+            for region in mojito_mir::mir::instruction_regions(instruction) {
+                self.verify_array_elements(region, reg_types)?;
+            }
         }
+
         Ok(())
     }
 }
 
 /// Close the masks of one block list and the regions below it; the first
 /// constraint a gather breaks is returned.
-fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result<(), String> {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            match instruction {
-                MirInstr::SimdShuffle {
-                    dest,
-                    value,
-                    other,
-                    mask: mask @ LaneMask::Attribute(_),
-                } => {
-                    let LaneMask::Attribute(attribute) = &*mask else {
-                        continue;
-                    };
-                    let Some(constant) = attribute.as_constant() else {
-                        continue;
-                    };
-                    let lanes = LaneMask::attribute_lanes(constant).ok_or_else(|| {
-                        "'pop.simd.shuffle' op expected mask to be a list of indices".to_string()
-                    })?;
-                    if other.is_some() {
-                        verify_shuffle_op(reg_types, *dest, *value, &lanes)?;
-                    }
-                    *mask = LaneMask::Known(lanes);
+fn close_blocks(block: &mut MirBlock, reg_types: &HashMap<u32, Ty>) -> Result<(), String> {
+    for instruction in &mut block.instrs {
+        match instruction {
+            MirInstr::SimdShuffle {
+                dest,
+                value,
+                other,
+                mask: mask @ LaneMask::Attribute(_),
+            } => {
+                let LaneMask::Attribute(attribute) = &*mask else {
+                    continue;
+                };
+                let Some(constant) = attribute.as_constant() else {
+                    continue;
+                };
+                let lanes = LaneMask::attribute_lanes(constant).ok_or_else(|| {
+                    "'pop.simd.shuffle' op expected mask to be a list of indices".to_string()
+                })?;
+                if other.is_some() {
+                    verify_shuffle_op(reg_types, *dest, *value, &lanes)?;
                 }
-                MirInstr::SimdShuffle {
-                    dest,
-                    value,
-                    other: Some(_),
-                    mask: LaneMask::Known(lanes),
-                } => verify_shuffle_op(reg_types, *dest, *value, lanes)?,
-                MirInstr::ArrayGet { array, index, .. } => {
-                    verify_array_index("get", reg_types, *array, index)?;
-                }
-                MirInstr::ArrayReplace { array, index, .. } => {
-                    verify_array_index("replace", reg_types, *array, index)?;
-                }
-                instruction => {
-                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                        close_blocks(region, reg_types)?;
-                    }
+                *mask = LaneMask::Known(lanes);
+            }
+            MirInstr::SimdShuffle {
+                dest,
+                value,
+                other: Some(_),
+                mask: LaneMask::Known(lanes),
+            } => verify_shuffle_op(reg_types, *dest, *value, lanes)?,
+            MirInstr::ArrayGet { array, index, .. } => {
+                verify_array_index("get", reg_types, *array, index)?;
+            }
+            MirInstr::ArrayReplace { array, index, .. } => {
+                verify_array_index("replace", reg_types, *array, index)?;
+            }
+            instruction => {
+                for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                    close_blocks(region, reg_types)?;
                 }
             }
         }

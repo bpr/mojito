@@ -70,7 +70,7 @@ use std::collections::{HashMap, HashSet};
 /// when a read parameter takes it.
 pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirDeclarations) {
     let mut uses = HashMap::new();
-    count_operand_uses(&function.blocks, &mut uses);
+    count_operand_uses(&function.body, &mut uses);
     let forwarded = forwarded_registers(function, declarations);
     let elision = Elision {
         var_names: &function.var_names,
@@ -78,17 +78,17 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
         reg_types: &function.reg_types,
         declarations,
         uses,
-        mentions: count_slot_mentions(&function.blocks),
+        mentions: count_slot_mentions(&function.body),
         forwarded,
     };
     let mut lent = Vec::new();
-    rewrite_blocks(&mut function.blocks, &elision, &mut lent);
+    rewrite_blocks(&mut function.body, &elision, &mut lent);
     for loan in &lent {
         if let Some((_, origin)) = function.spans.0.get_mut(&loan.load.0) {
             *origin = Some(loan.source);
         }
     }
-    rename_lent_slots(&mut function.blocks, &lent);
+    rename_lent_slots(&mut function.body, &lent);
 }
 
 /// What the rewrite reads of the whole function.
@@ -131,37 +131,35 @@ struct Loan {
 fn forwarded_registers(function: &MirFunction, declarations: &MirDeclarations) -> HashSet<u32> {
     let ends = RegisterEnds::new(function, declarations);
     let mut forwarded = Vec::new();
-    for_each_instr_deep(&function.blocks, &mut |instruction| {
+    for_each_instr_deep(&function.body, &mut |instruction| {
         ends.forwarded(instruction, &mut forwarded);
     });
     forwarded.into_iter().map(|reg| reg.0).collect()
 }
 
-fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
+fn count_operand_uses(block: &MirBlock, uses: &mut HashMap<u32, usize>) {
     let mut operands = Vec::new();
-    for block in blocks {
-        for instruction in &block.instrs {
-            operands.clear();
-            instruction_operand_regs(instruction, &mut operands);
-            for register in &operands {
-                *uses.entry(register.0).or_default() += 1;
-            }
-            for region in instruction_regions(instruction) {
-                count_operand_uses(region, uses);
-            }
-        }
-        for register in terminator_regs(&block.term) {
+    for instruction in &block.instrs {
+        operands.clear();
+        instruction_operand_regs(instruction, &mut operands);
+        for register in &operands {
             *uses.entry(register.0).or_default() += 1;
         }
+        for region in instruction_regions(instruction) {
+            count_operand_uses(region, uses);
+        }
+    }
+    for register in terminator_regs(&block.term) {
+        *uses.entry(register.0).or_default() += 1;
     }
 }
 
 /// How often each slot is named outside its `DropVar`s:
 /// a call-result slot that only its binding and its one load name is
 /// one a lent source can stand in for.
-fn count_slot_mentions(blocks: &[MirBlock]) -> HashMap<VarId, usize> {
+fn count_slot_mentions(block: &MirBlock) -> HashMap<VarId, usize> {
     let mut mentions = HashMap::new();
-    for_each_instr_deep(blocks, &mut |instruction| {
+    for_each_instr_deep(block, &mut |instruction| {
         // A `try` reports its regions' uses as its own; the walk visits them.
         let uses = if matches!(instruction, MirInstr::Try { .. }) {
             Vec::new()
@@ -180,29 +178,27 @@ fn count_slot_mentions(blocks: &[MirBlock]) -> HashMap<VarId, usize> {
     mentions
 }
 
-fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loan>) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            for region in instruction_regions_mut(instruction) {
-                rewrite_blocks(region, elision, lent);
-            }
+fn rewrite_blocks(block: &mut MirBlock, elision: &Elision, lent: &mut Vec<Loan>) {
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            rewrite_blocks(region, elision, lent);
         }
-        delete_dead_copies(&mut block.instrs, &elision.uses);
-        move_dying_slot_copies(&mut block.instrs, elision);
-        let mut at = 1;
-        while at < block.instrs.len() {
-            let instrs = &mut block.instrs;
-            let Some(source) = dying_copy(instrs, at, elision) else {
-                at += 1;
-                continue;
-            };
-            if let Some(forward_at) = forwarding_use(instrs, source, elision.var_names) {
-                forward(instrs, at, source, forward_at);
-            } else if let Some(lending) = lending_use(instrs, at, source, elision) {
-                lent.push(lend(instrs, at, source, lending));
-            } else {
-                elide(instrs, at, source, elision);
-            }
+    }
+    delete_dead_copies(&mut block.instrs, &elision.uses);
+    move_dying_slot_copies(&mut block.instrs, elision);
+    let mut at = 1;
+    while at < block.instrs.len() {
+        let instrs = &mut block.instrs;
+        let Some(source) = dying_copy(instrs, at, elision) else {
+            at += 1;
+            continue;
+        };
+        if let Some(forward_at) = forwarding_use(instrs, source, elision.var_names) {
+            forward(instrs, at, source, forward_at);
+        } else if let Some(lending) = lending_use(instrs, at, source, elision) {
+            lent.push(lend(instrs, at, source, lending));
+        } else {
+            elide(instrs, at, source, elision);
         }
     }
 }
@@ -704,7 +700,7 @@ fn names(instruction: &MirInstr, var: VarId) -> bool {
 /// Make every death of a lent slot its source's: its `DropVar`s, and its
 /// place in a `try` body's or an exit's cleanup, where a source already
 /// listed keeps its one entry.
-fn rename_lent_slots(blocks: &mut [MirBlock], lent: &[Loan]) {
+fn rename_lent_slots(block: &mut MirBlock, lent: &[Loan]) {
     if lent.is_empty() {
         return;
     }
@@ -712,20 +708,18 @@ fn rename_lent_slots(blocks: &mut [MirBlock], lent: &[Loan]) {
         .iter()
         .map(|loan| (loan.slot, loan.source))
         .collect::<HashMap<_, _>>();
-    rename_deaths(blocks, &sources);
+    rename_deaths(block, &sources);
 }
 
-fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            if let MirInstr::DropVar { var, .. } = instruction
-                && let Some(&source) = sources.get(var)
-            {
-                *var = source;
-            }
-            for region in instruction_regions_mut(instruction) {
-                rename_deaths(region, sources);
-            }
+fn rename_deaths(block: &mut MirBlock, sources: &HashMap<VarId, VarId>) {
+    for instruction in &mut block.instrs {
+        if let MirInstr::DropVar { var, .. } = instruction
+            && let Some(&source) = sources.get(var)
+        {
+            *var = source;
+        }
+        for region in instruction_regions_mut(instruction) {
+            rename_deaths(region, sources);
         }
     }
 }

@@ -351,7 +351,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     for (name, function) in &lowered.functions {
         if name == "__toplevel__" {
             // Mojo runs no module initializer; the library declares none.
-            if function.blocks.iter().any(|block| !block.instrs.is_empty()) {
+            if !function.body.instrs.is_empty() {
                 return Err(CompilerError::Verify(vec![
                     "the standard library initializes a module at run time".to_string(),
                 ]));
@@ -613,7 +613,7 @@ mod tests {
             functions: vec![(
                 "List.f".to_string(),
                 crate::mir::MirFunction {
-                    blocks: Vec::new(),
+                    body: crate::mir::MirBlock::default(),
                     n_regs: 0,
                     n_vars: 0,
                     var_names: Vec::new(),

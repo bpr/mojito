@@ -21,37 +21,35 @@ fn specialized_main(source: &str) -> SpecializedProgram {
     .expect("specialize iterator program")
 }
 
-fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+fn instructions(block: &MirBlock) -> Vec<&MirInstr> {
     let mut result = Vec::new();
-    for block in blocks {
-        for instruction in &block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                ..
-            } = instruction
-            {
-                result.extend(instructions(body));
-                if let Some(blocks) = handler {
-                    result.extend(instructions(blocks));
-                }
-                if let Some(blocks) = orelse {
-                    result.extend(instructions(blocks));
-                }
-            } else {
-                result.push(instruction);
+    for instruction in &block.instrs {
+        if let MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            ..
+        } = instruction
+        {
+            result.extend(instructions(&body));
+            if let Some(blocks) = handler {
+                result.extend(instructions(&blocks));
             }
+            if let Some(blocks) = orelse {
+                result.extend(instructions(&blocks));
+            }
+        } else {
+            result.push(instruction);
         }
     }
     result
 }
 
-/// Every instruction of `blocks`, each region's own included.
-fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
-    blocks
+/// Every instruction of `block`, each region's own included.
+fn nested_instructions(block: &MirBlock) -> Vec<&MirInstr> {
+    block
+        .instrs
         .iter()
-        .flat_map(|block| &block.instrs)
         .flat_map(|instruction| {
             std::iter::once(instruction).chain(
                 mojito_mir::mir::instruction_regions(instruction)
@@ -88,10 +86,10 @@ fn iterator_slot(function: &MirFunction) -> u32 {
         .expect("the loop keeps its iterator in a slot of its own") as u32
 }
 
-/// The target of each `__iter__` method call `blocks` and their regions
+/// The target of each `__iter__` method call `block` and their regions
 /// hold.
-fn iter_targets(blocks: &[MirBlock]) -> Vec<&String> {
-    nested_instructions(blocks)
+fn iter_targets(block: &MirBlock) -> Vec<&String> {
+    nested_instructions(block)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -138,7 +136,7 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
         "the split iterator slot must be typed by its `__iter__`: {:?}",
         main.var_tys.get(&dest)
     );
-    let steps = iter_targets(&main.blocks);
+    let steps = iter_targets(&main.body);
     assert!(!steps.is_empty(), "the loop calls its `__iter__`");
     for step in steps {
         assert!(
@@ -150,7 +148,7 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
             "`__iter__` `{step}` must name a specialized function"
         );
     }
-    let target = nested_instructions(&main.blocks)
+    let target = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -187,7 +185,7 @@ fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
     // `_ZeroStartingRange.__next__` is `@inline(.always)`, so it is inlined
     // into the loop's `try`, as upstream inlines it; a call left names its
     // instance.
-    let nested = nested_instructions(&main.blocks);
+    let nested = nested_instructions(&main.body);
     assert!(
         nested
             .iter()
@@ -226,7 +224,7 @@ fn generic_dispatch_iteration_resolves_a_typed_concrete_iter() {
         .find(|(name, _)| name.starts_with("first_count"))
         .expect("the generic loop body was specialized");
     let dest = iterator_slot(&first_count.1);
-    let steps = iter_targets(&first_count.1.blocks);
+    let steps = iter_targets(&first_count.1.body);
     assert!(
         !steps
             .iter()
@@ -306,7 +304,7 @@ fn dependent_lambda_calls_specialize_once_per_index_and_element_type() {
         "explicit and callable-bound lambdas need specialized lifted bodies: {lambda_instances:?}"
     );
     assert!(specialized.program.functions.iter().all(|(_, function)| {
-        !instructions(&function.blocks)
+        !instructions(&function.body)
             .iter()
             .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
     }));
@@ -433,7 +431,7 @@ fn nominal_len_inlines_the_library_overload_to_a_resolved_dunder_call() {
                   \x20   print(len(Measured(3)))\n";
     let specialized = specialized_main(source);
     let main = function(&specialized, "main");
-    let instrs = nested_instructions(&main.blocks);
+    let instrs = nested_instructions(&main.body);
     let resolved = instrs
         .iter()
         .find_map(|instruction| match instruction {
@@ -756,7 +754,7 @@ fn subscript_value_parameters_join_the_accessor_instance_identity() {
     )
     .expect("specialize tuple subscripts");
     let main = function(&specialized, "main");
-    let targets: std::collections::HashSet<&str> = nested_instructions(&main.blocks)
+    let targets: std::collections::HashSet<&str> = nested_instructions(&main.body)
         .iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
@@ -1211,13 +1209,13 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the loop");
     let comptime_fors = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
             .count()
     };
     let additions = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
             .count()
@@ -1247,7 +1245,7 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
     assert_eq!(comptime_fors(instance), 0);
     assert_eq!(additions(instance), 3, "one body copy per iteration");
     assert!(
-        instance.blocks.iter().flat_map(|block| &block.instrs).all(
+        instance.body.instrs.iter().all(
             |instruction| !matches!(instruction, MirInstr::UseVar { var, .. }
                 if instance.var_names.get(*var as usize).is_some_and(|name| name == "i"))
         ),
@@ -1283,13 +1281,13 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the loop");
     let iterator_loops = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
             .count()
     };
     let additions = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
             .count()
@@ -1347,7 +1345,7 @@ fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
         .find(|(name, _)| name == "total")
         .map(|(_, function)| function)
         .expect("the template is emitted");
-    let index = nested_instructions(&template.blocks)
+    let index = nested_instructions(&template.body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::ComptimeFor { binder, .. } => Some(binder.clone()),
@@ -1444,13 +1442,13 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
         .map(|(_, function)| function)
         .expect("the template is emitted");
     let comptime_branches = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::ComptimeIf { .. }))
             .count()
     };
     let prints_else = |function: &MirFunction| {
-        nested_instructions(&function.blocks)
+        nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| matches!(instruction, MirInstr::Const { k: mojito_mir::mir::Const::Str(text), .. } if text == "else"))
     };
@@ -1472,7 +1470,7 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
     assert_eq!(comptime_branches(instance), 0);
     assert!(!prints_else(instance), "the untaken arm is gone");
     assert_eq!(
-        nested_instructions(&instance.blocks)
+        nested_instructions(&instance.body)
             .into_iter()
             .filter(|instruction| matches!(instruction, MirInstr::If { .. }))
             .count(),
@@ -1503,7 +1501,7 @@ fn defaultable_pack_instance_builds_its_elements() {
         "a type pack has no frame slot: {:?}",
         instance.var_names
     );
-    let body = instructions(&instance.blocks);
+    let body = instructions(&instance.body);
     assert!(
         !body
             .iter()
@@ -1539,7 +1537,7 @@ fn dispatched_copy_of_builtin_instance_is_value_copy() {
         .collect();
     assert_eq!(instances.len(), 3, "one instance per argument type");
     for (name, instance) in instances {
-        let body = instructions(&instance.blocks);
+        let body = instructions(&instance.body);
         let copy_call = body.iter().find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method, resolved, ..
@@ -1596,7 +1594,7 @@ fn dispatched_copy_through_reference_binding_is_value_copy() {
     assert_eq!(instances.len(), 2, "one instance per element type");
     for (name, instance) in instances {
         // The copy sits in the loop's region.
-        let body = nested_instructions(&instance.blocks);
+        let body = nested_instructions(&instance.body);
         let copy_call = body.iter().find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method, resolved, ..
@@ -1673,7 +1671,7 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
         .expect("the `describe` template");
     // The construction sits in the `comptime for` and `comptime if` regions.
     assert!(
-        nested_instructions(&template.blocks)
+        nested_instructions(&template.body)
             .iter()
             .any(|instruction| matches!(instruction, MirInstr::ConstructType { .. })),
         "the template constructs the reflected field type"
@@ -1686,7 +1684,7 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
         .iter()
         .find(|(name, _)| name.starts_with("describe$mono$"))
         .expect("an instance of `describe`");
-    let body = instructions(&instance.blocks);
+    let body = instructions(&instance.body);
     assert!(
         !body
             .iter()
@@ -1734,7 +1732,7 @@ fn method_call_spread_passes_the_bound_pack_itself() {
         arg_places[1] = Some(collector.clone());
     }
     let mut function = MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs: vec![
                 MirInstr::LoadPlace {
                     dest: Reg(0),
@@ -1743,7 +1741,7 @@ fn method_call_spread_passes_the_bound_pack_itself() {
                 call,
             ],
             term: MirTerm::Return(None),
-        }],
+        },
         n_regs: 4,
         n_vars: 1,
         var_names: vec!["a".into()],
@@ -1767,10 +1765,10 @@ fn method_call_spread_passes_the_bound_pack_itself() {
         lowered_calls: Vec::new(),
         fresh_splices: None,
     };
-    let before = format!("{:?}", function.blocks[0].instrs);
+    let before = format!("{:?}", function.body.instrs);
     expand_pack_spreads("fwd", &mut function).expect("check the method-call spread");
     assert_eq!(
-        format!("{:?}", function.blocks[0].instrs),
+        format!("{:?}", function.body.instrs),
         before,
         "the call passes the caller's pack, read whole, at its spread position"
     );
@@ -1782,7 +1780,7 @@ fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
 
     let pack = Ty::new(TyKind::Tuple(vec![int32.clone(), Ty::bool()]));
     let mut function = MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs: vec![
                 MirInstr::UseVar {
                     dest: Reg(0),
@@ -1803,7 +1801,7 @@ fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
                 },
             ],
             term: MirTerm::Return(Some(Reg(1))),
-        }],
+        },
         n_regs: 2,
         n_vars: 1,
         var_names: vec!["loaded_pack".into()],
@@ -1828,7 +1826,7 @@ fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
         fresh_splices: None,
     };
     expand_pack_spreads("llvm_intrinsic", &mut function).expect("expand the intrinsic's spread");
-    let instrs = &function.blocks[0].instrs;
+    let instrs = &function.body.instrs;
     assert!(
         matches!(
             instrs.as_slice(),
@@ -1866,7 +1864,7 @@ fn spread_of_an_unbound_pack_is_the_instance_boundary() {
         *spread = Some(0);
     }
     let mut function = MirFunction {
-        blocks: vec![MirBlock {
+        body: MirBlock {
             instrs: vec![
                 MirInstr::LoadPlace {
                     dest: Reg(0),
@@ -1875,7 +1873,7 @@ fn spread_of_an_unbound_pack_is_the_instance_boundary() {
                 call,
             ],
             term: MirTerm::Return(None),
-        }],
+        },
         n_regs: 4,
         n_vars: 1,
         var_names: vec!["a".into()],
@@ -1992,7 +1990,7 @@ def main():
         .iter()
         .find(|(name, _)| name.starts_with("g$mono"))
         .expect("`g` was specialized");
-    let instrs = nested_instructions(&instance.blocks);
+    let instrs = nested_instructions(&instance.body);
     let constant = instrs.iter().find_map(|instruction| match instruction {
         MirInstr::Const {
             dest,
@@ -2031,7 +2029,7 @@ fn generic_closure_through_binder_calls_its_storage_witness() {
         .iter()
         .find(|(name, _)| name.starts_with("invoke$mono"))
         .expect("`invoke` was specialized");
-    let instrs = instructions(&instance.blocks);
+    let instrs = instructions(&instance.body);
     assert!(
         instrs.iter().any(|instruction| matches!(
             instruction,
@@ -2169,7 +2167,7 @@ fn specialized_with_removed(
 
 /// The instances of `template` the concrete `main` calls, in call order.
 fn main_callees(program: &SpecializedProgram, template: &str) -> Vec<String> {
-    instructions(&function(program, "main").blocks)
+    instructions(&function(program, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, .. } if func.0.starts_with(&format!("{template}$mono")) => {
@@ -2850,7 +2848,7 @@ fn member_instances<'s>(
 
 /// The callees of `name`'s `call` instructions.
 fn callees<'s>(specialized: &'s SpecializedProgram, name: &str) -> Vec<&'s str> {
-    instructions(&function(specialized, name).blocks)
+    instructions(&function(specialized, name).body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, .. } => Some(func.0.as_str()),
@@ -2942,7 +2940,7 @@ fn a_direct_call_names_the_generator_without_its_unused_argument() {
     );
     assert_eq!(function(&specialized, "g").n_params, 1);
     assert_eq!(function(&specialized, "g$REMOVED$ARG").n_params, 0);
-    let direct = instructions(&function(&specialized, "main").blocks)
+    let direct = instructions(&function(&specialized, "main").body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } if func.0 == "g$REMOVED$ARG" => Some(args.len()),
@@ -2983,7 +2981,7 @@ fn a_method_call_names_the_generator_without_its_unused_receiver() {
         .find(|declaration| declaration.lowered_name == name)
         .expect("the instance is declared");
     assert!(!declaration.has_receiver);
-    let calls = instructions(&function(&specialized, "main").blocks)
+    let calls = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } if func.0 == name => Some(args.len()),
@@ -3102,7 +3100,7 @@ fn a_subscript_store_sheds_the_setters_unused_value() {
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
     );
-    let stores = instructions(&function(&specialized, "main").blocks)
+    let stores = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::MethodCall {
@@ -3148,7 +3146,7 @@ fn a_subscript_names_the_accessor_without_its_unused_receiver() {
     );
     let name = "Arr.__getitem__$REMOVED$ARG$mono";
     assert_eq!(functions_naming(&specialized, "__getitem__"), [name]);
-    let reads = instructions(&function(&specialized, "main").blocks)
+    let reads = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } if func.0 == name => Some(args.len()),
@@ -3215,7 +3213,7 @@ fn a_forward_to_a_removed_argument_leaves_one_reduced_instance() {
         .filter(|name| name.starts_with("fwd"))
         .collect::<Vec<_>>();
     assert_eq!(forwards, ["fwd$REMOVED$ARG$mono"]);
-    let call = instructions(&function(&specialized, "fwd$REMOVED$ARG$mono").blocks)
+    let call = instructions(&function(&specialized, "fwd$REMOVED$ARG$mono").body)
         .into_iter()
         .find_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } if func.0.starts_with("fa") => {
@@ -3248,7 +3246,7 @@ fn a_removed_argument_left_out_evaluates_no_default() {
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
     );
-    let defaults = instructions(&function(&specialized, "main").blocks)
+    let defaults = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             // `print`'s own `file` default is the library call's.
@@ -3303,7 +3301,7 @@ fn a_nested_body_ignoring_its_argument_is_called_as_its_reduced_generator() {
             "outer$ign$REMOVED$ARG"
         ]
     );
-    let calls = instructions(&function(&specialized, "outer").blocks)
+    let calls = instructions(&function(&specialized, "outer").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } => Some((func.0.clone(), args.len())),
@@ -3346,7 +3344,7 @@ fn an_unread_borrowed_pack_leaves_one_reduced_instance_for_every_arity() {
         .filter(|name| name.starts_with("fw"))
         .collect::<Vec<_>>();
     assert_eq!(instances, ["fw$REMOVED$ARG"]);
-    let calls = instructions(&function(&specialized, "main").blocks)
+    let calls = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } if func.0.starts_with("fw") => Some(args.len()),

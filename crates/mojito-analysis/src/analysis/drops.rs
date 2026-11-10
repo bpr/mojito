@@ -61,7 +61,7 @@ pub(super) fn elaborate_drops(
         parameters: split_parameters(&function.ref_params),
         deinit: split_parameters(&function.deinit_params),
     };
-    let facts = DropFacts::new(
+    let mut facts = DropFacts::new(
         &function,
         declarations,
         &loan_roots,
@@ -78,9 +78,16 @@ pub(super) fn elaborate_drops(
         values,
         demands: &demands,
     };
-    walk_backward(&liveness, &function.blocks, &mut plan);
-    // Taking the blocks moves no block: the plan's addresses stay valid.
-    let mut blocks = std::mem::take(&mut function.blocks);
+    walk_backward(&liveness, &function.body, &mut plan);
+    // Taking the body moves its block, which the facts and the plan key by
+    // address, so both follow it; the instructions and the regions it holds
+    // stay where they are.
+    let root = std::ptr::from_ref(&function.body);
+    let mut blocks = std::mem::take(&mut function.body);
+    if let Some(moved) = plan.blocks.remove(&root) {
+        plan.blocks.insert(std::ptr::from_ref(&blocks), moved);
+    }
+    facts.moved_block(root, &blocks);
     let splice = Splice {
         f: &function,
         receiver,
@@ -94,8 +101,7 @@ pub(super) fn elaborate_drops(
     // destroys an unused `deinit self`'s fields before the first statement
     // runs, so it drops at the function's entry; so does a parameter's part
     // the body redefines before reading it (upstream's `scanFunction`).
-    let entry_dead: Vec<Death> = blocks
-        .first()
+    let entry_dead: Vec<Death> = Some(&blocks)
         .and_then(|entry| {
             let live = splice.plan.blocks.get(&std::ptr::from_ref(entry))?;
             let live = splice.effective(&live.live_in, facts.entry(entry));
@@ -113,9 +119,7 @@ pub(super) fn elaborate_drops(
         })
         .unwrap_or_default();
     splice.region(&mut blocks);
-    if let Some(entry) = blocks.first_mut() {
-        prepend_drops(&mut entry.instrs, entry_dead, receiver);
-    }
+    prepend_drops(&mut blocks.instrs, entry_dead, receiver);
 
     // A `deinit` parameter is *consumed*, not destroyed: its whole-value
     // `__deinit__` never runs (its resources already moved into the receiver),
@@ -142,7 +146,7 @@ pub(super) fn elaborate_drops(
         });
     }
 
-    function.blocks = blocks;
+    function.body = blocks;
     function
 }
 
@@ -153,9 +157,9 @@ pub(super) fn drop_registers_through_storage(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) {
-    let mut blocks = std::mem::take(&mut function.blocks);
+    let mut blocks = std::mem::take(&mut function.body);
     spill_register_drops(&mut blocks, function, declarations);
-    function.blocks = blocks;
+    function.body = blocks;
 }
 
 /// The owner parts carried by each `EstablishLoans` generation. A later
@@ -181,7 +185,7 @@ pub(super) fn drop_loan_generations(
     values: &DropValues,
 ) -> BTreeMap<u32, DropLoanGeneration> {
     let mut roots_by_generation: BTreeMap<u32, DropLoanGeneration> = BTreeMap::new();
-    for_each_instr_deep(&f.blocks, &mut |instr| {
+    for_each_instr_deep(&f.body, &mut |instr| {
         if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
             // Every generation propagates, pointer variables included: a
             // pointer register handed to a call reads its pointee inside the
@@ -331,13 +335,8 @@ impl BackwardScan for DropLiveness<'_> {
         self.values.mark_reached(live);
     }
 
-    fn enter(&self, live: &mut DenseSet, part: &[MirBlock]) {
-        let extras = loan_extras(
-            live,
-            self.facts.region_entry(part),
-            self.loan_roots,
-            self.values,
-        );
+    fn enter(&self, live: &mut DenseSet, part: &MirBlock) {
+        let extras = loan_extras(live, self.facts.entry(part), self.loan_roots, self.values);
         live.union(&extras);
     }
 }
@@ -568,19 +567,17 @@ impl Splice<'_> {
     }
 
     /// A region's effective live-in, its generations those at `state`.
-    fn region_live_in(&self, region: &[MirBlock], state: &LoanGenerationState) -> DenseSet {
-        region
-            .first()
-            .and_then(|block| self.plan.blocks.get(&std::ptr::from_ref(block)))
+    fn region_live_in(&self, region: &MirBlock, state: &LoanGenerationState) -> DenseSet {
+        self.plan
+            .blocks
+            .get(&std::ptr::from_ref(region))
             .map(|plan| self.effective(&plan.live_in, state))
             .unwrap_or_default()
     }
 
     /// Place the drops of every block of a region.
-    fn region(&self, blocks: &mut [MirBlock]) {
-        for block in blocks {
-            self.block(block);
-        }
+    fn region(&self, block: &mut MirBlock) {
+        self.block(block);
     }
 
     /// Place the drops of one block: its region ops' first, then its own.
@@ -657,10 +654,7 @@ impl Splice<'_> {
             _ => vec![Vec::new(); regions.len()],
         };
         for (drops, (region, args)) in entries.iter_mut().zip(regions.iter().zip(&arguments)) {
-            if region
-                .first()
-                .is_some_and(|block| ends_in_never_call(block, self.f))
-            {
+            if ends_in_never_call(region, self.f) {
                 drops.clear();
                 continue;
             }
@@ -669,21 +663,20 @@ impl Splice<'_> {
         }
         if entries.iter().any(|drops| !drops.is_empty()) {
             for (region, drops) in instruction_regions_mut(instr).into_iter().zip(entries) {
-                if let Some(entry) = region.first_mut() {
-                    entry
-                        .instrs
-                        .splice(0..0, drops.into_iter().map(Death::into_drop));
-                }
+                region
+                    .instrs
+                    .splice(0..0, drops.into_iter().map(Death::into_drop));
             }
         }
     }
 
     /// The deaths on arrival in `region` of the owned arguments `args` its
     /// entry defines and it never reads, in drop order.
-    fn unread_arguments(&self, region: &[MirBlock], args: &[Reg]) -> Vec<Death> {
-        let Some(live) = region
-            .first()
-            .and_then(|block| self.plan.blocks.get(&std::ptr::from_ref(block)))
+    fn unread_arguments(&self, region: &MirBlock, args: &[Reg]) -> Vec<Death> {
+        let Some(live) = self
+            .plan
+            .blocks
+            .get(&std::ptr::from_ref(region))
             .map(|plan| &plan.live_in)
         else {
             return Vec::new();
@@ -703,12 +696,12 @@ impl Splice<'_> {
     /// The entry drops of an `if`'s regions, listed as `then`, each elif's
     /// condition and arm, and `else`: as `checkIfOp` unifies them, each
     /// step's arm against the next condition (or the `else`).
-    fn if_entry_drops(&self, regions: &[&Vec<MirBlock>]) -> Vec<Vec<Death>> {
+    fn if_entry_drops(&self, regions: &[&MirBlock]) -> Vec<Vec<Death>> {
         let mut drops = vec![Vec::new(); regions.len()];
         // Step `k` takes the branch to arm `regions[2k]` or on to
         // `regions[2k + 1]`.
         for arm in (0..regions.len() - 1).step_by(2) {
-            let state = self.facts.region_entry(regions[arm]);
+            let state = self.facts.entry(regions[arm]);
             let taken = self.region_live_in(regions[arm], state);
             let next = self.region_live_in(regions[arm + 1], state);
             let mut unified = taken.clone();
@@ -722,10 +715,10 @@ impl Splice<'_> {
     /// The entry drops of a `comptime if`'s arms and `else`: each arm is
     /// unified against the arms after it and the `else` in turn, and what
     /// a step destroys on the way on runs before each later arm's own.
-    fn comptime_if_entry_drops(&self, regions: &[&Vec<MirBlock>]) -> Vec<Vec<Death>> {
+    fn comptime_if_entry_drops(&self, regions: &[&MirBlock]) -> Vec<Vec<Death>> {
         let mut drops: Vec<Vec<Death>> = vec![Vec::new(); regions.len()];
         for arm in 0..regions.len() - 1 {
-            let state = self.facts.region_entry(regions[arm]);
+            let state = self.facts.entry(regions[arm]);
             let taken = self.region_live_in(regions[arm], state);
             let mut rest = DenseSet::default();
             for region in &regions[arm + 1..] {
@@ -775,20 +768,14 @@ impl Splice<'_> {
         if let Some(h) = handler {
             self.region(h);
             let unread = self.unread_arguments(h, handler_args);
-            if let Some(entry) = h.first_mut() {
-                entry
-                    .instrs
-                    .splice(0..0, unread.into_iter().map(Death::into_drop));
-            }
+            h.instrs
+                .splice(0..0, unread.into_iter().map(Death::into_drop));
         }
         if let Some(e) = orelse {
             self.region(e);
             let unread = self.unread_arguments(e, else_args);
-            if let Some(entry) = e.first_mut() {
-                entry
-                    .instrs
-                    .splice(0..0, unread.into_iter().map(Death::into_drop));
-            }
+            e.instrs
+                .splice(0..0, unread.into_iter().map(Death::into_drop));
         }
         self.region(body);
     }
@@ -1162,44 +1149,42 @@ fn order_deaths(deaths: &mut [Death], receiver: Option<VarId>) {
 /// [`drop_registers_through_storage`] over the block list `blocks` and its
 /// regions.
 fn spill_register_drops(
-    blocks: &mut [MirBlock],
+    block: &mut MirBlock,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) {
-    for block in blocks {
-        let instructions = std::mem::take(&mut block.instrs);
-        block.instrs = Vec::with_capacity(instructions.len());
-        for mut instruction in instructions {
-            for region in instruction_regions_mut(&mut instruction) {
-                spill_register_drops(region, function, declarations);
-            }
-            let MirInstr::Drop { reg, destructor } = &instruction else {
-                block.instrs.push(instruction);
-                continue;
-            };
-            let Some(ty) = function
-                .reg_types
-                .get(&reg.0)
-                .filter(|ty| !declarations.register_passable(ty))
-                .cloned()
-            else {
-                block.instrs.push(instruction);
-                continue;
-            };
-            let slot = function.n_vars as VarId;
-            function.n_vars += 1;
-            function.var_names.push(format!("$drop_r{}", reg.0));
-            function.var_tys.insert(slot, ty.clone());
-            block.instrs.push(MirInstr::DefVar {
-                var: slot,
-                src: *reg,
-                binding_ty: Some(ty),
-                in_place: false,
-            });
-            block.instrs.push(MirInstr::DropVar {
-                var: slot,
-                destructor: destructor.clone(),
-            });
+    let instructions = std::mem::take(&mut block.instrs);
+    block.instrs = Vec::with_capacity(instructions.len());
+    for mut instruction in instructions {
+        for region in instruction_regions_mut(&mut instruction) {
+            spill_register_drops(region, function, declarations);
         }
+        let MirInstr::Drop { reg, destructor } = &instruction else {
+            block.instrs.push(instruction);
+            continue;
+        };
+        let Some(ty) = function
+            .reg_types
+            .get(&reg.0)
+            .filter(|ty| !declarations.register_passable(ty))
+            .cloned()
+        else {
+            block.instrs.push(instruction);
+            continue;
+        };
+        let slot = function.n_vars as VarId;
+        function.n_vars += 1;
+        function.var_names.push(format!("$drop_r{}", reg.0));
+        function.var_tys.insert(slot, ty.clone());
+        block.instrs.push(MirInstr::DefVar {
+            var: slot,
+            src: *reg,
+            binding_ty: Some(ty),
+            in_place: false,
+        });
+        block.instrs.push(MirInstr::DropVar {
+            var: slot,
+            destructor: destructor.clone(),
+        });
     }
 }
