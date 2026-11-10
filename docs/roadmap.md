@@ -11971,20 +11971,6 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
-- [ ] **R1839 `Set` lacks upstream's `List` initializer, so
-  `Set[Int]([1, 2, 1])` has one element**
-
-  Problem: `len(Set[Int]([1, 2, 1]))` prints `1`, where the pin prints
-  `2`, because `stdlib/std/collections/set.mojo` declares no
-  `__init__(out self, elements: List[Self.T])` and the call binds the
-  variadic initializer with the list converted to one element.
-  - Port upstream's overload, with its `where conforms_to(Self.T,
-    Copyable) and conforms_to(Self.T, Deinitable)` clause.
-  - Probe: `len(Set[Bool]([True, False, True]))` fails with "invalid call
-    to 'len': no overload matches", where the pin prints `2`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1690 `StringSpan` declares no ordering comparisons**
 
   `StaticString("a") < StaticString("b")` fails to check with "operator

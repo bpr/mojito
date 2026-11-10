@@ -79,6 +79,13 @@ struct Set[
         for var value in values^:
             self.add(value^)
 
+    def __init__(
+        out self, elements: List[Self.T]
+    ) where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Deinitable):
+        self = Self()
+        for e in elements:
+            self.add(e.copy())
+
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self.items = copy.items.copy()
 

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Set` declares upstream's `__init__(out self, elements: List[Self.T])`,
+  under `where conforms_to(Self.T, Copyable) and conforms_to(Self.T,
+  Deinitable)`, so `len(Set[Int]([1, 2, 1]))` prints `2` instead of
+  binding the variadic constructor with the list as one element (R1839,
+  `assets/ok/set_variadic_constructor.mojo`).
 - `std/collections/string/iterators.mojo` bundles upstream's
   `CodepointSliceIter[origin, forward]`, `CodepointsIter[origin]`, and
   `GraphemeSliceIter[origin, forward]`, which `std.collections.string`
