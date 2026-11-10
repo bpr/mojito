@@ -1,17 +1,18 @@
-//! The walk over every type and compile-time parameter site of a MIR body.
+//! The walks over every type and compile-time parameter site of a MIR body.
 //!
-//! It reaches them as MLIR's `AttrTypeReplacer` reaches every op's
-//! attributes and types, regions included.
-//! A client implements [`MutTypeVisitor`], one hook per kind of site, and
-//! drives it with [`walk_function_mut`] or [`walk_blocks_mut`]. The walk
-//! matches every [`MirInstr`] variant by name, so a new variant cannot skip
-//! it. Within an instruction the sites are visited in a
-//! fixed order, which is the order a failing client reports its first error
-//! in.
+//! They reach them as MLIR's `AttrTypeWalker` and `AttrTypeReplacer` reach
+//! every op's attributes and types, regions included, and are expanded from
+//! one inventory of sites as those two are derived from one sub-element
+//! declaration. A client implements [`TypeVisitor`] to read the sites or
+//! [`MutTypeVisitor`] to rewrite them, one hook per kind of site, and drives
+//! it with [`walk_function`] or [`walk_blocks`] (`*_mut` for the rewrite).
+//! The walk matches every [`MirInstr`] variant by name, so a new variant
+//! cannot skip it. Within an instruction the sites are visited in a fixed
+//! order, which is the order a failing client reports its first error in.
 
 use super::{
     Const, MirBlock, MirFunction, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, Proj,
-    instruction_regions_mut,
+    instruction_regions, instruction_regions_mut,
 };
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
@@ -76,494 +77,607 @@ pub enum ParamDeclSite {
     SubscriptContract,
 }
 
-/// A mutating visitor over every type and compile-time parameter site of a
-/// MIR body. A hook that fails stops the walk.
-pub trait MutTypeVisitor {
-    type Error;
-
-    fn visit_ty(&mut self, ty: &mut Ty, site: TySite) -> Result<(), Self::Error>;
-    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error>;
-    /// A `Variant` construction's alternatives, as one list: a bound `*Ts`
-    /// spread expands it, so it is not visited element by element.
-    fn visit_variant_alternatives(&mut self, alternatives: &mut Vec<Ty>)
-    -> Result<(), Self::Error>;
-    fn visit_variant_index(&mut self, index: &mut VariantIndex) -> Result<(), Self::Error>;
-    /// A symbolic field step ([`Proj::FieldAt`]) over the type of the
-    /// storage it selects into, already visited: a client closing the step
-    /// rewrites it to its [`Proj::Field`].
-    fn visit_field_step(&mut self, step: &mut Proj, base: Option<&Ty>) -> Result<(), Self::Error>;
-    fn visit_lane_mask(&mut self, mask: &mut LaneMask) -> Result<(), Self::Error>;
-    fn visit_param_arg(
-        &mut self,
-        arg: &mut MirParamArg,
-        site: ParamArgSite,
-    ) -> Result<(), Self::Error>;
-    fn visit_param_decls(
-        &mut self,
-        decls: &mut [ParamDecl],
-        site: ParamDeclSite,
-    ) -> Result<(), Self::Error>;
-    /// A constant an instruction reads or addresses: a `Const`'s and a
-    /// parameter list address's values, and an LLVM intrinsic call's name
-    /// and side-effect flag.
-    fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error>;
-    /// A parameter an instruction names: a constructed type
-    /// parameter, a `comptime for` binder.
-    fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), Self::Error>;
-    fn visit_sequence(&mut self, source: &mut ComptimeSequence) -> Result<(), Self::Error>;
-
-    /// One instruction, its regions not included: [`walk_blocks_mut`] walks
-    /// them after this returns, so an override sees, and may rewrite, the
-    /// instruction first.
-    fn visit_instruction(&mut self, instruction: &mut MirInstr) -> Result<(), Self::Error> {
-        walk_instruction_mut(self, instruction)
-    }
-
-    fn visit_place(&mut self, place: &mut MirPlace) -> Result<(), Self::Error> {
-        walk_place_mut(self, place)
-    }
+/// Take an `Option`'s contents by the walk's mutability.
+macro_rules! opt_ref {
+    (mut $option:expr) => {
+        $option.as_mut()
+    };
+    ($option:expr) => {
+        $option.as_ref()
+    };
 }
 
-/// Visit `function`'s parameter, slot, register, return, and error types,
-/// then its blocks.
-pub fn walk_function_mut<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    function: &mut MirFunction,
-) -> Result<(), V::Error> {
-    for ty in &mut function.param_types {
-        visitor.visit_ty(ty, TySite::Parameter)?;
-    }
-    for (var, ty) in &mut function.var_tys {
-        visitor.visit_ty(ty, TySite::Slot(*var))?;
-    }
-    for (reg, ty) in &mut function.reg_types {
-        visitor.visit_ty(ty, TySite::Register(*reg))?;
-    }
-    if let Some(ty) = &mut function.ret_ty {
-        visitor.visit_ty(ty, TySite::Return)?;
-    }
-    if let Some(ty) = &mut function.error_ty {
-        visitor.visit_ty(ty, TySite::Error)?;
-    }
-    walk_blocks_mut(visitor, &mut function.body)
+/// Take a boxed `Option`'s contents by the walk's mutability.
+macro_rules! opt_deref {
+    (mut $option:expr) => {
+        $option.as_deref_mut()
+    };
+    ($option:expr) => {
+        $option.as_deref()
+    };
 }
 
-/// Visit each block's instructions, each followed by its regions. A
-/// terminator names no type or parameter site.
-pub fn walk_blocks_mut<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    block: &mut MirBlock,
-) -> Result<(), V::Error> {
-    for instruction in &mut block.instrs {
-        visitor.visit_instruction(instruction)?;
-        for region in instruction_regions_mut(instruction) {
-            walk_blocks_mut(visitor, region)?;
-        }
-    }
-    Ok(())
+/// Iterate a slice by the walk's mutability.
+macro_rules! slice_iter {
+    (mut $slice:expr) => {
+        $slice.iter_mut()
+    };
+    ($slice:expr) => {
+        $slice.iter()
+    };
 }
 
-/// Visit every site of one instruction, none of its regions'.
-pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    instruction: &mut MirInstr,
-) -> Result<(), V::Error> {
-    use MirInstr as I;
-    match instruction {
-        I::MakeVariant {
-            alternatives,
-            index,
-            ..
-        } => {
-            visitor.visit_variant_index(index)?;
-            visitor.visit_variant_alternatives(alternatives)
+/// The mutating walk writes a visited vector type's slots back into the
+/// instruction; the read-only walk leaves them.
+macro_rules! write_back_slots {
+    (mut $built:ident, $dtype:ident, $width:ident) => {
+        if let Some((visited_dtype, visited_width)) = mojito_types::types::simd_slots(&$built) {
+            *$dtype = visited_dtype;
+            *$width = visited_width;
         }
-        I::VariantIs { index, .. } | I::VariantGet { index, .. } | I::VariantTake { index, .. } => {
-            visitor.visit_variant_index(index)
-        }
-        I::VariantSet { place, index, .. } => {
-            visitor.visit_variant_index(index)?;
-            visitor.visit_place(place)
-        }
-        I::VariantReplace {
-            place,
-            input_index,
-            output_index,
-            ..
-        } => {
-            visitor.visit_variant_index(input_index)?;
-            visitor.visit_variant_index(output_index)?;
-            visitor.visit_place(place)
-        }
-        I::SimdCast {
-            dtype,
-            width,
-            fastmath,
-            ..
-        } => {
-            visit_vector_slots(visitor, dtype, width)?;
-            visit_fastmath(visitor, fastmath.as_mut())
-        }
-        I::MakeSimd { dtype, width, .. } | I::SimdBitcast { dtype, width, .. } => {
-            visit_vector_slots(visitor, dtype, width)
-        }
-        I::SimdShuffle { mask, .. } => visitor.visit_lane_mask(mask),
-        I::EstablishLoans { loans, .. } => loans
-            .iter_mut()
-            .try_for_each(|loan| visitor.visit_place(&mut loan.place)),
-        I::MakeRef { place, .. }
-        | I::MovePlace { place, .. }
-        | I::Store { place, .. }
-        | I::StoreRef { place, .. }
-        | I::LoadPlace { place, .. }
-        | I::DropPlace { place, .. }
-        | I::MarkInitialized { place }
-        | I::MarkDestroyed { place } => visitor.visit_place(place),
-        I::MakeClosure { captures, .. } => captures
-            .iter_mut()
-            .try_for_each(|capture| visitor.visit_place(&mut capture.place)),
-        I::MaterializeLiteral { target: ty, .. }
-        | I::PointerStorageTake { element: ty, .. }
-        | I::PointerStorageDestroy { element: ty, .. }
-        | I::UninitStorageTake { element: ty, .. }
-        | I::UninitStorageDestroy { element: ty, .. }
-        | I::DefVar {
-            binding_ty: Some(ty),
-            ..
-        } => visitor.visit_ty(ty, TySite::Instruction),
-        I::Call {
-            raises,
-            arg_places,
-            kwarg_places,
-            param_arg_regs,
-            receiver,
-            instantiated_args,
-            ..
-        } => {
-            visit_opt_ty(
-                visitor,
-                raises.as_mut().map(|raises| &mut raises.ty),
-                TySite::Contract,
-            )?;
-            visit_places(visitor, arg_places)?;
-            visit_places(visitor, kwarg_places)?;
-            visit_opt_ty(visitor, receiver.as_mut(), TySite::Receiver)?;
-            visit_ty_args(visitor, instantiated_args)?;
-            visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)
-        }
-        I::CallIndirect {
-            raises,
-            callee_place,
-            arg_places,
-            kwarg_places,
-            param_arg_regs,
-            param_decls,
-            instantiated_contract,
-            instantiated_args,
-            ..
-        } => {
-            visit_opt_ty(
-                visitor,
-                raises.as_mut().map(|raises| &mut raises.ty),
-                TySite::Contract,
-            )?;
-            visit_opt_place(visitor, callee_place.as_deref_mut())?;
-            visit_places(visitor, arg_places)?;
-            visit_places(visitor, kwarg_places)?;
-            visit_opt_ty(visitor, instantiated_contract.as_mut(), TySite::Contract)?;
-            visit_ty_args(visitor, instantiated_args)?;
-            visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
-            visitor.visit_param_decls(param_decls, ParamDeclSite::CallableContract)
-        }
-        I::MethodCall {
-            raises,
-            reference_result,
-            recv_place,
-            arg_places,
-            kwarg_places,
-            param_arg_regs,
-            param_decls,
-            instantiated_args,
-            ..
-        } => {
-            visit_opt_ty(
-                visitor,
-                raises.as_mut().map(|raises| &mut raises.ty),
-                TySite::Contract,
-            )?;
-            if let Some(reference) = reference_result {
-                visitor.visit_ty(&mut reference.referent, TySite::Result)?;
+    };
+    ($built:ident, $dtype:ident, $width:ident) => {};
+}
+
+/// One inventory of a MIR body's type and parameter sites, expanded once
+/// per mutability as rustc's `make_mir_visitor!` is: MLIR derives its
+/// `AttrTypeWalker` and `AttrTypeReplacer` from one sub-element declaration
+/// the same way, so the two walks cannot reach different sites.
+macro_rules! type_visitor {
+    (
+        $(#[$trait_doc:meta])*
+        trait $Visitor:ident;
+        walks $walk_function:ident, $walk_blocks:ident, $walk_instruction:ident, $walk_place:ident;
+        regions $regions:path;
+        alternatives $Alternatives:ty;
+        helpers $helpers:ident;
+        mutability ($($m:ident)?)
+    ) => {
+        $(#[$trait_doc])*
+        pub trait $Visitor {
+            type Error;
+
+            fn visit_ty(&mut self, ty: &$($m)? Ty, site: TySite) -> Result<(), Self::Error>;
+            fn visit_ty_arg(&mut self, arg: &$($m)? TyArg) -> Result<(), Self::Error>;
+            /// A `Variant` construction's alternatives, as one list: a bound
+            /// `*Ts` spread expands it, so it is not visited element by
+            /// element.
+            fn visit_variant_alternatives(
+                &mut self,
+                alternatives: &$($m)? $Alternatives,
+            ) -> Result<(), Self::Error>;
+            fn visit_variant_index(
+                &mut self,
+                index: &$($m)? VariantIndex,
+            ) -> Result<(), Self::Error>;
+            /// A symbolic field step ([`Proj::FieldAt`]) over the type of the
+            /// storage it selects into, already visited: a client closing the
+            /// step rewrites it to its [`Proj::Field`].
+            fn visit_field_step(
+                &mut self,
+                step: &$($m)? Proj,
+                base: Option<&Ty>,
+            ) -> Result<(), Self::Error>;
+            fn visit_lane_mask(&mut self, mask: &$($m)? LaneMask) -> Result<(), Self::Error>;
+            fn visit_param_arg(
+                &mut self,
+                arg: &$($m)? MirParamArg,
+                site: ParamArgSite,
+            ) -> Result<(), Self::Error>;
+            fn visit_param_decls(
+                &mut self,
+                decls: &$($m)? [ParamDecl],
+                site: ParamDeclSite,
+            ) -> Result<(), Self::Error>;
+            /// A constant an instruction reads or addresses: a `Const`'s and
+            /// a parameter list address's values, an LLVM intrinsic call's
+            /// name and side-effect flag, an op's fast-math flag, an array
+            /// index, an inline count, and the `comptime if` conditions and
+            /// `comptime assert` values.
+            fn visit_constant(&mut self, constant: &$($m)? Const) -> Result<(), Self::Error>;
+            /// A parameter an instruction names: a constructed type
+            /// parameter, a `comptime for` binder.
+            fn visit_param_ref(&mut self, param: &$($m)? ParamRef) -> Result<(), Self::Error>;
+            fn visit_sequence(
+                &mut self,
+                source: &$($m)? ComptimeSequence,
+            ) -> Result<(), Self::Error>;
+
+            #[doc = concat!(
+                "One instruction, its regions not included: [`",
+                stringify!($walk_blocks),
+                "`] walks them after this returns, so an override sees the instruction first."
+            )]
+            fn visit_instruction(
+                &mut self,
+                instruction: &$($m)? MirInstr,
+            ) -> Result<(), Self::Error> {
+                $walk_instruction(self, instruction)
             }
-            visit_opt_place(visitor, recv_place.as_deref_mut())?;
-            visit_places(visitor, arg_places)?;
-            visit_places(visitor, kwarg_places)?;
-            visit_ty_args(visitor, instantiated_args)?;
-            visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
-            visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
-        }
-        I::UnOp { raises, .. } => visit_opt_ty(
-            visitor,
-            raises.as_mut().map(|raises| &mut raises.ty),
-            TySite::Contract,
-        ),
-        I::BinOp {
-            raises, fastmath, ..
-        } => {
-            visit_opt_ty(
-                visitor,
-                raises.as_mut().map(|raises| &mut raises.ty),
-                TySite::Contract,
-            )?;
-            visit_fastmath(visitor, fastmath.as_mut())
-        }
-        I::Pop { fastmath, .. } => visit_fastmath(visitor, fastmath.as_mut()),
-        I::Index {
-            base_place,
-            index_place,
-            call,
-            ..
-        } => {
-            visit_opt_place(visitor, base_place.as_deref_mut())?;
-            visit_opt_place(visitor, index_place.as_deref_mut())?;
-            call.as_deref_mut()
-                .map_or(Ok(()), |call| walk_subscript_call(visitor, call))
-        }
-        I::MultiIndex {
-            object_place,
-            arg_places,
-            kwarg_places,
-            call,
-            ..
-        } => {
-            visit_opt_place(visitor, object_place.as_deref_mut())?;
-            visit_places(visitor, arg_places)?;
-            visit_places(visitor, kwarg_places)?;
-            call.as_deref_mut()
-                .map_or(Ok(()), |call| walk_subscript_call(visitor, call))
-        }
-        I::MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
-            call,
-            ..
-        } => {
-            visit_opt_place(visitor, receiver_place.as_deref_mut())?;
-            visit_places(visitor, arg_places)?;
-            visit_opt_place(visitor, value_place.as_deref_mut())?;
-            walk_subscript_call(visitor, call)
-        }
-        I::MakeTuple {
-            element_types: Some(types),
-            ..
-        } => types
-            .iter_mut()
-            .try_for_each(|ty| visitor.visit_ty(ty, TySite::TupleElement)),
-        I::ConstructType { ty, .. } => visitor.visit_ty(ty, TySite::ConstructedType),
-        I::ConstructTypeParam {
-            param,
-            kwarg_places,
-            element,
-            ..
-        } => {
-            visitor.visit_param_ref(param)?;
-            visit_places(visitor, kwarg_places)?;
-            element.as_mut().map_or(Ok(()), |element| {
-                visitor.visit_param_arg(element, ParamArgSite::ConstructedElement)
-            })
-        }
-        I::Const { k: constant, .. }
-        | I::ParamListAddress {
-            values: constant, ..
-        } => visitor.visit_constant(constant),
-        I::CallLlvmIntrinsic {
-            intrinsic,
-            has_side_effect,
-            ..
-        } => {
-            visitor.visit_constant(intrinsic)?;
-            visitor.visit_constant(has_side_effect)
-        }
-        I::ArrayGet { index, .. }
-        | I::ArrayReplace { index, .. }
-        | I::SourceLoc {
-            inline_count: index,
-            ..
-        } => visitor.visit_constant(index),
-        I::ComptimeIf { values, .. } => values
-            .iter_mut()
-            .try_for_each(|value| visitor.visit_constant(value)),
-        I::ComptimeFor { binder, source, .. } => {
-            visitor.visit_param_ref(binder)?;
-            visitor.visit_sequence(source)
-        }
-        I::ComptimeAssert { value, message } => {
-            visitor.visit_constant(value)?;
-            message
-                .iter_mut()
-                .try_for_each(|message| visitor.visit_constant(message))
-        }
-        I::Match { .. } => Ok(()),
-        I::DefVar {
-            binding_ty: None, ..
-        }
-        | I::MakeTuple {
-            element_types: None,
-            ..
-        }
-        | I::MakeStruct { .. }
-        | I::MakeArray { .. }
-        | I::MakeRefPack { .. }
-        | I::LoadIndirect { .. }
-        | I::ArrayRepeat { .. }
-        | I::InvalidateInteriors { .. }
-        | I::ReadRef { .. }
-        | I::Rebind { .. }
-        | I::CopyValue { .. }
-        | I::WriteRef { .. }
-        | I::KeepAlive { .. }
-        | I::StoreToMem { .. }
-        | I::ScalarCast { .. }
-        | I::BuiltinCast { .. }
-        | I::PointerConvert { .. }
-        | I::ArrayGep { .. }
-        | I::IsRunInComptimeInterpreter { .. }
-        | I::Select { .. }
-        | I::SimdSelect { .. }
-        | I::SimdExtract { .. }
-        | I::SimdInsert { .. }
-        | I::SimdReduce { .. }
-        | I::UseVar { .. }
-        | I::DeclareVar { .. }
-        | I::UninitStorage { .. }
-        | I::GetField { .. }
-        | I::Try { .. }
-        | I::If { .. }
-        | I::Loop { .. }
-        | I::Drop { .. }
-        | I::DropVar { .. }
-        | I::ConsumeVar { .. }
-        | I::Unsupported(_)
-        | I::GetIter { .. }
-        | I::HasNext { .. }
-        | I::VariantTag { .. }
-        | I::Next { .. } => Ok(()),
-    }
-}
 
-/// Visit a place's root type, its projection types, the alternatives its
-/// variant projections select, its symbolic field steps, then its
-/// designated type.
-pub fn walk_place_mut<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    place: &mut MirPlace,
-) -> Result<(), V::Error> {
-    visit_opt_ty(visitor, place.root_ty.as_mut(), TySite::Place)?;
-    for ty in &mut place.projection_tys {
-        visitor.visit_ty(ty, TySite::Place)?;
-    }
-    for (position, projection) in place.proj.iter_mut().enumerate() {
-        match projection {
-            Proj::Variant(index) => visitor.visit_variant_index(index)?,
-            Proj::FieldAt(_) => {
-                let base = match position.checked_sub(1) {
-                    Some(previous) => place.projection_tys.get(previous),
-                    None => place.root_ty.as_ref(),
-                };
-                visitor.visit_field_step(projection, base)?;
+            fn visit_place(&mut self, place: &$($m)? MirPlace) -> Result<(), Self::Error> {
+                $walk_place(self, place)
             }
-            _ => {}
         }
-    }
-    visit_opt_ty(visitor, place.ty.as_mut(), TySite::Place)
+
+        /// Visit `function`'s parameter, slot, register, return, and error
+        /// types, then its blocks.
+        pub fn $walk_function<V: $Visitor + ?Sized>(
+            visitor: &mut V,
+            function: &$($m)? MirFunction,
+        ) -> Result<(), V::Error> {
+            for ty in &$($m)? function.param_types {
+                visitor.visit_ty(ty, TySite::Parameter)?;
+            }
+            for (var, ty) in &$($m)? function.var_tys {
+                visitor.visit_ty(ty, TySite::Slot(*var))?;
+            }
+            for (reg, ty) in &$($m)? function.reg_types {
+                visitor.visit_ty(ty, TySite::Register(*reg))?;
+            }
+            if let Some(ty) = &$($m)? function.ret_ty {
+                visitor.visit_ty(ty, TySite::Return)?;
+            }
+            if let Some(ty) = &$($m)? function.error_ty {
+                visitor.visit_ty(ty, TySite::Error)?;
+            }
+            $walk_blocks(visitor, &$($m)? function.body)
+        }
+
+        /// Visit each block's instructions, each followed by its regions. A
+        /// terminator names no type or parameter site.
+        pub fn $walk_blocks<V: $Visitor + ?Sized>(
+            visitor: &mut V,
+            block: &$($m)? MirBlock,
+        ) -> Result<(), V::Error> {
+            for instruction in &$($m)? block.instrs {
+                visitor.visit_instruction(instruction)?;
+                for region in $regions(instruction) {
+                    $walk_blocks(visitor, region)?;
+                }
+            }
+            Ok(())
+        }
+
+        /// Visit every site of one instruction, none of its regions'.
+        pub fn $walk_instruction<V: $Visitor + ?Sized>(
+            visitor: &mut V,
+            instruction: &$($m)? MirInstr,
+        ) -> Result<(), V::Error> {
+            use MirInstr as I;
+            match instruction {
+                I::MakeVariant {
+                    alternatives,
+                    index,
+                    ..
+                } => {
+                    visitor.visit_variant_index(index)?;
+                    visitor.visit_variant_alternatives(alternatives)
+                }
+                I::VariantIs { index, .. }
+                | I::VariantGet { index, .. }
+                | I::VariantTake { index, .. } => visitor.visit_variant_index(index),
+                I::VariantSet { place, index, .. } => {
+                    visitor.visit_variant_index(index)?;
+                    visitor.visit_place(place)
+                }
+                I::VariantReplace {
+                    place,
+                    input_index,
+                    output_index,
+                    ..
+                } => {
+                    visitor.visit_variant_index(input_index)?;
+                    visitor.visit_variant_index(output_index)?;
+                    visitor.visit_place(place)
+                }
+                I::SimdCast {
+                    dtype,
+                    width,
+                    fastmath,
+                    ..
+                } => {
+                    $helpers::visit_vector_slots(visitor, dtype, width)?;
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? fastmath))
+                }
+                I::MakeSimd { dtype, width, .. } | I::SimdBitcast { dtype, width, .. } => {
+                    $helpers::visit_vector_slots(visitor, dtype, width)
+                }
+                I::SimdShuffle { mask, .. } => visitor.visit_lane_mask(mask),
+                I::EstablishLoans { loans, .. } => slice_iter!($($m)? loans)
+                    .try_for_each(|loan| visitor.visit_place(&$($m)? loan.place)),
+                I::MakeRef { place, .. }
+                | I::MovePlace { place, .. }
+                | I::Store { place, .. }
+                | I::StoreRef { place, .. }
+                | I::LoadPlace { place, .. }
+                | I::DropPlace { place, .. }
+                | I::MarkInitialized { place }
+                | I::MarkDestroyed { place } => visitor.visit_place(place),
+                I::MakeClosure { captures, .. } => slice_iter!($($m)? captures)
+                    .try_for_each(|capture| visitor.visit_place(&$($m)? capture.place)),
+                I::MaterializeLiteral { target: ty, .. }
+                | I::PointerStorageTake { element: ty, .. }
+                | I::PointerStorageDestroy { element: ty, .. }
+                | I::UninitStorageTake { element: ty, .. }
+                | I::UninitStorageDestroy { element: ty, .. }
+                | I::DefVar {
+                    binding_ty: Some(ty),
+                    ..
+                } => visitor.visit_ty(ty, TySite::Instruction),
+                I::Call {
+                    raises,
+                    arg_places,
+                    kwarg_places,
+                    param_arg_regs,
+                    receiver,
+                    instantiated_args,
+                    ..
+                } => {
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
+                        TySite::Contract,
+                    )?;
+                    $helpers::visit_places(visitor, arg_places)?;
+                    $helpers::visit_places(visitor, kwarg_places)?;
+                    $helpers::visit_opt_ty(visitor, opt_ref!($($m)? receiver), TySite::Receiver)?;
+                    $helpers::visit_ty_args(visitor, instantiated_args)?;
+                    $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)
+                }
+                I::CallIndirect {
+                    raises,
+                    callee_place,
+                    arg_places,
+                    kwarg_places,
+                    param_arg_regs,
+                    param_decls,
+                    instantiated_contract,
+                    instantiated_args,
+                    ..
+                } => {
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
+                        TySite::Contract,
+                    )?;
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? callee_place))?;
+                    $helpers::visit_places(visitor, arg_places)?;
+                    $helpers::visit_places(visitor, kwarg_places)?;
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? instantiated_contract),
+                        TySite::Contract,
+                    )?;
+                    $helpers::visit_ty_args(visitor, instantiated_args)?;
+                    $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
+                    visitor.visit_param_decls(param_decls, ParamDeclSite::CallableContract)
+                }
+                I::MethodCall {
+                    raises,
+                    reference_result,
+                    recv_place,
+                    arg_places,
+                    kwarg_places,
+                    param_arg_regs,
+                    param_decls,
+                    instantiated_args,
+                    ..
+                } => {
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
+                        TySite::Contract,
+                    )?;
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? reference_result)
+                            .map(|reference| &$($m)? reference.referent),
+                        TySite::Result,
+                    )?;
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? recv_place))?;
+                    $helpers::visit_places(visitor, arg_places)?;
+                    $helpers::visit_places(visitor, kwarg_places)?;
+                    $helpers::visit_ty_args(visitor, instantiated_args)?;
+                    $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
+                    visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
+                }
+                I::UnOp { raises, .. } => $helpers::visit_opt_ty(
+                    visitor,
+                    opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
+                    TySite::Contract,
+                ),
+                I::BinOp {
+                    raises, fastmath, ..
+                } => {
+                    $helpers::visit_opt_ty(
+                        visitor,
+                        opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
+                        TySite::Contract,
+                    )?;
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? fastmath))
+                }
+                I::Pop { fastmath, .. } => {
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? fastmath))
+                }
+                I::Index {
+                    base_place,
+                    index_place,
+                    call,
+                    ..
+                } => {
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? base_place))?;
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? index_place))?;
+                    opt_deref!($($m)? call)
+                        .map_or(Ok(()), |call| $helpers::walk_subscript_call(visitor, call))
+                }
+                I::MultiIndex {
+                    object_place,
+                    arg_places,
+                    kwarg_places,
+                    call,
+                    ..
+                } => {
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? object_place))?;
+                    $helpers::visit_places(visitor, arg_places)?;
+                    $helpers::visit_places(visitor, kwarg_places)?;
+                    opt_deref!($($m)? call)
+                        .map_or(Ok(()), |call| $helpers::walk_subscript_call(visitor, call))
+                }
+                I::MultiSet {
+                    receiver_place,
+                    arg_places,
+                    value_place,
+                    call,
+                    ..
+                } => {
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? receiver_place))?;
+                    $helpers::visit_places(visitor, arg_places)?;
+                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? value_place))?;
+                    $helpers::walk_subscript_call(visitor, call)
+                }
+                I::MakeTuple {
+                    element_types: Some(types),
+                    ..
+                } => slice_iter!($($m)? types)
+                    .try_for_each(|ty| visitor.visit_ty(ty, TySite::TupleElement)),
+                I::ConstructType { ty, .. } => visitor.visit_ty(ty, TySite::ConstructedType),
+                I::ConstructTypeParam {
+                    param,
+                    kwarg_places,
+                    element,
+                    ..
+                } => {
+                    visitor.visit_param_ref(param)?;
+                    $helpers::visit_places(visitor, kwarg_places)?;
+                    opt_ref!($($m)? element).map_or(Ok(()), |element| {
+                        visitor.visit_param_arg(element, ParamArgSite::ConstructedElement)
+                    })
+                }
+                I::Const { k: constant, .. }
+                | I::ParamListAddress {
+                    values: constant, ..
+                } => visitor.visit_constant(constant),
+                I::CallLlvmIntrinsic {
+                    intrinsic,
+                    has_side_effect,
+                    ..
+                } => {
+                    visitor.visit_constant(intrinsic)?;
+                    visitor.visit_constant(has_side_effect)
+                }
+                I::ArrayGet { index, .. }
+                | I::ArrayReplace { index, .. }
+                | I::SourceLoc {
+                    inline_count: index,
+                    ..
+                } => visitor.visit_constant(index),
+                I::ComptimeIf { values, .. } => slice_iter!($($m)? values)
+                    .try_for_each(|value| visitor.visit_constant(value)),
+                I::ComptimeFor { binder, source, .. } => {
+                    visitor.visit_param_ref(binder)?;
+                    visitor.visit_sequence(source)
+                }
+                I::ComptimeAssert { value, message } => {
+                    visitor.visit_constant(value)?;
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? message))
+                }
+                I::Match { .. } => Ok(()),
+                I::DefVar {
+                    binding_ty: None, ..
+                }
+                | I::MakeTuple {
+                    element_types: None,
+                    ..
+                }
+                | I::MakeStruct { .. }
+                | I::MakeArray { .. }
+                | I::MakeRefPack { .. }
+                | I::LoadIndirect { .. }
+                | I::ArrayRepeat { .. }
+                | I::InvalidateInteriors { .. }
+                | I::ReadRef { .. }
+                | I::Rebind { .. }
+                | I::CopyValue { .. }
+                | I::WriteRef { .. }
+                | I::KeepAlive { .. }
+                | I::StoreToMem { .. }
+                | I::ScalarCast { .. }
+                | I::BuiltinCast { .. }
+                | I::PointerConvert { .. }
+                | I::ArrayGep { .. }
+                | I::IsRunInComptimeInterpreter { .. }
+                | I::Select { .. }
+                | I::SimdSelect { .. }
+                | I::SimdExtract { .. }
+                | I::SimdInsert { .. }
+                | I::SimdReduce { .. }
+                | I::UseVar { .. }
+                | I::DeclareVar { .. }
+                | I::UninitStorage { .. }
+                | I::GetField { .. }
+                | I::Try { .. }
+                | I::If { .. }
+                | I::Loop { .. }
+                | I::Drop { .. }
+                | I::DropVar { .. }
+                | I::ConsumeVar { .. }
+                | I::Unsupported(_)
+                | I::GetIter { .. }
+                | I::HasNext { .. }
+                | I::VariantTag { .. }
+                | I::Next { .. } => Ok(()),
+            }
+        }
+
+        /// Visit a place's root type, its projection types, the alternatives
+        /// its variant projections select, its symbolic field steps, then its
+        /// designated type.
+        pub fn $walk_place<V: $Visitor + ?Sized>(
+            visitor: &mut V,
+            place: &$($m)? MirPlace,
+        ) -> Result<(), V::Error> {
+            $helpers::visit_opt_ty(visitor, opt_ref!($($m)? place.root_ty), TySite::Place)?;
+            for ty in &$($m)? place.projection_tys {
+                visitor.visit_ty(ty, TySite::Place)?;
+            }
+            for (position, projection) in slice_iter!($($m)? place.proj).enumerate() {
+                match projection {
+                    Proj::Variant(index) => visitor.visit_variant_index(index)?,
+                    Proj::FieldAt(_) => {
+                        let base = match position.checked_sub(1) {
+                            Some(previous) => place.projection_tys.get(previous),
+                            None => place.root_ty.as_ref(),
+                        };
+                        visitor.visit_field_step(projection, base)?;
+                    }
+                    _ => {}
+                }
+            }
+            $helpers::visit_opt_ty(visitor, opt_ref!($($m)? place.ty), TySite::Place)
+        }
+
+        mod $helpers {
+            use super::{
+                $Visitor, Const, MirParamArg, MirPlace, MirSubscriptCall, ParamArgSite,
+                ParamDeclSite, SimdDtype, SimdWidth, Ty, TyArg, TySite,
+            };
+
+            pub(super) fn visit_opt_ty<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                ty: Option<&$($m)? Ty>,
+                site: TySite,
+            ) -> Result<(), V::Error> {
+                ty.map_or(Ok(()), |ty| visitor.visit_ty(ty, site))
+            }
+
+            pub(super) fn visit_opt_constant<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                constant: Option<&$($m)? Const>,
+            ) -> Result<(), V::Error> {
+                constant.map_or(Ok(()), |constant| visitor.visit_constant(constant))
+            }
+
+            pub(super) fn visit_opt_place<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                place: Option<&$($m)? MirPlace>,
+            ) -> Result<(), V::Error> {
+                place.map_or(Ok(()), |place| visitor.visit_place(place))
+            }
+
+            pub(super) fn visit_places<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                places: &$($m)? [Option<MirPlace>],
+            ) -> Result<(), V::Error> {
+                slice_iter!($($m)? places)
+                    .flatten()
+                    .try_for_each(|place| visitor.visit_place(place))
+            }
+
+            pub(super) fn visit_param_args<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                args: &$($m)? [MirParamArg],
+                site: ParamArgSite,
+            ) -> Result<(), V::Error> {
+                slice_iter!($($m)? args).try_for_each(|arg| visitor.visit_param_arg(arg, site))
+            }
+
+            pub(super) fn visit_ty_args<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                args: &$($m)? [TyArg],
+            ) -> Result<(), V::Error> {
+                slice_iter!($($m)? args).try_for_each(|arg| visitor.visit_ty_arg(arg))
+            }
+
+            /// A subscript call's error, result, and parameter types, its
+            /// bracket arguments, its reference result's referent, then its
+            /// contract.
+            pub(super) fn walk_subscript_call<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                call: &$($m)? MirSubscriptCall,
+            ) -> Result<(), V::Error> {
+                visit_opt_ty(
+                    visitor,
+                    opt_ref!($($m)? call.raises).map(|raises| &$($m)? raises.ty),
+                    TySite::Contract,
+                )?;
+                visitor.visit_ty(&$($m)? call.result_ty, TySite::Result)?;
+                for argument in &$($m)? call.arguments {
+                    visitor.visit_ty(&$($m)? argument.parameter_ty, TySite::SubscriptParameter)?;
+                }
+                visit_param_args(visitor, &$($m)? call.param_arg_regs, ParamArgSite::Subscript)?;
+                visit_opt_ty(
+                    visitor,
+                    opt_ref!($($m)? call.reference_result)
+                        .map(|reference| &$($m)? reference.referent),
+                    TySite::Result,
+                )?;
+                visitor.visit_param_decls(
+                    &$($m)? call.param_decls,
+                    ParamDeclSite::SubscriptContract,
+                )
+            }
+
+            /// A SIMD instruction's slots, visited as the vector type they
+            /// build; a visited type that is no vector leaves them as they
+            /// were.
+            pub(super) fn visit_vector_slots<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                dtype: &$($m)? SimdDtype,
+                width: &$($m)? SimdWidth,
+            ) -> Result<(), V::Error> {
+                let $($m)? built = Ty::simd(dtype.clone(), width.clone());
+
+                visitor.visit_ty(&$($m)? built, TySite::VectorSlots)?;
+                write_back_slots!($($m)? built, dtype, width);
+                Ok(())
+            }
+        }
+    };
 }
 
-fn visit_opt_ty<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    ty: Option<&mut Ty>,
-    site: TySite,
-) -> Result<(), V::Error> {
-    ty.map_or(Ok(()), |ty| visitor.visit_ty(ty, site))
+type_visitor! {
+    /// A read-only visitor over every type and compile-time parameter site
+    /// of a MIR body, as MLIR's `AttrTypeWalker` is. A hook that fails stops
+    /// the walk.
+    trait TypeVisitor;
+    walks walk_function, walk_blocks, walk_instruction, walk_place;
+    regions instruction_regions;
+    alternatives [Ty];
+    helpers read_sites;
+    mutability ()
 }
 
-/// An op's `fastmath` flag constant, when it has one.
-fn visit_fastmath<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    fastmath: Option<&mut Const>,
-) -> Result<(), V::Error> {
-    fastmath.map_or(Ok(()), |flag| visitor.visit_constant(flag))
-}
-
-fn visit_places<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    places: &mut [Option<MirPlace>],
-) -> Result<(), V::Error> {
-    places
-        .iter_mut()
-        .try_for_each(|place| visit_opt_place(visitor, place.as_mut()))
-}
-
-fn visit_opt_place<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    place: Option<&mut MirPlace>,
-) -> Result<(), V::Error> {
-    place.map_or(Ok(()), |place| visitor.visit_place(place))
-}
-
-fn visit_param_args<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    args: &mut [MirParamArg],
-    site: ParamArgSite,
-) -> Result<(), V::Error> {
-    args.iter_mut()
-        .try_for_each(|arg| visitor.visit_param_arg(arg, site))
-}
-
-fn visit_ty_args<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    args: &mut [TyArg],
-) -> Result<(), V::Error> {
-    args.iter_mut()
-        .try_for_each(|arg| visitor.visit_ty_arg(arg))
-}
-
-/// A subscript call's error, result, and parameter types, its bracket
-/// arguments, its reference result's referent, then its contract.
-fn walk_subscript_call<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    call: &mut MirSubscriptCall,
-) -> Result<(), V::Error> {
-    visit_opt_ty(
-        visitor,
-        call.raises.as_mut().map(|raises| &mut raises.ty),
-        TySite::Contract,
-    )?;
-    visitor.visit_ty(&mut call.result_ty, TySite::Result)?;
-    for argument in &mut call.arguments {
-        visitor.visit_ty(&mut argument.parameter_ty, TySite::SubscriptParameter)?;
-    }
-    visit_param_args(visitor, &mut call.param_arg_regs, ParamArgSite::Subscript)?;
-    if let Some(reference) = &mut call.reference_result {
-        visitor.visit_ty(&mut reference.referent, TySite::Result)?;
-    }
-    visitor.visit_param_decls(&mut call.param_decls, ParamDeclSite::SubscriptContract)
-}
-
-/// A SIMD instruction's slots, visited as the vector type they build; a
-/// visited type that is no vector leaves them as they were.
-fn visit_vector_slots<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    dtype: &mut SimdDtype,
-    width: &mut SimdWidth,
-) -> Result<(), V::Error> {
-    let mut built = Ty::simd(dtype.clone(), width.clone());
-
-    visitor.visit_ty(&mut built, TySite::VectorSlots)?;
-    if let Some((visited_dtype, visited_width)) = mojito_types::types::simd_slots(&built) {
-        *dtype = visited_dtype;
-        *width = visited_width;
-    }
-    Ok(())
+type_visitor! {
+    /// A mutating visitor over every type and compile-time parameter site
+    /// of a MIR body, as MLIR's `AttrTypeReplacer` is. A hook that fails
+    /// stops the walk.
+    trait MutTypeVisitor;
+    walks walk_function_mut, walk_blocks_mut, walk_instruction_mut, walk_place_mut;
+    regions instruction_regions_mut;
+    alternatives Vec<Ty>;
+    helpers write_sites;
+    mutability (mut)
 }
 
 #[cfg(test)]
@@ -572,13 +686,68 @@ mod tests {
     use crate::mir::{MirTerm, Reg, TryLabel};
 
     /// Counts each hook's visits and the sites its types sit at.
-    #[derive(Default)]
+    #[derive(Debug, Default, PartialEq, Eq)]
     struct Counter {
         sites: Vec<TySite>,
+        ty_args: usize,
         variant_lists: usize,
         variant_indices: usize,
+        field_steps: usize,
         lane_masks: usize,
+        param_args: Vec<ParamArgSite>,
+        param_decls: Vec<ParamDeclSite>,
         constants: usize,
+        param_refs: usize,
+        sequences: usize,
+    }
+
+    impl TypeVisitor for Counter {
+        type Error = ();
+
+        fn visit_ty(&mut self, _: &Ty, site: TySite) -> Result<(), ()> {
+            self.sites.push(site);
+            Ok(())
+        }
+        fn visit_ty_arg(&mut self, _: &TyArg) -> Result<(), ()> {
+            self.ty_args += 1;
+            Ok(())
+        }
+        fn visit_variant_alternatives(&mut self, _: &[Ty]) -> Result<(), ()> {
+            self.variant_lists += 1;
+            Ok(())
+        }
+        fn visit_variant_index(&mut self, _: &VariantIndex) -> Result<(), ()> {
+            self.variant_indices += 1;
+            Ok(())
+        }
+        fn visit_field_step(&mut self, _: &Proj, _: Option<&Ty>) -> Result<(), ()> {
+            self.field_steps += 1;
+            Ok(())
+        }
+        fn visit_lane_mask(&mut self, _: &LaneMask) -> Result<(), ()> {
+            self.lane_masks += 1;
+            Ok(())
+        }
+        fn visit_param_arg(&mut self, _: &MirParamArg, site: ParamArgSite) -> Result<(), ()> {
+            self.param_args.push(site);
+            Ok(())
+        }
+        fn visit_param_decls(&mut self, _: &[ParamDecl], site: ParamDeclSite) -> Result<(), ()> {
+            self.param_decls.push(site);
+            Ok(())
+        }
+        fn visit_constant(&mut self, _: &Const) -> Result<(), ()> {
+            self.constants += 1;
+            Ok(())
+        }
+        fn visit_param_ref(&mut self, _: &ParamRef) -> Result<(), ()> {
+            self.param_refs += 1;
+            Ok(())
+        }
+        fn visit_sequence(&mut self, _: &ComptimeSequence) -> Result<(), ()> {
+            self.sequences += 1;
+            Ok(())
+        }
     }
 
     impl MutTypeVisitor for Counter {
@@ -589,6 +758,7 @@ mod tests {
             Ok(())
         }
         fn visit_ty_arg(&mut self, _: &mut TyArg) -> Result<(), ()> {
+            self.ty_args += 1;
             Ok(())
         }
         fn visit_variant_alternatives(&mut self, _: &mut Vec<Ty>) -> Result<(), ()> {
@@ -600,16 +770,23 @@ mod tests {
             Ok(())
         }
         fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), ()> {
+            self.field_steps += 1;
             Ok(())
         }
         fn visit_lane_mask(&mut self, _: &mut LaneMask) -> Result<(), ()> {
             self.lane_masks += 1;
             Ok(())
         }
-        fn visit_param_arg(&mut self, _: &mut MirParamArg, _: ParamArgSite) -> Result<(), ()> {
+        fn visit_param_arg(&mut self, _: &mut MirParamArg, site: ParamArgSite) -> Result<(), ()> {
+            self.param_args.push(site);
             Ok(())
         }
-        fn visit_param_decls(&mut self, _: &mut [ParamDecl], _: ParamDeclSite) -> Result<(), ()> {
+        fn visit_param_decls(
+            &mut self,
+            _: &mut [ParamDecl],
+            site: ParamDeclSite,
+        ) -> Result<(), ()> {
+            self.param_decls.push(site);
             Ok(())
         }
         fn visit_constant(&mut self, _: &mut Const) -> Result<(), ()> {
@@ -617,15 +794,17 @@ mod tests {
             Ok(())
         }
         fn visit_param_ref(&mut self, _: &mut ParamRef) -> Result<(), ()> {
+            self.param_refs += 1;
             Ok(())
         }
         fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), ()> {
+            self.sequences += 1;
             Ok(())
         }
     }
 
-    #[test]
-    fn visit_walk_reaches_every_site_kind() {
+    /// A body holding one instruction of each kind of site the walks reach.
+    fn fixture() -> MirFunction {
         let int = || Ty::int();
         let mut place = MirPlace::root(0, Some(int()));
         place.project(Proj::Variant(VariantIndex::Known(0)), Ty::bool());
@@ -637,7 +816,7 @@ mod tests {
             }],
             term: MirTerm::TryYield(Vec::new()),
         };
-        let mut function = MirFunction {
+        MirFunction {
             param_types: vec![int()],
             ret_ty: Some(int()),
             reg_types: std::iter::once((0, int())).collect(),
@@ -696,7 +875,47 @@ mod tests {
                 term: MirTerm::Return(None),
             },
             ..MirFunction::default()
-        };
+        }
+    }
+
+    /// A method call's error, reference result, arguments, slots, and
+    /// contract, the sites a read-only client must not miss.
+    fn method_call() -> MirInstr {
+        MirInstr::MethodCall {
+            dest: Reg(6),
+            recv: Reg(0),
+            method: "get".into(),
+            resolved: Some("S.get".into()),
+            raises: None,
+            reference_result: Some(Box::new(mojito_types::origin::RefTy {
+                referent: Ty::int(),
+                origin: mojito_types::origin::Origin::Untracked { mutable: false },
+                mutability: mojito_types::origin::Mutability::Immutable,
+            })),
+            result_adapter: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: None,
+            recv_writes: false,
+            receiver_convention: None,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: vec![MirParamArg {
+                name: None,
+                value: None,
+                expr: None,
+            }],
+            param_decls: Vec::new(),
+            instantiated_args: vec![TyArg::Ty(Ty::int())],
+            spread: None,
+            refined_bound: None,
+        }
+    }
+
+    #[test]
+    fn visit_walk_reaches_every_site_kind() {
+        let mut function = fixture();
         let mut counter = Counter::default();
         walk_function_mut(&mut counter, &mut function).unwrap();
         assert_eq!(
@@ -716,5 +935,22 @@ mod tests {
         assert_eq!(counter.variant_lists, 1);
         assert_eq!(counter.variant_indices, 2);
         assert_eq!(counter.lane_masks, 1);
+    }
+
+    /// The read-only walk reaches exactly the sites the mutating walk does,
+    /// in the same order.
+    #[test]
+    fn read_only_walk_matches_the_mutating_walk() {
+        let mut function = fixture();
+        function.body.instrs.push(method_call());
+        let mut read = Counter::default();
+        walk_function(&mut read, &function).unwrap();
+        let mut written = Counter::default();
+        walk_function_mut(&mut written, &mut function).unwrap();
+        assert_eq!(read, written);
+        assert_eq!(read.sites.last(), Some(&TySite::Result));
+        assert_eq!(read.ty_args, 1);
+        assert_eq!(read.param_args, [ParamArgSite::Call]);
+        assert_eq!(read.param_decls, [ParamDeclSite::MethodContract]);
     }
 }

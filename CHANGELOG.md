@@ -158,6 +158,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier's scope and concrete modes now read every type and
+  parameter site through `mir::visit::TypeVisitor`, the read-only twin of
+  `MutTypeVisitor` expanded from the same site inventory, as MLIR's
+  `AttrTypeWalker` is of its `AttrTypeReplacer`, instead of their own
+  narrower lists. A method call's and a subscript's reference result, a
+  subscript's parameter types, bracket-argument expressions, field steps,
+  every parameter constant, and an instantiated value argument are now
+  checked, and a call's contract declarations are held to its callee's
+  scope (R944).
 - `inline-parametric` keeps the call to a callee whose followed calls reach
   a cycle of them, not only to one on the cycle, as the pin's
   `InlineParametric` does: a `nodebug` callee calling a `nodebug` wrapper

@@ -5,11 +5,17 @@
 //! body, so every type is closed and every call names its target. These
 //! rules reject the parametric residue; the structural rules are shared.
 
+use super::scope::Family;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::instruction_mnemonic;
-use crate::mir::{Const, MirParamArg, MirSubscriptCall, UseMode, VarId};
+use crate::mir::visit::{
+    ParamArgSite, ParamDeclSite, TySite, TypeVisitor, walk_instruction, walk_place,
+};
+use crate::mir::{Const, MirParamArg, MirPlace, UseMode, VarId};
+use mojito_checked::checked::ComptimeSequence;
 use mojito_types::mlir::storage_bits;
+use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{TyKind, has_no_llvm_type};
 
 /// The concreteness findings for one function body.
@@ -238,17 +244,6 @@ fn require_no_parameters(head: &str, parameters: &[ParamDecl], errors: &mut Vec<
     }
 }
 
-/// A concrete call has no parameter list: its compile-time arguments are
-/// attributes its instantiated arguments carry, and none has a run-time
-/// register.
-fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Vec<String>) {
-    if !slots.is_empty() {
-        errors.push(format!(
-            "{head} keeps compile-time argument slots in elaborated MIR"
-        ));
-    }
-}
-
 fn concrete_block(
     name: &str,
     function: &MirFunction,
@@ -302,32 +297,9 @@ fn require_known_alternative(
     }
 }
 
+/// The op rules of elaborated MIR, then every site of the instruction
+/// through [`ConcreteCx`].
 fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<String>) {
-    for place in instruction_places(instruction) {
-        let types = place
-            .root_ty
-            .iter()
-            .chain(&place.projection_tys)
-            .chain(place.ty.iter());
-        for ty in types {
-            require_concrete(head, "place", ty, errors);
-        }
-        for projection in &place.proj {
-            match projection {
-                Proj::Variant(index) => require_known_alternative(head, index, errors),
-                Proj::Rebind => {
-                    errors.push(format!("{head} keeps a rebound place in elaborated MIR"));
-                }
-                Proj::FieldAt(index) => errors.push(format!(
-                    "{head} keeps the symbolic field step `{index}` in elaborated MIR"
-                )),
-                _ => {}
-            }
-        }
-    }
-    for index in instruction_variant_indices(instruction) {
-        require_known_alternative(head, index, errors);
-    }
     if let Some(flag) = instruction.fastmath()
         && !matches!(flag, Const::Value(CtValue::MlirAttr(attribute))
             if mojito_types::mlir::is_fastmath_attribute(attribute))
@@ -380,22 +352,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} constructs the type `{ty}` in elaborated MIR"
             ));
         }
-        MirInstr::Const {
-            k: Const::Param(value),
-            ..
-        }
-        | MirInstr::ParamListAddress {
-            values: Const::Param(value),
-            ..
-        } => errors.push(format!(
-            "{head} keeps the parameter constant `{value}` in elaborated MIR"
-        )),
-        MirInstr::Const {
-            k: Const::FunctionInstance { function, .. },
-            ..
-        } => errors.push(format!(
-            "{head} keeps the unelaborated instance of `{function}` in elaborated MIR"
-        )),
         MirInstr::MakeSimd { dtype, width, .. }
         | MirInstr::SimdCast { dtype, width, .. }
         | MirInstr::SimdBitcast { dtype, width, .. }
@@ -405,132 +361,15 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps the symbolic vector slots `SIMD[{dtype}, {width}]` in elaborated MIR"
             ));
         }
-        MirInstr::ArrayGet {
-            index: Const::Param(index),
-            ..
-        }
-        | MirInstr::ArrayReplace {
-            index: Const::Param(index),
-            ..
-        } => errors.push(format!(
-            "{head} keeps the parameter array index `{index}` in elaborated MIR"
-        )),
-        MirInstr::SourceLoc {
-            inline_count: Const::Param(count),
-            ..
-        } => errors.push(format!(
-            "{head} keeps the parameter inline count `{count}` in elaborated MIR"
-        )),
-        MirInstr::SimdShuffle { mask, .. } if mask.is_symbolic() => {
-            errors.push(format!(
-                "{head} keeps the symbolic lane mask `{mask}` in elaborated MIR"
-            ));
-        }
-        MirInstr::MaterializeLiteral { target: ty, .. }
-        | MirInstr::PointerStorageTake { element: ty, .. }
-        | MirInstr::PointerStorageDestroy { element: ty, .. }
-        | MirInstr::UninitStorageTake { element: ty, .. }
-        | MirInstr::UninitStorageDestroy { element: ty, .. }
-        | MirInstr::DefVar {
-            binding_ty: Some(ty),
-            ..
-        } => {
-            require_concrete(head, "instruction", ty, errors);
-        }
-        MirInstr::Call {
-            raises,
-            param_arg_regs,
-            receiver,
-            instantiated_args,
-            ..
-        } => {
-            for ty in raises
-                .iter()
-                .map(|raises| &raises.ty)
-                .chain(receiver.iter())
-            {
-                require_concrete(head, "instruction", ty, errors);
-            }
-            for argument in instantiated_args {
-                if let TyArg::Ty(ty) = argument {
-                    require_concrete(head, "instantiated argument", ty, errors);
-                }
-            }
-            require_no_parameter_slots(head, param_arg_regs, errors);
-        }
-        MirInstr::MakeTuple { element_types, .. } => {
-            for ty in element_types.iter().flatten() {
-                require_concrete(head, "tuple element", ty, errors);
-            }
-        }
-        MirInstr::MakeVariant { alternatives, .. } => {
-            for ty in alternatives {
-                require_concrete(head, "variant alternative", ty, errors);
-            }
-        }
-        MirInstr::CallIndirect {
-            raises,
-            param_arg_regs,
-            param_decls,
-            instantiated_contract,
-            instantiated_args,
-            ..
-        } => {
-            for ty in raises
-                .iter()
-                .map(|raises| &raises.ty)
-                .chain(instantiated_contract.iter())
-            {
-                require_concrete(head, "callable contract", ty, errors);
-            }
-            for argument in instantiated_args {
-                if let TyArg::Ty(ty) = argument {
-                    require_concrete(head, "callable argument", ty, errors);
-                }
-            }
-            require_no_parameters(head, param_decls, errors);
-            require_no_parameter_slots(head, param_arg_regs, errors);
-        }
-        MirInstr::MethodCall {
-            raises,
-            param_arg_regs,
-            param_decls,
-            instantiated_args,
-            ..
-        } => {
-            if let Some(raises) = raises {
-                require_concrete(head, "error contract", &raises.ty, errors);
-            }
-            for argument in instantiated_args {
-                if let TyArg::Ty(ty) = argument {
-                    require_concrete(head, "instantiated argument", ty, errors);
-                }
-            }
-            require_no_parameters(head, param_decls, errors);
-            require_no_parameter_slots(head, param_arg_regs, errors);
-        }
-        MirInstr::Index {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiIndex {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiSet { call, .. } => concrete_subscript(head, call, errors),
         _ => {}
     }
-}
-
-fn concrete_subscript(head: &str, call: &MirSubscriptCall, errors: &mut Vec<String>) {
-    for ty in call
-        .raises
-        .iter()
-        .map(|raises| &raises.ty)
-        .chain(std::iter::once(&call.result_ty))
-    {
-        require_concrete(head, "subscript contract", ty, errors);
-    }
-    require_no_parameters(head, &call.param_decls, errors);
-    require_no_parameter_slots(head, &call.param_arg_regs, errors);
+    let mut cx = ConcreteCx {
+        head,
+        errors,
+        family: Family::Other,
+        slots_reported: false,
+    };
+    let Ok(()) = cx.visit_instruction(instruction);
 }
 
 /// A reference slot is read by a whole-root `LoadPlace`, which yields its
@@ -808,6 +647,160 @@ fn integer_constants(block: &MirBlock, constants: &mut HashMap<u32, i128>) {
     }
 }
 
+/// The sites of one instruction, each held to what elaborated MIR may
+/// carry there.
+struct ConcreteCx<'a> {
+    head: &'a str,
+    errors: &'a mut Vec<String>,
+    family: Family,
+    /// Whether the instruction's compile-time argument slots are reported.
+    slots_reported: bool,
+}
+
+impl TypeVisitor for ConcreteCx<'_> {
+    type Error = std::convert::Infallible;
+
+    fn visit_instruction(&mut self, instruction: &MirInstr) -> Result<(), Self::Error> {
+        self.family = Family::of(instruction);
+        self.slots_reported = false;
+        walk_instruction(self, instruction)
+    }
+
+    /// A place's sites, and its rebind step, which no instance keeps.
+    fn visit_place(&mut self, place: &MirPlace) -> Result<(), Self::Error> {
+        walk_place(self, place)?;
+        for _ in place
+            .proj
+            .iter()
+            .filter(|step| matches!(step, Proj::Rebind))
+        {
+            self.errors.push(format!(
+                "{} keeps a rebound place in elaborated MIR",
+                self.head
+            ));
+        }
+        Ok(())
+    }
+
+    /// Every type but a constructed one, which the op's own rule rejects,
+    /// and a SIMD instruction's slots, which theirs does.
+    fn visit_ty(&mut self, ty: &Ty, site: TySite) -> Result<(), Self::Error> {
+        if !matches!(site, TySite::ConstructedType | TySite::VectorSlots) {
+            require_concrete(self.head, &self.family.ty_role(site), ty, self.errors);
+        }
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &TyArg) -> Result<(), Self::Error> {
+        let role = self.family.argument_role();
+        match arg {
+            TyArg::Ty(ty) => require_concrete(self.head, role, ty, self.errors),
+            TyArg::Val(value) if mojito_types::types::ct_value_is_symbolic(value) => {
+                self.errors.push(format!(
+                    "{} {role} keeps the symbolic parameter value `{value:?}` in elaborated MIR",
+                    self.head
+                ));
+            }
+            TyArg::Val(_) | TyArg::Origin(_) => {}
+        }
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(&mut self, alternatives: &[Ty]) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            require_concrete(self.head, "variant alternative", ty, self.errors);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(
+        &mut self,
+        index: &mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        require_known_alternative(self.head, index, self.errors);
+        Ok(())
+    }
+
+    fn visit_field_step(&mut self, step: &Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        if let Proj::FieldAt(index) = step {
+            self.errors.push(format!(
+                "{} keeps the symbolic field step `{index}` in elaborated MIR",
+                self.head
+            ));
+        }
+        Ok(())
+    }
+
+    fn visit_lane_mask(&mut self, mask: &mojito_types::types::LaneMask) -> Result<(), Self::Error> {
+        if mask.is_symbolic() {
+            self.errors.push(format!(
+                "{} keeps the symbolic lane mask `{mask}` in elaborated MIR",
+                self.head
+            ));
+        }
+        Ok(())
+    }
+
+    /// A concrete call has no parameter list: its compile-time arguments
+    /// are attributes its instantiated arguments carry, and none has a
+    /// run-time register. A constructed pack element is rejected with its
+    /// op.
+    fn visit_param_arg(&mut self, _: &MirParamArg, site: ParamArgSite) -> Result<(), Self::Error> {
+        if site != ParamArgSite::ConstructedElement && !self.slots_reported {
+            self.slots_reported = true;
+            self.errors.push(format!(
+                "{} keeps compile-time argument slots in elaborated MIR",
+                self.head
+            ));
+        }
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        decls: &[ParamDecl],
+        _: ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        require_no_parameters(self.head, decls, self.errors);
+        Ok(())
+    }
+
+    /// A parameter constant an instance has not folded. A fast-math flag,
+    /// an LLVM intrinsic's operands, and the compile-time ops are judged by
+    /// their op's own rule.
+    fn visit_constant(&mut self, constant: &Const) -> Result<(), Self::Error> {
+        let head = self.head;
+        match (self.family, constant) {
+            (Family::Constant, Const::Param(value)) => self.errors.push(format!(
+                "{head} keeps the parameter constant `{value}` in elaborated MIR"
+            )),
+            (Family::Constant, Const::FunctionInstance { function, .. }) => {
+                self.errors.push(format!(
+                    "{head} keeps the unelaborated instance of `{function}` in elaborated MIR"
+                ));
+            }
+            (Family::ArrayIndex, Const::Param(index)) => self.errors.push(format!(
+                "{head} keeps the parameter array index `{index}` in elaborated MIR"
+            )),
+            (Family::SourceLoc, Const::Param(count)) => self.errors.push(format!(
+                "{head} keeps the parameter inline count `{count}` in elaborated MIR"
+            )),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A constructed type parameter and a `comptime for` binder: their ops
+    /// are rejected whole.
+    fn visit_param_ref(&mut self, _: &ParamRef) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_sequence(&mut self, _: &ComptimeSequence) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,6 +991,52 @@ mod tests {
                 .iter()
                 .any(|finding| finding.contains("attribute constant")),
             "{findings:?}"
+        );
+    }
+
+    fn concrete_findings_of(instruction: MirInstr) -> Vec<String> {
+        concrete_function_findings("f", &function_with(instruction, Ty::none()), None)
+    }
+
+    fn keeps_symbolic(found: &[String], role: &str) -> bool {
+        found
+            .iter()
+            .any(|finding| finding.contains(&format!("{role} keeps symbolic type `T`")))
+    }
+
+    /// A method call's and a subscript's reference result, and a
+    /// subscript's parameter type, are closed in an instance.
+    #[test]
+    fn concrete_rejects_symbolic_call_results_and_parameters() {
+        use super::super::scope::tests::{foreign_param, method_call, subscript};
+        let found = concrete_findings_of(method_call(foreign_param(), Vec::new(), Vec::new()));
+        assert!(keeps_symbolic(&found, "reference result"), "{found:?}");
+        let found = concrete_findings_of(subscript(foreign_param(), Ty::int()));
+        assert!(keeps_symbolic(&found, "subscript parameter"), "{found:?}");
+        let found = concrete_findings_of(subscript(Ty::int(), foreign_param()));
+        assert!(keeps_symbolic(&found, "subscript contract"), "{found:?}");
+    }
+
+    /// An instantiated value argument is closed in an instance.
+    #[test]
+    fn concrete_rejects_a_symbolic_instantiated_value() {
+        let n = mojito_types::param_expr::ParamContext::detached().decl_ref(
+            mojito_types::param_expr::ParamId::new("g", 0),
+            "n",
+            mojito_types::param_expr::MetaTy::int(),
+        );
+        let mut call = super::super::scope::tests::method_call(Ty::int(), Vec::new(), Vec::new());
+        if let MirInstr::MethodCall {
+            instantiated_args, ..
+        } = &mut call
+        {
+            instantiated_args.push(TyArg::Val(CtValue::Expr(n)));
+        }
+        let found = concrete_findings_of(call);
+        assert!(
+            found.iter().any(|finding| finding
+                .contains("instantiated argument keeps the symbolic parameter value")),
+            "{found:?}"
         );
     }
 }

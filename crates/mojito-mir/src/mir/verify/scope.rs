@@ -16,7 +16,12 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::Const;
+use crate::mir::MirParamArg;
+use crate::mir::visit::{
+    ParamArgSite, ParamDeclSite, TySite, TypeVisitor, walk_blocks, walk_instruction,
+};
 use mojito_types::ct::CtValue;
+use mojito_types::param_expr::ParamRef;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
 use mojito_types::types::TyKind;
 use mojito_types::types::{DependentType, FuncTy, GenericFuncTy, SimdDtype, SimdWidth};
@@ -132,6 +137,8 @@ pub(super) fn verify_scope(
         errors,
         erasable: 0,
         callee_removed_params: &function.callee_removed_params,
+        family: Family::Other,
+        callee: None,
     };
     let signature = function
         .param_types
@@ -162,139 +169,85 @@ pub(super) fn verify_scope(
     for (register, ty) in registers {
         cx.walk(&format!("register r{register}"), ty);
     }
-    cx.block(&function.body);
-}
-
-/// The types an instruction names outside its places and registers, each
-/// with the role the finding spells.
-pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty)> {
-    let mut types = Vec::new();
-    match instruction {
-        MirInstr::MaterializeLiteral { target: ty, .. }
-        | MirInstr::PointerStorageTake { element: ty, .. }
-        | MirInstr::PointerStorageDestroy { element: ty, .. }
-        | MirInstr::UninitStorageTake { element: ty, .. }
-        | MirInstr::UninitStorageDestroy { element: ty, .. }
-        | MirInstr::DefVar {
-            binding_ty: Some(ty),
-            ..
-        } => types.push(("instruction", ty)),
-        MirInstr::ConstructType { ty, .. } => types.push(("constructed type", ty)),
-        MirInstr::Call {
-            raises,
-            receiver,
-            instantiated_args,
-            ..
-        } => {
-            types.extend(
-                raises
-                    .as_ref()
-                    .map(|raises| &raises.ty)
-                    .into_iter()
-                    .chain(receiver.as_ref())
-                    .map(|ty| ("instruction", ty)),
-            );
-            types.extend(
-                instantiated_args
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        TyArg::Ty(ty) => Some(("instantiated argument", ty)),
-                        _ => None,
-                    }),
-            );
-        }
-        MirInstr::MakeTuple { element_types, .. } => {
-            types.extend(
-                element_types
-                    .iter()
-                    .flatten()
-                    .map(|ty| ("tuple element", ty)),
-            );
-        }
-        MirInstr::MakeVariant { alternatives, .. } => {
-            types.extend(alternatives.iter().map(|ty| ("variant alternative", ty)));
-        }
-        MirInstr::CallIndirect {
-            raises,
-            instantiated_contract,
-            instantiated_args,
-            ..
-        } => {
-            types.extend(
-                raises
-                    .as_ref()
-                    .map(|raises| &raises.ty)
-                    .into_iter()
-                    .chain(instantiated_contract.as_ref())
-                    .map(|ty| ("callable contract", ty)),
-            );
-            types.extend(
-                instantiated_args
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        TyArg::Ty(ty) => Some(("callable argument", ty)),
-                        _ => None,
-                    }),
-            );
-        }
-        MirInstr::MethodCall {
-            raises,
-            instantiated_args,
-            ..
-        } => {
-            types.extend(raises.as_ref().map(|raises| ("error contract", &raises.ty)));
-            types.extend(
-                instantiated_args
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        TyArg::Ty(ty) => Some(("instantiated argument", ty)),
-                        _ => None,
-                    }),
-            );
-        }
-        MirInstr::Index {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiIndex {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiSet { call, .. } => {
-            types.extend(
-                call.raises
-                    .iter()
-                    .map(|raises| &raises.ty)
-                    .chain(std::iter::once(&call.result_ty))
-                    .map(|ty| ("subscript contract", ty)),
-            );
-        }
-        _ => {}
-    }
-    types
-}
-
-/// The alternatives a `Variant` operation selects, outside its places.
-pub fn instruction_variant_indices(
-    instruction: &MirInstr,
-) -> Vec<&mojito_types::types::VariantIndex> {
-    match instruction {
-        MirInstr::MakeVariant { index, .. }
-        | MirInstr::VariantIs { index, .. }
-        | MirInstr::VariantGet { index, .. }
-        | MirInstr::VariantSet { index, .. }
-        | MirInstr::VariantTake { index, .. } => vec![index],
-        MirInstr::VariantReplace {
-            input_index,
-            output_index,
-            ..
-        } => vec![input_index, output_index],
-        _ => Vec::new(),
-    }
+    let Ok(()) = walk_blocks(&mut cx, &function.body);
 }
 
 /// Whether a binder is one a callable contract or witness request spells,
 /// bound by the construct that holds it rather than by a declaration.
 pub(super) fn is_contract_binder(id: &ParamId) -> bool {
     id.owner.starts_with('$')
+}
+
+/// The instruction a site sits in, as far as the role of its finding
+/// depends on it, in either verifier mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Family {
+    Call,
+    Indirect,
+    Method,
+    Subscript,
+    ComptimeIf,
+    ComptimeFor,
+    /// A `comptime assert` before its condition is visited.
+    ComptimeAssert,
+    /// A `comptime assert` after its condition, at its message.
+    ComptimeAssertMessage,
+    /// A `const` or a parameter list address.
+    Constant,
+    /// An array element read or replacement at a constant index.
+    ArrayIndex,
+    SourceLoc,
+    Other,
+}
+
+impl Family {
+    pub(super) const fn of(instruction: &MirInstr) -> Self {
+        match instruction {
+            MirInstr::Call { .. } => Self::Call,
+            MirInstr::CallIndirect { .. } => Self::Indirect,
+            MirInstr::MethodCall { .. } => Self::Method,
+            MirInstr::Index { .. } | MirInstr::MultiIndex { .. } | MirInstr::MultiSet { .. } => {
+                Self::Subscript
+            }
+            MirInstr::ComptimeIf { .. } => Self::ComptimeIf,
+            MirInstr::ComptimeFor { .. } => Self::ComptimeFor,
+            MirInstr::ComptimeAssert { .. } => Self::ComptimeAssert,
+            MirInstr::Const { .. } | MirInstr::ParamListAddress { .. } => Self::Constant,
+            MirInstr::ArrayGet { .. } | MirInstr::ArrayReplace { .. } => Self::ArrayIndex,
+            MirInstr::SourceLoc { .. } => Self::SourceLoc,
+            _ => Self::Other,
+        }
+    }
+
+    /// The role a finding spells for a type at `site` of this instruction.
+    pub(super) fn ty_role(self, site: TySite) -> String {
+        match (site, self) {
+            (TySite::Parameter, _) => "parameter type".into(),
+            (TySite::Slot(slot), _) => format!("variable slot {slot}"),
+            (TySite::Register(register), _) => format!("register r{register}"),
+            (TySite::Return, _) => "return type".into(),
+            (TySite::Error, _) => "error type".into(),
+            (TySite::Place, _) => "place".into(),
+            (TySite::ConstructedType, _) => "constructed type".into(),
+            (TySite::TupleElement, _) => "tuple element".into(),
+            (TySite::SubscriptParameter, _) => "subscript parameter".into(),
+            (TySite::VectorSlots, _) => "vector slots".into(),
+            (TySite::Contract, Self::Indirect) => "callable contract".into(),
+            (TySite::Contract, Self::Method) => "error contract".into(),
+            (TySite::Contract | TySite::Result, Self::Subscript) => "subscript contract".into(),
+            (TySite::Result, _) => "reference result".into(),
+            (TySite::Instruction | TySite::Receiver | TySite::Contract, _) => "instruction".into(),
+        }
+    }
+
+    /// The role a finding spells for an instantiated argument of this
+    /// instruction.
+    pub(super) const fn argument_role(self) -> &'static str {
+        match self {
+            Self::Indirect => "callable argument",
+            _ => "instantiated argument",
+        }
+    }
 }
 
 /// The binders a body may name, with the kind each declares.
@@ -361,141 +314,14 @@ struct ScopeCx<'a> {
     erasable: usize,
     /// The body's snapshot of the removals of the callees it reads through.
     callee_removed_params: &'a [(String, Vec<ParamId>)],
+    /// The instruction the walk is in, which names the role of its sites.
+    family: Family,
+    /// The callee the instruction names, whose scope its contract's
+    /// declarations are spelled in.
+    callee: Option<String>,
 }
 
 impl ScopeCx<'_> {
-    fn block(&mut self, block: &MirBlock) {
-        for instruction in &block.instrs {
-            let regions = crate::mir::instruction_regions(instruction);
-            if !regions.is_empty() {
-                match instruction {
-                    MirInstr::ComptimeIf { values, .. } => {
-                        let role = "compile-time if";
-                        for value in values {
-                            if let Const::Param(value) = value {
-                                let mut nested = Vec::new();
-                                self.expr_nodes(role, "condition value", value, &mut nested);
-                            }
-                        }
-                    }
-                    MirInstr::ComptimeFor { binder, source, .. } => {
-                        self.comptime_loop("compile-time loop", binder, source);
-                    }
-                    _ => {}
-                }
-                for region in regions {
-                    self.block(region);
-                }
-                continue;
-            }
-            let role = "place";
-            for place in instruction_places(instruction) {
-                let types = place
-                    .root_ty
-                    .iter()
-                    .chain(&place.projection_tys)
-                    .chain(place.ty.iter());
-                for ty in types {
-                    self.walk(role, ty);
-                }
-            }
-            for (what, ty) in instruction_named_types(instruction) {
-                self.walk(what, ty);
-            }
-            // A SIMD instruction's slots are the slots of the vector type
-            // it builds, checked as that type is.
-            if let MirInstr::MakeSimd { dtype, width, .. }
-            | MirInstr::SimdCast { dtype, width, .. }
-            | MirInstr::SimdBitcast { dtype, width, .. } = instruction
-            {
-                let built = Ty::simd(dtype.clone(), width.clone());
-                self.walk("vector slots", &built);
-            }
-            let projected = instruction_places(instruction)
-                .into_iter()
-                .flat_map(|place| &place.proj)
-                .filter_map(|projection| match projection {
-                    Proj::Variant(alternative) => Some(alternative),
-                    _ => None,
-                });
-            for alternative in instruction_variant_indices(instruction)
-                .into_iter()
-                .chain(projected)
-            {
-                if let mojito_types::types::VariantIndex::Expr(value) = alternative {
-                    let role = "variant alternative";
-                    let mut nested = Vec::new();
-                    self.expr_nodes(role, "variant alternative", value, &mut nested);
-                }
-            }
-            if let MirInstr::SimdShuffle { mask, .. } = instruction {
-                let role = "lane mask";
-                for value in mask.expressions() {
-                    let mut nested = Vec::new();
-                    self.expr_nodes(role, "lane mask", value, &mut nested);
-                }
-            }
-            if let MirInstr::ComptimeAssert { value, message } = instruction {
-                let role = "compile-time assertion";
-                if let Const::Param(value) = value {
-                    let mut nested = Vec::new();
-                    self.expr_nodes(role, "condition value", value, &mut nested);
-                }
-                if let Some(Const::Param(value)) = message {
-                    let role = "compile-time assertion message";
-                    let mut nested = Vec::new();
-                    self.expr_nodes(role, "assertion message", value, &mut nested);
-                }
-            }
-            if let MirInstr::Const {
-                k: Const::Param(value),
-                ..
-            }
-            | MirInstr::ArrayGet {
-                index: Const::Param(value),
-                ..
-            }
-            | MirInstr::ArrayReplace {
-                index: Const::Param(value),
-                ..
-            } = instruction
-            {
-                let role = "parameter constant";
-                let mut nested = Vec::new();
-                self.expr_nodes(role, "parameter constant", value, &mut nested);
-            }
-        }
-    }
-
-    /// A compile-time loop's binder is in scope, and every expression of its
-    /// sequence is well-kinded.
-    fn comptime_loop(
-        &mut self,
-        role: &str,
-        binder: &mojito_types::param_expr::ParamRef,
-        source: &mojito_checked::checked::ComptimeSequence,
-    ) {
-        self.reference(role, &binder.id, &binder.name, None, &[]);
-        for expression in source.expressions() {
-            // A sequence the elaborator evaluates is the application of its
-            // thunk, a list of values; its arguments are held to every
-            // expression's rules.
-            let operands: Vec<&ParamExpr> = match expression.kind() {
-                ParamKind::Apply { args, .. }
-                    if matches!(expression.meta(), MetaTy::ParamList(element)
-                        if matches!(**element, MetaTy::Value(_))) =>
-                {
-                    args.iter().collect()
-                }
-                _ => vec![expression],
-            };
-            for operand in operands {
-                let mut nested = Vec::new();
-                self.expr_nodes(role, "compile-time loop sequence", operand, &mut nested);
-            }
-        }
-    }
-
     /// Walk `ty` with the function's scope, entering each generic callable
     /// signature's own binders as it is passed.
     fn walk(&mut self, role: &str, ty: &Ty) {
@@ -556,26 +382,7 @@ impl ScopeCx<'_> {
                         },
                 } = &**generic;
 
-                let mark = nested.len();
-                nested.extend(
-                    decls
-                        .iter()
-                        .map(|decl| (decl.id().clone(), decl.binder_meta())),
-                );
-                for decl in decls {
-                    match decl {
-                        ParamDecl::Type {
-                            callable_bound,
-                            default,
-                            ..
-                        } => {
-                            for ty in callable_bound.iter().chain(default.iter()) {
-                                self.walk_in(role, ty, nested);
-                            }
-                        }
-                        ParamDecl::Value { ty, .. } => self.walk_in(role, ty, nested),
-                    }
-                }
+                let mark = self.param_decls(role, decls, nested);
                 for ty in params
                     .iter()
                     .chain(std::iter::once(ret))
@@ -674,6 +481,38 @@ impl ScopeCx<'_> {
             | TyKind::KgenDtype
             | TyKind::SelfType => {}
         }
+    }
+
+    /// Bring a declaration list's binders into `nested` and walk each
+    /// declaration's types under them; the caller truncates `nested` to the
+    /// returned mark when the list's scope ends.
+    fn param_decls(
+        &mut self,
+        role: &str,
+        decls: &[ParamDecl],
+        nested: &mut Vec<(ParamId, MetaTy)>,
+    ) -> usize {
+        let mark = nested.len();
+        nested.extend(
+            decls
+                .iter()
+                .map(|decl| (decl.id().clone(), decl.binder_meta())),
+        );
+        for decl in decls {
+            match decl {
+                ParamDecl::Type {
+                    callable_bound,
+                    default,
+                    ..
+                } => {
+                    for ty in callable_bound.iter().chain(default.iter()) {
+                        self.walk_in(role, ty, nested);
+                    }
+                }
+                ParamDecl::Value { ty, .. } => self.walk_in(role, ty, nested),
+            }
+        }
+        mark
     }
 
     /// The symbolic slots of a `SIMD` application or its `!kgen.simd`
@@ -960,8 +799,171 @@ impl ScopeCx<'_> {
     }
 }
 
+/// Every site of the body, each with the role its finding spells, held to
+/// the function's scope.
+impl TypeVisitor for ScopeCx<'_> {
+    type Error = std::convert::Infallible;
+
+    fn visit_instruction(&mut self, instruction: &MirInstr) -> Result<(), Self::Error> {
+        self.family = Family::of(instruction);
+        self.callee = match instruction {
+            MirInstr::MethodCall { resolved, .. } => resolved.clone(),
+            MirInstr::Index {
+                call: Some(call), ..
+            }
+            | MirInstr::MultiIndex {
+                call: Some(call), ..
+            }
+            | MirInstr::MultiSet { call, .. } => Some(call.target.clone()),
+            _ => None,
+        };
+        walk_instruction(self, instruction)
+    }
+
+    fn visit_ty(&mut self, ty: &Ty, site: TySite) -> Result<(), Self::Error> {
+        self.walk(&self.family.ty_role(site), ty);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &TyArg) -> Result<(), Self::Error> {
+        let role = self.family.argument_role();
+        match arg {
+            TyArg::Ty(ty) => self.walk(role, ty),
+            TyArg::Val(value) => self.value(role, value, None, &mut Vec::new()),
+            TyArg::Origin(_) => {}
+        }
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(&mut self, alternatives: &[Ty]) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            self.walk("variant alternative", ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(
+        &mut self,
+        index: &mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        if let mojito_types::types::VariantIndex::Expr(value) = index {
+            let role = "variant alternative";
+            self.expr_nodes(role, role, value, &mut Vec::new());
+        }
+        Ok(())
+    }
+
+    fn visit_field_step(&mut self, step: &Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        if let Proj::FieldAt(index) = step {
+            let role = "field step";
+            self.expr_nodes(role, role, index, &mut Vec::new());
+        }
+        Ok(())
+    }
+
+    fn visit_lane_mask(&mut self, mask: &mojito_types::types::LaneMask) -> Result<(), Self::Error> {
+        let role = "lane mask";
+        for value in mask.expressions() {
+            self.expr_nodes(role, role, value, &mut Vec::new());
+        }
+        Ok(())
+    }
+
+    fn visit_param_arg(
+        &mut self,
+        arg: &MirParamArg,
+        site: ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        let role = match site {
+            ParamArgSite::Call | ParamArgSite::Subscript => "parameter argument",
+            ParamArgSite::ConstructedElement => "constructed element",
+        };
+        if let Some(expr) = &arg.expr {
+            self.expr_nodes(role, role, expr, &mut Vec::new());
+        }
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        decls: &[ParamDecl],
+        site: ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        let role = match site {
+            ParamDeclSite::CallableContract => "callable contract",
+            ParamDeclSite::MethodContract => "method contract",
+            ParamDeclSite::SubscriptContract => "subscript contract",
+        };
+        // A contract restates its callee's declarations as the callee
+        // declares them: their types name the callee's binders and its
+        // struct's, which the call's instantiated arguments bind.
+        let mut nested: Vec<(ParamId, MetaTy)> = self
+            .callee
+            .as_deref()
+            .map(|callee| Scope::of_function(callee, self.declarations).kinds)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        self.param_decls(role, decls, &mut nested);
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, constant: &Const) -> Result<(), Self::Error> {
+        let (role, slot) = match self.family {
+            Family::ComptimeIf => ("compile-time if", "condition value"),
+            Family::ComptimeAssert => ("compile-time assertion", "condition value"),
+            Family::ComptimeAssertMessage => {
+                ("compile-time assertion message", "assertion message")
+            }
+            _ => ("parameter constant", "parameter constant"),
+        };
+        if self.family == Family::ComptimeAssert {
+            self.family = Family::ComptimeAssertMessage;
+        }
+        if let Const::Param(value) = constant {
+            self.expr_nodes(role, slot, value, &mut Vec::new());
+        }
+        Ok(())
+    }
+
+    fn visit_param_ref(&mut self, param: &ParamRef) -> Result<(), Self::Error> {
+        let role = match self.family {
+            Family::ComptimeFor => "compile-time loop",
+            _ => "constructed type parameter",
+        };
+        self.reference(role, &param.id, &param.name, None, &[]);
+        Ok(())
+    }
+
+    /// Every expression of a compile-time loop's sequence is well-kinded.
+    fn visit_sequence(
+        &mut self,
+        source: &mojito_checked::checked::ComptimeSequence,
+    ) -> Result<(), Self::Error> {
+        let role = "compile-time loop";
+        for expression in source.expressions() {
+            // A sequence the elaborator evaluates is the application of its
+            // thunk, a list of values; its arguments are held to every
+            // expression's rules.
+            let operands: Vec<&ParamExpr> = match expression.kind() {
+                ParamKind::Apply { args, .. }
+                    if matches!(expression.meta(), MetaTy::ParamList(element)
+                        if matches!(**element, MetaTy::Value(_))) =>
+                {
+                    args.iter().collect()
+                }
+                _ => vec![expression],
+            };
+            for operand in operands {
+                self.expr_nodes(role, "compile-time loop sequence", operand, &mut Vec::new());
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::mir::MirStructDeclaration;
     use mojito_types::param_expr::{ParamContext, ParamRef};
@@ -1441,5 +1443,160 @@ mod tests {
         let mut errors = Vec::new();
         verify_scope("Bag.first", &function, &declarations, &mut errors);
         assert_eq!(errors, Vec::<String>::new());
+    }
+
+    /// A type naming the binder `T` of `g`, which no declaration of `f`
+    /// encloses.
+    pub(in crate::mir::verify) fn foreign_param() -> Ty {
+        TyKind::Param {
+            binder: binder("g", 0, "T"),
+            bounds: Vec::new(),
+            callable_bound: None,
+        }
+        .into()
+    }
+
+    pub(in crate::mir::verify) fn reference_to(referent: Ty) -> mojito_types::origin::RefTy {
+        mojito_types::origin::RefTy {
+            referent,
+            origin: mojito_types::origin::Origin::Untracked { mutable: false },
+            mutability: mojito_types::origin::Mutability::Immutable,
+        }
+    }
+
+    /// A method call returning a reference to `referent`, with `slots` for
+    /// its bracket arguments and `decls` for its contract.
+    pub(in crate::mir::verify) fn method_call(
+        referent: Ty,
+        slots: Vec<MirParamArg>,
+        decls: Vec<ParamDecl>,
+    ) -> MirInstr {
+        MirInstr::MethodCall {
+            dest: Reg(1),
+            recv: Reg(0),
+            method: "get".into(),
+            resolved: Some("S.get".into()),
+            raises: None,
+            reference_result: Some(Box::new(reference_to(referent))),
+            result_adapter: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: None,
+            recv_writes: false,
+            receiver_convention: None,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: slots,
+            param_decls: decls,
+            instantiated_args: Vec::new(),
+            spread: None,
+            refined_bound: None,
+        }
+    }
+
+    /// A subscript read whose one parameter is `parameter` and whose
+    /// reference result is to `referent`.
+    pub(in crate::mir::verify) fn subscript(parameter: Ty, referent: Ty) -> MirInstr {
+        MirInstr::Index {
+            dest: Reg(1),
+            base: Reg(0),
+            index: Reg(0),
+            base_place: None,
+            index_place: None,
+            call: Some(Box::new(crate::mir::MirSubscriptCall {
+                target: "S.__getitem__".into(),
+                raises: None,
+                result_ty: Ty::int(),
+                receiver_requires_place: false,
+                receiver_convention: None,
+                arguments: vec![mojito_checked::checked::CheckedCallArgument {
+                    source: mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
+                    parameter_ty: parameter,
+                    requires_place: false,
+                    convention: None,
+                }],
+                capture_accesses: Vec::new(),
+                reference_result: Some(reference_to(referent)),
+                param_arg_regs: Vec::new(),
+                param_decls: Vec::new(),
+                refined_bound: None,
+            })),
+            intrinsic: None,
+        }
+    }
+
+    fn findings_of(instruction: MirInstr) -> Vec<String> {
+        let mut function = function_with(vec![Ty::none(), Ty::none()]);
+        function.body.instrs.push(instruction);
+        findings(&function, &declarations("f", Vec::new()))
+    }
+
+    fn unbound_in(found: &[String], role: &str) -> bool {
+        found.iter().any(|finding| {
+            finding.contains(&format!("{role} names parameter `T` of `g`"))
+                && finding.contains("no enclosing declaration binds")
+        })
+    }
+
+    /// A method call's and a subscript's reference result, and a
+    /// subscript's parameter type, are held to the function's scope.
+    #[test]
+    fn scope_rejects_unbound_binders_in_call_results_and_parameters() {
+        let found = findings_of(method_call(foreign_param(), Vec::new(), Vec::new()));
+        assert!(unbound_in(&found, "reference result"), "{found:?}");
+        let found = findings_of(subscript(foreign_param(), Ty::int()));
+        assert!(unbound_in(&found, "subscript parameter"), "{found:?}");
+        let found = findings_of(subscript(Ty::int(), foreign_param()));
+        assert!(unbound_in(&found, "subscript contract"), "{found:?}");
+    }
+
+    /// A bracket argument's expression is held to the function's scope.
+    #[test]
+    fn scope_rejects_an_unbound_binder_in_a_bracket_argument() {
+        let foreign = ParamContext::detached().decl_ref(ParamId::new("g", 0), "n", MetaTy::int());
+        let slot = MirParamArg {
+            name: None,
+            value: None,
+            expr: Some(foreign),
+        };
+        let found = findings_of(method_call(Ty::int(), vec![slot], Vec::new()));
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.contains("parameter argument")
+                    && finding.contains("names parameter `n` of `g`")),
+            "{found:?}"
+        );
+    }
+
+    /// A contract's declarations may name its own binders, and no other.
+    #[test]
+    fn scope_brings_a_contract_s_own_binders_into_scope() {
+        let own = |slot| TyKind::Param {
+            binder: binder("S.get", slot, "T"),
+            bounds: Vec::new(),
+            callable_bound: None,
+        };
+        let decls = |ty: Ty| {
+            vec![
+                ParamDecl::Type {
+                    id: ParamId::new("S.get", 0),
+                    name: "T".into(),
+                    bounds: Vec::new(),
+                    trait_param: None,
+                    callable_bound: None,
+                    default: None,
+                    infer_only: false,
+                    variadic: false,
+                    constraints: Vec::new(),
+                },
+                value_decl("S.get", 1, "v", ty),
+            ]
+        };
+        let found = findings_of(method_call(Ty::int(), Vec::new(), decls(own(0).into())));
+        assert_eq!(found, Vec::<String>::new());
+        let found = findings_of(method_call(Ty::int(), Vec::new(), decls(foreign_param())));
+        assert!(unbound_in(&found, "method contract"), "{found:?}");
     }
 }

@@ -4962,8 +4962,11 @@ they define, as `ControlFlowVerifier`'s `verifyTypesAlongEdge` does), `ComptimeY
 a fixed order, and the analyses and the elaborator's slot renumbering walk
 through them.
 `mir::visit` walks every type and compile-time parameter site of a body,
-regions included, as MLIR's `AttrTypeReplacer` does, and
-the elaborator substitutes an instance's bindings through it.
+regions included, from one inventory expanded twice: `MutTypeVisitor`, as
+MLIR's `AttrTypeReplacer`, which the elaborator substitutes an instance's
+bindings through, and the read-only `TypeVisitor`, as its
+`AttrTypeWalker`, which the verifier's scope and concrete modes read every
+site through, so no mode keeps a narrower list of its own.
 
 MIR lowering builds `and`/`or`, conditional expressions, comparison
 chains, and comprehensions as `If`/`Loop`, each region one block (a

@@ -561,22 +561,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R944 The MIR verifier misses types the elaborator substitutes**
-
-  The verifier's scope and concrete modes read an instruction's types
-  through `instruction_places` and `instruction_named_types`, which skip
-  sites `mir::visit` reaches.
-  - Missed today: `MethodCall.reference_result`, a subscript call's
-    `parameter_ty` and `reference_result`, and the `comptime` terminators'
-    parameters.
-  - Give `mir::visit` a read-only twin (`TypeVisitor`, `walk_instruction`)
-    and run both verifier modes over it, then delete
-    `instruction_named_types`.
-  - The concrete mode may report findings it does not report today; triage
-    them in this entry.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1414 A display's elements are not bound as its literal
   constructor's arguments**
 
