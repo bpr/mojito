@@ -537,27 +537,57 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2081 The pin keeps a `print`-calling `nodebug` callee whose caller
-  reaches a cycle, by a rule not yet known**
+- [ ] **R2081 The pin keeps a `nodebug` callee that splices one plain
+  `@always_inline` function twice when its caller reaches a cycle, by a
+  rule not yet known**
 
-  A `nodebug` `leaf[n]` whose body calls only `print()` keeps its own
-  instance on the pin when its caller `gen[n]` also calls the recursive
-  `nodebug` `rec[1](x)`, while `inline-parametric` inlines it: `leaf`
-  reaches no cycle, so the reach rule (R924) does not refuse it.
+  The pin keeps an instance of a `nodebug` `leaf[n]` that `inline-parametric`
+  inlines when two things hold. First, `leaf`'s own run splices one plain
+  `@always_inline` generator `X` at least twice, and `X`'s finished body
+  holds splices of its own. Second, `leaf`'s caller `gen` reaches a cycle of
+  followed calls. `leaf` reaches no cycle, so R924's reach rule does not
+  explain it.
   - The instances hold more inlined code than the pin's, and no output
     differs.
-  - Probe: `gen[n]` holds `_ = rec[1](x)` then `leaf[n](x)`, and `leaf`
-    holds `comptime assert k < 3` and `print()` (or `print(x)`); `main`
-    calls `gen[5]`. The pin's trace carries `("k": 5)`, and Mojito's names
-    `gen`.
-  - Probe: the same `gen` with `leaf` calling a `@no_inline` user function
-    instead of `print` (one with `print`'s exact signature, or one that
-    itself calls `rec`) is inlined on the pin, so `print`'s identity
-    matters, not its signature or its own reach.
-  - Probe: a cycle-reaching call in `main`, in a sibling function, or a
-    large plain `@always_inline` call in `gen` leaves `leaf` inlined on the
-    pin; the call's order inside `gen` does not matter.
-  - Find the pin's rule before matching it.
+  - Skeleton: `@no_inline sink(a: Int)`. The `nodebug` `rec[t]` calls
+    `rec[1](x)` under `comptime if t == 0`. `leaf[k]` holds
+    `comptime assert k < 3`, then the body below. `gen[n]` holds
+    `_ = rec[1](x)` and `leaf[n](x)`, and `main` prints `gen[5](1)`. KEPT
+    means the pin's trace carries `("k": 5)`. Mojito's trace names `gen` in
+    every probe below.
+  - Probe, KEPT: `X(x)` is plain, `var s = 0` then `s += e1(x+1)`, with
+    plain `e1(x) = x + 1`. `leaf` calls `sink(X(x+i))` twice or more. The
+    same holds for distinct bindings `X[k, 1]` and `X[k, 2]` of one
+    generator.
+  - Probe, INLINED: the same `X` once, at any count of `e1` calls in it.
+    Also `X` once beside a twin `Y` once, with the same body.
+  - Probe: how heavy `X` must be depends on its body. `d2s(x) =
+    e1(x) + e1(x+1)` is KEPT at three calls and INLINED at two. A
+    three-`e1` sum is KEPT at two calls. `c2(x) = c1(x) + 2` is INLINED at
+    30 calls. `c3(x) = c2(x) + 3` is KEPT at two. `d2(x) = e1(x) + f1(x)` is
+    INLINED at three. `p` and `q`, each calling `c3` once, KEPT. `p` and
+    `q`, each calling `c2` once, INLINED.
+  - Probe: `leaf` calling a `nodebug` `other` that holds the three `d2s`
+    calls is INLINED. A `nodebug` `X`, or 100 live statements in `leaf`,
+    is INLINED too. So only the plain splices `leaf`'s own run makes count.
+  - Probe, caller side: `gen` may be non-parametric. It may reach `rec`
+    through a plain `@always_inline` or `nodebug` intermediary, or hold the
+    call after `leaf[n]`, and the result is still KEPT. `rec` reached
+    through a `@no_inline` function, a self-recursive plain `def`, `gen`
+    calling itself, or `rec` in `main` instead each give INLINED. A second
+    `rec` call or 40 more statements in `gen` do not move the threshold.
+  - Probe: the pin's trace shows every call to `X` spliced into `leaf`.
+    So `leaf` keeps no refused plain call, and nothing is spliced into
+    `gen` before `leaf` is.
+  - Only `-O3`, `mojo run`'s default, shows the effect, since `-O0` to `-O2`
+    splice no plain callee before elaboration. The debug level does not
+    change it.
+  - R924's `print()` probe is this shape: `print`'s literal defaults are
+    plain `StaticString` conversions, each splicing an inner plain
+    initializer.
+  - Find the pin's rule before matching it. The likely levers are
+    `Callees::body` and `BottomUp::reaching` (`pre_elaboration.rs`) and
+    `Admission::admits` (`inline_parametric.rs`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
