@@ -289,9 +289,9 @@ folds the operators over it (R840);
    a copy- or move-capturing body a sibling captures (R1104) and a
    raising `deinit` callee passed a field, which takes a copy of it
    (R1106); a small plain `@always_inline` callee inlines too
-   (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps as
-   calls) and R925 (a recursive `@always_inline` function, an error on the
-   pin). The
+   (R923); a callee that reaches a cycle of followed calls keeps its
+   call, as on the pin (R924); the pin's refusal Mojito lacks is R925 (a
+   recursive `@always_inline` function, an error on the pin). The
    corpus holds no `nodebug` or `builtin` callee outside
    `assets/ok/always_inline_nodebug_calls.mojo`, so the stage's corpus
    effect waits on the bundled library's markings (stage 10), as

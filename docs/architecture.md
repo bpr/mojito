@@ -7061,7 +7061,14 @@ point where a slot declared in a loop is uninitialized again.
   program's followed calls, and at the package seam `PackageBodies::on_cycle`
   decides one from drop-elaborated bodies, as the program seam's components
   are, memoized by row, so a finishing hook never re-enters the body it
-  finishes around a cycle a destructor call closes.
+  finishes around a cycle a destructor call closes. Nor is a callee whose
+  followed calls reach such a cycle (`Cycles::Reached`), as the pin keeps a
+  `nodebug` callee that calls one (R924): `bottom_up_order`'s reaching set
+  marks each component that is cyclic or calls into a marked one as it
+  pops, and at the package seam `PackageBodies::reaches_cycle` walks the
+  pass's own followed calls to a body `on_cycle` answers for, memoized by
+  row and pass. `remove-unused-params` still refuses only a callee on a
+  cycle.
 - **`sroa` runs before each round's `mem-2-reg`** (`analysis::SROA`,
   `analysis/sroa.rs`, R928), upstream's `SROA` (`ReplaceStructs`), which
   replaces a struct allocation by one allocation per element when every

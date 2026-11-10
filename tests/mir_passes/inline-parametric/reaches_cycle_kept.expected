@@ -1,0 +1,93 @@
+  functions: [
+      fn {
+        name: spin,
+        registers: 14,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r10, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 58, end: 59, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 58, end: 64, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 81, end: 82, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 81, end: 82, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 81, end: 82, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 99, end: 100, origin: present($v0) }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 103, end: 104, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 103, end: 104, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 103, end: 104, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 99, end: 104, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 94, end: 105, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r3, fields: [%r2] },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call.method { dest: %r4, recv: %r0, method: __le__, resolved: present("SIMD.__le__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r3], kwargs: [], recv_place: absent, recv_writes: false, receiver_convention: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              if { results: [], condition: %r4, then: [bb0 { instructions: [const { dest: %r5, value: int_literal(0) }, literal.materialize { dest: %r6, value: %r5, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r7, fields: [%r6] }], terminator: return { value: present(%r7) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              const { dest: %r9, value: int_literal(1) },
+              literal.materialize { dest: %r10, value: %r9, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r11, fields: [%r10] },
+              place.load { dest: %r8, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call.method { dest: %r12, recv: %r8, method: __sub__, resolved: present("SIMD.__sub__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r11], kwargs: [], recv_place: absent, recv_writes: false, receiver_convention: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call { dest: %r13, func: spin, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r13) }
+          }
+        ]
+      },
+      fn {
+        name: wrap,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 175, end: 176, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 170, end: 177, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: spin, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: reaches_cycle_kept,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 235, end: 236, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 230, end: 237, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: wrap, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

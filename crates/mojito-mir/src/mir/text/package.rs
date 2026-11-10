@@ -110,6 +110,11 @@ pub struct PackageBodies {
     /// Whether each row's function lies on a cycle of the calls
     /// [`Self::on_cycle`] was asked about, once answered.
     cycles: Mutex<HashMap<usize, bool>>,
+    /// Whether each row's function reaches a cycle along the calls a pass,
+    /// by its name, follows ([`Self::reaches_cycle`]), once answered: keyed
+    /// by the pass, since each pass follows its own subset of the calls
+    /// [`Self::cycles`] answers over.
+    reaching: Mutex<HashMap<(usize, &'static str), bool>>,
     /// Each row's callees [`Self::on_cycle`] follows, by its drop-elaborated
     /// body, once listed.
     edges: Mutex<HashMap<usize, Arc<[String]>>>,
@@ -253,6 +258,55 @@ impl PackageBodies {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(row, cyclic);
         cyclic
+    }
+
+    /// Whether the function `name`, or a body it reaches through the calls
+    /// `successors` lists whose callee `followed` accepts, lies on a cycle
+    /// of the calls `successors` lists ([`Self::on_cycle`]); memoized by
+    /// row and `pass`, the name of the pass whose calls `followed` keeps.
+    ///
+    /// Upstream's `InlineParametric` reads no body that still calls into
+    /// a cycle, whether it lies on it or not.
+    pub fn reaches_cycle(
+        &self,
+        name: &str,
+        pass: &'static str,
+        successors: &dyn Fn(&str, &MirFunction, &MirDeclarations) -> Vec<String>,
+        followed: &dyn Fn(&str) -> bool,
+    ) -> bool {
+        let Some(row) = self.package.body_row(name) else {
+            return false;
+        };
+        let memo = || {
+            self.reaching
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(&reaches) = memo().get(&(row, pass)) {
+            return reaches;
+        }
+        let mut seen = std::collections::HashSet::from([name.to_string()]);
+        let mut pending = vec![name.to_string()];
+        let mut reaches = false;
+        while let Some(next) = pending.pop() {
+            if self.on_cycle(&next, successors) {
+                reaches = true;
+                break;
+            }
+            let Some(callees) = self.callees(&next, successors) else {
+                continue;
+            };
+            pending.extend(
+                callees
+                    .iter()
+                    .filter(|callee| {
+                        self.contains(callee) && followed(callee) && seen.insert((*callee).clone())
+                    })
+                    .cloned(),
+            );
+        }
+        memo().insert((row, pass), reaches);
+        reaches
     }
 
     /// Whether the package has a function `name`.
@@ -760,6 +814,7 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             modules,
             units: Mutex::new(HashMap::new()),
             cycles: Mutex::new(HashMap::new()),
+            reaching: Mutex::new(HashMap::new()),
             edges: Mutex::new(HashMap::new()),
             package: declarations,
             drops: None,

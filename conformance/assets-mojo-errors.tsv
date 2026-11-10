@@ -229,6 +229,7 @@ assets/type_error/always_inline_builtin_variadic_argument.mojo	compile-reject	ag
 assets/type_error/always_inline_builtin_vector_ne_reduction_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tag[(v != w)]' value to 'Tag[any_lane(v.ne(w))]'
 assets/type_error/always_inline_builtin_while_loop.mojo	compile-reject	agree	error: '@always_inline("builtin")' does not support MLIR operation lit.loop
 assets/type_error/always_inline_lifted_parameter_assert.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/always_inline_nodebug_reaches_cycle_kept.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/always_inline_operand_rejected.mojo	compile-reject	agree	error: '@always_inline' operand must be "nodebug" or "builtin"
 assets/type_error/and_or_operand_needs_boolable.mojo	compile-reject	agree	error: 'NoTruth' does not implement the '__bool__' method
 assets/type_error/anytype_no_len.mojo	compile-reject	agree	error: no matching function in call to 'len'

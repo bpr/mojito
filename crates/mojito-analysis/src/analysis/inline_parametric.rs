@@ -13,7 +13,8 @@
 //! by the call ([`extend_source_locations`]).
 //! The pin inlines a `nodebug` or `builtin` callee at any size and a plain
 //! `@always_inline` one below a size bound ([`INLINE_SIZE_BOUND`] over
-//! [`inline_cost`]), and refuses one that lies on a cycle of such calls.
+//! [`inline_cost`]), and refuses one that reaches a cycle of such calls,
+//! lying on it or calling into it.
 //!
 //! Its splice ([`inline_calls`]) is `automatic-inline`'s too, which admits
 //! callees by upstream's `AutomaticInline` rule ([`Admission::Automatic`])
@@ -220,7 +221,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
     follows: |declaration, _| is_inlined_before_elaboration(declaration),
-    cycles: Cycles::Refused,
+    cycles: Cycles::Reached,
     run: inline_parametric,
 };
 

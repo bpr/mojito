@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2081**.
+Next free ID: **R2082**.
 
 ## Ordered Work
 
@@ -537,19 +537,27 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R924 Mojito inlines `nodebug` callees the pin refuses**
+- [ ] **R2081 The pin keeps a `print`-calling `nodebug` callee whose caller
+  reaches a cycle, by a rule not yet known**
 
-  The pin keeps a call to a `nodebug` callee holding `"abc"`-literal
-  storage, `print("big")`, a `String` local or `var String` parameter, or
-  a local whose `nodebug` destructor branches, and `inline-parametric`
-  inlines them.
+  A `nodebug` `leaf[n]` whose body calls only `print()` keeps its own
+  instance on the pin when its caller `gen[n]` also calls the recursive
+  `nodebug` `rec[1](x)`, while `inline-parametric` inlines it: `leaf`
+  reaches no cycle, so the reach rule (R924) does not refuse it.
   - The instances hold more inlined code than the pin's, and no output
     differs.
-  - Probe: `gen[n]` calls `leaf[n](x)`, whose body adds the shape to
-    `comptime assert k < 3`, and `main` calls `gen[5]`; the callee was
-    inlined when the error trace has no `("k": 5)` instantiation note.
-  - Find the pin's legality rule before matching it.
-  - Done when Mojito's veto list matches those probes.
+  - Probe: `gen[n]` holds `_ = rec[1](x)` then `leaf[n](x)`, and `leaf`
+    holds `comptime assert k < 3` and `print()` (or `print(x)`); `main`
+    calls `gen[5]`. The pin's trace carries `("k": 5)`, and Mojito's names
+    `gen`.
+  - Probe: the same `gen` with `leaf` calling a `@no_inline` user function
+    instead of `print` (one with `print`'s exact signature, or one that
+    itself calls `rec`) is inlined on the pin, so `print`'s identity
+    matters, not its signature or its own reach.
+  - Probe: a cycle-reaching call in `main`, in a sibling function, or a
+    large plain `@always_inline` call in `gen` leaves `leaf` inlined on the
+    pin; the call's order inside `gen` does not matter.
+  - Find the pin's rule before matching it.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -6200,6 +6208,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     drop its second `comptime assert`.
   - Restore `SIMD.__hash__`'s `and Self.dtype != DType.float8_e8m0fnu`
     conjunct and its comment in `stdlib/std/simd.mojo`.
+  - Restore `SIMD.cast`'s float8 branches, which call
+    `self.cast[DType.float32]()` and so put `cast` on a cycle of `nodebug`
+    calls. Probe: a `nodebug` `leaf[n]` holding `comptime assert k < 3`
+    and `_ = UInt64(x)` over an `Int` `x`, called from `gen[n]` and
+    `gen[5]` from `main`, keeps its instance on the pin (the trace carries
+    `("k": 5)`), since `UInt64(x)` reaches `cast` and `inline-parametric`
+    refuses a callee reaching a cycle (R924); Mojito's error names `gen`.
   - Probe: `SIMD[DType.bool, 4](fill=True).reduce_bit_count()` prints `4`
     at the pin but fails `pack_bits`'s assert, as do bool widths 2, 128,
     and 256 (found while landing R1586).
@@ -11331,6 +11346,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - No program output differs; allocation counts and `capacity()` do.
   - Port the static form first: every mutator, `__del__`, copy, and move
     must respect a non-owning flag, on both backends.
+  - Upstream's `__deinit__` reaches `_drop_ref` → `capacity_bytes` →
+    `_is_inline` → `UInt64(self._capacity_or_data)` → `SIMD.cast`, a cycle
+    once R65 restores `cast`'s float8 branches, so the pin keeps a
+    `nodebug` callee that destroys a `String`, where `inline-parametric`
+    inlines it (R924's reach rule). Probe: `gen[n]` calls `leaf[n](x)`,
+    whose body adds the shape to `comptime assert k < 3`, `main` calls
+    `gen[5]`; kept when the trace carries `("k": 5)`. The shapes are
+    `_ = "abc"`, `var s = "abc"`, `print("big")`, a `String` local, and a
+    `var String` parameter; `var s: StaticString = "abc"` stays inlined.
   - Depends on nothing.
   - Model: Opus, Planned.
 

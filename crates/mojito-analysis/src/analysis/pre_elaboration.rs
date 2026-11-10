@@ -63,7 +63,8 @@ pub struct ProgramPass {
 /// A seam runs it over each body after every callee the body calls through
 /// a callee it `follows`, so the callee arrives already rewritten. A callee
 /// on a cycle of such calls has no body to read ([`Callees::body`]), or,
-/// by its [`Cycles`], none from a caller on the same cycle.
+/// by its [`Cycles`], none from a caller on the same cycle, or none when it
+/// only reaches such a cycle.
 pub struct CallGraphPass {
     /// The pass's name, as the verifier's findings after it spell it.
     pub name: &'static str,
@@ -80,9 +81,12 @@ pub struct CallGraphPass {
 /// reads no body of.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Cycles {
-    /// Every one, as upstream's `InlineParametric` and `RemoveUnusedParams`
-    /// read none.
+    /// Every one, as upstream's `RemoveUnusedParams` reads none.
     Refused,
+    /// Every one, and every callee that reaches one along followed calls,
+    /// as upstream's `InlineParametric` reads none: a callee whose body
+    /// still calls into a cycle stays a call.
+    Reached,
     /// Only one in the caller's own strongly connected component, as
     /// upstream's `AutomaticInline` (`canInlineCallee`) inlines a recursive
     /// callee into a caller outside its cycle.
@@ -96,6 +100,10 @@ pub struct Callees<'a> {
     package: Option<&'a PackageBodies>,
     declarations: &'a MirDeclarations,
     follows: fn(&MirFunctionDeclaration, &MirDeclarations) -> bool,
+    /// The pass's name, which keys the package's memo of the bodies that
+    /// reach a cycle along the pass's own calls.
+    pass: &'static str,
+    cycles: Cycles,
 }
 
 impl Callees<'_> {
@@ -104,7 +112,8 @@ impl Callees<'_> {
     ///
     /// A program callee comes rewritten, since the seam runs callees first;
     /// one on a cycle has none, or, under [`Cycles::CallerComponent`], none
-    /// when the cycle holds the caller.
+    /// when the cycle holds the caller, or, under [`Cycles::Reached`], none
+    /// when it reaches a cycle either.
     /// A package callee is finished on first use, which runs the pass over
     /// it in turn; a package body never calls a program body, so no cycle
     /// crosses the seam. Finishing a body runs every call-graph pass, so a
@@ -120,6 +129,7 @@ impl Callees<'_> {
         {
             let readable = match program.cycles {
                 Cycles::Refused => !program.cyclic.contains(&row),
+                Cycles::Reached => !program.reaching.contains(&row),
                 Cycles::CallerComponent => {
                     program.components[row] != program.components[program.caller]
                 }
@@ -136,13 +146,22 @@ impl Callees<'_> {
         {
             return None;
         }
-        if package.on_cycle(name, &|caller, function, declarations| {
+        let successors = |caller: &str, function: &MirFunction, declarations: &MirDeclarations| {
             followed_callees(caller, function, declarations, |callee| {
                 declarations.function(callee).is_some_and(|declaration| {
                     followed_by_a_call_graph_pass(declaration, declarations)
                 })
             })
-        }) {
+        };
+        let refused = match self.cycles {
+            Cycles::Reached => package.reaches_cycle(name, self.pass, &successors, &|callee| {
+                self.declarations
+                    .function(callee)
+                    .is_some_and(|declaration| (self.follows)(declaration, self.declarations))
+            }),
+            Cycles::Refused | Cycles::CallerComponent => package.on_cycle(name, &successors),
+        };
+        if refused {
             return None;
         }
         if package.finishing_body(name) {
@@ -276,6 +295,8 @@ pub fn run_pipeline(
                     package: Some(bodies),
                     declarations,
                     follows: pass.follows,
+                    pass: pass.name,
+                    cycles: pass.cycles,
                 };
                 if (pass.run)(name, function, declarations, &callees) {
                     verify_after(pass.name, name, function, declarations, findings);
@@ -385,7 +406,8 @@ pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
 /// The order is the call graph's strongly connected components bottom-up,
 /// as MLIR's inliner walks them; a function in a component of more than
 /// one, or calling itself, is no callee's body, or no body to a caller in
-/// its component ([`Callees::body`]).
+/// its component, and under [`Cycles::Reached`] neither is one whose
+/// followed calls reach such a function ([`Callees::body`]).
 pub(super) fn run_call_graph_pass(
     pass: &CallGraphPass,
     functions: &mut [(String, MirFunction)],
@@ -406,6 +428,7 @@ pub(super) fn run_call_graph_pass(
     let BottomUp {
         order,
         cyclic,
+        reaching,
         components,
     } = bottom_up_order(functions, declarations, &rows, &followed);
     let mut changed = Vec::new();
@@ -420,6 +443,7 @@ pub(super) fn run_call_graph_pass(
                 rows: &rows,
                 followed: &followed,
                 cyclic: &cyclic,
+                reaching: &reaching,
                 components: &components,
                 caller: row,
                 cycles: pass.cycles,
@@ -427,6 +451,8 @@ pub(super) fn run_call_graph_pass(
             package,
             declarations,
             follows: pass.follows,
+            pass: pass.name,
+            cycles: pass.cycles,
         };
         if (pass.run)(&functions[row].0, &mut function, declarations, &callees) {
             changed.push(row);
@@ -445,6 +471,9 @@ struct ProgramCallees<'a> {
     followed: &'a HashSet<usize>,
     /// The rows of the followed functions on a cycle of followed calls.
     cyclic: &'a HashSet<usize>,
+    /// The rows of the followed functions whose followed calls reach a
+    /// cycle of them, the cyclic rows included.
+    reaching: &'a HashSet<usize>,
     /// The strongly connected component of each row.
     components: &'a [usize],
     /// The row of the function the pass is rewriting.
@@ -566,13 +595,17 @@ struct BottomUp {
     order: Vec<usize>,
     /// The followed rows on a cycle of followed calls.
     cyclic: HashSet<usize>,
+    /// The followed rows whose followed calls reach such a cycle, the
+    /// cyclic rows included.
+    reaching: HashSet<usize>,
     /// The strongly connected component of each row.
     components: Vec<usize>,
 }
 
 /// The rows of `functions` callees first along the calls to `followed`
 /// rows (Tarjan's strongly connected components, which come out bottom-up),
-/// the followed rows on a cycle of such calls, and each row's component.
+/// the followed rows on a cycle of such calls, the followed rows reaching
+/// one, and each row's component.
 fn bottom_up_order(
     functions: &[(String, MirFunction)],
     declarations: &MirDeclarations,
@@ -588,6 +621,7 @@ fn bottom_up_order(
         next: usize,
         order: Vec<usize>,
         cyclic: HashSet<usize>,
+        reaching: HashSet<usize>,
         components: Vec<usize>,
         followed: &'a HashSet<usize>,
     }
@@ -620,12 +654,25 @@ fn bottom_up_order(
                         break;
                     }
                 }
-                if component.len() > 1 || self.edges[row].contains(&row) {
-                    self.cyclic.extend(
-                        component
+                let on_cycle = component.len() > 1 || self.edges[row].contains(&row);
+                let followed: Vec<usize> = component
+                    .iter()
+                    .copied()
+                    .filter(|member| self.followed.contains(member))
+                    .collect();
+                if on_cycle {
+                    self.cyclic.extend(followed.iter().copied());
+                }
+                // Every callee outside the component popped first, so its
+                // answer is final.
+                if on_cycle
+                    || component.iter().any(|member| {
+                        self.edges[*member]
                             .iter()
-                            .filter(|member| self.followed.contains(member)),
-                    );
+                            .any(|callee| self.reaching.contains(callee))
+                    })
+                {
+                    self.reaching.extend(followed);
                 }
                 self.order.extend(component);
             }
@@ -651,6 +698,7 @@ fn bottom_up_order(
         next: 0,
         order: Vec::with_capacity(functions.len()),
         cyclic: HashSet::new(),
+        reaching: HashSet::new(),
         components: vec![0; functions.len()],
         followed,
     };
@@ -662,6 +710,7 @@ fn bottom_up_order(
     BottomUp {
         order: tarjan.order,
         cyclic: tarjan.cyclic,
+        reaching: tarjan.reaching,
         components: tarjan.components,
     }
 }

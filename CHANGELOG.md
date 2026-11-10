@@ -158,6 +158,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` keeps the call to a callee whose followed calls reach
+  a cycle of them, not only to one on the cycle, as the pin's
+  `InlineParametric` does: a `nodebug` callee calling a `nodebug` wrapper
+  of a recursive function now keeps its own instance (R924,
+  `assets/type_error/always_inline_nodebug_reaches_cycle_kept.mojo`).
 - `canonicalize` materializes each constant once per value at its region's
   entry and erases the duplicates, as MLIR's `OperationFolder` does, where
   it folded a constant in place and left equal constants one per use;
