@@ -1245,6 +1245,7 @@ assets/ok/static_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_string_parameter_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_tuple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/staticmethod_self_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/std_iter_map.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_numerics_fputils.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_numerics_nan_classes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_plugin_hooks.mojo	-	ineligible	no-scalar-entry-shape
@@ -1686,6 +1687,7 @@ assets/extensions/ok/comprehension_borrowed_named_source.mojo	-	ineligible	no-sc
 assets/extensions/ok/container_owning_family_apis.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_case_map.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/enum_caseless.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/enum_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/enum_generic_payloads.mojo	-	ineligible	no-scalar-entry-shape

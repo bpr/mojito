@@ -16,6 +16,7 @@
 # `keys`/`values`/`items` return self-iterable, non-indexable borrowing
 # views that hold a loan on their source while they live.
 
+from std.builtin.rebind import rebind_var
 from std.collections.optional import Optional
 
 @fieldwise_init
@@ -73,12 +74,80 @@ def iter[
     return iterable.__iter__()
 
 
-# `next(iterator)`: the builtin spelling of `__next__`. Exhaustion surfaces
-# as an ordinary `Error("StopIteration")` so the call propagates through a
-# plain `raises` context, as upstream's does.
+# `next(iterator)`: the builtin spelling of `__next__`. Exhaustion raises
+# `StopIteration`, which a plain `raises` caller converts to `Error` through
+# its `@implicit` initializer, as upstream's does.
 @inline(.always)
-def next[T: Iterator](mut iterator: T) raises -> T.Element:
-    try:
-        return iterator.__next__()
-    except StopIteration:
-        raise Error("StopIteration")
+def next[
+    IteratorType: Iterator
+](mut iterator: IteratorType) raises StopIteration -> IteratorType.Element:
+    return iterator.__next__()
+
+
+# `map[function](iterable)`: a lazy iterator applying `function` to each
+# element of `iterable`, as upstream's `_MapIterator`.
+@fieldwise_init
+struct _MapIterator[
+    OutputType: Copyable,
+    InnerIteratorType: Iterator,
+    //,
+    function: def(var InnerIteratorType.Element) thin -> OutputType,
+](
+    Copyable where conforms_to(InnerIteratorType, Copyable),
+    Iterable where conforms_to(InnerIteratorType, Copyable),
+    IterableOwned,
+    Iterator,
+):
+    comptime Element = Self.OutputType
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ]: Iterator = Self
+    comptime IteratorOwnedType: Iterator = Self
+
+    var _inner: Self.InnerIteratorType
+
+    def __iter__(
+        ref self,
+    ) -> Self.IteratorType[origin_of(self)] where conforms_to(
+        Self.InnerIteratorType, Copyable
+    ):
+        return self.copy()
+
+    @inline(.always)
+    def __iter__(var self) -> Self.IteratorOwnedType:
+        return self^
+
+    def __next__(mut self) raises StopIteration -> Self.Element:
+        return Self.function(next(self._inner))
+
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        return self._inner.bounds()
+
+
+@inline(.always)
+def map[
+    origin: ImmOrigin,
+    IterableType: Iterable,
+    ResultType: Copyable,
+    //,
+    function: def(
+        var IterableType.IteratorType[origin].Element
+    ) thin -> ResultType,
+](ref[origin] iterable: IterableType) -> _MapIterator[function]:
+    return {
+        rebind_var[_MapIterator[function].InnerIteratorType](iter(iterable))
+    }
+
+
+@inline(.always)
+def map[
+    IterableType: IterableOwned,
+    ResultType: Copyable,
+    //,
+    function: def(
+        var IterableType.IteratorOwnedType.Element
+    ) thin -> ResultType,
+](var iterable: IterableType) -> _MapIterator[function]:
+    return {
+        rebind_var[_MapIterator[function].InnerIteratorType](iter(iterable^))
+    }

@@ -39,7 +39,26 @@ impl Checker {
         source_mutable: bool,
     ) -> Result<(mojito_checked::checked::IterationProtocol, IteratorRaises), TypeError> {
         let mut raises = Vec::new();
-        let (mut yielded_ty, mut protocol) = self.iteration_protocol(iter_ty, mode, &mut raises)?;
+        let (mut yielded_ty, mut protocol) =
+            match self.iteration_protocol(iter_ty, mode, &mut raises) {
+                // A temporary takes `__iter__(var self)` where no borrowed
+                // `__iter__` applies (`for x in map[f]([1, 2])`), as the pin's
+                // ordinary `__iter__` call on an rvalue resolves it.
+                Err(error)
+                    if source.is_none()
+                        && mode == mojito_checked::checked::IterationMode::Borrowed =>
+                {
+                    raises.clear();
+                    self.iteration_protocol(
+                        iter_ty,
+                        mojito_checked::checked::IterationMode::Owned,
+                        &mut raises,
+                    )
+                    .map_err(|_| error)?
+                }
+                selected => selected?,
+            };
+        let mode = protocol.mode;
         self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
         Self::resolve_iterator_origin(source, &mut protocol);
         if let Some(resolved) =

@@ -1484,6 +1484,9 @@ impl Checker {
         let (name, arguments) = match &expression.kind {
             ExprKind::Identifier(name) => (name.as_str(), &[][..]),
             ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
+            ExprKind::Member { object, field } => {
+                return self.static_value_symbol(expression, object, field, expected);
+            }
             _ => return Ok(None),
         };
         if self.is_local_binding(name) {
@@ -2300,6 +2303,36 @@ impl Checker {
                 },
             ));
         }
+    }
+
+    /// The type and symbol of a static read through a non-parametric
+    /// struct (`S.inc`, an enum case `Token.integer`) as a value at
+    /// `expected`. `None` for any other member, and for a parametric
+    /// struct's static, whose symbol names the struct's instance.
+    fn static_value_symbol(
+        &self,
+        expression: &Expr,
+        object: &Expr,
+        field: &str,
+        expected: &Ty,
+    ) -> Result<Option<(Ty, String)>, TypeError> {
+        if !matches!(self.static_method_owner(object, field), Some((_, false))) {
+            return Ok(None);
+        }
+        let span = expression.source_span();
+        let Some(actual) = self.infer_static_method_value(
+            span.clone(),
+            (object, field),
+            &[],
+            Some(expected),
+            true,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .fact(&span, |facts| facts.overload_target.as_ref())
+            .map(|symbol| (actual, symbol)))
     }
 
     /// Declare method `m`'s receiver, if it has one: a refined

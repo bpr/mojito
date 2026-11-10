@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.iter.map` is upstream's: the lazy `_MapIterator` over a callable
+  parameter and `map`'s borrowed and owned overloads, exported by the
+  prelude, and `next` is upstream's body raising `StopIteration` (R1411).
+  `map[Token.integer]([1, 2, 3])` maps through an enum case, and a static
+  read through a non-parametric struct (`S.inc`) is a function symbol at a
+  callable parameter. A struct's infer-only parameter is solved through a
+  projection (`I.Element` against `T.IteratorOwnedType.Element`), a
+  struct parameter typed by a same-module trait's associated type waits
+  for that trait, a `for` over a temporary takes `__iter__(var self)` when
+  no borrowed `__iter__` applies, and a callee's loan on the caller's own
+  storage landing in that storage's interior no longer self-loans
+  (`assets/ok/std_iter_map.mojo`,
+  `assets/extensions/ok/enum_case_map.mojo`).
 - A typed raise converts to the error its context propagates, through that
   type's `@implicit` initializers, as upstream's `emitRaise` converts a
   raised value to its error slot's type (R1152): `print(g())` for `def g()

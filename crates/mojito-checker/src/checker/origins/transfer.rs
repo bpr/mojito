@@ -634,9 +634,13 @@ impl Checker {
                         );
                     }
                     for origin in &sources {
+                        // A loan on the frame's own storage landing in its
+                        // own interior (`next(self._inner)` storing into
+                        // `self._inner._slice`) is an internal reshuffle,
+                        // which self-loans no caller.
                         if let Some(src_sig) =
                             self.abstract_body_origin(origin, &param_owners, self_owner)
-                            && src_sig != dest_sig
+                            && sig_root(&src_sig) != sig_root(&dest_sig)
                         {
                             let src_is_place = {
                                 let frames = self.transfer_frames.borrow();
@@ -851,6 +855,14 @@ impl Checker {
         let (name, arguments) = receiver.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
         Some(struct_subst(&info.decls, arguments))
+    }
+}
+
+/// The signature slot a projected origin is rooted at, or the origin itself.
+fn sig_root(origin: &mojito_types::origin::SigOrigin) -> &mojito_types::origin::SigOrigin {
+    match origin {
+        mojito_types::origin::SigOrigin::Projected(base, _) => sig_root(base),
+        other => other,
     }
 }
 

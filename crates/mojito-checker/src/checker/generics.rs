@@ -174,6 +174,28 @@ pub(super) fn unify(
                 .try_for_each(|(pattern, element)| unify(pattern, element, subst, deduce)),
             _ => Ok(()),
         },
+        // A projection solves through its base against the same projection
+        // of another base (`I.Element` against `T.IteratorOwnedType.Element`
+        // solves `I = T.IteratorOwnedType`), as the pin's deduction matches
+        // an associated-type access structurally.
+        TyKind::Assoc {
+            base: pattern_base,
+            name: pattern_name,
+            args: pattern_args,
+        } => {
+            if let TyKind::Assoc { base, name, args } = actual.kind()
+                && name == pattern_name
+                && args.len() == pattern_args.len()
+            {
+                unify(pattern_base, base, subst, deduce)?;
+                for (pattern, actual) in pattern_args.iter().zip(args) {
+                    if let (TyArg::Ty(pattern), TyArg::Ty(actual)) = (pattern, actual) {
+                        unify(pattern, actual, subst, deduce)?;
+                    }
+                }
+            }
+            Ok(())
+        }
         // A non-parameter pattern contributes no solution; coercion is checked
         // separately by the caller.
         _ => Ok(()),

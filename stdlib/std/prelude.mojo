@@ -78,7 +78,7 @@ from std.builtin.variadics import (
 )
 from std.range import range
 from std.builtin.builtin_slice import Slice, slice
-from std.iter import Iterable, IterableOwned, Iterator, StopIteration, iter, next
+from std.iter import Iterable, IterableOwned, Iterator, StopIteration, iter, map, next
 from std.builtin.reversed import reversed
 from std.memory.alloc import alloc
 from std.span import Span

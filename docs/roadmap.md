@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2094**.
+Next free ID: **R2095**.
 
 ## Ordered Work
 
@@ -1215,6 +1215,35 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2094 A loan named only inside a type argument does not follow a
+  move or copy of its holder**
+
+  `var m = map[inc](l)` then `for e in m^:` (or `m.copy()`, or a `for`
+  over `map[inc](l)` itself), with no later use of `l`, frees `l` before
+  the loop reads it: the VM stops with "invalid reference projection
+  Field("data") on <moved>", natively "use after Pointer deallocation",
+  where the pin keeps `l` alive and prints `2 3 4`.
+  - `m`'s type is `_MapIterator[Int, _ArrayIter[Int, origin_of(l)],
+    inc]`: the loan on `l` is spelled by an origin nested in a type
+    argument, not by `_MapIterator`'s own origin tail, a reference, or a
+    pointer.
+  - The call's transfer keeps `l` alive while `m` itself is read
+    (`next(m)` twice runs); a move, a copy, or the borrowed loop's
+    `self.copy()` hands the value to a binding that carries no loan.
+  - A user struct holding `iter(l)` directly (`var h2 = h^` over
+    `H(iter(l))`) keeps it, since its construction aggregates the
+    argument's origins.
+  - The loop's `IterationProtocol::source_retained` reads the iterator's
+    declaration (an origin parameter, a reference or pointer field), so it
+    misses an origin carried by a type argument the same way
+    (`docs/architecture.md`, borrowed iteration).
+  - Probe: `for e in map[inc](l): print(e)` with no later use of `l`.
+  - Probe: `var m = map[inc](l); var c = m.copy(); print(next(c))`.
+  - Probe: `for e in map[S.inc](l)` over a `@staticmethod`, the same way.
+  - Found while landing R1411 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1682 A local read through an untracked pointer after its last use
   reads `None` on the VM**
@@ -2890,6 +2919,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     owned only for a `^` transfer (`iteration_protocol` in
     `checker/iteration.rs`), and selects among the conventions that mode
     allows.
+  - `loop_site_protocol` already takes `__iter__(var self)` for a
+    temporary whose borrowed `__iter__` does not apply (`for e in
+    map[f]([1, 2])`); the ranking where both apply is what remains.
   - Ordinary methods overloaded on their receiver convention are rejected
     instead ("'get' is already declared in this scope"), where the pin
     runs `Bag(1).get()` through `get(var self)` and `b.get()` through
@@ -3914,8 +3946,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     nested `def inner() -> Int: return n` and `struct S[f: def() thin ->
     Int]`, stops with "solution for `f` is not constant"; the pin prints
     `5 6` for `outer[4](), outer[5]()`.
-  - Probe: `g[T.seven]()` over a `@staticmethod` runs, with
-    `ct_deferred` in the call's `instantiated_args`.
+  - A static read through a non-parametric struct (`g[T.seven]()`, an
+    enum case) is its symbol already (`static_value_symbol`); one through
+    a parametric struct is not, since its symbol names the struct's
+    instance.
+  - Probe: `g[P[Int].seven]()` over `struct P[T: AnyType]` stops with
+    "unsupported value parameter `f` is not compile-time constant".
   - Probe: `g[lambda -> Int: 3]()` runs, with `ct_deferred` the same way.
   - Probe: a forwarded binder (`g[f]()` inside `fwd[f: ...]`) carries
     `ct_expr(param_decl_ref fwd.f)` but still also passes the value in a
@@ -12787,34 +12823,6 @@ residue found inside a task moves to the task that owns its fix.
     `stdlib/std/collections/list.mojo`.
   - Found while planning R136 (2026-10-25).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1411 `std.iter.map` is not ported**
-
-  `from std.iter import map` fails with "module 'std.iter' has no
-  declaration named 'map'", where the pin's `map[Token.integer]([1, 2, 3])`
-  maps a list through a static method.
-  - Probe: the pin's enum integration test's `test_function_value`, `for
-    token in map[Token.integer]([1, 2, 3])`.
-  - Port upstream's `_MapIterator[OutputType, InnerIteratorType, //,
-    function: def(var InnerIteratorType.Element) thin -> OutputType]` and
-    its two `map` overloads from `Mojo/stdlib/std/iter/__init__.mojo` into
-    `stdlib/std/iter.mojo`.
-  - The iterator is a struct over a callable parameter that its
-    `__next__` calls as `Self.function(...)`, which runs, and `map`'s
-    `_MapIterator[..., function]` over its own binder resolves, in its
-    signature and its body.
-  - Its `_inner` field needs `Iterator`'s `Deinitable` refinement, and its
-    `bounds` reads the trait's default (R669).
-  - The `map` bodies call `iter(iterable)` (R670) and `rebind_var`
-    (R1737).
-  - `__next__ raises StopIteration` calls `next`, which must raise
-    upstream's `StopIteration` rather than `Error`, so plain `raises`
-    callers need the typed raise to convert (R1152).
-  - An enum case already passes as a `thin` function value
-    (`apply[Token.integer](3)` runs).
-  - Found while landing `enum` (2026-10-25).
-  - Depends on R669, R670, R1737, R1152.
   - Model: Opus, Not Planned.
 
 - [ ] **R1455 The bundle has no `std.python`, so `String` is not

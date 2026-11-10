@@ -240,6 +240,10 @@ impl Checker {
         ty: &Ty,
         expr: &Expr,
     ) -> Result<TyArg, TypeError> {
+        // A callee's binder substitution leaves its projections on the
+        // caller's concrete types open (`def(var List[Int].IteratorType[o]
+        // .Element)`); the argument matches the type they close to.
+        let ty = &self.resolve_assoc_ty(ty);
         // An enclosing callable binder is a compile-time reference, in a
         // signature as in a body, where no run-time binding names it.
         if let Ok(CtValue::Expr(binder)) = self.eval_associated_ct(expr)

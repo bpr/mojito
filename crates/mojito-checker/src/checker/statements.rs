@@ -142,6 +142,12 @@ impl Checker {
                 Err(_) if self.shell_awaits_declarations(declaration.type_params) => {
                     deferred_shells.push(index);
                 }
+                // A parameter typed by a projection through a trait this
+                // module declares (`f: def(var I.Element)` over `I:
+                // Iterator`) waits for the trait's requirements.
+                Err(error) if self.shell_awaits_traits(stmts, &error) => {
+                    deferred_shells.push(index);
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -220,6 +226,8 @@ impl Checker {
         }
         // A trait naming a later one (`HookFor[...]: PluginHooks` above it).
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        // A shell typed by a projection through one of those traits.
+        self.settle_deferred_shells(stmts, &mut deferred_shells);
         // A struct header's condition naming a trait this module declares
         // compiles once the trait has registered.
         self.compile_pending_header_conditions(stmts);
@@ -601,6 +609,17 @@ impl Checker {
                         && !self.comptime_aliases.contains_key(name);
                     unregistered_struct || unregistered_alias
                 })
+            })
+    }
+
+    /// Whether the struct shell that failed with `error` reads an
+    /// associated type of a trait `stmts` declares that has not yet
+    /// registered its requirements.
+    fn shell_awaits_traits(&self, stmts: &[Stmt], error: &TypeError) -> bool {
+        matches!(error, TypeError::NoSuchAssociatedType { .. })
+            && stmts.iter().any(|statement| {
+                matches!(&statement.kind, StmtKind::Trait { name, .. }
+                    if !self.traits.contains_key(name))
             })
     }
 
@@ -2513,15 +2532,15 @@ impl Checker {
                 // `range`, the element type for a `List`, or — for a user struct —
                 // the element type of its `__iter__()` iterator (`__next__`'s return).
                 let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
-                let source_mode = Self::iteration_mode(iter);
                 let (source, source_mutable) = self.iteration_source(iter);
                 let (protocol, raises) = self.loop_site_protocol(
                     &iter_ty,
-                    source_mode,
+                    Self::iteration_mode(iter),
                     *binding,
                     source.as_ref(),
                     source_mutable,
                 )?;
+                let source_mode = protocol.mode;
                 if !raises.is_empty() {
                     self.raising_iterations
                         .borrow_mut()

@@ -5521,6 +5521,8 @@ the loop (no `KeepAlive` needed) and rejects conflicting mutation of the source
 during iteration; the reference slot is read only by `GetIter` and dropped
 afterward as a no-op. Owned iteration keeps the
 single slot: `__iter__(var self)` consumes the source into the iterator.
+The checker selects it for a `^` transfer, and for a temporary whose borrowed
+`__iter__` does not apply (`loop_site_protocol`).
 Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path
 is currently List-specific. For a current typed-raising iterator, the loop
 calls `__next__(mut self)` as a raising `MethodCall` on the iterator slot,
