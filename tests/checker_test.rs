@@ -7528,10 +7528,9 @@ fn callable_conformance_requires_a_read_receiver() {
 fn movable_where_false_gates_transfers_but_not_deinit_consumption() {
     let pinned = "struct Pinned(Movable where False):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n";
 
-    // Rebinding, returning, var-argument, and var-receiver transfers reject.
+    // Rebinding and returning transfers reject.
     for tail in [
         "def main():\n    var p = Pinned(1)\n    var q = p^\n",
-        "def take(var value: Pinned) -> Int:\n    return value.id\n\ndef main():\n    var p = Pinned(1)\n    print(take(p^))\n",
         "def make() -> Pinned:\n    var p = Pinned(1)\n    return p^\n",
     ] {
         let source = format!("{pinned}\n{tail}");
@@ -7543,6 +7542,12 @@ fn movable_where_false_gates_transfers_but_not_deinit_consumption() {
             "expected a Movable rejection for: {tail}"
         );
     }
+
+    // A transfer into a `var` argument is forwarded in place, as the pin
+    // passes an owned argument by address: no move, so no `Movable`.
+    ok(&format!(
+        "{pinned}\ndef take(var value: Pinned) -> Int:\n    return value.id\n\ndef main():\n    var p = Pinned(1)\n    print(take(p^))\n"
+    ));
 
     // `deinit self` consumption is not a move: the explicit-destroy pattern
     // stays legal for a non-Movable linear value.

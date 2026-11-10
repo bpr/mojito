@@ -16,13 +16,14 @@ use mojito_types::origin::{Mutability, Origin, RefSig, SigMutability, SigOrigin}
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// How a consuming position takes its value: an ownership **move** into new
-/// storage (gated on `Movable`), or a **deinit** binding — consumption by a
-/// destructor/named-destructor receiver or `deinit` parameter, which must stay
-/// legal for a non-Movable (`Movable where False`) value.
+/// storage (gated on `Movable`), or a **forward** into an owned argument — a
+/// `var` or `deinit` parameter or receiver, which upstream passes by address,
+/// so a transfer there runs no move and stays legal for a non-Movable
+/// (`Movable where False`) value.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConsumeKind {
     Move,
-    Deinit,
+    Forward,
 }
 
 /// Whether a type conforms to `RegisterPassable`, as a result origin asks

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The prelude gains upstream's `rebind_var`, which moves an owned value
+  into the type a parameter refinement names, and `std.memory` gains
+  `forget_deinit`, which ends a value without running its deinitializer or
+  its fields' (R1737). `List(iterable)` now moves each element in with
+  `rebind_var`, as upstream's body does. A `^` transfer into a `var`
+  argument is forwarded in place and no longer requires `Movable`, and a
+  named `out` result of a non-`Deinitable` type is no longer reported
+  abandoned (`assets/ok/rebind_var_forget_deinit.mojo`).
 - The prelude's free `iter(iterable)` is upstream's: a borrowed overload
   over an `Iterable` and an owned one over `Some[IterableOwned]`, so `var
   it = iter(xs)` runs and `List(iterable)` reserves `iter(iterable).bounds()`

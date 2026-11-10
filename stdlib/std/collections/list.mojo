@@ -19,6 +19,7 @@ from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, iter
+from std.builtin.rebind import rebind_var
 
 from std.collections.optional import Optional
 
@@ -209,9 +210,7 @@ struct List[T: AnyType](
 
     # Upstream's clause, `where conforms_to(IterableType.IteratorType[
     # origin_of(iterable)].Element, Copyable)`, takes a projection subject
-    # (R792). Its body moves each element in with `rebind_var` from a loop
-    # that yields the iterator's element (R178); this one copies the
-    # iterable's `Element` and rebinds it.
+    # (R792).
     def __init__[
         IterableType: Iterable,
     ](
@@ -220,9 +219,8 @@ struct List[T: AnyType](
     ):
         var lower, _ = iter(iterable).bounds()
         self = type_of(self)(capacity=lower)
-        for value in iterable:
-            var element = value.copy()
-            self.append(rebind[type_of(self).T](element)^)
+        for var value in iterable:
+            self.append(rebind_var[type_of(self).T](value^))
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self._storage = alloc(Layout[Self.T](count=copy.capacity()))

@@ -1045,6 +1045,7 @@ assets/ok/rebind_method_template_served.mojo	main	exe-differential	sanitized
 assets/ok/rebind_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/rebind_place_projection.mojo	main	exe-differential	sanitized
 assets/ok/rebind_type_of_target.mojo	main	exe-differential	sanitized
+assets/ok/rebind_var_forget_deinit.mojo	main	exe-differential	sanitized
 assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/receiver_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/recursive_argument_instances.mojo	main	exe-differential	sanitized

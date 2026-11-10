@@ -388,19 +388,14 @@ impl Checker {
                     .expect("selected method slot has a parameter type"),
                 true,
             )?;
-            if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
+            if let Some(ArgConvention::Var | ArgConvention::Deinit) =
                 resolved.conventions.get(index).copied().flatten()
             {
-                let kind = if convention == ArgConvention::Deinit {
-                    crate::checker::traits::ConsumeKind::Deinit
-                } else {
-                    crate::checker::traits::ConsumeKind::Move
-                };
                 self.check_consuming_as(
                     expression,
                     &ty,
                     &format!("argument {} to method '{}'", index + 1, method),
-                    kind,
+                    crate::checker::traits::ConsumeKind::Forward,
                 )?;
             }
         }

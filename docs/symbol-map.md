@@ -1116,6 +1116,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   assignment and augmented-assignment target (`parser/stmts.rs`).
   Every body is checked once with the operand symbolic, so no body is
   keyed on a `rebind`.
+- Upstream's library `rebind_var` lives in `stdlib/std/builtin/rebind.mojo`
+  (a prelude export, `PRELUDE_EXPORTS` in `mojito-module`), over the
+  `rebind` builtin above and `forget_deinit` (`stdlib/std/memory/memory.mojo`,
+  re-exported by `std.memory`). `forget_deinit`'s `mark_destroyed` is
+  admitted by `is_bundled_ownership_marker_source`, `rebind_var`'s pointer
+  take by `is_bundled_pointer_take_source` (both
+  `checker/overload_support.rs`), and `explicit_destroy.rs`'s
+  `is_mark_destroyed` arm discharges the marked place's whole obligation.
+  An owned argument is `ConsumeKind::Forward` (`checker/traits.rs`): a
+  transfer into it runs no move and needs no `Movable`.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` compiles a clause,
   binding an operand that names a binder of an open scope;

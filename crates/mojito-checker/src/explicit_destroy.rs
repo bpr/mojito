@@ -217,6 +217,24 @@ fn check_operands(
                 env.pending.push(place);
             }
         }
+        // `lit.ownership.mark_destroyed` ends its place's value, the root
+        // and every field, without destroying it (`forget_deinit`).
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            ..
+        } if is_mark_destroyed(object, method) => {
+            if let Some((id, path)) =
+                marked_place(args).and_then(|place| obligation_place(place, env))
+            {
+                ensure_initialized(id, env)?;
+                let var = &mut env.vars[id];
+                var.obligations
+                    .retain(|obligation| !obligation.starts_with(&path));
+                var.moved.insert(path);
+            }
+        }
         // A named destructor (`x^.close()`) consumes its receiver at the
         // call, after its arguments.
         ExprKind::MethodCall {
@@ -942,6 +960,9 @@ fn check_function<'a>(
         // A `deinit` parameter is torn down by parts, as a `deinit self`
         // receiver is: upstream's `deinit` convention disables the whole
         // value's destructor, so it owes no whole-value destruction.
+        // An `out` result is the caller's value once initialized: it owes
+        // no destruction here.
+        let linear = linear.filter(|_| convention != Some(ArgConvention::Out));
         let live = linear.is_some() && convention == Some(ArgConvention::Var);
         env.declare(name, linear, live);
     }
@@ -1467,6 +1488,31 @@ fn raise_edge(env: &Env) -> Result<(), TypeError> {
     entry.frames.pop();
     frame.entries.borrow_mut().push(entry);
     Ok(())
+}
+
+/// Whether `object.method` is the `__mlir_op` ownership marker
+/// `lit.ownership.mark_destroyed`.
+fn is_mark_destroyed(object: &Expr, method: &str) -> bool {
+    method == "lit.ownership.mark_destroyed"
+        && matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op")
+}
+
+/// The place an ownership marker's `__get_mvalue_as_litref(place)` operand
+/// names.
+fn marked_place(args: &[Expr]) -> Option<&Expr> {
+    let [
+        Expr {
+            kind: ExprKind::Call { name, args, .. },
+            ..
+        },
+    ] = args
+    else {
+        return None;
+    };
+    match args.as_slice() {
+        [place] if name == "__get_mvalue_as_litref" => Some(place),
+        _ => None,
+    }
 }
 
 fn destructor_at_path(

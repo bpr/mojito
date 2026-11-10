@@ -3163,12 +3163,11 @@ impl Checker {
                     kwargs,
                 )?;
                 for (index, slot) in selected.slots.iter().enumerate() {
-                    let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                    let Some(Some(ArgConvention::Var | ArgConvention::Deinit)) =
                         selected.conventions.get(index)
                     else {
                         continue;
                     };
-                    let kind = consume_kind(*convention);
                     let argument = match slot {
                         ArgSlot::Positional(position) => &args[*position],
                         ArgSlot::Keyword(position) => &kwargs[*position].value,
@@ -3192,7 +3191,7 @@ impl Checker {
                         argument,
                         &ty,
                         &format!("argument {} to '{name}'", index + 1),
-                        kind,
+                        super::traits::ConsumeKind::Forward,
                     )?;
                 }
                 self.check_consuming_collected(
@@ -3343,15 +3342,14 @@ impl Checker {
                             context: format!("argument {} to '{}.__init__'", i + 1, name),
                         });
                     }
-                    if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
+                    if let Some(Some(ArgConvention::Var | ArgConvention::Deinit)) =
                         sig.conventions.get(i)
                     {
-                        let kind = consume_kind(*convention);
                         self.check_consuming_as(
                             &args[i],
                             &actual,
                             &format!("argument {} to '{}'", i + 1, name),
-                            kind,
+                            super::traits::ConsumeKind::Forward,
                         )?;
                     }
                     bound.push(expected);
@@ -3789,14 +3787,12 @@ impl Checker {
                             context: format!("argument {} to '{name}.__init__'", index + 1),
                         });
                     }
-                    if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
-                        convention
-                    {
+                    if let Some(ArgConvention::Var | ArgConvention::Deinit) = convention {
                         self.check_consuming_as(
                             expression,
                             &actual,
                             &format!("argument {} to '{}'", index + 1, name),
-                            consume_kind(convention),
+                            super::traits::ConsumeKind::Forward,
                         )?;
                     }
                 }
@@ -5249,15 +5245,6 @@ impl Checker {
 /// bound from the arguments, or the origin-binding failure that rejected the
 /// candidate (`None` when the arguments simply did not match its slots).
 type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Option<TypeError>>;
-
-/// The consumption a `var` or `deinit` argument convention performs.
-fn consume_kind(convention: ArgConvention) -> super::traits::ConsumeKind {
-    if convention == ArgConvention::Deinit {
-        super::traits::ConsumeKind::Deinit
-    } else {
-        super::traits::ConsumeKind::Move
-    }
-}
 
 /// Whether a `*args: *Self.Ts` collector took exactly the elements of the
 /// pack an application bound (`Bag[Int, String](1)` is short one). A

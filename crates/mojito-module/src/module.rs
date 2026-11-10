@@ -2352,6 +2352,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "atof",
     "iter",
     "next",
+    "rebind_var",
     "Iterable",
     "IterableOwned",
     "Iterator",

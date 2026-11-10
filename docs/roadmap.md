@@ -1329,14 +1329,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Model: Opus, Not Planned.
 
 - [ ] **R2029 Taking or destroying a pointee with a destructor through an
-  origin-bearing pointer is rejected outside five bundled modules, where
+  origin-bearing pointer is rejected outside six bundled modules, where
   the pin accepts it**
 
   `check_pointer_take_source` (`checker/method_calls/builtin_types.rs`)
   requires a trivially destructible element for `unsafe_take_pointee`,
   `unsafe_deinit_pointee`, and `unsafe_write_move_from` unless the origin is
-  untracked or the call is in a module `is_bundled_private_storage_source`
-  lists (`tuple`, `_enum`, `variadics`, `maybe_uninit`, `variant`).
+  untracked or the call is in a module `is_bundled_pointer_take_source`
+  lists (`tuple`, `_enum`, `variadics`, `maybe_uninit`, `variant`, and
+  `rebind`, whose `rebind_var` takes its operand through
+  `Pointer(to=dest_ref)`).
   - Probe: `var b = Pointer(to=a).unsafe_take_pointee()` over a local `N`
     with a destructor, then `Pointer(to=a).unsafe_write(N(2))`: the pin
     prints `took 1 / del 1 / del 2 / end`, Mojito reports "requires a
@@ -3243,6 +3245,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     with "Undefined variable '__module$std$$plugin$$impl$CurrentPlugin'":
     `std.math.math` reads `CurrentPlugin` while `std._plugin` is loading.
     Restore upstream's order when this lands.
+  - Probe: `std/builtin/rebind.mojo` spelling upstream's `import
+    std.memory` and `std.memory.forget_deinit(src^)` stops packaging with
+    "not a compile-time Int constant: unsupported associated comptime
+    member access": `std.memory.unsafe` imports `std.sys`, whose `info`
+    imports `List`, whose `List(iterable)` imports `rebind_var`. The module
+    imports `std.memory.memory` instead; restore upstream's import when
+    this lands.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8407,10 +8416,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     where the pin reports "'Iterable' value has no attribute 'Element'".
     Snippets in `tests/vm_test.rs` and `tests/mir_test.rs` use that
     signature.
-  - The bundled `List.__init__` from an iterable copies the iterable's
-    `Element` and `rebind`s it to `type_of(self).T`, where upstream's
-    `for var value in iterable` moves the iterator's element in with
-    `rebind_var` (R1737). Restore upstream's body when both land.
+  - The bundled `List.__init__` from an iterable spells upstream's `for
+    var value in iterable` and `rebind_var[type_of(self).T](value^)`, but
+    its loop binds the iterable's `Element`, not the iterator's.
   - Probe: the same copying body in a user initializer, `for value in
     iterable: var element = value.copy()`, runs in Mojito, where the pin
     reports "'IterableType.IteratorType[...].Element' value has no
@@ -12251,24 +12259,6 @@ residue found inside a task moves to the task that owns its fix.
     `10`; `nth(10)` is `None`.
   - Found while landing R669 (2026-11-10).
   - Depends on R2090, R792.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1737 `rebind_var` is undeclared**
-
-  Problem: `rebind_var[type_of(self).T](value^)` is rejected ("Undefined
-  variable 'rebind_var'"), where the pin moves an owned value into the
-  type a parameter refinement names.
-  - Mojito's `rebind` is a checker builtin (`checker/rebind.rs`), and the
-    bundled library has no `std.builtin.rebind` module, so upstream's
-    library `rebind_var` has no home.
-  - Upstream's body takes `ref dest_ref = rebind[dest_type](src)`, moves
-    it out with `Pointer(to=dest_ref).unsafe_take_pointee()`, and ends
-    `src` with `std.memory.forget_deinit`, which is also missing.
-  - Probe: the bundled `List.__init__` from an iterable copies and
-    `rebind`s each element where upstream's moves it with `rebind_var`
-    (with R178).
-  - Found while landing R1154 (2026-10-30).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1229 `enumerate` and `zip` are missing**

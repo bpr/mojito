@@ -711,9 +711,9 @@ impl Checker {
     /// `origin`. Upstream requires only a mutable pointer. An origin-bearing
     /// pointee still belongs to its checked storage, which would destroy it
     /// again, so a tracked origin is accepted only for a trivially
-    /// destructible element, or in the bundled private-storage modules,
-    /// whose destructors and consuming members take every element out of
-    /// trivially destructible storage (R2029).
+    /// destructible element, or in the bundled modules
+    /// `is_bundled_pointer_take_source` lists, which end that storage
+    /// without destroying it (R2029).
     fn check_pointer_take_source(
         &self,
         span: &SourceSpan,
@@ -724,7 +724,7 @@ impl Checker {
         let untracked = matches!(
             origin,
             mojito_types::origin::PointerOrigin::Untracked { mutable: true }
-        ) || super::super::overload_support::is_bundled_private_storage_source(
+        ) || super::super::overload_support::is_bundled_pointer_take_source(
             span.source.as_deref(),
         );
         if origin.statically_mutable() == Some(false) {
