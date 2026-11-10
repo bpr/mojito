@@ -4610,7 +4610,8 @@ impl<'a> Flatten<'a> {
     /// on the call (`func(a, b)` through a callable binder). A closed value
     /// carries its constant as the expression the elaborator binds; a type
     /// parameter needs no operand, the elaborator binding it from the
-    /// instance's argument types.
+    /// instance's argument types, and a function symbol (a callable
+    /// default) none either, being a parameter attribute alone.
     fn inferred_param_args(
         &mut self,
         call: Node<'a>,
@@ -4638,7 +4639,10 @@ impl<'a> Flatten<'a> {
                     },
                     TyArg::Val(value),
                 ) if !occupied.contains(&name.as_str())
-                    && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
+                    && !matches!(
+                        value,
+                        CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::FuncSymbol(_)
+                    ) =>
                 {
                     Some((name.clone(), value))
                 }
