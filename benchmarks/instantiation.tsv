@@ -809,6 +809,7 @@ assets/ok/pack_bare_in_struct_header.mojo	elaborated	21	1032	12	13	1002	740	84	2
 assets/ok/pack_beside_value_binder.mojo	elaborated	20	1393	12	13	1002	740	89	277	66
 assets/ok/pack_call_nested_def_and_forward.mojo	elaborated	29	2022	15	22	1113	1591	109	295	88
 assets/ok/pack_constructor_spread_served.mojo	elaborated	27	2021	14	18	1073	1132	104	287	73
+assets/ok/pack_contains_self_binder.mojo	elaborated	11	802	5	5	234	212	33	64	11
 assets/ok/pack_def_scalar_value_binders_served.mojo	elaborated	38	2696	17	28	1250	2247	181	341	145
 assets/ok/pack_def_unkept_loop_template_served.mojo	elaborated	35	2468	19	28	1495	2276	152	412	133
 assets/ok/pack_drop_names_element_destructors.mojo	elaborated	32	1869	17	22	1141	1105	107	318	77
@@ -1005,7 +1006,7 @@ assets/ok/pointer_to_ref_union_origin.mojo	elaborated	21	920	12	13	1002	740	84	2
 assets/ok/pointer_to_ref_write_through.mojo	elaborated	20	921	12	13	1002	740	81	277	66
 assets/ok/pointer_to_reference_call.mojo	elaborated	22	1155	12	13	1002	740	85	277	66
 assets/ok/pointer_to_tuple_element.mojo	elaborated	25	1448	14	17	1076	1055	99	292	83
-assets/ok/pointer_tuple_field_write.mojo	elaborated	20	973	12	13	1002	761	81	277	66
+assets/ok/pointer_tuple_field_write.mojo	elaborated	20	967	12	13	1002	761	81	277	66
 assets/ok/pointer_type_argument_clone_binder.mojo	elaborated	24	1223	16	17	1011	768	89	281	70
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	elaborated	22	1236	13	15	1004	895	89	278	68
 assets/ok/pointer_unsafe_vocabulary.mojo	elaborated	21	1240	12	14	1002	831	82	277	67
@@ -1587,7 +1588,7 @@ assets/ok/value_pack_bracket_spread.mojo	elaborated	20	1114	12	13	1002	740	83	27
 assets/ok/value_pack_callable_before_parameter.mojo	elaborated	25	1259	14	16	1096	957	94	303	73
 assets/ok/value_pack_comptime_for_served.mojo	elaborated	21	1151	13	14	1023	918	82	282	67
 assets/ok/value_pack_implicit_conversion.mojo	elaborated	27	1630	14	20	1380	1339	129	387	114
-assets/ok/value_pack_parameter_list_members.mojo	elaborated	24	1527	15	17	1320	1235	107	374	92
+assets/ok/value_pack_parameter_list_members.mojo	elaborated	25	1739	15	18	1320	1326	108	374	93
 assets/ok/value_pack_parameter_list_writable.mojo	elaborated	69	4838	24	57	2096	4526	325	499	288
 assets/ok/value_pack_runtime_read.mojo	elaborated	38	2416	15	31	1107	1364	235	312	144
 assets/ok/value_pack_template_served.mojo	elaborated	35	2121	20	28	1251	1259	122	345	95
@@ -1640,6 +1641,7 @@ assets/ok/vm_backed_ctfe_ternary.mojo	elaborated	20	913	12	13	1002	740	81	277	66
 assets/ok/walrus_place_targets.mojo	elaborated	52	3983	22	39	1159	1728	323	319	139
 assets/ok/waypoints.mojo	elaborated	28	1242	20	21	1128	906	115	309	85
 assets/ok/where_applied_alias_clause.mojo	elaborated	20	972	12	13	1002	740	81	277	66
+assets/ok/where_applied_field_type_clause.mojo	elaborated	23	1140	14	16	1380	894	96	387	81
 assets/ok/where_conformance_disjunction_assumed.mojo	elaborated	12	380	6	6	265	267	26	80	12
 assets/ok/where_conforms_to_concrete_type.mojo	elaborated	12	380	6	6	265	267	26	80	12
 assets/ok/where_dtype_predicate.mojo	elaborated	22	1282	13	15	1032	898	83	290	68
@@ -1674,4 +1676,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	92	6219	43	81	2304	4787	621	654	
 benchmarks/compile/trait_defaults.mojo	elaborated	123	7922	41	85	1516	6360	300	409	192
 benchmarks/compile/tstring.mojo	elaborated	27	1175	15	18	1033	882	92	290	71
 benchmarks/compile/tuple.mojo	elaborated	33	1634	16	22	1085	1007	109	293	80
-total	1675	58599	4198713	28966	41770	2026028	2642947	314493	557460	208662
+total	1677	58634	4200861	28985	41792	2027642	2644144	314623	557911	208755
