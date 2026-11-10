@@ -3878,6 +3878,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Such a closure has no value either: its storage has no `__call__`
     witness, so a first-class use of it lowers to `MirInstr::Unsupported`
     (`closure_storage_read`, `mir/lower_expr/calls.rs`).
+  - Probe: upstream's `_MapIterator[..., function: def(var
+    InnerIteratorType.Element) thin -> OutputType]`, which `std.iter.map`
+    returns (R1411).
   - Found while probing deferred slots (2026-09-26).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -12758,8 +12761,23 @@ residue found inside a task moves to the task that owns its fix.
   maps a list through a static method.
   - Probe: the pin's enum integration test's `test_function_value`, `for
     token in map[Token.integer]([1, 2, 3])`.
+  - Port upstream's `_MapIterator[OutputType, InnerIteratorType, //,
+    function: def(var InnerIteratorType.Element) thin -> OutputType]` and
+    its two `map` overloads from `Mojo/stdlib/std/iter/__init__.mojo` into
+    `stdlib/std/iter.mojo`.
+  - The iterator is a struct over a callable parameter that its
+    `__next__` calls as `Self.function(...)` (R92).
+  - Its `_inner` field needs `Iterator`'s `Deinitable` refinement, and its
+    `bounds` reads the trait's default (R669).
+  - The `map` bodies call `iter(iterable)` (R670) and `rebind_var`
+    (R1737).
+  - `__next__ raises StopIteration` calls `next`, which must raise
+    upstream's `StopIteration` rather than `Error`, so plain `raises`
+    callers need the typed raise to convert (R1152).
+  - An enum case already passes as a `thin` function value
+    (`apply[Token.integer](3)` runs).
   - Found while landing `enum` (2026-10-25).
-  - Depends on nothing.
+  - Depends on R92, R669, R670, R1737, R1152.
   - Model: Opus, Not Planned.
 
 - [ ] **R1455 The bundle has no `std.python`, so `String` is not
