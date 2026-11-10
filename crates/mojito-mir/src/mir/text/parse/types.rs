@@ -1359,6 +1359,7 @@ impl Decoder {
                 "ct_float_literal" => self.float_literal(inner).map(CtValue::FloatLiteral),
                 "ct_bool" => self.boolean(inner).map(CtValue::Bool),
                 "ct_string" => self.string(inner).map(CtValue::Str),
+                "ct_func_symbol" => self.string(inner).map(CtValue::FuncSymbol),
                 "ct_tuple" => Some(CtValue::Tuple(self.ct_values(inner))),
                 "ct_list" => Some(CtValue::List(self.ct_values(inner))),
                 "ct_store_to_mem" => self

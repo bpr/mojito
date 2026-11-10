@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.183
+# Mojito Textual MIR Format, Version 1.184
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.183 is implemented end to end for inspection and loading: canonical
+Version 1.184 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.183
+mojito-mir 1.184
 ```
 
-The writer emits 1.183. The reader accepts 1.0 through 1.183; *Schema 1.0*
+The writer emits 1.184. The reader accepts 1.0 through 1.184; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1157,6 +1157,14 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+Schema 1.184 adds the compile-time value `ct_func_symbol("symbol")`,
+upstream's `#kgen.func.symbol<@symbol>`: a thin function's symbol bound
+to a callable-typed parameter, which joins generic identity (a struct
+instance `S[seven]`, a callable pack's list, a callable binder's
+binding). It replaces `ct_string` at a callable-typed slot, which only
+concrete MIR held; an older artifact's string there reads as a string.
+The package format moves to `mojito-package 208` (R92).
+
 Schema 1.183 adds the instruction `kgen.source_loc { dest, inline_count,
 location }` (R1979), upstream's `kgen.source_loc{inlineCount}`: the
 `(line, column, file)` `Tuple` of the call site `inline_count` frames out
@@ -1757,6 +1765,8 @@ attribute of type `!pop.array<len, element>` (schema 1.137),
 `ct_generator { params, body }` for a generator, upstream's `#kgen.gen`:
 a parameterized `comptime` declaration read unapplied, its body naming its
 own parameters and nothing else (schema 1.112),
+`ct_func_symbol("symbol")` for a thin function's symbol, upstream's
+`#kgen.func.symbol` (schema 1.184),
 `ct_expr(param-expr)` for a residual
 parameter expression,
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value

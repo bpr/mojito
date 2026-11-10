@@ -334,16 +334,6 @@ impl VmBackend {
             {
                 return crate::runtime::materialize_literal(&number, peel_references(ty));
             }
-            // A function-typed value is the symbol of the function it binds,
-            // as `Const::of_parameter_value` reads one.
-            CtValue::Str(function)
-                if matches!(
-                    target.map(Ty::kind),
-                    Some(TyKind::Func(_) | TyKind::GenericFunc(_))
-                ) =>
-            {
-                Value::Function(function.clone())
-            }
             _ => crate::crossing::ct_to_vm(value)?,
         };
         Ok(match target {

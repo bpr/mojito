@@ -423,7 +423,8 @@ impl Specializer<'_> {
                     bindings
                         .callables
                         .insert(declaration.param_names[index].clone(), callable.clone());
-                    callable_arguments.push(InstanceArg::Value(CtValue::Str(callable.clone())));
+                    callable_arguments
+                        .push(InstanceArg::Value(CtValue::FuncSymbol(callable.clone())));
                 }
             }
         }

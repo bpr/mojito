@@ -1109,7 +1109,7 @@ impl<'a> Specializer<'a> {
         self.constant_values.extend(
             self.callable_targets
                 .iter()
-                .map(|(reg, (target, _))| (*reg, CtValue::Str(target.clone()))),
+                .map(|(reg, (target, _))| (*reg, CtValue::FuncSymbol(target.clone()))),
         );
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
@@ -3428,7 +3428,7 @@ impl<'a> Specializer<'a> {
                 }) =>
                 {
                     for item in items {
-                        if let CtValue::Str(target) = item {
+                        if let CtValue::FuncSymbol(target) = item {
                             self.enqueue_function_value(target)?;
                         }
                     }

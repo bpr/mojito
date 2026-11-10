@@ -317,6 +317,11 @@ impl Checker {
                 }
                 Ok(tuple)
             }
+            // The enclosing struct's own parameter is spelled `Self.<name>`
+            // inside the body; the bare spelling is upstream's error.
+            _ if self.is_enclosing_struct_param(name) && self.lookup_tparam(name).is_none() => {
+                Err(TypeError::UnqualifiedStructParam(name.to_string()))
+            }
             _ => Err(TypeError::UndefinedVariable(name.to_string())),
         }
     }
@@ -854,6 +859,74 @@ impl Checker {
             kind => Ty::new(kind),
         };
         self.infer_call_method(call, element, &element_ty, args, kwargs)
+    }
+
+    /// Whether `object.name` reads a struct's callable value parameter:
+    /// `object` is `Self` or a struct type (`S[seven]`), and `name` one of
+    /// its parameters of a callable type.
+    pub(super) fn is_struct_callable_parameter(&self, object: &Expr, name: &str) -> bool {
+        let declares = |decls: &[ParamDecl]| {
+            decls.iter().any(|decl| {
+                matches!(decl, ParamDecl::Value { name: parameter, ty, .. }
+                    if parameter == name
+                        && matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
+            })
+        };
+        match &object.kind {
+            ExprKind::Identifier(spelled) if spelled == "Self" => {
+                self.lookup("Self").is_none() && declares(&self.self_decls)
+            }
+            _ => self
+                .member_type_operand(object)
+                .and_then(|ty| {
+                    let (struct_name, _) = ty.kind().as_non_simd_struct()?;
+                    self.structs
+                        .get(struct_name)
+                        .map(|info| declares(&info.decls))
+                })
+                .unwrap_or(false),
+        }
+    }
+
+    /// Type the call `Self.f(args)` (or `S[g].f(args)`) of a struct's
+    /// callable value parameter `f` as the call of the value `Self.f`, as the pin
+    /// calls the `#kgen.func.symbol` it binds. The checked arena hands HIR
+    /// the spelled `(Self.f)(args)` in the call's place. `None` when `f`
+    /// is no such parameter.
+    pub(super) fn infer_struct_callable_parameter_call(
+        &self,
+        call: &Expr,
+        object: &Expr,
+        parameter: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        if !self.is_struct_callable_parameter(object, parameter) {
+            return None;
+        }
+        let callee = super::initializer_list::spelled_node(
+            call,
+            1,
+            ExprKind::Member {
+                object: Box::new(object.clone()),
+                field: parameter.to_string(),
+            },
+            call.span,
+        );
+        let spelled = super::initializer_list::spelled_node(
+            call,
+            0,
+            ExprKind::Invoke {
+                callee: Box::new(callee),
+                param_args: Vec::new(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+            call.span,
+        );
+        Some(self.infer(&spelled).inspect(|ty| {
+            self.record_spelled_construction(call, spelled, ty);
+        }))
     }
 
     /// Type the call `object.field(args)` of a struct field no method

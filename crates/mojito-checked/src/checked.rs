@@ -3838,7 +3838,9 @@ pub struct CheckedClosureUses {
     /// their spellings.
     pub parameters: Vec<mojito_types::types::ParamDecl>,
     /// Whether its body becomes the storage's method; not when the body
-    /// names an enclosing callable binder.
+    /// names an enclosing `def`'s callable binder, a run-time hidden
+    /// argument (R2085). A struct's callable binder is an ordinary storage
+    /// parameter.
     pub method: bool,
 }
 

@@ -4797,10 +4797,12 @@ struct ClosureStorage {
     /// The body as the struct's `read`-self method
     /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's
     /// `liftClosureIntoMethod` makes it (`CheckedClosureUses::method`).
-    /// `None` for a body naming an enclosing callable binder, which no
-    /// struct instance carries as a
-    /// parameter: it stays a generator nested in its enclosing
-    /// declaration, taking the storage as its leading parameter.
+    /// `None` for a body naming an enclosing `def`'s callable binder, a
+    /// run-time hidden argument no struct instance carries as a parameter
+    /// (R2085): it stays a generator nested in its enclosing declaration,
+    /// taking the storage as its leading parameter. A struct's callable
+    /// binder is a function symbol its instance carries, so a body naming
+    /// it is a method.
     method: Option<String>,
     /// The declaration the check made: whether a call writes it, its
     /// copyability, and its passability (a call passes a register-passable

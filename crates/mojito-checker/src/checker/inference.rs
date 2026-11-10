@@ -981,7 +981,9 @@ impl Checker {
                 // arguments are explicit. The method dispatch owns the receiver
                 // reading: a type-name receiver (`Lanes.ident[Int](3)`) is a
                 // static call there and is never inferred as a value.
-                if let ExprKind::Member { object, field } = &callee.kind {
+                if let ExprKind::Member { object, field } = &callee.kind
+                    && !self.is_struct_callable_parameter(object, field)
+                {
                     match self.infer_method_call(
                         &expr.source_span(),
                         object,
@@ -1265,7 +1267,19 @@ impl Checker {
                             )),
                             None => self
                                 .infer_type_list_binding_read(expr, name)
-                                .unwrap_or_else(|| Err(TypeError::UndefinedVariable(name.clone()))),
+                                .unwrap_or_else(|| {
+                                    // The enclosing struct's own parameter is
+                                    // spelled `Self.<name>` inside the body.
+                                    Err(
+                                        if self.is_enclosing_struct_param(name)
+                                            && self.lookup_tparam(name).is_none()
+                                        {
+                                            TypeError::UnqualifiedStructParam(name.clone())
+                                        } else {
+                                            TypeError::UndefinedVariable(name.clone())
+                                        },
+                                    )
+                                }),
                         },
                         Ok,
                     )
@@ -1315,6 +1329,16 @@ impl Checker {
                     self.infer_self_alias_construction(expr, method, args, kwargs) =>
             {
                 construction
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if let Some(call) =
+                self.infer_struct_callable_parameter_call(expr, object, method, args, kwargs) =>
+            {
+                call
             }
             ExprKind::MethodCall {
                 object,

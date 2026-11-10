@@ -224,6 +224,48 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    /// The argument `expr` of the callable-value parameter `decl`, named
+    /// `name` and typed `ty`: a struct's is the function's symbol, part of
+    /// the instance's identity, as the pin's `S[#kgen.func.symbol<@f>]`. A
+    /// `def`'s stays a run-time value in the VM ABI: MIR evaluates the
+    /// argument into a register and the call frame reifies it under `name`,
+    /// its slot the deferred marker outside generic identity.
+    fn resolve_callable_param_arg(
+        &self,
+        decl: &ParamDecl,
+        name: &str,
+        ty: &Ty,
+        expr: &Expr,
+    ) -> Result<TyArg, TypeError> {
+        let actual = self.infer(expr)?;
+        // A closure's storage is a run-time value, and so is a capturing
+        // lambda's closure, as at the pin.
+        let captures = super::is_closure_storage(&actual)
+            || actual
+                .callable()
+                .and_then(|f| f.environment.captures())
+                .is_some();
+        if matches!(expr.kind, ExprKind::Lambda { .. }) && captures {
+            return Err(TypeError::CapturingLambdaParameter);
+        }
+        if super::is_closure_storage(&actual) {
+            return Err(TypeError::DynamicParameterValue);
+        }
+        if !self.value_coerces(&actual, ty) {
+            return Err(TypeError::TypeMismatch {
+                expected: ty.to_string(),
+                found: actual.to_string(),
+                context: format!("callable-value parameter '{name}'"),
+            });
+        }
+        if self.structs.contains_key(&decl.binder().id.owner)
+            && let Some((_, symbol)) = self.callable_value_symbol(expr, ty)?
+        {
+            return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
+        }
+        Ok(TyArg::Val(CtValue::Deferred(decl.binder())))
+    }
+
     /// The argument of a generator-typed parameter (`apply[Twice]()`,
     /// `apply[S.k]()`, `apply[G]()`): a generator that converts to the
     /// declared generator type ([`mojito_types::types::generator_converts`]),
@@ -3195,34 +3237,8 @@ impl Checker {
             }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
-                    // Function values are compile-time parameters in source, but
-                    // deliberately remain runtime values in the VM ABI: MIR
-                    // evaluates the parameter argument into a register and the
-                    // call frame reifies it under `name`. `CtValue::Deferred` is only
-                    // the erased generic-identity marker used by this resolver.
                     if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
-                        let actual = self.infer(expr)?;
-                        // A closure's storage is a run-time value, and so is
-                        // a capturing lambda's closure, as at the pin.
-                        let captures = super::is_closure_storage(&actual)
-                            || actual
-                                .callable()
-                                .and_then(|f| f.environment.captures())
-                                .is_some();
-                        if matches!(expr.kind, ExprKind::Lambda { .. }) && captures {
-                            return Err(TypeError::CapturingLambdaParameter);
-                        }
-                        if super::is_closure_storage(&actual) {
-                            return Err(TypeError::DynamicParameterValue);
-                        }
-                        if !self.value_coerces(&actual, ty) {
-                            return Err(TypeError::TypeMismatch {
-                                expected: ty.to_string(),
-                                found: actual.to_string(),
-                                context: format!("callable-value parameter '{name}'"),
-                            });
-                        }
-                        return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
+                        return self.resolve_callable_param_arg(decl, name, ty, expr);
                     }
                     // Source validation types before the elaborator folds a
                     // value argument it alone can evaluate (a vector

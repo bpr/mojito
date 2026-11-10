@@ -2944,6 +2944,7 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::FloatLiteral(v) => positional("ct_float_literal", &v.to_string()),
         CtValue::Bool(v) => positional("ct_bool", &v.to_string()),
         CtValue::Str(v) => positional("ct_string", &quote(v)),
+        CtValue::FuncSymbol(v) => positional("ct_func_symbol", &quote(v)),
         CtValue::Tuple(v) => positional("ct_tuple", &list(v.iter().map(ct_value))),
         CtValue::List(v) => positional("ct_list", &list(v.iter().map(ct_value))),
         CtValue::Dtype(v) => positional("ct_dtype", v.name()),

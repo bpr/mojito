@@ -6113,6 +6113,13 @@ impl Checker {
             return None;
         };
         let context = &self.param_context;
+        // A function symbol holds no signature: it is a value of the
+        // parameter's declared callable type.
+        if let (CtValue::FuncSymbol(_), ParamDecl::Value { ty, .. }) = (value, &info.decls[slot])
+            && !mojito_types::types::is_symbolic(ty)
+        {
+            return Some(context.constant_as(value.clone(), ty).map_err(param_error));
+        }
         Some(
             context
                 .constant(value.clone())

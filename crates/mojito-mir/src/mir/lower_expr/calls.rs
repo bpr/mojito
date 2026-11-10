@@ -642,7 +642,7 @@ impl<'a> Flatten<'a> {
     /// its storage struct, read from the
     /// declaration's slot as any local is, as upstream's `emitClosure`
     /// returns the storage. A body that is no method of its storage (one
-    /// naming an enclosing callable binder) has no value (R92).
+    /// naming an enclosing `def`'s callable binder) has no value (R2085).
     pub(in crate::mir) fn closure_storage_read(
         &mut self,
         node: Node<'a>,
@@ -656,7 +656,7 @@ impl<'a> Flatten<'a> {
         {
             return self.unsupported_value(
                 node.location(),
-                "a closure naming an enclosing callable parameter is not a value (R92)",
+                "a closure naming an enclosing callable parameter is not a value (R2085)",
             );
         }
         match self.owner_vars.get(&info.binding).copied() {
@@ -684,7 +684,7 @@ impl<'a> Flatten<'a> {
         if storage.method.is_none() {
             return self.unsupported_value(
                 node.location(),
-                "a closure naming an enclosing callable parameter is not a value (R92)",
+                "a closure naming an enclosing callable parameter is not a value (R2085)",
             );
         }
         let slot = self.lambda_storage_slot(info, storage, &node.location());

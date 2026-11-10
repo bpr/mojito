@@ -964,7 +964,7 @@ fn resolve_callable_default(
     bindings: &Bindings,
 ) -> Result<Option<CtValue>, MonoError> {
     match default {
-        CallableDefault::Symbol(symbol) => Ok(Some(CtValue::Str(symbol.clone()))),
+        CallableDefault::Symbol(symbol) => Ok(Some(CtValue::FuncSymbol(symbol.clone()))),
         CallableDefault::Parameter(parameter) => Ok(bindings.values.get(parameter).cloned()),
         CallableDefault::If {
             condition,

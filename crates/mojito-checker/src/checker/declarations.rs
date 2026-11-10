@@ -1445,26 +1445,17 @@ impl Checker {
             return Ok(CallableDefault::Parameter(ParamRef::unbound(name)));
         }
 
-        let (name, arguments) = match &expression.kind {
-            ExprKind::Identifier(name) => (name.as_str(), &[][..]),
-            ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
-            _ => {
-                return Err(TypeError::Unsupported(
-                    "a callable default must be a function, an earlier callable parameter, or a conditional of those values"
-                        .to_string(),
-                ));
-            }
+        let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &expression.kind
+        else {
+            return Err(TypeError::Unsupported(
+                "a callable default must be a function, an earlier callable parameter, or a conditional of those values"
+                    .to_string(),
+            ));
         };
-        let actual = self
-            .infer_specialized_callable_value(
-                expression.source_span(),
-                CallableValueSource::Binding(name),
-                arguments,
-                Some(expected),
-                true,
-            )?
+        let (actual, symbol) = self
+            .callable_value_symbol(expression, expected)?
             .ok_or_else(|| TypeError::NotCallable {
-                name: name.to_string(),
+                name: name.clone(),
                 ty: self
                     .lookup(name)
                     .map_or_else(|| "undefined".to_string(), ToString::to_string),
@@ -1476,12 +1467,41 @@ impl Checker {
                 context: "callable parameter default".to_string(),
             });
         }
+        Ok(CallableDefault::Symbol(symbol))
+    }
+
+    /// The type and symbol of the function `expression` names as a value at
+    /// the callable type `expected` — upstream's `#kgen.func.symbol` of a
+    /// callable parameter's argument or default: a function, an overload
+    /// resolved against `expected`, or an explicit specialization (`f[Int]`).
+    /// `None` when it names no function: a local, a binder, or any other
+    /// expression.
+    pub(super) fn callable_value_symbol(
+        &self,
+        expression: &Expr,
+        expected: &Ty,
+    ) -> Result<Option<(Ty, String)>, TypeError> {
+        let (name, arguments) = match &expression.kind {
+            ExprKind::Identifier(name) => (name.as_str(), &[][..]),
+            ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
+            _ => return Ok(None),
+        };
+        let Some(actual) = self.infer_specialized_callable_value(
+            expression.source_span(),
+            CallableValueSource::Binding(name),
+            arguments,
+            Some(expected),
+            true,
+        )?
+        else {
+            return Ok(None);
+        };
         let symbol = self
             .fact(&expression.source_span(), |facts| {
                 facts.overload_target.as_ref()
             })
             .unwrap_or_else(|| name.to_string());
-        Ok(CallableDefault::Symbol(symbol))
+        Ok(Some((actual, symbol)))
     }
 
     /// Method `m`'s `where` clauses that read none of its arguments, or
@@ -4233,7 +4253,8 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
-                        tyargs.push(TyArg::Val(CtValue::Deferred(decl.binder())));
+                        let value = self.omitted_callable_value(decl, &value_environment);
+                        tyargs.push(TyArg::Val(value));
                     } else {
                         let unsolved = decl.list_pack(decls).unwrap_or(decl);
                         return Err(self.unsolved_binder(name, unsolved, patterns, actuals));
@@ -5561,6 +5582,33 @@ fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
 }
 
 impl Checker {
+    /// The value an omitted callable parameter with a default takes: a
+    /// struct's is the function its default names, or the earlier callable
+    /// parameter's symbol it repeats, as the pin keys `S[f = seven]` by
+    /// `#kgen.func.symbol<@seven>`. Any other is the deferred slot the VM
+    /// fills.
+    fn omitted_callable_value(
+        &self,
+        decl: &ParamDecl,
+        environment: &HashMap<String, CtValue>,
+    ) -> CtValue {
+        let symbol = match decl {
+            ParamDecl::Value {
+                callable_default: Some(default),
+                ..
+            } if self.structs.contains_key(&decl.binder().id.owner) => match default {
+                CallableDefault::Symbol(symbol) => Some(CtValue::FuncSymbol(symbol.clone())),
+                CallableDefault::Parameter(earlier) => environment
+                    .get(&*earlier.name)
+                    .filter(|value| matches!(value, CtValue::FuncSymbol(_)))
+                    .cloned(),
+                CallableDefault::If { .. } => None,
+            },
+            _ => None,
+        };
+        symbol.unwrap_or_else(|| CtValue::Deferred(decl.binder()))
+    }
+
     /// The explicit-bracket binding [`Self::resolve_use_params`] and
     /// [`Self::resolve_partial_use_params`] share: `unbound`, when given,
     /// names the arguments that bind and the slots the list leaves open,
@@ -5791,10 +5839,7 @@ impl Checker {
                 ..
             } = decl
             {
-                // The VM evaluates the symbolic default after reifying all
-                // preceding scalar/callable parameters.  Generic identity
-                // records only that this runtime value occupies the slot.
-                TyArg::Val(CtValue::Deferred(decl.binder()))
+                TyArg::Val(self.omitted_callable_value(decl, &value_environment))
             } else if let ParamDecl::Value {
                 default: Some(value),
                 ty,

@@ -135,7 +135,9 @@ impl ParamContext {
         if let TyKind::ParamList(element) = ty.kind()
             && is_function(element)
             && let CtValue::Tuple(values) = &value
-            && values.iter().all(|value| matches!(value, CtValue::Str(_)))
+            && values
+                .iter()
+                .all(|value| matches!(value, CtValue::FuncSymbol(_)))
         {
             return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
         }
@@ -4786,10 +4788,12 @@ impl MetaTy {
             ),
             CtValue::Generator(generator) => Self::value(generator.ty()),
             CtValue::Expr(expr) => expr.meta().clone(),
-            // A deferred slot has no value yet, so no domain either.
-            CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => {
-                Self::value(Ty::infer())
-            }
+            // A deferred slot has no value yet, so no domain either; a
+            // function symbol does not carry its signature.
+            CtValue::FuncSymbol(_)
+            | CtValue::Deferred(_)
+            | CtValue::Marker(_)
+            | CtValue::RemovedArg => Self::value(Ty::infer()),
         }
     }
 

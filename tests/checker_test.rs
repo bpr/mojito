@@ -10168,3 +10168,35 @@ fn simd_member_call_in_signature_is_an_application() {
     let mutating = "struct T[n: Int32]:\n    def __init__(out self):\n        pass\n\ndef use[v: SIMD[DType.int32, 1]](var t: T[v.__iadd__(v)]):\n    print(v)\n";
     check_with_std(mutating).expect_err("a `mut self` member is no application");
 }
+
+const CALLABLE_STRUCT: &str = "def seven() -> Int:\n    return 7\ndef eight() -> Int:\n    return 8\nstruct S[f: def() thin -> Int](Movable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n";
+
+#[test]
+fn struct_callable_parameter_instance_carries_function_symbol() {
+    // `S[seven]` is keyed by the function's symbol, as the pin's
+    // `S[#kgen.func.symbol<@seven>]`, so it is not `S[eight]`.
+    let source = format!("{CALLABLE_STRUCT}def main():\n    var s = S[seven](1)\n");
+    let checked = checked_with_std(&source).expect("check");
+    let symbol = mojito::types::TyArg::Val(mojito::ct::CtValue::FuncSymbol("seven".into()));
+    assert!(own_expressions(&checked).any(|expression| {
+        expression.ty.as_ref().is_some_and(|ty| {
+            matches!(ty.kind(), mojito::types::TyKind::Struct(name, arguments)
+                if name == "S" && arguments.as_slice() == std::slice::from_ref(&symbol))
+        })
+    }));
+    let e = err(&format!(
+        "{CALLABLE_STRUCT}def take(s: S[seven]):\n    pass\ndef main():\n    take(S[eight](1))\n"
+    ));
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+}
+
+#[test]
+fn rejects_bare_struct_callable_parameter() {
+    // Inside the struct the parameter is `Self.f`, called or read.
+    for body in ["return self.x + f()", "var h = f\n        return h()"] {
+        let e = err(&format!(
+            "{CALLABLE_STRUCT}    def get(self) -> Int:\n        {body}\n"
+        ));
+        assert_eq!(e, TypeError::UnqualifiedStructParam("f".into()));
+    }
+}

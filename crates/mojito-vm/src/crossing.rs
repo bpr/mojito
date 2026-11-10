@@ -74,6 +74,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
         CtValue::None => Ok(Value::None),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
+        CtValue::FuncSymbol(symbol) => Ok(Value::Function(symbol.clone())),
         CtValue::Tuple(items)
         | CtValue::PopArray {
             elements: items, ..

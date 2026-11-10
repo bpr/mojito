@@ -1613,14 +1613,7 @@ impl Const {
             CtValue::Bool(value) => Some(Self::Bool(*value)),
             CtValue::None => Some(Self::None),
             CtValue::Dtype(value) => Some(Self::Dtype(*value)),
-            CtValue::Str(value)
-                if matches!(
-                    slot_ty.map(Ty::kind),
-                    Some(TyKind::Func(_) | TyKind::GenericFunc(_))
-                ) =>
-            {
-                Some(Self::Function(value.clone()))
-            }
+            CtValue::FuncSymbol(symbol) => Some(Self::Function(symbol.clone())),
             CtValue::Str(_) if slot_ty.is_some_and(mojito_types::types::is_nominal_string) => {
                 Some(Self::Value(value.clone()))
             }

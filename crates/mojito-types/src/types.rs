@@ -5856,6 +5856,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
+        | CtValue::FuncSymbol(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
         | CtValue::Marker(_)
@@ -6454,6 +6455,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
+        | CtValue::FuncSymbol(_)
         | CtValue::RemovedArg => false,
     }
 }

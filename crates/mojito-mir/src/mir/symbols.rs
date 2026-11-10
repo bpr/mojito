@@ -131,7 +131,7 @@ impl<'t> SymbolTable<'t> {
                 })
             {
                 uses.extend(items.iter().filter_map(|item| match item {
-                    CtValue::Str(function) => self.lookup(function),
+                    CtValue::FuncSymbol(function) => self.lookup(function),
                     _ => None,
                 }));
             }

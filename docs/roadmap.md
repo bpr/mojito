@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2085**.
+Next free ID: **R2087**.
 
 ## Ordered Work
 
@@ -193,13 +193,14 @@ which names the upstream pass each one follows. Each is measured by the
     expression", where the pin prints `5`. The same call in a signature
     fails the same way; an `Int` result in a body already runs through a
     lifted thunk (`g[ap[inc](4)]()`).
-  - Lever: a symbol-valued `CtValue` that the elaborator binds and
-    `VmBackend::thaw` turns into the VM's function value; then admit
-    `callable_bound` binders and function-typed slots.
-  - Related: R92 (a struct's callable-value parameter), R1650 (the
-    callable binder's environment erased).
+  - Lever: the symbol-valued `CtValue::FuncSymbol`, which the elaborator
+    already binds and the VM thaws into its function value; admit
+    `callable_bound` binders and function-typed slots once a `def`'s
+    callable parameter is that symbol (R2085).
+  - Related: R2085 (a `def`'s callable parameter is a run-time argument),
+    R1650 (the callable binder's environment erased).
   - Found while landing R1644 (2026-10-30).
-  - Depends on nothing.
+  - Depends on R2085.
   - Model: Fable, Not Planned.
 
 - [ ] **R1727 A `@fieldwise_init` struct that declares another `__init__`
@@ -3851,39 +3852,54 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R92 A struct's callable-value parameter neither elaborates nor
-  reads inside its methods**
+- [ ] **R2085 A `def`'s thin callable parameter is a run-time hidden
+  argument, not a function symbol in its instance key**
 
-  Problem: a struct instance whose parameter is a callable
-  (`struct S[f: def() thin -> Int]`) fails at the elaborator, and a method
-  reading the parameter fails too, where the pin runs both.
-  - `var s = S[seven](1)` stops with "unsupported monomorphizing receiver
-    for `S.__init__`: solution for `f` is not constant"; the pin prints
-    `s.x`.
-  - A method returning `self.x + Self.f()` stops with "Undefined variable
-    'Self'"; the pin prints `8`. Bare `f()` is rejected at the pin
-    ("unqualified access to struct parameter 'f'; use 'Self.f' instead"),
-    and Mojito accepts it, then stops with "Undefined variable 'f'".
-  - The same parameter on a module `def` runs: the call frame reifies it as
-    a hidden local. A struct's deferred slot is never reified into its
-    methods' frames.
-  - Probe: a capturing closure naming an enclosing callable binder
-    (`callable_frame` in `assets/ok/closure_storage_method_binders.mojo`,
-    whose `body() {var x}` calls the frame's `f`) stays a generator nested
-    in its enclosing declaration, taking its storage as a leading argument
-    (`ClosureStorage::method`, `mir/nested.rs`), because its storage would
-    carry `f`, where upstream's `liftClosureIntoMethod` makes every
-    closure body its storage's method. Once a struct carries a callable
-    parameter, drop that exception.
-  - Such a closure has no value either: its storage has no `__call__`
-    witness, so a first-class use of it lowers to `MirInstr::Unsupported`
-    (`closure_storage_read`, `mir/lower_expr/calls.rs`).
-  - Probe: upstream's `_MapIterator[..., function: def(var
-    InnerIteratorType.Element) thin -> OutputType]`, which `std.iter.map`
-    returns (R1411).
-  - Found while probing deferred slots (2026-09-26).
+  The pin specializes `def g[f: def() thin -> Int]` per function symbol;
+  Mojito passes `f` through `param_arg_regs` and reads it back as a
+  `const param`, so its slot is `CtValue::Deferred` and no instance names
+  the function.
+  - Where: `resolve_param_arg`'s callable arm
+    (`checker/type_resolution.rs`) resolves only a struct's argument to
+    `CtValue::FuncSymbol`; `resolve_use_params` and `bind_bracket_params`
+    (`checker/declarations.rs`) fill a `def`'s omitted callable default
+    with `Deferred`; `inline_parametric`'s binder binding and
+    `mir::callable_targets` carry the run-time value.
+  - Probe: `S[f](2).get()` inside `def g[f: def() thin -> Int]()`, over a
+    struct `S[f: def() thin -> Int]`, stops with "vm backend does not
+    support the built-in or callee 'f'"; the pin prints `9`.
+  - Probe: `callable_frame`'s `body() {var x}` in
+    `assets/ok/closure_storage_method_binders.mojo` calls the frame's `f`,
+    so it stays a generator nested in its enclosing declaration
+    (`ClosureStorage::method` is `None`, `mir/nested.rs`), where
+    upstream's `liftClosureIntoMethod` makes every closure body its
+    storage's method; its first-class use lowers to
+    `MirInstr::Unsupported` (`closure_storage_read`,
+    `lambda_storage_value`, `mir/lower_expr/calls.rs`).
+  - Probe: `std.iter.map` applies upstream's `_MapIterator[...,
+    function]` to its own `function` binder (R1411).
+  - Related: R1731, R1650.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2086 A struct's callable default naming a function fails at the
+  struct's declaration**
+
+  `struct S[f: def() thin -> Int = seven]` stops with "'seven' has type
+  undefined and is not callable", where the pin keys `S()` as `S[seven]`.
+  - Cause: `check_struct_shell` (`checker/traits.rs`) classifies a
+    struct's parameters before function signatures are in scope, and
+    `deferred_defaults` defers a call or an alias default but not a
+    callable default naming a function, so `compile_callable_default`
+    finds no function.
+  - A `def`'s callable default naming the same function runs.
+  - Probe: `take(S(1))` over `def take(s: S[seven, seven])` and
+    `struct S[f: def() thin -> Int = seven, g: def() thin -> Int = f]`;
+    the pin prints `1`. Once the default resolves,
+    `omitted_callable_value` (`checker/declarations.rs`) already keys it
+    by the symbol.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R102 A method's `*Ts` pack does not take a `Span` argument**
 
@@ -12766,7 +12782,8 @@ residue found inside a task moves to the task that owns its fix.
     its two `map` overloads from `Mojo/stdlib/std/iter/__init__.mojo` into
     `stdlib/std/iter.mojo`.
   - The iterator is a struct over a callable parameter that its
-    `__next__` calls as `Self.function(...)` (R92).
+    `__next__` calls as `Self.function(...)`, which runs; `map` applies
+    it to its own `function` binder, a run-time hidden argument (R2085).
   - Its `_inner` field needs `Iterator`'s `Deinitable` refinement, and its
     `bounds` reads the trait's default (R669).
   - The `map` bodies call `iter(iterable)` (R670) and `rebind_var`
@@ -12777,7 +12794,7 @@ residue found inside a task moves to the task that owns its fix.
   - An enum case already passes as a `thin` function value
     (`apply[Token.integer](3)` runs).
   - Found while landing `enum` (2026-10-25).
-  - Depends on R92, R669, R670, R1737, R1152.
+  - Depends on R2085, R669, R670, R1737, R1152.
   - Model: Opus, Not Planned.
 
 - [ ] **R1455 The bundle has no `std.python`, so `String` is not

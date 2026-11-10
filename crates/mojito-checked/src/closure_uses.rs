@@ -429,10 +429,9 @@ impl CheckedProgram {
                     &method.body,
                     defaults(&method.params),
                     &method.symbol,
-                    &BinderScope::of(
-                        struct_parameters(&node.module, &declaration.name)
-                            .iter()
-                            .chain(&method.signature.parameters),
+                    &BinderScope::of_method(
+                        struct_parameters(&node.module, &declaration.name),
+                        &method.signature.parameters,
                     ),
                     &HashMap::new(),
                 );
@@ -441,10 +440,9 @@ impl CheckedProgram {
                 tables.wrapper_roots(index),
                 Vec::new(),
                 &wrapper.lowered_name,
-                &BinderScope::of(
-                    struct_parameters(&wrapper.module, &wrapper.declaration)
-                        .iter()
-                        .chain(&wrapper.signature.parameters),
+                &BinderScope::of_method(
+                    struct_parameters(&wrapper.module, &wrapper.declaration),
+                    &wrapper.signature.parameters,
                 ),
                 &HashMap::new(),
             ),
@@ -468,7 +466,8 @@ impl CheckedProgram {
 struct BinderScope {
     /// The binders that are not callable, in scope order.
     declarations: Vec<ParamDecl>,
-    /// The callable value binders ([`ParamDecl::is_callable_binder`]).
+    /// The callable value binders ([`ParamDecl::is_callable_binder`]) of an
+    /// enclosing `def`; a struct's are among `declarations`.
     callables: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
@@ -478,6 +477,19 @@ struct BinderScope {
 impl BinderScope {
     fn of<'a>(declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
         Self::default().with(declarations)
+    }
+
+    /// A method's binders: its struct's `parameters`, then its own. A
+    /// struct's callable binder is bound to a function symbol in the
+    /// struct's instance, so a closure naming it is still its storage's
+    /// method, taking it as an ordinary storage parameter.
+    fn of_method<'a>(
+        parameters: &'a [ParamDecl],
+        own: impl IntoIterator<Item = &'a ParamDecl>,
+    ) -> Self {
+        let mut scope = Self::default();
+        scope.declarations.extend(parameters.iter().cloned());
+        scope.with(own)
     }
 
     /// These binders, then those of a declaration nested inside them.

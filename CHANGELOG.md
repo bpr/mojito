@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's callable-value parameter (`struct S[f: def() thin -> Int]`)
+  runs: the checker keys the instance by the function's symbol, the new
+  `CtValue::FuncSymbol` (upstream's `#kgen.func.symbol`, MIR text
+  `ct_func_symbol`, schema 1.184, package format 208), which replaces the
+  elaborator's string stand-in at every callable slot. `S[seven]` and
+  `S[eight]` are distinct instances; methods, static or not, call
+  `Self.f()`, read it through a local, and name it from a capture-list
+  closure that is its storage's method; `S[seven].f()` calls it from
+  outside; and a bare `f` is the pin's "unqualified access to struct
+  parameter" error (R92, `assets/ok/struct_callable_parameter.mojo`).
 - `Set` declares upstream's `__init__(out self, elements: List[Self.T])`,
   under `where conforms_to(Self.T, Copyable) and conforms_to(Self.T,
   Deinitable)`, so `len(Set[Int]([1, 2, 1]))` prints `2` instead of

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1143
+# swept-count	1145
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -1038,6 +1038,8 @@ assets/type_error/string_not_writable.mojo	compile-reject	agree	error: no matchi
 assets/type_error/string_span_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
 assets/type_error/string_span_return_temporary.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringSpan[origin_of(self)]'
 assets/type_error/struct_binder_origin_store_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'RefBox[origin_of(other)]' value to 'RefBox[origin]'
+assets/type_error/struct_callable_parameter_identity.mojo	compile-reject	agree	error: invalid call to 'take': value passed to 's' cannot be converted from 'S[comptime #kgen.func.symbol<@struct_callable_parameter_identity::@"eight()">]' to 'S[comptime #kgen.func.symbol<@struct_callable_parameter_identity::@"seven()">]'
+assets/type_error/struct_callable_parameter_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'f'; use 'Self.f' instead
 assets/type_error/struct_construction_field_unfolded.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, Extent(n, Int(1)).rows]' value to 'SIMD[.int8, n]'
 assets/type_error/struct_construction_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(n, (n + Int(1)))]' value to 'Tagged[Extent((n + Int(1)), n)]'
 assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'

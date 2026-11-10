@@ -1712,6 +1712,7 @@ CtValue::Tuple
 CtValue::List
 CtValue::Type
 CtValue::Expr      // a residual parameter expression, never a constant
+CtValue::FuncSymbol // a thin function's symbol, `#kgen.func.symbol`; part of identity
 CtValue::Deferred  // a slot whose value arrives later; not part of identity
 ```
 
@@ -4800,9 +4801,16 @@ runtime/semantic parameters. Scalar values, ordinary types, and packs may drive
 OriginSet, and explicit callable-value parameters remain on its signature, and
 their source arguments remain on the rewritten call. A scalar-controlled branch
 can therefore select code that later invokes a captured callback without asking
-the compile-time universe to own that callback. `CtValue` intentionally has no
-function or closure variant: this residualization is not arbitrary callable
-CTFE, and it does not make closures escaping. A closure's storage does not
+the compile-time universe to own that callback. A function's symbol is a
+compile-time value, `CtValue::FuncSymbol` (upstream's `#kgen.func.symbol`):
+the checker resolves a struct's callable-value argument to it, so `S[seven]`
+is an instance of its own, a method reads `Self.f` as the parameter constant
+the elaborator folds to `Const::Function`, and the elaborator binds a callable
+binder, a callable pack's list, and a callable default to it. A `def`'s
+callable-value parameter is still a retained run-time hidden argument, its
+slot `CtValue::Deferred`, where the pin keys the instance by the symbol
+(R2085). `CtValue` has no closure variant: this residualization is not
+arbitrary callable CTFE, and it does not make closures escaping. A closure's storage does not
 convert to a run-time `def(...)` value or bind a compile-time callable value
 (matching current Mojo), while a closure-trait binder `F: def(...)` takes it
 as a run-time argument.

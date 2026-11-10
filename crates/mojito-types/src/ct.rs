@@ -623,6 +623,11 @@ pub enum CtValue {
     /// `A.get`). Its body names its own parameters and nothing else; its
     /// type is [`TyKind::Generator`]. It displays as `__gen[x: Int] x * 2`.
     Generator(Box<GeneratorValue>),
+    /// A thin function's symbol — upstream's `#kgen.func.symbol<@sym>`, the
+    /// value of a callable-typed parameter bound to a named function
+    /// (`S[seven]`). It is a closed constant that joins generic identity,
+    /// and it displays as the symbol.
+    FuncSymbol(#[serde(serialize_with = "crate::symbol_ref::serialize")] String),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -1252,6 +1257,7 @@ impl CtValue {
             | Self::MlirAttr(_)
             | Self::KgenTarget(_)
             | Self::Generator(_)
+            | Self::FuncSymbol(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -1347,7 +1353,7 @@ impl CtValue {
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
             // A callable binder's value is the symbol of the function it is
             // bound to, which a read materializes as that function.
-            (value @ Self::Str(_), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some(value),
+            (value @ Self::FuncSymbol(_), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some(value),
             // `Int`, `UInt`, and `Float64` hold their one lane as the host
             // scalar.
             (Self::Simd { dtype, lanes }, kind)
@@ -1712,6 +1718,7 @@ impl CtValue {
             | Self::Type(_)
             | Self::Trait(_)
             | Self::Generator(_)
+            | Self::FuncSymbol(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -1982,6 +1989,7 @@ impl fmt::Display for CtValue {
                 write!(f, " {}", generator.body)
             }
             Self::Expr(expr) => write!(f, "{expr}"),
+            Self::FuncSymbol(symbol) => f.write_str(symbol),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::Marker(marker) => write!(f, "{marker}"),
             Self::RemovedArg => f.write_str("_REMOVED_ARG"),

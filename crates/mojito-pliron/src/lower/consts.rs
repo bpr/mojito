@@ -163,7 +163,7 @@ impl FnLowering<'_> {
             let mut thunks = Vec::with_capacity(elements.len());
             for value in elements {
                 let target = match value {
-                    CtValue::Str(function) => self.signatures.get(function.as_str()),
+                    CtValue::FuncSymbol(function) => self.signatures.get(function.as_str()),
                     _ => None,
                 };
                 let Some(target) = target else {

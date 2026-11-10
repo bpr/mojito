@@ -1076,7 +1076,7 @@ impl<'p> CallEdges<'p, '_> {
             }) =>
             {
                 for item in items {
-                    if let mojito_types::ct::CtValue::Str(function) = item {
+                    if let mojito_types::ct::CtValue::FuncSymbol(function) = item {
                         self.push_named(function);
                     }
                 }

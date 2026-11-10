@@ -3472,6 +3472,26 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     );
 }
 
+/// Schema 1.184 carries a function symbol bound to a callable-typed
+/// struct parameter (`S[seven]`) as `ct_func_symbol`.
+#[test]
+fn function_symbol_struct_arguments_round_trip() {
+    let applied: Ty = TyKind::Struct(
+        "S".into(),
+        vec![TyArg::Val(CtValue::FuncSymbol("seven".into()))],
+    )
+    .into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![applied.clone()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("ct_func_symbol(\"seven\")"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], applied);
+}
+
 /// Schema 1.63 carries an erased struct argument (`_REMOVED_ARG`) in a
 /// concrete struct type.
 #[test]
