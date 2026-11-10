@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2082**.
+Next free ID: **R2083**.
 
 ## Ordered Work
 
@@ -4226,17 +4226,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1413 Enum declaration errors a payload's type causes use Mojito's
-  words**
+- [ ] **R2082 A binary operator over a struct without its dunder reports
+  Mojito's words**
 
-  The pin's "case 'list' has non-'ImplicitlyCopyable' payload type
-  'List[Int]'", "enum case payloads do not support trait types; 'AnyType' is
-  a trait, ...", and "deriving `__eq__` is not yet supported for enums;
-  write `__eq__`" are reported as a field conformance failure, a
-  conformance-oracle failure, and an undefined operator.
-  - The verdicts agree
-    (`assets/type_error/enum_payload_not_implicitly_copyable.mojo`).
-  - Found while landing `enum` (2026-10-25).
+  `S(1) == S(2)` over a struct declaring no `__eq__` reports "operator '=='
+  is not defined for S and S" (`TypeError::BadOperator`), where the pin
+  reports "'S' does not implement the '__eq__' method".
+  - The pin names the left operand's type and the dunder it lacks; which
+    wording it uses when only the reflected dunder exists is unprobed.
+  - Probe: an `enum E(Copyable)` with `case a(Int)` and `E.a(1) == E.a(2)`.
+  - The `# expect:` lines of the `assets/type_error` fixtures that assert
+    `is not defined for` move to the pin's words with the fix.
+  - Found while landing R1413 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11419,6 +11420,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The bundled traits' requirements stay `...` until both check.
   - Done when both traits declare upstream's bodies and the two synthesis
     passes are gone.
+  - Probe: an `enum E(Equatable, Copyable)` (or `Hashable`) without its own
+    `__eq__` (`__hash__`) is rejected, "declares conformance to trait
+    'Equatable' but is missing method '__eq__'", where the pin's defaults
+    branch on `conforms_to(Self, EnumLike)` to `_enum_reflection_eq` and
+    print `False True True` for `x == y, x == x, x != y`;
+    `synthesize_equatable_eq` matches only a declaration without cases.
   - Found while landing R1383 (2026-10-26), refiled from R269.
   - Depends on R77 and R1210.
   - Model: Fable, Not Planned.

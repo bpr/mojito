@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1141
+# swept-count	1143
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -1042,6 +1042,7 @@ assets/type_error/struct_construction_field_unfolded.mojo	compile-reject	agree	e
 assets/type_error/struct_construction_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(n, (n + Int(1)))]' value to 'Tagged[Extent((n + Int(1)), n)]'
 assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'
 assets/type_error/struct_field_non_deinitable_param.mojo	compile-reject	agree	error: field 'value' has non-'Deinitable' type 'T'
+assets/type_error/struct_field_trait_type.mojo	compile-reject	agree	error: struct fields do not support trait types; 'AnyType' is a trait, use a concrete type or compile-time generic
 assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead
 assets/type_error/struct_member_type_as_value_argument.mojo	compile-reject	agree	error: 'Box' parameter 'n' has 'Int' type, but value has type 'AnyStruct[Int]'
 assets/type_error/struct_method_instance_clone_fails.mojo	compile-reject	agree	error: function instantiation failed

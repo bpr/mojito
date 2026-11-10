@@ -395,6 +395,20 @@ pub enum TypeError {
         field: String,
         ty: String,
     },
+    /// An enum case's payload type `ty` that does not conform to
+    /// `trait_name`, which every payload must (`Deinitable`) or which the
+    /// enum declares (`Copyable`, `ImplicitlyCopyable`).
+    EnumPayloadNotConforming {
+        case: String,
+        trait_name: String,
+        ty: String,
+    },
+    /// A trait spelled where a stored type goes: `storage` is "struct
+    /// fields" or "enum case payloads".
+    TraitTypedStorage {
+        storage: &'static str,
+        trait_name: String,
+    },
     /// A generic call/construction could not solve a type parameter from the
     /// argument types (no explicit type-argument syntax exists to supply it).
     CannotInferTypeParam {
@@ -970,6 +984,21 @@ impl fmt::Display for TypeError {
             Self::FieldNotDeinitable { field, ty } => {
                 write!(f, "field '{field}' has non-'Deinitable' type '{ty}'")
             }
+            Self::EnumPayloadNotConforming {
+                case,
+                trait_name,
+                ty,
+            } => write!(
+                f,
+                "case '{case}' has non-'{trait_name}' payload type '{ty}'"
+            ),
+            Self::TraitTypedStorage {
+                storage,
+                trait_name,
+            } => write!(
+                f,
+                "{storage} do not support trait types; '{trait_name}' is a trait, use a concrete type or compile-time generic"
+            ),
             Self::CannotInferTypeParam { name, param } => write!(
                 f,
                 "cannot infer type parameter '{param}' of '{name}' from the arguments"

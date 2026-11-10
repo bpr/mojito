@@ -459,7 +459,10 @@ impl Checker {
         name: &str,
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Option<Result<Ty, TypeError>> {
+        // An enum's storage is the compiler's intrinsic, constructed by its
+        // own rule (`__EnumStorage[...](payload, index=i)`).
         if param_args.is_empty()
+            || name == mojito_types::types::ENUM_STORAGE_TYPE_NAME
             || self
                 .lookup(name)
                 .is_some_and(|ty| !matches!(ty.kind(), TyKind::Generator(_)))

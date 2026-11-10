@@ -73,6 +73,29 @@ impl Checker {
         }
     }
 
+    /// A trait spelled as a stored type (`var x: AnyType`, `case c(Tr)`),
+    /// which upstream rejects at the declaration: a stored type is concrete
+    /// or a compile-time generic.
+    pub(super) fn reject_trait_typed_storage(
+        &self,
+        ty: &mojito_ast::ast::Type,
+        storage: &'static str,
+    ) -> Result<(), TypeError> {
+        match ty {
+            mojito_ast::ast::Type::Named(name, arguments)
+                if arguments.is_empty()
+                    && !self.structs.contains_key(name)
+                    && self.check_trait_name(name).is_ok() =>
+            {
+                Err(TypeError::TraitTypedStorage {
+                    storage,
+                    trait_name: name.rsplit('$').next().unwrap_or(name).to_string(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The canonical trait set `expr` denotes when it is a trait, or a `&`
     /// composition of traits, used as a value (`Copyable & Hashable`): each
     /// trait another one implies is dropped, as upstream folds a redundant
@@ -860,6 +883,14 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<StructMemberTypes, TypeError> {
         let name = declaration.name;
+        for payload in declaration
+            .enum_cases
+            .into_iter()
+            .flatten()
+            .flat_map(|case| &case.payload)
+        {
+            self.reject_trait_typed_storage(payload, "enum case payloads")?;
+        }
         // Associated members resolve BEFORE fields, each installed into the
         // registered shell as it resolves: a later member reads an earlier
         // one through `Self`, and a field's type may apply the struct's own
@@ -905,6 +936,7 @@ impl Checker {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
+            self.reject_trait_typed_storage(&f.ty, "struct fields")?;
             // A field's `Self.name` resolves declared parameters and (now
             // pre-installed) associated members; a residual miss on `Self`
             // itself still reports an unknown parameter. Field annotations are
@@ -1324,6 +1356,9 @@ impl Checker {
         let methods = declaration.methods;
         // Verify each declared conformance now that the method signatures
         // exist, recording each one's witness table.
+        if let Some(cases) = declaration.enum_cases {
+            self.check_enum_payload_conformances(name, cases, declaration.conforms)?;
+        }
         let mut witness_tables = Vec::new();
         for tr in declaration.conforms {
             witness_tables.extend(self.verify_conformance(name, tr, self_ty)?);
@@ -3357,8 +3392,39 @@ impl Checker {
         let Some(info) = self.structs.get(name) else {
             return false;
         };
-        let assumed = |element: &Ty| {
-            matches!(element.kind(), TyKind::Param { binder, .. }
+        info.methods.contains_key("__copyinit__")
+            || info.fields.iter().all(|(_, ty)| {
+                // A field of a parameter's type the conformance's own
+                // `where` clause states is implicitly copyable.
+                self.is_implicitly_copyable_under_assumption(ty, assumption)
+                    // Private storage (`__RuntimeTuple[*Self.Ts]`, an
+                    // enum's `__EnumStorage[Self.T, Self.E]`) copies as its
+                    // elements do, which the conformance's own `where`
+                    // clause states.
+                    || match ty.kind() {
+                        TyKind::Tuple(elements) | TyKind::Variant(elements) => {
+                            match mojito_types::types::pack_spread(elements) {
+                                Some(pack) => self.is_implicitly_copyable_under_assumption(pack, assumption),
+                                None => elements.iter().all(|element| {
+                                    self.is_implicitly_copyable_under_assumption(element, assumption)
+                                }),
+                            }
+                        }
+                        _ => false,
+                    }
+            })
+    }
+
+    /// Whether `ty` is implicitly copyable, or is a parameter whose
+    /// implicit copyability a conformance's `where` clause (`assumption`)
+    /// states.
+    fn is_implicitly_copyable_under_assumption(
+        &self,
+        ty: &Ty,
+        assumption: Option<&GenericConstraint>,
+    ) -> bool {
+        self.is_implicitly_copyable(ty)
+            || matches!(ty.kind(), TyKind::Param { binder, .. }
             if assumption.is_some_and(|known| {
                 binder_conformance_assumed(
                     binder,
@@ -3367,29 +3433,76 @@ impl Checker {
                     &|available, required| self.trait_implies(available, required),
                 )
             }))
+    }
+
+    /// The conformances an `enum`'s payloads owe, as upstream's declaration
+    /// resolution judges each case's payload types: every payload is
+    /// `Deinitable`, and is `Copyable` and `ImplicitlyCopyable` when the
+    /// enum declares them, each under its declared condition. The first
+    /// payload that falls short is reported in upstream's words, ahead of
+    /// the storage field's own conformance failure.
+    fn check_enum_payload_conformances(
+        &self,
+        name: &str,
+        cases: &[mojito_ast::ast::EnumCase],
+        conforms: &[String],
+    ) -> Result<(), TypeError> {
+        let Some(info) = self.structs.get(name) else {
+            return Ok(());
         };
-        info.methods.contains_key("__copyinit__")
-            || info.fields.iter().all(|(_, ty)| {
-                self.is_implicitly_copyable(ty)
-                    // A field of a parameter's type the conformance's own
-                    // `where` clause states is implicitly copyable.
-                    || assumed(ty)
-                    // Private storage (`__RuntimeTuple[*Self.Ts]`, an
-                    // enum's `__EnumStorage[Self.T, Self.E]`) copies as its
-                    // elements do, which the conformance's own `where`
-                    // clause states.
-                    || match ty.kind() {
-                        TyKind::Tuple(elements) | TyKind::Variant(elements) => {
-                            match mojito_types::types::pack_spread(elements) {
-                                Some(pack) => assumed(pack),
-                                None => elements.iter().all(|element| {
-                                    self.is_implicitly_copyable(element) || assumed(element)
-                                }),
-                            }
-                        }
-                        _ => false,
-                    }
-            })
+        let Some(TyKind::Variant(alternatives)) = info
+            .fields
+            .iter()
+            .find(|(field, _)| field == "__enum_storage")
+            .map(|(_, ty)| ty.kind())
+        else {
+            return Ok(());
+        };
+        let assumption = |tr: &str| {
+            info.conformance_conditions
+                .get(tr)
+                .and_then(|condition| condition.compiled().ok())
+        };
+        let copyable = conforms
+            .iter()
+            .filter(|tr| self.trait_implies(tr, "Copyable"))
+            .collect::<Vec<_>>();
+        let implicitly_copyable = conforms.iter().any(|tr| tr == "ImplicitlyCopyable");
+        for (case, alternative) in cases.iter().zip(alternatives) {
+            let payloads = match case.payload.len() {
+                0 => Vec::new(),
+                1 => vec![alternative],
+                _ => mojito_types::types::tuple_elements(alternative.kind()).unwrap_or_default(),
+            };
+            for ty in payloads {
+                let missing = if !self.is_deinitable(ty) {
+                    Some("Deinitable")
+                } else if !copyable.is_empty()
+                    && !copyable
+                        .iter()
+                        .any(|tr| self.is_copyable_under_assumption(ty, assumption(tr)))
+                {
+                    Some("Copyable")
+                } else if implicitly_copyable
+                    && !self.is_implicitly_copyable_under_assumption(
+                        ty,
+                        assumption("ImplicitlyCopyable"),
+                    )
+                {
+                    Some("ImplicitlyCopyable")
+                } else {
+                    None
+                };
+                if let Some(trait_name) = missing {
+                    return Err(TypeError::EnumPayloadNotConforming {
+                        case: case.name.clone(),
+                        trait_name: trait_name.to_string(),
+                        ty: ty.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// At a **consuming** position (binding a value to a new place, passing it by

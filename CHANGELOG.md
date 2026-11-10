@@ -158,6 +158,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `enum` declaration's payload errors use the pin's words: a trait as a
+  payload type is "enum case payloads do not support trait types", a
+  payload that is not `Deinitable`, or not `Copyable` or
+  `ImplicitlyCopyable` where the enum declares it, is "case 'c' has
+  non-'T' payload type 'P'", and a trait as a struct field's type is
+  "struct fields do not support trait types", instead of an unknown type
+  or the storage field's conformance failure (R1413).
+- A case constructor's `__EnumStorage[...](payload, index=i)` is no longer
+  read as a compile-time value's type application, which since R1908 had
+  stopped every `enum` with a payload case in the check ("not an
+  associated comptime expression").
 - `canonicalize`'s `IfYieldSelect` no longer selects a value an arm
   yields when an earlier rewrite of the same walk replaced it, since its
   replacement may be defined in the arm; the next walk judges the
