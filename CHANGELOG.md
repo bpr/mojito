@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled `Iterator` trait is upstream's: it refines `Deinitable` and
+  `Movable` and declares the defaulted `bounds()` (`(0, None)`), which the
+  bundled List, Array, Optional, Set, Dict-view, Span, `bytes()`, and
+  integer range iterators override with their exact remaining length, so
+  `it.bounds()` answers as at the pin and `List(iterable)` reserves the
+  iterable's lower bound (R669). The `paramfor_*` stubs drop their
+  stand-in `& Deinitable` bound (R798).
 - A `def`'s callable-value parameter (`def g[f: def() thin -> Int]`) takes
   the function's symbol in its instance, as a struct's does: the checker
   resolves `g[seven]` to `ct_func_symbol("seven")`, carried as a parameter

@@ -11,6 +11,7 @@ from std.builtin.int import Indexer, index
 from std.hash import Hasher
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
+from std.collections.optional import Optional
 from std.reflection.type_info import _unqualified_type_name
 from std.traits import IsTriviallyDeinitable
 
@@ -31,6 +32,11 @@ struct _ArrayIter[
 
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
@@ -65,6 +71,11 @@ struct _ArrayOwnedIter[T: AnyType](
 
     def __len__(self) -> Int:
         return self.size - self.index
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
         Self.T, Movable

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2089**.
+Next free ID: **R2092**.
 
 ## Ordered Work
 
@@ -1688,9 +1688,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     (`std/builtin/_stubs.mojo`), whose `var elem = result.__next__()` is
     `Deinitable` at the pin only through `where
     conforms_to(IteratorType.Element, Movable & Deinitable)`, which needs R792.
-  - It also breaks generic borrowed loops while the bundled `Iterator` does
-    not refine `Deinitable` (R669) and `Iterable` declares an `Element`
-    upstream does not.
+  - It also breaks generic borrowed loops while the bundled `Iterable`
+    declares an `Element` upstream does not.
   - The lever: an `Assoc` arm in `destruction_verdict` whose root base is an
     own parameter (`is_own_parameter`), judged by `archetype_verdict`.
   - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
@@ -2587,6 +2586,45 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2089 A conformance's constraint need not imply its ancestors'**
+
+  Problem: `struct S(Derived, Base where False)`, where `trait
+  Derived(Base)`, compiles, where the pin rejects it with "constraint for
+  'Derived' does not imply constraint for ancestor trait 'Base';
+  strengthen the derived constraint by adding the ancestor's constraint
+  with 'and'".
+  - A conformance list is never checked for a refined trait whose
+    condition is weaker than an ancestor's own entry in the list; the
+    conditions are only read back per trait (`struct_conformance_conditions`,
+    `checker/traits.rs`).
+  - Probe: `assets/type_error/owned_iteration_linear_user_iterator.mojo`
+    declares `Drain(Iterator, Deinitable where False, Movable)`, which the
+    pin rejects at the list since `Iterator` refines `Deinitable` (R669),
+    and Mojito rejects only at the owned loop; its `expect` line should
+    move to the pin's words.
+  - Found while landing R669 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2090 A trait's associated type does not meet its own bound in
+  the trait's signatures**
+
+  Problem: `def take(self, b: Box[Self.Element]) -> Int` in `trait Src`,
+  for `comptime Element: Movable` and `struct Box[T: AnyType]`, is
+  rejected with "type 'Self.Element' for parameter 'T' does not conform to
+  trait 'AnyType'", where the pin accepts it.
+  - The struct application's bound check does not read `Self.Element`'s
+    declared bound (`Movable`) from the trait's associated-member
+    declaration, so even `AnyType` fails; a `def f[E: Movable](b: Box[E])`
+    over a function binder checks.
+  - `List[Self.Element]` checks, so `List`'s path differs from a user
+    struct's.
+  - Probe: `Optional[Self.Element]` as a trait method's result fails the
+    same way, which blocks upstream's `Iterator.nth` (R2091).
+  - Found while landing R669 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1172 Overloads that differ only in compile-time parameter types
   collapse to the last one**
@@ -10531,18 +10569,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R798 The bundled `paramfor_*` stubs bound their iterator by
-  `Deinitable` as well**
-
-  Problem: `stdlib/std/builtin/_stubs.mojo` bounds `IteratorType` by
-  `Iterator & Copyable & Deinitable`, where upstream's bound is `Iterator &
-  Copyable`.
-  - The extra bound stands in for upstream's `trait Iterator(Deinitable,
-    Movable)`, which the bundled `Iterator` does not refine yet (R669).
-  - Drop `& Deinitable` from the three stubs once it does.
-  - Depends on R669.
-  - Model: Opus, Not Planned.
-
 - [ ] **R894 Bundled modules loaded while the prelude bootstraps do not see
   the prelude's names**
 
@@ -12212,22 +12238,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R669 The bundled `Iterator` trait is not upstream's**
-
-  Problem: `it.bounds()` on an `Iterator` is rejected ("has no method
-  'bounds'"), where the pin answers it.
-  - Upstream declares `trait Iterator(Deinitable, Movable)` with a defaulted
-    `def bounds(self) -> Tuple[Int, Optional[Int]]` returning `(0, None)`.
-  - The bundled trait (`stdlib/std/iter.mojo`) refines nothing and has no
-    `bounds`.
-  - Every bundled conformer must still conform once the refinement lands.
-  - The bundled `List.__init__` from an iterable starts at the default
-    capacity, where upstream's sizes it by `iter(iterable).bounds()`
-    (with R670).
-  - Found while landing R665 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R670 The free `iter()` function is missing**
 
   Problem: `var it = iter(xs)` is rejected with "Undefined variable
@@ -12239,10 +12249,25 @@ residue found inside a task moves to the task that owns its fix.
   - The borrowed overload's body is `return iterable.__iter__()`, which
     checks since R665 (`assets/ok/generic_iterable_explicit_iter.mojo`).
   - Add both to `stdlib/std/iter.mojo` beside `next`.
-  - `List.__init__` from an iterable reads `iter(iterable).bounds()`
-    upstream (R669).
+  - `List.__init__` from an iterable spells `iter(iterable).bounds()` as
+    `iterable.__iter__().bounds()` until then.
   - Found while landing R665 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2091 The bundled `Iterator` lacks upstream's `nth` default**
+
+  Problem: `iter(l).nth(3)` is rejected ("has no method 'nth'"), where the
+  pin returns the fourth element (or `None` past the end).
+  - Upstream declares `def nth(var self, n: Int) -> Optional[Self.Element]`
+    on `Iterator`, whose body opens with `comptime assert
+    conforms_to(Self.Element, Deinitable)` and discards `n` elements.
+  - Its signature fails today on `Optional[Self.Element]` (R2090), and its
+    assert takes a projection subject (R792).
+  - Probe: `l.__iter__().nth(0).value()` over `[10, 20, 30, 40]` prints
+    `10`; `nth(10)` is `None`.
+  - Found while landing R669 (2026-11-10).
+  - Depends on R2090, R792.
   - Model: Opus, Not Planned.
 
 - [ ] **R1737 `rebind_var` is undeclared**

@@ -13,6 +13,7 @@ from std.collections.list import List
 from std.builtin.builtin_slice import ContiguousSlice
 from std.builtin.int import Indexer, index
 from std.iter import Iterable, Iterator, StopIteration
+from std.collections.optional import Optional
 from std.string import String, StringSpan
 
 # The audited head's strict-slice abort messages with the index and valid
@@ -211,6 +212,11 @@ struct _SpanIter[
     @inline(.always)
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     @inline(.always)
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:

@@ -16,15 +16,22 @@
 # `keys`/`values`/`items` return self-iterable, non-indexable borrowing
 # views that hold a loan on their source while they live.
 
+from std.collections.optional import Optional
+
 @fieldwise_init
 struct StopIteration:
     pass
 
-trait Iterator:
+trait Iterator(Deinitable, Movable):
     comptime Element: Movable
 
     def __next__(mut self) raises StopIteration -> Self.Element:
         ...
+
+    # Bounds `[lower, upper]` on the remaining length, a pre-allocation hint
+    # only; `None` means unknown (or above `Int.MAX`).
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        return (0, None)
 
 trait Iterable:
     # Borrowed iteration yields element references whose ordinary value reads

@@ -2838,6 +2838,11 @@ struct _BytesIter[
     def __len__(self) -> Int:
         return self.src.byte_length() - self.index
 
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
+
 
 
 # Upstream's `CStringSlice` (std.ffi, re-exported there): a view over the

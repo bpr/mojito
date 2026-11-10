@@ -71,6 +71,11 @@ struct _DictEntryIter[
         return self.copy()
 
     @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = len(self.src[]) - self.index
+        return (n, {n})
+
+    @inline(.always)
     def __next__(mut self) raises StopIteration -> ref[
         ImmOrigin(Self.iterable_origin._get_owned_interior["element"])
     ] DictEntry[Self.K, Self.V, Self.H] where conforms_to(
@@ -105,6 +110,10 @@ struct _DictKeyIter[
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        return self.iter.bounds()
+
     # Key yields are read-only regardless of the mapping's mutability:
     # writing through a key reference would corrupt the hash invariant
     # (the wrapped entry iterator's yields are already immutable).
@@ -134,6 +143,10 @@ struct _DictValueIter[
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        return self.iter.bounds()
 
     # Value yields follow the entry iterator's capability (read-only here, a
     # conservative subset of upstream's mut-following value references).

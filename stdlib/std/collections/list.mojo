@@ -40,6 +40,11 @@ struct _ListIter[
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
+
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
     @inline(.always)
@@ -72,6 +77,11 @@ struct _ListReversedIter[
 
     def __len__(self) -> Int:
         return self.remaining
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
@@ -121,6 +131,11 @@ struct _ListIterOwned[T: Movable & Deinitable](
 
     def __len__(self) -> Int:
         return len(self._list) - self._index
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
 @explicit_destroy(
     "Use `deinit_with()` to explicitly destroy a `List` of"
@@ -194,17 +209,18 @@ struct List[T: AnyType](
 
     # Upstream's clause, `where conforms_to(IterableType.IteratorType[
     # origin_of(iterable)].Element, Copyable)`, takes a projection subject
-    # (R792). Its body sizes the list by `iter(iterable).bounds()` (R670,
-    # R669) and moves each element in with `rebind_var` from a loop that
-    # yields the iterator's element (R178); this one copies the iterable's
-    # `Element` and rebinds it.
+    # (R792). Its body moves each element in with `rebind_var` from a loop
+    # that yields the iterator's element (R178); this one copies the
+    # iterable's `Element` and rebinds it, and spells upstream's
+    # `iter(iterable)` as the `__iter__` call it forwards to (R670).
     def __init__[
         IterableType: Iterable,
     ](
         ref iterable: IterableType,
         out self: List[IterableType.IteratorType[origin_of(iterable)].Element],
     ):
-        self = type_of(self)()
+        var lower, _ = iterable.__iter__().bounds()
+        self = type_of(self)(capacity=lower)
         for value in iterable:
             var element = value.copy()
             self.append(rebind[type_of(self).T](element)^)

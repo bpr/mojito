@@ -9,6 +9,7 @@
 # subset's debug asserts.
 
 from std.iter import Iterable, Iterator, StopIteration
+from std.collections.optional import Optional
 from std.math import fma
 
 def _range_length(start: Int, stop: Int, step: Int) -> Int:
@@ -63,6 +64,11 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
         return Int(self.curr)
 
     @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
+
+    @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
         return Scalar[Self.dtype](idx)
 
@@ -103,6 +109,11 @@ struct _SequentialRange[dtype: DType = DType.int](
     @inline(.always)
     def __len__(self) -> Int:
         return Int(self.end) - Int(self.start)
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
@@ -161,6 +172,11 @@ struct _StridedRange[dtype: DType = DType.int](
     @inline(.always)
     def __len__(self) -> Int:
         return _range_length(Int(self.start), Int(self.end), Int(self.step))
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     @inline(.always)
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:

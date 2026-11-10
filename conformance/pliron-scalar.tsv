@@ -546,6 +546,7 @@ assets/ok/int_mod_zero_divisor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/invert_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/is_run_in_comptime_interpreter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/iterator_bounds.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/joint_map.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyed_def_builds_loan_carrying_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_call.mojo	-	ineligible	no-scalar-entry-shape

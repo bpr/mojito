@@ -7,8 +7,6 @@
 # Mojito's deviations, each removed by the entries named beside it:
 # - `Sized` is imported, since this module loads before the prelude that
 #   brings it into scope upstream.
-# - The bound adds `& Deinitable`, since `Iterator` does not refine it yet
-#   (R669, R798).
 # - The `where conforms_to(IteratorType.Element, Movable & Deinitable)`
 #   clause is absent, since `conforms_to` takes neither a projection nor a
 #   composition yet (R792).
@@ -44,7 +42,7 @@ def check_list_length[
 
 
 def paramfor_has_next[
-    IteratorType: Iterator & Copyable & Deinitable
+    IteratorType: Iterator & Copyable
 ](it: IteratorType) -> Bool:
     var result = it.copy()
     try:
@@ -56,7 +54,7 @@ def paramfor_has_next[
 
 
 def paramfor_next_iter[
-    IteratorType: Iterator & Copyable & Deinitable
+    IteratorType: Iterator & Copyable
 ](it: IteratorType) -> IteratorType:
     # NOTE: This function is called by the compiler's elaborator only when
     # paramfor_has_next will return true. This is needed because the interpreter
@@ -73,7 +71,7 @@ def paramfor_next_iter[
 
 
 def paramfor_next_value[
-    IteratorType: Iterator & Copyable & Deinitable
+    IteratorType: Iterator & Copyable
 ](it: IteratorType) -> IteratorType.Element:
     # NOTE: This function is called by the compiler's elaborator only when
     # paramfor_has_next will return true. This is needed because the interpreter

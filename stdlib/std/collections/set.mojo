@@ -22,6 +22,11 @@ struct _SetIter[
     def __len__(self) -> Int:
         return len(self.src[]) - self.index
 
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
+
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:

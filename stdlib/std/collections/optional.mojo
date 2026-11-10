@@ -36,6 +36,11 @@ struct _OptionalIter[
     def __len__(self) -> Int:
         return self.src._size - self.index
 
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
+
     # Yields owned copies: chaining the named `value()` interior reference
     # through the iterator is not supported, so Optional `for ref` iteration
     # stays a recorded subset gap while plain borrowed iteration copies.
@@ -65,6 +70,11 @@ struct _OptionalOwnedIter[T: AnyType](
 
     def __len__(self) -> Int:
         return self.size - self.index
+
+    @inline(.always)
+    def bounds(self) -> Tuple[Int, Optional[Int]]:
+        var n = self.__len__()
+        return (n, {n})
 
     def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
         Self.T, Movable
