@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The prelude's free `iter(iterable)` is upstream's: a borrowed overload
+  over an `Iterable` and an owned one over `Some[IterableOwned]`, so `var
+  it = iter(xs)` runs and `List(iterable)` reserves `iter(iterable).bounds()`
+  as upstream spells it (R670). A call's result naming an existential
+  parameter's type (`-> type_of(s).IteratorOwnedType`) now closes over the
+  argument's type at free functions and methods alike
+  (`assets/ok/free_iter_function.mojo`).
 - The bundled `Iterator` trait is upstream's: it refines `Deinitable` and
   `Movable` and declares the defaulted `bounds()` (`(0, None)`), which the
   bundled List, Array, Optional, Set, Dict-view, Span, `bytes()`, and

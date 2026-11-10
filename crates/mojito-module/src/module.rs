@@ -2350,6 +2350,7 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "hash",
     "atol",
     "atof",
+    "iter",
     "next",
     "Iterable",
     "IterableOwned",

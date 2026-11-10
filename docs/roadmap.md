@@ -12238,23 +12238,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R670 The free `iter()` function is missing**
-
-  Problem: `var it = iter(xs)` is rejected with "Undefined variable
-  'iter'", where the pin runs it.
-  - Upstream declares a borrowed overload,
-    `iter[IterableType: Iterable](ref iterable: IterableType) ->
-    IterableType.IteratorType[origin_of(iterable)]`, and an owned one over
-    `Some[IterableOwned]`.
-  - The borrowed overload's body is `return iterable.__iter__()`, which
-    checks since R665 (`assets/ok/generic_iterable_explicit_iter.mojo`).
-  - Add both to `stdlib/std/iter.mojo` beside `next`.
-  - `List.__init__` from an iterable spells `iter(iterable).bounds()` as
-    `iterable.__iter__().bounds()` until then.
-  - Found while landing R665 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2091 The bundled `Iterator` lacks upstream's `nth` default**
 
   Problem: `iter(l).nth(3)` is rejected ("has no method 'nth'"), where the

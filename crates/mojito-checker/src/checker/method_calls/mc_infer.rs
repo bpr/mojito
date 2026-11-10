@@ -194,7 +194,7 @@ impl Checker {
     pub(super) fn infer_selected_method_call(
         &self,
         site: MethodCallSite<'_>,
-        resolved: MethodCallResolution,
+        mut resolved: MethodCallResolution,
     ) -> Result<Ty, TypeError> {
         let MethodCallSite {
             span,
@@ -217,7 +217,9 @@ impl Checker {
                 Some(resolved.param_decls.clone());
         }
         let boundary_before = self.call_boundary_snapshot(span, args, kwargs);
-        self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
+        let existentials =
+            self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
+        resolved.return_type = self.close_existentials(resolved.return_type, &existentials);
         let call_error = resolved
             .raises
             .then(|| resolved.error.clone().unwrap_or_else(Ty::error));

@@ -6673,6 +6673,23 @@ fn any_type_bound_does_not_permit_len() {
 }
 
 #[test]
+fn existential_result_closes_over_the_argument_type() {
+    // A result naming a `Some[Trait]` parameter's type is upstream's
+    // anonymous binder, which each call binds to its argument's type, so
+    // `type_of(s).IteratorOwnedType` over a `List[Int]` yields `Int`.
+    const OWN: &str = "def own(var s: Some[IterableOwned]) -> type_of(s).IteratorOwnedType:\n    return s^.__iter__()\n\n";
+    ok_std(&format!(
+        "{OWN}def first() raises -> Int:\n    var it = own(List[Int]())\n    return next(it)\n"
+    ));
+    assert!(matches!(
+        err_std(&format!(
+            "{OWN}def first() raises -> String:\n    var it = own(List[Int]())\n    return next(it)\n"
+        )),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
 fn hashable_bound_permits_hasher_contribution() {
     // `x.__hash__(hasher)` type-checks on an opaque `K: Hashable` and on
     // concrete hashable built-ins (not `StringLiteral`, which is not

@@ -604,6 +604,17 @@ impl Checker {
         }
     }
 
+    /// `ty` with each existential binder `existentials` solves
+    /// ([`bind_existential`]) replaced by its argument's type, and the members
+    /// it then reads closed (`List[Int].IteratorOwnedType`).
+    pub(super) fn close_existentials(&self, ty: Ty, existentials: &TySubst) -> Ty {
+        if existentials.is_empty() {
+            ty
+        } else {
+            self.resolve_assoc_ty(&substitute(&ty, existentials))
+        }
+    }
+
     /// Whether a value of `ty` materializes through its target's implicit
     /// constructor (a `StringLiteral`, a user struct), rather than by the
     /// compiler's literal folding (`IntLiteral`, `FloatLiteral`).
@@ -1689,6 +1700,7 @@ impl Checker {
             None => ret,
         };
         let mut score = 0;
+        let mut existentials = mojito_types::types::TySubst::new();
         for (i, slot) in slots.iter().enumerate() {
             let arg = match slot {
                 ArgSlot::Positional(p) => &args[*p],
@@ -1701,6 +1713,7 @@ impl Checker {
             if expected != params[i] {
                 arg_ty = self.infer_with_expected(arg, &expected, true)?;
             }
+            bind_existential(&mut existentials, &params[i], &expected);
             if !self.record_implicit_conversion(arg, &arg_ty, &expected)? {
                 return Err(TypeError::TypeMismatch {
                     expected: params[i].to_string(),
@@ -1777,6 +1790,10 @@ impl Checker {
             }
         }
 
+        // Each existential is the anonymous binder its argument deduced, so a
+        // result naming it (`type_of(it).IteratorOwnedType`) closes over the
+        // argument's type.
+        let ret = self.close_existentials(ret, &existentials);
         // Borrow check (mutable-XOR-shared), root-sensitive: within one call a
         // variable borrowed exclusively (`mut`/`ref`) or moved (`^`) may not be
         // borrowed again — mutably, shared, or moved.
@@ -2543,7 +2560,9 @@ impl Checker {
 
     /// [`Self::resolve_use_params`] for a call of `name`, reporting an
     /// argument the element bound of its pack collector refuses
-    /// ([`Self::collector_element_failure`]).
+    /// ([`Self::collector_element_failure`]). The substitution also solves
+    /// each existential `Some[Trait]` pattern to its argument's deduced type
+    /// ([`bind_existential`]).
     fn resolve_call_params(
         &self,
         name: &str,
@@ -2552,8 +2571,14 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
-        self.resolve_use_params(name, decls, param_args, patterns, actuals)
-            .map_err(|failure| self.collector_element_failure(name, decls, failure))
+        let mut bound = self
+            .resolve_use_params(name, decls, param_args, patterns, actuals)
+            .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
+        for (pattern, actual) in patterns.iter().zip(actuals) {
+            let deduced = self.existential_argument_ty(pattern, actual);
+            bind_existential(&mut bound.subst, pattern, &deduced);
+        }
+        Ok(bound)
     }
 
     /// Upstream's rejection of an argument the element bound of `name`'s

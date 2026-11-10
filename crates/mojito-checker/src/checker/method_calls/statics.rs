@@ -685,7 +685,8 @@ impl Checker {
             kwargs,
             None,
         );
-        self.record_selected_method_conversions(method, &selected, args, kwargs)?;
+        let existentials =
+            self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.record_at(span.clone()).overload_target = Some(target);
         }
@@ -694,7 +695,7 @@ impl Checker {
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
         }
-        Ok(selected.return_type)
+        Ok(self.close_existentials(selected.return_type, &existentials))
     }
 
     /// Solve a struct's compile-time parameters for a static-method call:

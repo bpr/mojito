@@ -55,6 +55,23 @@ trait IterableOwned:
         ...
 
 
+# `iter(iterable)`: the builtin spelling of `__iter__`. The owned overload
+# consumes an `IterableOwned` source; the borrowed one borrows an `Iterable`
+# at the argument's origin, as upstream declares them.
+@inline(.always)
+def iter(
+    var iterable: Some[IterableOwned],
+) -> type_of(iterable).IteratorOwnedType:
+    return iterable^.__iter__()
+
+
+@inline(.always)
+def iter[
+    IterableType: Iterable
+](ref iterable: IterableType) -> IterableType.IteratorType[origin_of(iterable)]:
+    return iterable.__iter__()
+
+
 # `next(iterator)`: the builtin spelling of `__next__`. Exhaustion surfaces
 # as an ordinary `Error("StopIteration")` so the call propagates through a
 # plain `raises` context, as upstream's does.

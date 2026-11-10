@@ -75,14 +75,16 @@ impl Checker {
     /// Apply the implicit conversions selected while scoring one concrete method
     /// overload. Keyword-overflow arguments are materialized into the callee's
     /// `StringDict`, so their conversions must be recorded just like conversions
-    /// for ordinary parameter slots.
+    /// for ordinary parameter slots. Reports the type each existential
+    /// `Some[Trait]` parameter's argument deduced ([`bind_existential`]).
     pub(in crate::checker) fn record_selected_method_conversions(
         &self,
         method: &str,
         resolved: &MethodCallResolution,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<(), TypeError> {
+    ) -> Result<TySubst, TypeError> {
+        let mut existentials = TySubst::new();
         for (index, slot) in resolved.slots.iter().enumerate() {
             let expression = match slot {
                 ArgSlot::Positional(position) => &args[*position],
@@ -95,6 +97,7 @@ impl Checker {
                 if expected != declared {
                     actual = self.infer_with_expected(expression, expected, true)?;
                 }
+                bind_existential(&mut existentials, declared, expected);
                 let binds = if self.is_synthetic_slice_descriptor(expression) {
                     self.slice_literal_binding(expression, expected, true)?
                         .is_some()
@@ -152,7 +155,7 @@ impl Checker {
                 }
             }
         }
-        Ok(())
+        Ok(existentials)
     }
 
     pub(in crate::checker) fn call_boundary_snapshot(

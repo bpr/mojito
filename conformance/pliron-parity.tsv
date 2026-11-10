@@ -438,6 +438,7 @@ assets/ok/forwarded_capturing_callable_parameter.mojo	main	exe-differential	sani
 assets/ok/forwarded_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/free_function_origin_binder_result.mojo	main	exe-differential	sanitized
 assets/ok/free_function_origin_binders.mojo	main	exe-differential	sanitized
+assets/ok/free_iter_function.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
 assets/ok/function_type_trait_composition.mojo	main	exe-differential	sanitized
 assets/ok/function_type_where_bound.mojo	main	exe-differential	sanitized

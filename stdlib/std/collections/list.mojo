@@ -18,7 +18,7 @@ from std.memory.alloc import Allocation, Layout, alloc, dealloc
 from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher
 from std.range import range
-from std.iter import Iterable, IterableOwned, Iterator, StopIteration
+from std.iter import Iterable, IterableOwned, Iterator, StopIteration, iter
 
 from std.collections.optional import Optional
 
@@ -211,15 +211,14 @@ struct List[T: AnyType](
     # origin_of(iterable)].Element, Copyable)`, takes a projection subject
     # (R792). Its body moves each element in with `rebind_var` from a loop
     # that yields the iterator's element (R178); this one copies the
-    # iterable's `Element` and rebinds it, and spells upstream's
-    # `iter(iterable)` as the `__iter__` call it forwards to (R670).
+    # iterable's `Element` and rebinds it.
     def __init__[
         IterableType: Iterable,
     ](
         ref iterable: IterableType,
         out self: List[IterableType.IteratorType[origin_of(iterable)].Element],
     ):
-        var lower, _ = iterable.__iter__().bounds()
+        var lower, _ = iter(iterable).bounds()
         self = type_of(self)(capacity=lower)
         for value in iterable:
             var element = value.copy()

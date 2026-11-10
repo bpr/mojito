@@ -369,6 +369,21 @@ pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
     }
 }
 
+/// Record in `solutions` that the existential `Some[Trait]` binder of
+/// `param` stands for `deduced`, the type its argument passes at it
+/// ([`Checker::existential_argument_ty`]), so a signature naming the
+/// parameter's type (`-> type_of(it).IteratorOwnedType`) closes over the
+/// argument's. A non-existential parameter, or one its argument did not
+/// deduce, records nothing.
+pub(super) fn bind_existential(solutions: &mut TySubst, param: &Ty, deduced: &Ty) {
+    if let TyKind::Param { binder, .. } = param.kind()
+        && is_existential_binder(binder)
+        && deduced != param
+    {
+        solutions.insert(binder.id.clone(), deduced.clone());
+    }
+}
+
 /// The reference to the value binder `id` spelled `name`, typed `ty`.
 pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
     ParamContext::detached().decl_ref(
