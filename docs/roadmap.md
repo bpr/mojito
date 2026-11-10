@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2075**.
+Next free ID: **R2076**.
 
 ## Ordered Work
 
@@ -276,23 +276,39 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1948 A callable's signature is emitted in passes, so its
-  `where` clauses compile twice**
+- [ ] **R2075 A callable's `where` clauses are emitted eagerly from a
+  rebuilt scope, not on first demand**
 
-  An application made before its callee's signature registers reads the
-  clauses `compile_application_constraints` (`comptime_validation.rs`)
-  emits early, and the registered signature compiles them again and
-  publishes them over the early ones, where upstream emits one signature
-  on first demand.
-  - The lever: emit a callable's signature, its clauses included, on
-    first demand, so the early emission and the compile in
-    `def_signature_in_scope` / `method_signature_owned_by` are one.
-  - The obstacle: an application is selected through `&self`
-    (`selected_application`), and a signature registers through
-    `&mut self`.
-  - Probe: `assets/ok/where_applied_alias_clause.mojo` and its
-    `type_error` twin keep their output with the early emission gone.
-  - Found while landing R1898 (2026-11-05).
+  `compile_application_constraints` (`comptime_validation.rs`) emits every
+  listed callable's clauses before any use asks for them, in a scope
+  rebuilt from its classified entry (`in_signature_clause_scope`), where
+  upstream's `Signatures.cpp` emits one signature when a use first needs
+  it. The registered signature reads that emission, so each set compiles
+  once, but the emission is not the registered signature's own.
+  - The rebuilt scope fails for about ten library callables: the `ref
+    self` iterator methods (`List.__iter__`, `List.__reversed__`,
+    `Dict.keys`/`values`/`items`/`__iter__`, `Set`/`Array`/`StringDict`
+    `.__iter__`) and `IntLiteral.__pow__`, whose `IntLiteral[_]` parameter
+    is auto-parameterized. Their clauses wait for the registered signature
+    (`publish_def_constraints` / `publish_method_constraints` fill the
+    empty slot), so an application before then finds none.
+  - The parameter list is classified twice too:
+    `classify_applicable_signatures` beside `classify_params` in
+    `def_signature` / `method_signature_owned_by`.
+  - The obstacle: the demand chain is `&self` (`ty_from_anno` →
+    `applied_call` / `violated_application_constraint` →
+    `selected_application_at`), and emitting a signature pushes onto the
+    `&mut self` scope stacks (`push_param_scope`, `in_owner_scope`,
+    `in_signature_scope`).
+  - The lever: make the registered signature's emitter reachable from type
+    resolution, then delete `in_signature_clause_scope`, both
+    `compile_application_constraints` calls, and the entry's separate
+    classification. R1853 and R2052 need the same on-demand resolver.
+  - Probe: `assets/ok/where_applied_field_type_clause.mojo` and its
+    `type_error` twin keep their output.
+  - Probe: a trace where `publish_constraints` fills an empty slot fires
+    for no callable while the bundled library packages.
+  - Found while landing R1948 (2026-11-09).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

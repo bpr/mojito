@@ -2,7 +2,8 @@
 
 **Status:** assessment recorded 2026-09-11; the dialect-definition section
 added 2026-09-16, its generator recommendation revised 2026-09-17, its
-check-order statements brought up to date 2026-09-30. The goal it serves — an implementation that resembles Mojo's
+check-order statements brought up to date 2026-09-30, the investigation
+reopened 2026-11-09 (see "Direction" below). The goal it serves — an implementation that resembles Mojo's
 own — is settled (`docs/architecture.md`); what stays unscheduled is this
 document's particular staging of it. The staging that is scheduled, with MIR
 rather than Pliron as the parametric IR, is
@@ -17,6 +18,53 @@ question that plan deliberately leaves out: what would it take for Pliron to be
 to Mojito what MLIR is to Mojo, *including above the waist*, and in what order
 should the work happen. The two agree on keeping the AST and `CheckedProgram`;
 they differ in where the remaining distance to Mojo actually lies.
+
+## Direction
+
+The project's aim is to recreate Mojo in Rust rather than C++, and in the
+long term a Pliron-based substrate should do much or all of the work for
+Mojito that MLIR does for Mojo: hold the dialects, verify them stage by stage,
+rewrite and lower them, serialize packages, and drive the passes.
+
+The order was chosen on purpose. Rewriting everything onto Pliron at once was
+too large a first step, so the first stage made the whole architecture as
+Mojo-shaped as it could be without MLIR, with Pliron only as the route to
+LLVM. That stage is now largely done: the check order is upstream's, MIR is
+parametric with `hlcf`-shaped regions, the pre-elaboration pipeline runs
+upstream's passes on generic MIR, the dialect level is library code, and gaps
+E–I of [`docs/notes/representation-consolidation.md`](notes/representation-consolidation.md)
+have landed or have their cores in. With the shape in place, the question of
+a larger role for Pliron is reopened (2026-11-09).
+
+The measured obstacle is unchanged: the Stage A1 bridge failed its overhead
+budget on the canonical-text round trip
+([`docs/non-goals.md`](non-goals.md)). The reopened investigation therefore
+starts there, in this order:
+
+1. A canonical form without a reparse: positional value and block numbering
+   in Pliron's printer and a block-label parser fix, proposed upstream; then
+   the same focused lane against the 0.20.0 release, plus the corpus
+   aggregate A1 did not measure.
+2. An `hlcf`-shaped dialect from MIR's region ops and the uniqued
+   parameter-expression attribute ([`docs/notes/param-expr-attributes.md`](notes/param-expr-attributes.md)),
+   as a shadow beside MIR checked by round trip.
+3. Declarative legality (a conversion target and an
+   `unrealized_conversion_cast`) and the build-time definition generator
+   described under "Defining the dialects".
+4. A Pliron bytecode, so packages can hold dialect IR.
+5. Moving the waist, in the stages of
+   [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md),
+   extended with the parametric layer that plan lacks.
+
+Data layout without LLVM, object emission through `pliron-llvm`, and tooling
+can proceed in parallel; parallel passes come last. Generic pieces go to
+Pliron upstream as narrow additions rather than a fork; Mojo-specific passes,
+including the elaborator, stay in Mojito. None of this is scheduled until it
+has roadmap entries, and until a stage lands, the MIR waist contract in
+`docs/architecture.md` remains the rule.
+
+The rest of this document is the assessment as recorded before that
+reopening; its first two recommendations have landed.
 
 ## Bottom line
 

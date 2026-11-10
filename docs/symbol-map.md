@@ -2422,12 +2422,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::compile_application_constraints` emits them right after the
   folds, and again once aliases and traits register, in the signature's
   scope (`Checker::in_signature_clause_scope`), for applications made
-  before the callee's signature registers; the registered signature then
-  publishes its own (`Checker::publish_def_constraints` from
-  `declare_module_functions`, `Checker::publish_method_constraints` from
-  `register_struct_method_signatures`, its `MethodSig::availability`),
-  re-owned to the entry's binders when an overloaded callable's typed
-  symbol owns them. A call binds them to its arguments and instance in
+  before the callee's signature registers. That slot is the callable's one
+  emission: the registered signature reads it rather than compiling the
+  clauses again (`Checker::emitted_def_constraints` in
+  `def_signature_in_scope`, `Checker::emitted_method_constraints` in
+  `method_signature_owned_by`, its `MethodSig::availability`), re-owned
+  onto the signature's binders, and only a callable whose scope the early
+  emission cannot rebuild (a `ref self` receiver, an auto-parameterized
+  parameter) is emitted by its registered signature, which fills the empty
+  slot (`Checker::publish_def_constraints` from `declare_module_functions`,
+  `Checker::publish_method_constraints` from
+  `register_struct_method_signatures`), re-owned to the entry's binders
+  when an overloaded callable's typed symbol owns them. Each entry is
+  found by its declaration (`ApplicableFunction::site`, a
+  `GenericSite`), not its key, which overloads may share. A call binds them to its arguments and instance in
   `application_constraint_failure`,
   judged by `validate_constraint_in_environment`, and
   `violated_application_constraint` reports the failure in

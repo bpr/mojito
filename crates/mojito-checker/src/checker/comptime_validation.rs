@@ -151,8 +151,17 @@ pub(super) struct ForwardedPack {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The declaration's key among its name's overloads, the symbol its
-    /// syntax spells, which owns its argument slots' binders.
+    /// syntax spells, which owns its argument slots' binders. Overloads may
+    /// share it (a copy initializer and a move one), so the entry is found
+    /// by [`Self::site`].
     key: String,
+    /// The declaration it lists: a module `def`'s statement, a method's
+    /// index among its struct's, or the struct itself for the synthesized
+    /// fieldwise `__init__`. A source location is local to the check of
+    /// its module, so a packaged entry, whose declaration no later check
+    /// registers, has none.
+    #[serde(skip)]
+    site: Option<mojito_checked::checked::GenericSite>,
     /// The symbol the check spelled the declaration from its typed
     /// signature, once it has: an overloaded module `def` or method is
     /// listed before any signature is typed.
@@ -216,9 +225,11 @@ pub(in crate::checker) struct ApplicableFunction {
     /// compiled header condition joins its constraints.
     gate: Option<String>,
     /// Those clauses as its signature emits them, over its own declared
-    /// binders and its struct's ([`Checker::compile_application_constraints`]);
-    /// `None` until they compile, and a callable whose clauses do not is
-    /// applied by no call.
+    /// binders and its struct's ([`Checker::compile_application_constraints`]):
+    /// the callable's one emission, which its registered signature reads
+    /// ([`Checker::emitted_def_constraints`]) or, when the early emission
+    /// could not compile them, fills. `None` until they compile, and a
+    /// callable whose clauses do not is applied by no call.
     pub(in crate::checker) constraints: Option<Vec<GenericConstraint>>,
 }
 
@@ -425,41 +436,38 @@ impl ApplicableFunction {
         search.found
     }
 
+    /// Its constraints re-owned from its own declared binders onto `decls`,
+    /// the binders of the same positions its registered signature declares:
+    /// an overloaded callable's signature owns them by its typed symbol, or
+    /// a provisional one, not its key. `None` until they compile, or when
+    /// they do not re-own.
+    fn emitted_constraints(
+        &self,
+        context: &mojito_types::param_expr::ParamContext,
+        decls: &[ParamDecl],
+    ) -> Option<Vec<GenericConstraint>> {
+        let constraints = self.constraints.as_ref()?;
+        reowned_constraints(context, self.declared_binders()?, decls, constraints)
+    }
+
     /// Take `clauses`, emitted by its registered signature over its binders
-    /// `decls`, as its constraints, each binder re-owned to the one its
-    /// own declared binder at that position is: an overloaded callable's
-    /// signature owns them by its typed symbol, not its key. Clauses that
-    /// do not re-own leave it applied by no call.
+    /// `decls`, as its constraints when none has emitted yet, each binder
+    /// re-owned to the one its own declared binder at that position is.
+    /// Clauses that do not re-own leave it applied by no call.
     fn publish_constraints(
         &mut self,
         context: &mojito_types::param_expr::ParamContext,
         decls: &[ParamDecl],
         clauses: Option<Vec<GenericConstraint>>,
     ) {
+        if self.constraints.is_some() {
+            return;
+        }
         let Some(own) = self.declared_binders() else {
             return;
         };
-        let reowned = if decls
-            .iter()
-            .map(ParamDecl::id)
-            .eq(own.iter().map(ParamDecl::id))
-        {
-            clauses
-        } else {
-            let bindings = mojito_types::types::own_parameter_bindings(decls, own);
-            clauses.and_then(|clauses| {
-                clauses
-                    .iter()
-                    .map(|clause| {
-                        mojito_types::types::replace_constraint_parameters(
-                            context, clause, &bindings,
-                        )
-                        .ok()
-                    })
-                    .collect()
-            })
-        };
-        self.constraints = reowned;
+        self.constraints =
+            clauses.and_then(|clauses| reowned_constraints(context, decls, own, &clauses));
     }
 
     /// The [`Self::argument_slots`] position of its collector, which takes
@@ -748,7 +756,12 @@ pub(super) fn applicable_declarations<'a>(
                     overloads,
                     constants,
                 );
-                declarations.extend(shape.applicable(symbol, false, SelfSlot::None).map(
+                let site = mojito_checked::checked::GenericSite::Function {
+                    module: statement.module.clone(),
+                    declaration: statement.span,
+                    syntax: statement.syntax_id,
+                };
+                declarations.extend(shape.applicable(symbol, site, false, SelfSlot::None).map(
                     |function| ApplicableDeclaration {
                         name: name.clone(),
                         function,
@@ -809,13 +822,24 @@ pub(super) fn applicable_declarations<'a>(
                         gate: None,
                     };
                     let symbol = format!("{name}.__init__");
+                    let site = mojito_checked::checked::GenericSite::Struct {
+                        module: statement.module.clone(),
+                        declaration: name.clone(),
+                    };
                     list(
                         name.clone(),
-                        shape.applicable(symbol, on_instance, SelfSlot::Constructed),
+                        shape.applicable(symbol, site, on_instance, SelfSlot::Constructed),
                         None,
                     );
                 }
-                for method in methods {
+                for (index, method) in methods.iter().enumerate() {
+                    // The index `register_struct_method_signatures` registers
+                    // the method's signature at.
+                    let site = mojito_checked::checked::GenericSite::Method {
+                        module: statement.module.clone(),
+                        declaration: name.clone(),
+                        method: index,
+                    };
                     if method.name == "__init__"
                         && method.self_convention == Some(ArgConvention::Out)
                     {
@@ -838,7 +862,7 @@ pub(super) fn applicable_declarations<'a>(
                             constants,
                         );
                         let function = shape
-                            .applicable(symbol, on_instance, SelfSlot::Constructed)
+                            .applicable(symbol, site, on_instance, SelfSlot::Constructed)
                             .map(|function| ApplicableFunction {
                                 refined_self: method.self_type.clone(),
                                 ..function
@@ -891,6 +915,7 @@ pub(super) fn applicable_declarations<'a>(
                         source,
                         shape.applicable(
                             symbol,
+                            site,
                             on_instance,
                             if method.has_self {
                                 SelfSlot::Receiver {
@@ -909,6 +934,68 @@ pub(super) fn applicable_declarations<'a>(
         }
     }
     declarations
+}
+
+/// The name [`applicable_functions`] lists module `def` `statement` under,
+/// and the site its entry is found by.
+fn def_entry_site(statement: &Stmt) -> Option<(&str, mojito_checked::checked::GenericSite)> {
+    let StmtKind::Def { name, .. } = &statement.kind else {
+        return None;
+    };
+    Some((
+        name,
+        mojito_checked::checked::GenericSite::Function {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+        },
+    ))
+}
+
+/// The name [`applicable_functions`] lists method `m`, the `method`-th of
+/// struct `declaration`, under (an `out self` initializer's the struct's),
+/// and the site its entry is found by.
+fn method_entry_site(
+    declaration: &super::StructDeclaration<'_>,
+    method: usize,
+    m: &mojito_ast::ast::Method,
+) -> (String, mojito_checked::checked::GenericSite) {
+    let structure = declaration.name;
+    let listed = if m.name == "__init__" && m.self_convention == Some(ArgConvention::Out) {
+        structure.to_string()
+    } else {
+        format!("{structure}.{}", m.name)
+    };
+    let site = mojito_checked::checked::GenericSite::Method {
+        module: declaration.module.clone(),
+        declaration: structure.to_string(),
+        method,
+    };
+    (listed, site)
+}
+
+/// `clauses` over the binders `from` with each binder re-owned to the one
+/// of the same position in `to`; `None` when one does not re-own.
+fn reowned_constraints(
+    context: &mojito_types::param_expr::ParamContext,
+    from: &[ParamDecl],
+    to: &[ParamDecl],
+    clauses: &[GenericConstraint],
+) -> Option<Vec<GenericConstraint>> {
+    if from
+        .iter()
+        .map(ParamDecl::id)
+        .eq(to.iter().map(ParamDecl::id))
+    {
+        return Some(clauses.to_vec());
+    }
+    let bindings = mojito_types::types::own_parameter_bindings(from, to);
+    clauses
+        .iter()
+        .map(|clause| {
+            mojito_types::types::replace_constraint_parameters(context, clause, &bindings).ok()
+        })
+        .collect()
 }
 
 impl Checker {
@@ -2283,7 +2370,9 @@ impl Checker {
     /// member's gating conformance condition, already compiled over its
     /// struct's binders. A callable whose clauses do not compile yet keeps
     /// none, and a later run, once the aliases and traits a clause names
-    /// have registered, emits them again; one already emitted is kept.
+    /// have registered, emits them again; one already emitted is kept. The
+    /// emission is the callable's only one: its registered signature reads
+    /// it rather than compiling the clauses again.
     pub(super) fn compile_application_constraints(&mut self, stmts: &[Stmt]) {
         let declarations = self.listed_declarations(stmts);
         for declaration in declarations {
@@ -2420,9 +2509,9 @@ impl Checker {
                 self.applicable_functions
                     .get(&declaration.name)
                     .and_then(|overloads| {
-                        overloads
-                            .iter()
-                            .find(|function| function.key == declaration.function.key)
+                        overloads.iter().find(|function| {
+                            function.site.is_some() && function.site == declaration.function.site
+                        })
                     })
             {
                 declaration.function = listed.clone();
@@ -2441,25 +2530,62 @@ impl Checker {
     }
 
     /// Name the entry [`applicable_functions`] lists for the overloaded
-    /// method `m` of struct `structure` by `symbol`, the one the check
-    /// spelled from its typed signature.
+    /// method `m`, the `method`-th of struct `declaration`, by `symbol`, the
+    /// one the check spelled from its typed signature.
     pub(super) fn name_applicable_method(
         &mut self,
-        structure: &str,
-        type_params: &[mojito_ast::ast::TypeParam],
+        declaration: &super::StructDeclaration<'_>,
+        method: usize,
         m: &mojito_ast::ast::Method,
         symbol: &str,
     ) {
-        if let Some(entry) = self.listed_method_entry(structure, type_params, m) {
+        if let Some(entry) = self.listed_method_entry(declaration, method, m) {
             entry.lowered = Some(symbol.to_string());
         }
     }
 
-    /// Publish the `where` clauses the registered signature of module `def`
-    /// `statement` emitted over its binders `decls` as the clauses a
-    /// compile-time call of it reads, as upstream's application reads the
-    /// one emitted signature's. `None` for clauses no call can bind (an
-    /// erased origin-mutability binder's).
+    /// The `where` clauses of module `def` `statement` as its one emission
+    /// holds them ([`ApplicableFunction::constraints`]), re-owned onto the
+    /// binders `decls` its registered signature declares, which reads them
+    /// rather than compiling them again, as upstream emits a signature
+    /// once. `None` when it lists no entry or its clauses have not
+    /// compiled.
+    pub(super) fn emitted_def_constraints(
+        &self,
+        statement: &Stmt,
+        decls: &[ParamDecl],
+    ) -> Option<Vec<GenericConstraint>> {
+        let (listed, site) = def_entry_site(statement)?;
+        self.applicable_functions
+            .get(listed)?
+            .iter()
+            .find(|function| function.site.as_ref() == Some(&site))?
+            .emitted_constraints(&self.param_context, decls)
+    }
+
+    /// [`Self::emitted_def_constraints`] for method `m`, the `method`-th of
+    /// struct `declaration`: its availability, its gate included.
+    pub(super) fn emitted_method_constraints(
+        &self,
+        declaration: &super::StructDeclaration<'_>,
+        method: usize,
+        m: &mojito_ast::ast::Method,
+        decls: &[ParamDecl],
+    ) -> Option<Vec<GenericConstraint>> {
+        let (listed, site) = method_entry_site(declaration, method, m);
+        self.applicable_functions
+            .get(&listed)?
+            .iter()
+            .find(|function| function.site.as_ref() == Some(&site))?
+            .emitted_constraints(&self.param_context, decls)
+    }
+
+    /// Fill the empty emission of module `def` `statement` with the `where`
+    /// clauses its registered signature compiled over its binders `decls`:
+    /// a callable whose clauses the early emission could not compile in
+    /// its rebuilt scope ([`Self::compile_application_constraints`]) is
+    /// emitted once, by its registered signature. `None` for clauses no
+    /// call can bind (an erased origin-mutability binder's).
     pub(super) fn publish_def_constraints(
         &mut self,
         statement: &Stmt,
@@ -2472,18 +2598,18 @@ impl Checker {
         }
     }
 
-    /// [`Self::publish_def_constraints`] for method `m` of struct
-    /// `structure`: its availability, its gate included.
+    /// [`Self::publish_def_constraints`] for method `m`, the `method`-th of
+    /// struct `declaration`: its availability, its gate included.
     pub(super) fn publish_method_constraints(
         &mut self,
-        structure: &str,
-        type_params: &[mojito_ast::ast::TypeParam],
+        declaration: &super::StructDeclaration<'_>,
+        method: usize,
         m: &mojito_ast::ast::Method,
         decls: &[ParamDecl],
         availability: &[GenericConstraint],
     ) {
         let context = self.param_context.clone();
-        if let Some(entry) = self.listed_method_entry(structure, type_params, m) {
+        if let Some(entry) = self.listed_method_entry(declaration, method, m) {
             entry.publish_constraints(&context, decls, Some(availability.to_vec()));
         }
     }
@@ -2496,61 +2622,32 @@ impl Checker {
         self.applicable_functions
             .get_mut(&declaration.name)?
             .iter_mut()
-            .find(|function| function.key == declaration.function.key)
+            .find(|function| function.site.is_some() && function.site == declaration.function.site)
     }
 
     /// The entry [`applicable_functions`] lists for module `def`
-    /// `statement`, by the key its syntax spells.
+    /// `statement`.
     fn listed_def_entry(&mut self, statement: &Stmt) -> Option<&mut ApplicableFunction> {
-        let StmtKind::Def {
-            name,
-            type_params,
-            params,
-            ..
-        } = &statement.kind
-        else {
-            return None;
-        };
-        let key = mojito_symbol::symbol::lowered_def_name(
-            name,
-            type_params,
-            params,
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
+        let (listed, site) = def_entry_site(statement)?;
         self.applicable_functions
-            .get_mut(name)?
+            .get_mut(listed)?
             .iter_mut()
-            .find(|function| function.key == key)
+            .find(|function| function.site.as_ref() == Some(&site))
     }
 
-    /// The entry [`applicable_functions`] lists for method `m` of struct
-    /// `structure`, by the key its syntax spells: an `out self`
-    /// initializer's under the struct's name.
+    /// The entry [`applicable_functions`] lists for method `m`, the
+    /// `method`-th of struct `declaration`.
     fn listed_method_entry(
         &mut self,
-        structure: &str,
-        type_params: &[mojito_ast::ast::TypeParam],
+        declaration: &super::StructDeclaration<'_>,
+        method: usize,
         m: &mojito_ast::ast::Method,
     ) -> Option<&mut ApplicableFunction> {
-        let (listed, source) =
-            if m.name == "__init__" && m.self_convention == Some(ArgConvention::Out) {
-                (structure.to_string(), format!("{structure}.__init__"))
-            } else {
-                let source = format!("{structure}.{}", m.name);
-                (source.clone(), source)
-            };
-        let key = mojito_symbol::symbol::lowered_method_name(
-            &source,
-            type_params,
-            mojito_symbol::symbol::MethodShape::of(m),
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
+        let (listed, site) = method_entry_site(declaration, method, m);
         self.applicable_functions
             .get_mut(&listed)?
             .iter_mut()
-            .find(|function| function.key == key)
+            .find(|function| function.site.as_ref() == Some(&site))
     }
 
     /// `declaration`'s own compile-time parameters classified, its result
@@ -6627,6 +6724,7 @@ impl ApplicableShape<'_> {
     fn applicable(
         &self,
         symbol: String,
+        site: mojito_checked::checked::GenericSite,
         on_instance: bool,
         self_slot: SelfSlot,
     ) -> Option<ApplicableFunction> {
@@ -6698,6 +6796,7 @@ impl ApplicableShape<'_> {
             .collect::<Option<Vec<_>>>()?;
         Some(ApplicableFunction {
             key: symbol,
+            site: Some(site),
             lowered: None,
             on_instance,
             self_slot,

@@ -152,6 +152,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A callable's `where` clauses compile once: the registered signature
+  reads the clauses a compile-time application already emitted, rather
+  than compiling them again and publishing over them, as upstream emits a
+  signature once. Each applicable entry is now found by its declaration,
+  so overloads sharing a key (`StringDict`'s and `Set`'s copy and move
+  initializers) no longer publish over each other's clauses (R1948).
 - `automatic-inline` binds a `ref` parameter's inferred mutability
   binder to its argument's reference mutability, as upstream infers
   `Origin[mut=m]` from the argument, not only through the references the

@@ -3828,6 +3828,9 @@ impl Checker {
         } = shape;
         let pos_only = regular_marker_index(params, *positional_only);
         let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
+        // The clauses a compile-time application already emitted are the
+        // signature's own, as upstream emits a signature once.
+        let emitted = self.emitted_def_constraints(stmt, &decls);
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params);
@@ -3871,10 +3874,13 @@ impl Checker {
                     );
                 }
             }
-            let compiled = where_clauses
-                .iter()
-                .map(|condition| this.compile_where_clause(condition))
-                .collect::<Result<Vec<_>, _>>()?;
+            let compiled = match emitted {
+                Some(emitted) => emitted,
+                None => where_clauses
+                    .iter()
+                    .map(|condition| this.compile_where_clause(condition))
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
             Ok((param_tys, ret_ty, compiled))
         })?;
         let mut function_assumptions = Vec::new();

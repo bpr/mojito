@@ -1039,8 +1039,8 @@ impl Checker {
             let (all_types, mut sig) =
                 self.declared_method_signature(declaration, method_index, m)?;
             self.publish_method_constraints(
-                name,
-                declaration.type_params,
+                declaration,
+                method_index,
                 m,
                 &sig.decls,
                 &sig.availability,
@@ -1136,19 +1136,20 @@ impl Checker {
             .method_is_overloaded(&format!("{name}.{method_name}"), m.params.len());
         if !overloaded {
             let owner = self.method_binder_owner(module, name, method_index, m);
-            return self.method_signature_owned_by(declaration, m, &owner);
+            return self.method_signature_owned_by(declaration, method_index, m, &owner);
         }
         let recorded = self.recorded_method_owner(module, name, method_index);
         let provisional = mojito_symbol::symbol::naming_owner(name, method_index as u64);
         let (all_types, mut sig, owned_by) = match recorded {
             Some(owner) => {
-                let (all_types, sig) = self.method_signature_owned_by(declaration, m, &owner)?;
+                let (all_types, sig) =
+                    self.method_signature_owned_by(declaration, method_index, m, &owner)?;
                 (all_types, sig, None)
             }
             // Binder-free, the signature types the same under any owner.
             None if m.type_params.is_empty() => {
                 let (all_types, sig) =
-                    self.method_signature_owned_by(declaration, m, &provisional)?;
+                    self.method_signature_owned_by(declaration, method_index, m, &provisional)?;
                 (all_types, sig, None)
             }
             None => {
@@ -1157,7 +1158,8 @@ impl Checker {
                 // to spell it, and its lifts there are forgotten.
                 let lifted = self.lifted_applications.borrow().len();
                 let counts = self.lifted_counts.borrow().clone();
-                let named = self.method_signature_owned_by(declaration, m, &provisional);
+                let named =
+                    self.method_signature_owned_by(declaration, method_index, m, &provisional);
                 self.lifted_applications.borrow_mut().truncate(lifted);
                 *self.lifted_counts.borrow_mut() = counts;
                 let symbol = method_lowered_name(
@@ -1166,7 +1168,8 @@ impl Checker {
                     &named?.1,
                     self.self_instance_ty(name).as_ref(),
                 );
-                let (all_types, sig) = self.method_signature_owned_by(declaration, m, &symbol)?;
+                let (all_types, sig) =
+                    self.method_signature_owned_by(declaration, method_index, m, &symbol)?;
                 (all_types, sig, Some(symbol))
             }
         };
@@ -1186,16 +1189,20 @@ impl Checker {
             )
         });
         sig.overload = mojito_symbol::symbol::overload_qualifier(&symbol).map(str::to_string);
-        self.name_applicable_method(name, declaration.type_params, m, &symbol);
+        self.name_applicable_method(declaration, method_index, m, &symbol);
         self.declaration_symbols.borrow_mut().insert(site, symbol);
         Ok((all_types, sig))
     }
 
-    /// Method `m`'s parameter types and signature on struct `declaration`,
-    /// its own binders owned by `owner`.
+    /// Method `m`'s parameter types and signature, the `method_index`-th of
+    /// struct `declaration`, its own binders owned by `owner`. Its
+    /// availability is the one a compile-time application already emitted
+    /// ([`Self::emitted_method_constraints`]), as upstream emits a signature
+    /// once, or compiled here when none has.
     fn method_signature_owned_by(
         &mut self,
         declaration: &StructDeclaration<'_>,
+        method_index: usize,
         m: &Method,
         owner: &str,
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
@@ -1210,8 +1217,39 @@ impl Checker {
         // The method's own `where` clause refines its signature exactly as
         // it refines its body: a conditionally available method may name
         // types its receiver's bare bounds do not admit.
-        let signature = self
-            .method_gate(name, m)
+        let signature =
+            match self.emitted_method_constraints(declaration, method_index, m, &method_decls) {
+                Some(availability) => {
+                    self.push_assumptions(self.method_where_assumptions(m, &availability));
+                    let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                    let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                        let all_types = this.param_tys(&m.params)?;
+                        let sig = this.method_sig(m, method_decls, &all_types, availability)?;
+                        this.check_method_result_origins(name, m, &all_types, receiver.as_ref())?;
+                        Ok((all_types, sig))
+                    });
+                    self.pop_assumptions();
+                    signature
+                }
+                None => self.compiled_method_signature(name, m, method_decls),
+            };
+        self.enclosing_type_params = saved_method_type_params;
+        self.enclosing_struct_type_params.set(saved_struct_count);
+        self.tparams.pop();
+        signature
+    }
+
+    /// [`Self::method_signature_owned_by`]'s signature with its `where`
+    /// clauses and gate compiled here: those reading none of its arguments
+    /// before its parameter types resolve, their facts assumed, and the rest
+    /// in its signature scope.
+    fn compiled_method_signature(
+        &mut self,
+        name: &str,
+        m: &Method,
+        method_decls: Vec<ParamDecl>,
+    ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
+        self.method_gate(name, m)
             .and_then(|gate| self.method_clauses(m, false).map(|free| (free, gate)))
             .and_then(|(free, gate)| {
                 let mut facts = Vec::new();
@@ -1231,23 +1269,33 @@ impl Checker {
                         .chain(gate)
                         .collect();
                     let sig = this.method_sig(m, method_decls, &all_types, availability)?;
-                    if !name.contains('$') && !m.name.contains('$') {
-                        this.check_result_origins(
-                            m.ret.as_ref(),
-                            &m.params,
-                            &all_types,
-                            receiver.as_ref().map(|ty| (m.self_convention, ty)),
-                        )?;
-                    }
+                    this.check_method_result_origins(name, m, &all_types, receiver.as_ref())?;
                     Ok((all_types, sig))
                 });
                 self.pop_assumptions();
                 signature
-            });
-        self.enclosing_type_params = saved_method_type_params;
-        self.enclosing_struct_type_params.set(saved_struct_count);
-        self.tparams.pop();
-        signature
+            })
+    }
+
+    /// The result-origin check of method `m` of struct `name`, over its
+    /// parameter types `all_types` and its typed `receiver`, which a
+    /// compiler-generated (`$`-named) declaration skips.
+    fn check_method_result_origins(
+        &self,
+        name: &str,
+        m: &Method,
+        all_types: &[Ty],
+        receiver: Option<&Ty>,
+    ) -> Result<(), TypeError> {
+        if name.contains('$') || m.name.contains('$') {
+            return Ok(());
+        }
+        self.check_result_origins(
+            m.ret.as_ref(),
+            &m.params,
+            all_types,
+            receiver.map(|ty| (m.self_convention, ty)),
+        )
     }
 
     /// Verify declared conformances, select the callable target, and check

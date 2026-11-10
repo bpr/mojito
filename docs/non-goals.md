@@ -23,11 +23,18 @@ this stays an option rather than a plan.
   target/layout/runtime ABI and the differential corpus.
 - It must not fork language semantics or become a required compiler layer.
 
-### Pliron as the required post-check IR framework (A1 rejected)
+### The Stage A1 canonical-text bridge (A1 rejected)
 
-Not planned: the Stage A1 shadow core passed four of its five falsifiers and
-failed the fifth, overhead. The record is
+Not planned: the Stage A1 shadow core, as built, passed four of its five
+falsifiers and failed the fifth, overhead. The record is
 [`docs/notes/pliron-a1.md`](notes/pliron-a1.md).
+
+What stays deferred is this bridge, not the direction. A Pliron-based
+substrate standing where MLIR stands for Mojo is the project's long-term aim,
+and the investigation reopened on 2026-11-09 now that the architecture is
+largely Mojo-shaped; see [`docs/pliron-future.md`](pliron-future.md),
+"Direction". A rebuilt bridge becomes roadmap work when its first step is
+scheduled.
 
 - The failed condition is compile time on the predeclared stress row. Gate
   ×64 compiles 1.62 times as slowly under the shadow, 1.54 to 1.69 at three
@@ -45,9 +52,10 @@ failed the fifth, overhead. The record is
 - Optional Pliron-to-LLVM emission stays the supported native backend, and
   the parametric front-end work of the roadmap's `pmir` track does not depend on
   this.
-- Reopen when a canonical form needs no print and parse at the pin, or the
-  pinned printer and parser are several times faster, and the same focused
-  lane then passes.
+- The bridge is retried when a canonical form needs no print and parse at
+  the pin, or the pinned printer and parser are several times faster, and the
+  same focused lane then passes. That fix is the first step of the reopened
+  investigation.
 
 ### Mapping patterns
 
