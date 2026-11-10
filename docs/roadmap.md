@@ -725,23 +725,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R934.
   - Model: Opus, Not Planned.
 
-- [ ] **R897 Each step of a `comptime for` iterator is its own VM call**
-
-  An iterator loop of N elements runs about 3N+2 compile-time
-  applications per instance (`has_next`, `next_iter`, and `next_value` per
-  step, then the iterable), where the built-in `range` rule ran none.
-  - Over the 111 range-loop fixtures, a debug `mojito run` sweep went from
-    12.4 s to 18.1 s.
-  - On ten small loops (65 steps), elaboration went from 163 ms to 259 ms.
-  - Each application's fragment is built and verified once per instance
-    (`Specializer::verified_fragment`), so what remains is the call itself.
-  - Levers: `VmBackend::call_concrete`'s per-call setup, and the
-    `Bindings` clone per step in `Specializer::trip_elements`.
-  - Release numbers were not measured.
-  - Found while landing R791 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Measure Instantiation And Test The Passes That Shrink It
 
 Track: `measure`.

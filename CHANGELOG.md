@@ -158,6 +158,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator memoizes a compile-time application's result by its
+  instance and the structural values of its runtime arguments, instead of a
+  string formatted from them, and steps a `comptime for` iterator under one
+  set of bindings rather than a copy per step (R897). Profiling showed the
+  per-step stub applications themselves cost little: on ten debug loops
+  (111 elements) the three stubs' VM calls took 25 ms of a 1.65 s run, the
+  rest of the run being the per-process package-body lowering every program
+  pays, so the applications stay as upstream's `processComptimeForOp` runs
+  them (`docs/non-goals.md`).
 - The check types the `comptime for` stepping stubs (`paramfor_has_next`,
   `paramfor_next_iter`, `paramfor_next_value`) against a value of the
   iterator type, as upstream's `parseParamFor` passes them the iterator,

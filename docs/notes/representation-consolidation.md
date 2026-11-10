@@ -295,14 +295,14 @@ None of these unblocks another entry. Run them whenever they are useful.
 - **Calls (11-01 to 11-03)**: R1853, R1854, R1857, R1838, R1833.
 - **Divergences (11-01 to 11-03)**: R1900, R1869, R1890, R1852, R1885,
   R1913.
-- **Performance**: R896, R897. **Pin legality**: R2081.
+- **Performance**: R896. **Pin legality**: R2081.
   **Canonicalizer completeness**: R1255, R1256.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1346 --only R1347 --only R1350 \
   --only R1339 --only R1340 --only R1341 --only R1452 --only R1809 --only R1112 --only R1289 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R944 --only R868 --only R1276 \
-  --only R896 --only R897 --only R2081 --only R1255 --only R1256 -n 0
+  --only R896 --only R2081 --only R1255 --only R1256 -n 0
 scripts/claude_loop.py --model opus --only R1411 --only R1839 --only R1866 --only R1906 --only R1413 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1853 --only R1854 --only R1857 --only R1838 \
   --only R1833 --only R1900 --only R1869 --only R1890 --only R1852 --only R1885 --only R1913 -n 0

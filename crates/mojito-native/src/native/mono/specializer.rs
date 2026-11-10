@@ -1670,13 +1670,11 @@ impl<'a> Specializer<'a> {
             }
         }
         let name = self.enqueue(function, instance_bindings, arguments)?;
-        let evaluation = if called.is_empty() {
-            name.clone()
-        } else {
-            let called: Vec<String> = called.iter().map(ToString::to_string).collect();
-            format!("{name}({})", called.join(", "))
-        };
-        if let Some(value) = self.evaluations.get(&evaluation) {
+        if let Some(value) = self
+            .evaluations
+            .get(&name)
+            .and_then(|evaluated| evaluated.get(&called))
+        {
             return Ok(value.clone());
         }
         // The fragment an instance's applications run is built and verified
@@ -1716,7 +1714,10 @@ impl<'a> Specializer<'a> {
         // The result is the function's declared one: a literal it returns
         // (`return y` of `comptime y: Int = 5`) is materialized at that type.
         let value = value.clone().materialize_as(&result_ty).unwrap_or(value);
-        self.evaluations.insert(evaluation, value.clone());
+        self.evaluations
+            .entry(name)
+            .or_default()
+            .insert(called, value.clone());
         Ok(value)
     }
 

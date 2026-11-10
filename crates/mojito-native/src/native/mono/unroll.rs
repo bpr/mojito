@@ -570,8 +570,10 @@ impl Specializer<'_> {
     ) -> Result<Vec<CtValue>, MonoError> {
         let mut iterator = self.evaluated(template, &source.initial, bindings)?;
         let mut iterators = Vec::new();
+        // One set of bindings serves every step, its binder rebound to the
+        // step's iterator.
+        let mut stepping = bindings.clone();
         loop {
-            let mut stepping = bindings.clone();
             stepping.values.insert(binder.clone(), iterator.clone());
             match self.evaluated(template, &source.has_next, &stepping)? {
                 CtValue::Bool(false) => {

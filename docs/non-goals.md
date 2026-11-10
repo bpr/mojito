@@ -244,6 +244,24 @@ an explicit `a.__lt__(b)`, and both cost the same.
 - Reopen if an operator site's `check_program.bodies` cost exceeds twice a
   plain call's on a release build.
 
+### Short-circuiting a `comptime for` iterator's per-step applications
+
+The elaborator steps a `comptime for` iterator by running the library stubs
+`paramfor_has_next`, `paramfor_next_iter`, and `paramfor_next_value` on the
+VM for each element, about 3N+2 applications per loop instance, as
+upstream's `processComptimeForOp` runs them through its interpreter. No
+built-in rule folds `range` or any other iterator around them.
+
+- Measured 2026-11-10 on a debug build over ten loops of 111 elements: the
+  stubs' VM calls took 25 ms, their argument and instance bookkeeping about
+  10 ms, and each stub instance's fragment about 1 ms once, of a 1.65 s run
+  whose bulk is the package-body lowering a hello-world program pays as
+  well (R897).
+- `VmBackend::call_concrete`'s own setup is under 4 µs of a call's 88 µs;
+  the rest is the VM interpreting the stub bodies.
+- Reopen if a release profile shows the stub applications above a tenth of
+  a range-loop program's elaboration.
+
 ### `Pointer(to=<temporary>)` is unsupported
 
 `View(Pointer(to=make_list()), 0)` reports `Pointer(to=...) requires a place

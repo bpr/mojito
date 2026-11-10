@@ -668,9 +668,10 @@ struct Specializer<'a> {
     /// The instances a compile-time evaluation is waiting on, outermost
     /// first: a demand on one of them is a cycle in the parameter domain.
     demand_stack: Vec<String>,
-    /// Every compile-time application evaluated so far, by instance name:
-    /// the same application under the same bindings runs once.
-    evaluations: HashMap<String, CtValue>,
+    /// Every compile-time application evaluated so far, by instance name
+    /// and then by the values of its runtime arguments: the same
+    /// application under the same bindings runs once.
+    evaluations: HashMap<String, HashMap<Vec<CtValue>, CtValue>>,
     /// The prepared fragment each demanded instance runs in, by its name.
     fragments: HashMap<String, Rc<ConcreteProgram>>,
     /// The applications the instances' types and parameter arguments carry
