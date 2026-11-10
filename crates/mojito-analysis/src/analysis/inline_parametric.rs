@@ -1824,6 +1824,9 @@ impl<'c> Inliner<'_, 'c> {
                 })
                 .unwrap_or_default(),
         );
+        for (id, mutability) in argument_mutabilities(bindings) {
+            mutabilities.0.entry(id).or_insert(mutability);
+        }
         if !mutabilities.0.is_empty() {
             mutabilities.blocks(&mut blocks);
         }
@@ -2987,6 +2990,30 @@ fn bound_mutabilities<'t>(
                 ..
             }) if call.mutability != Mutability::Param(*id) => Some((*id, call.mutability)),
             _ => None,
+        })
+        .collect()
+}
+
+/// The inferred mutability binder of each `ref` parameter
+/// ([`OriginParamId::reference_binder`]) bound to the mutability of the
+/// reference its argument is reached through, as upstream infers
+/// `Origin[mut=m]` from the argument: a body reference reached through the
+/// parameter that its returned references do not spell still binds.
+fn argument_mutabilities(bindings: &[Binding]) -> HashMap<OriginParamId, Mutability> {
+    bindings
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, binding)| {
+            let reached = match binding {
+                Binding::Place(place) | Binding::Part { place, .. } => place.root_ty.as_ref(),
+                Binding::Handle(source) => source.ty(),
+                _ => None,
+            };
+            let TyKind::Ref(reference) = reached?.kind() else {
+                return None;
+            };
+            let id = OriginParamId::reference_binder(u32::try_from(slot).ok()?);
+            (reference.mutability != Mutability::Param(id)).then_some((id, reference.mutability))
         })
         .collect()
 }

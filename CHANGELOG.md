@@ -152,6 +152,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `automatic-inline` binds a `ref` parameter's inferred mutability
+  binder to its argument's reference mutability, as upstream infers
+  `Origin[mut=m]` from the argument, not only through the references the
+  body returns. A nested `.Some(.Some(x))` pattern over an immutable
+  `Optional` no longer leaves the binder unbound and fails MIR
+  verification after inlining.
 - `automatic-inline` binds no owner for a callee, which after elaboration
   is an instance whose owner is already bound, as upstream's
   `AutomaticInline` meets only concrete generators. A `SIMD` method, whose
