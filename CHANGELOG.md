@@ -158,6 +158,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled consuming `List` iterator is upstream's `_ListIterOwned`,
+  holding the drained `List` as `_list` beside `_index`, so
+  `reflect[type_of(xs^.__iter__())]` answers the pin's name and fields;
+  its destructor destroys the untaken tail and zeroes `_list._len`.
+  `Set.__iter__(var self)` drains its backing list into the same iterator
+  (R1906).
 - An `enum` declaration's payload errors use the pin's words: a trait as a
   payload type is "enum case payloads do not support trait types", a
   payload that is not `Deinitable`, or not `Copyable` or

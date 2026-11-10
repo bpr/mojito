@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2083**.
+Next free ID: **R2084**.
 
 ## Ordered Work
 
@@ -1343,6 +1343,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Lifting the gate means the ownership analysis must accept a
     pointer-side take of a tracked slot as upstream does, leaving soundness
     to the caller.
+  - Probe: `_ListIterOwned` (`list.mojo`) spells upstream's
+    `self._list.unsafe_ptr().unsafe_offset(i).unsafe_take_pointee()` in
+    `__next__` through the raw `_list._storage._alloc._ptr`, and its
+    `__deinit__` loops `unsafe_deinit_pointee` there instead of upstream's
+    `Span(self._list)._unchecked_subspan(...).unsafe_deinit_elements()`,
+    which the bundled `Span` lacks and would hit this gate.
   - Found while landing R359 (2026-11-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1402,6 +1408,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     its copy can read what the loop yields: the iterator now dies after
     the `finally` (`returning 2`, `finally 2`, `iter dropped at 3`), where
     the pin prints `iter dropped at 3` before `returning 2`.
+  - Probe: `for var item in items^:` over `List[Item]` with `try: if
+    item.value == 2: return item.value finally: print(...)` prints
+    `finally 2`, `drop 2`, `drop 3`, where the pin's `_ListIterOwned`
+    destroys the tail first (`drop 3`, `finally 2`, `drop 2`).
   - Found while landing R826 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -8827,6 +8837,21 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2083 The bundled `Set` is backed by a `List`, where upstream's
+  wraps a `Dict[T, NoneType, H]`**
+
+  `reflect[Set[Int]].field_names()` yields `items`, where the pin yields
+  `_data`, upstream's `Dict[Self.T, NoneType, Self.H]` field.
+  - Lever: `struct Set` in `stdlib/std/collections/set.mojo`, whose
+    membership, `remove`, and set algebra scan `items` linearly.
+  - Probe: `reflect[type_of(s^.__iter__())].name()` over a `Set[Int]`
+    names `_ListIterOwned[...]`; upstream's `IteratorOwnedType` is
+    `_DictKeyIterOwned[downcast[T, KeyElement & Deinitable], NoneType, H]`,
+    which the bundled `Dict` does not declare.
+  - Found while landing R1906 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R851 A constant out-of-range shift runs instead of failing to
   compile**
 
@@ -8886,21 +8911,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the owners kept alive first.
   - Found in the 2026-10-24 overnight-gate triage.
   - Depends on R1323, which the respelled tests need.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1906 The bundled owned `List` iterator holds a raw buffer, where
-  upstream's holds the drained `List`**
-
-  `reflect[type_of(it)]` over `var it = xs^.__iter__()` names
-  `_ListOwnedIter` with fields `data`, `size`, and `index`, where the pin
-  names `_ListIterOwned` holding `_list: List[T]` and `_index`.
-  - Lever: `_ListOwnedIter` and `List.__iter__(var self)` in
-    `stdlib/std/collections/list.mojo`, and `Set.__iter__(var self)` in
-    `set.mojo`, which build it from the list's leaked `_storage`.
-  - Upstream's `__deinit__` destroys the untaken tail and zeroes
-    `_list._len` so the held `List` frees only its buffer.
-  - Found while landing R1482 (2026-11-03).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1510 `type_of`, `origin_of`, and `conforms_to` are names, where

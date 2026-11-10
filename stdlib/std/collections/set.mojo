@@ -1,8 +1,7 @@
-from std.collections.list import List, _ListOwnedIter
+from std.collections.list import List, _ListIterOwned
 from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher, default_hasher, hash
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
-from std.memory.alloc import Layout, alloc
 from std.collections.optional import Optional
 
 @fieldwise_init
@@ -63,7 +62,9 @@ struct Set[
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _SetIter[Self.T, iterable_origin]
-    comptime IteratorOwnedType = _ListOwnedIter[Self.T]
+    comptime IteratorOwnedType: Iterator where conforms_to(
+        Self.T, Deinitable
+    ) = _ListIterOwned[Self.T]
 
     # A dense list deliberately preserves display and iteration insertion order.
     var items: List[Self.T]
@@ -306,18 +307,11 @@ struct Set[
             Pointer(to=self.items).unsafe_origin_cast[origin_of(self)](), 0
         )
 
-    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
-        Self.T, Deinitable
-    ):
-        # Consuming iteration drains the backing list in insertion order,
-        # constructing the owned iterator directly like the borrowed overload.
-        var storage = self.items._storage^
-        self.items._storage = alloc(Layout[Self.T](count=0))
-        var result = _ListOwnedIter[Self.T](
-            storage^.unsafe_leak(), self.items._len
-        )
-        self.items._len = 0
-        return result^
+    def __iter__(
+        var self,
+    ) -> Self.IteratorOwnedType where conforms_to(Self.T, Deinitable):
+        # Consuming iteration drains the backing list in insertion order.
+        return {self^._take_items(), 0}
 
     @inline(.never)
     def write_to(self, mut writer: Some[Writer]) where conforms_to(

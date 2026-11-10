@@ -84,45 +84,43 @@ struct _ListReversedIter[
         self.remaining -= 1
         return self.src[self.remaining]
 
-struct _ListOwnedIter[T: AnyType](
-    Deinitable where conforms_to(T, Deinitable),
-    Iterator where conforms_to(T, Movable),
-    Movable,
+# The consuming iterator `List.__iter__(var self)` returns: it holds the
+# drained `List` itself and moves elements out of its buffer by index. Its
+# destructor destroys the untaken tail and zeroes `_list._len`, so the held
+# `List` then frees only its buffer.
+@fieldwise_init
+struct _ListIterOwned[T: Movable & Deinitable](
+    IterableOwned, Iterator, Movable
 ):
     comptime Element = Self.T
+    comptime IteratorOwnedType = Self
 
-    var data: UnsafePointer[Self.T]
-    var size: Int
-    var index: Int
+    var _list: List[Self.T]
+    var _index: Int
 
-    def __init__(out self, data: UnsafePointer[Self.T], size: Int):
-        self.data = data
-        self.size = size
-        self.index = 0
+    @inline(.always)
+    def __deinit__(deinit self):
+        var data = self._list._storage._alloc._ptr
+        var i = self._index
+        while i < len(self._list):
+            data.unsafe_offset(i).unsafe_deinit_pointee()
+            i += 1
+        self._list._len = 0
 
-    def __len__(self) -> Int:
-        return self.size - self.index
-
-    # The owned iterator iterates itself, so a stored drained-iterator value
-    # can sit directly in a `for var … in it^` loop.
-    def __iter__(var self) -> Self:
+    @inline(.always)
+    def __iter__(var self) -> Self.IteratorOwnedType:
         return self^
 
-    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
-        Self.T, Movable
-    ):
-        if self.index >= self.size:
+    def __next__(mut self) raises StopIteration -> Self.Element:
+        if self._index >= len(self._list):
             raise StopIteration()
-        var result = self.data.unsafe_offset(self.index).unsafe_take_pointee()
-        self.index += 1
-        return result^
+        self._index += 1
+        return self._list._storage._alloc._ptr.unsafe_offset(
+            self._index - 1
+        ).unsafe_take_pointee()
 
-    def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
-        var i = self.index
-        while i < self.size:
-            self.data.unsafe_offset(i).unsafe_deinit_pointee()
-            i += 1
-        self.data.unsafe_free()
+    def __len__(self) -> Int:
+        return len(self._list) - self._index
 
 @explicit_destroy(
     "Use `deinit_with()` to explicitly destroy a `List` of"
@@ -145,7 +143,9 @@ struct List[T: AnyType](
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _ListIter[Self.T, iterable_origin]
-    comptime IteratorOwnedType = _ListOwnedIter[Self.T]
+    comptime IteratorOwnedType: Iterator where conforms_to(
+        Self.T, Deinitable & Movable
+    ) = _ListIterOwned[Self.T]
     comptime ReversedIterType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = _ListReversedIter[Self.T, iterable_origin]
@@ -621,14 +621,10 @@ struct List[T: AnyType](
         ref source = self
         return _ListReversedIter[Self.T](source, len(self))
 
-    def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
-        Self.T, Deinitable
-    ):
-        var storage = self._storage^
-        self._storage = alloc(Layout[Self.T](count=0))
-        var result = _ListOwnedIter[Self.T](storage^.unsafe_leak(), self._len)
-        self._len = 0
-        return result^
+    def __iter__(
+        var self,
+    ) -> Self.IteratorOwnedType where conforms_to(Self.T, Deinitable & Movable):
+        return {self^, 0}
 
     # Move the elements into a fresh allocation of `new_cap` slots.
     @inline(.never)
