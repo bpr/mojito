@@ -1822,7 +1822,20 @@ impl Checker {
         let any_named = args.iter().any(|a| matches!(a, ParamArg::Named { .. }));
         if !any_named {
             let non_origin = explicit.len() - origin_slots;
-            if args.len() == non_origin {
+            // Positional arguments bind in order, so a prefix that supplies
+            // an origin slot and leaves only defaulted non-origin parameters
+            // after it (`GraphemeSliceIter[ImmStaticOrigin]` over `forward:
+            // Bool = True`) is a full supply of that prefix.
+            let defaulted_suffix = args.len() < explicit.len()
+                && explicit[args.len()..]
+                    .iter()
+                    .all(|param| !is_origin(param) && param.default.is_some())
+                && explicit.iter().zip(args).any(|(param, argument)| {
+                    is_origin(param)
+                        && (origin_placeholder(argument)
+                            || self.resolve_origin_param_arg(argument).is_ok())
+                });
+            if args.len() == non_origin && !defaulted_suffix {
                 if strict != super::StorageStrictness::Off {
                     let omitted = explicit
                         .iter()
@@ -1835,7 +1848,7 @@ impl Checker {
                 }
                 return Ok(forward_all());
             }
-            if args.len() != explicit.len() {
+            if args.len() != explicit.len() && !defaulted_suffix {
                 return Err(TypeError::WrongTypeArgCount {
                     name: name.to_string(),
                     expected: explicit.len(),

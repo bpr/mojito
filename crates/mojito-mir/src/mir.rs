@@ -4576,6 +4576,19 @@ impl<'a> Flatten<'a> {
         let site = call.location();
         let mut registers = Vec::new();
         for (position, argument) in call.param_args().iter().enumerate() {
+            // A positional origin argument binds the callee's origin slot,
+            // which its parameter declarations do not list, so it takes no
+            // positional slot from the value or type parameter after it
+            // (`f[ImmStaticOrigin, 3]()`).
+            if matches!(
+                argument,
+                CheckedParamArg::Attribute {
+                    value: Some(TyArg::Origin(_)),
+                    ..
+                }
+            ) {
+                continue;
+            }
             let name = match argument {
                 CheckedParamArg::Named { name, .. } => Some(name.clone()),
                 CheckedParamArg::Attribute { .. } | CheckedParamArg::Value(_) => None,

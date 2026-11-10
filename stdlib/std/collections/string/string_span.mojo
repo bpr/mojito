@@ -1,12 +1,18 @@
 # Upstream's `std/collections/string/string_span.mojo` at its own module
-# path, holding `_get_kgen_string` and `get_static_string` verbatim.
+# path, holding `_get_kgen_string` and `get_static_string` verbatim, and
+# importing the string iterators from `iterators`, as upstream's does.
 # Upstream's module also declares `StringSpan` itself, which Mojito keeps
-# in `std/string.mojo`, whence this module imports `StaticString`.
+# in `std/string.mojo`, whence this module imports it.
 #
 # Omitted: the rest of upstream's module, which lives in `std/string.mojo`.
 """Implements the `StringSpan` type and related utilities for efficient string operations."""
 
-from std.string import StaticString
+from std.collections.string.iterators import (
+    CodepointSliceIter,
+    CodepointsIter,
+    GraphemeSliceIter,
+)
+from std.string import StaticString, StringSlice, StringSpan
 
 
 @inline(.nodebug)

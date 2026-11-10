@@ -25,12 +25,12 @@ from std.string import (
     StaticString,
     String,
     StringSlice,
-    _CodepointIter,
-    _CodepointSliceIter,
-    _CodepointSliceReversedIter,
     _FormatUtils,
-    _GraphemeIter,
-    _GraphemeReversedIter,
+)
+from std.collections.string.iterators import (
+    CodepointSliceIter,
+    CodepointsIter,
+    GraphemeSliceIter,
 )
 
 
@@ -227,7 +227,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return String(self)
 
-    def __iter__(self) -> _GraphemeIter[ImmStaticOrigin]:
+    def __iter__(self) -> GraphemeSliceIter[ImmStaticOrigin]:
         """Iterate over the string literal, returning grapheme clusters.
 
         Returns:
@@ -235,7 +235,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return self.graphemes()
 
-    def __reversed__(self) -> _GraphemeReversedIter[ImmStaticOrigin]:
+    def __reversed__(self) -> GraphemeSliceIter[ImmStaticOrigin, False]:
         """Iterate backwards over the string literal, returning grapheme
         clusters.
 
@@ -547,7 +547,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return StringSlice(self).lstrip()
 
-    def codepoint_slices(self) -> _CodepointSliceIter[ImmStaticOrigin]:
+    def codepoint_slices(self) -> CodepointSliceIter[ImmStaticOrigin]:
         """Iterate over the string literal, returning immutable references.
 
         Returns:
@@ -557,7 +557,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
 
     def codepoint_slices_reversed(
         self,
-    ) -> _CodepointSliceReversedIter[ImmStaticOrigin]:
+    ) -> CodepointSliceIter[ImmStaticOrigin, False]:
         """Iterates backwards over the codepoint slices of this string
         literal.
 
@@ -566,7 +566,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return StringSlice(self).codepoint_slices_reversed()
 
-    def codepoints(self) -> _CodepointIter[ImmStaticOrigin]:
+    def codepoints(self) -> CodepointsIter[ImmStaticOrigin]:
         """Returns an iterator over the `Codepoint`s encoded in this string
         literal.
 
@@ -575,7 +575,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
         """
         return StringSlice(self).codepoints()
 
-    def graphemes(self) -> _GraphemeIter[ImmStaticOrigin]:
+    def graphemes(self) -> GraphemeSliceIter[ImmStaticOrigin]:
         """Returns an iterator over the extended grapheme clusters of this
         string literal.
 
@@ -586,7 +586,7 @@ struct StringLiteral[value: __mlir_type.`!kgen.string`](
 
     def graphemes_reversed(
         self,
-    ) -> _GraphemeReversedIter[ImmStaticOrigin]:
+    ) -> GraphemeSliceIter[ImmStaticOrigin, False]:
         """Returns an iterator over the extended grapheme clusters of this
         string literal, yielding them in reverse order.
 

@@ -21,6 +21,11 @@ from std.span import Span
 from std.builtin.floatable import FloatableRaising
 from std.builtin.int import IntableRaising
 from std.iter import Iterator, StopIteration
+from std.collections.string.iterators import (
+    CodepointSliceIter,
+    CodepointsIter,
+    GraphemeSliceIter,
+)
 from std.range import range
 from std.hash.hasher import Hasher
 from std._string_tables import _lower_table, _pow5_table, _upper_table, _upper2_table, _upper3_table
@@ -1084,14 +1089,14 @@ struct String(
     # Codepoint-level iteration: decoded `Codepoint` values, borrowed
     # single-codepoint sub-views, and the grapheme-cluster views ordinary
     # iteration yields.
-    def codepoints(self) -> _CodepointIter[origin_of(self)]:
-        return _CodepointIter(StringSpan(self), 0)
+    def codepoints(self) -> CodepointsIter[ImmOrigin(origin_of(self))]:
+        return CodepointsIter[ImmOrigin(origin_of(self))](StringSpan(self))
 
-    def codepoint_slices(self) -> _CodepointSliceIter[origin_of(self)]:
-        return _CodepointSliceIter(StringSpan(self), 0)
+    def codepoint_slices(self) -> CodepointSliceIter[ImmOrigin(origin_of(self))]:
+        return CodepointSliceIter[ImmOrigin(origin_of(self))](StringSpan(self))
 
-    def graphemes(self) -> _GraphemeIter[origin_of(self)]:
-        return _GraphemeIter(StringSpan(self), 0)
+    def graphemes(self) -> GraphemeSliceIter[ImmOrigin(origin_of(self))]:
+        return GraphemeSliceIter[ImmOrigin(origin_of(self))](StringSpan(self))
 
     # The strip family returns views borrowing this String's owned bytes
     # (`_get_owned_interior["bytes"]`, upstream's origin), so a call assigned
@@ -1189,17 +1194,19 @@ struct String(
 
     # Ordinary String iteration yields borrowed grapheme-cluster StringSpan
     # views (current Mojo); `__reversed__` walks the clusters back to front.
-    def __iter__(ref self) -> _GraphemeIter[origin_of(self)]:
-        return _GraphemeIter(StringSpan(self), 0)
+    def __iter__(ref self) -> GraphemeSliceIter[ImmOrigin(origin_of(self))]:
+        return GraphemeSliceIter[ImmOrigin(origin_of(self))](StringSpan(self))
 
-    def __reversed__(self) -> _GraphemeReversedIter[origin_of(self)]:
-        return _GraphemeReversedIter(StringSpan(self), self.size, 0, False)
+    def __reversed__(self) -> GraphemeSliceIter[ImmOrigin(origin_of(self)), False]:
+        return GraphemeSliceIter[ImmOrigin(origin_of(self)), False](StringSpan(self))
 
-    def codepoint_slices_reversed(self) -> _CodepointSliceReversedIter[origin_of(self)]:
-        return _CodepointSliceReversedIter(StringSpan(self), self.size)
+    def codepoint_slices_reversed(
+        self,
+    ) -> CodepointSliceIter[ImmOrigin(origin_of(self)), False]:
+        return CodepointSliceIter[ImmOrigin(origin_of(self)), False](StringSpan(self))
 
-    def graphemes_reversed(self) -> _GraphemeReversedIter[origin_of(self)]:
-        return _GraphemeReversedIter(StringSpan(self), self.size, 0, False)
+    def graphemes_reversed(self) -> GraphemeSliceIter[ImmOrigin(origin_of(self)), False]:
+        return GraphemeSliceIter[ImmOrigin(origin_of(self)), False](StringSpan(self))
 
     def bytes(self) -> _BytesIter[origin_of(self)]:
         return _BytesIter(StringSpan(self), 0)
@@ -1539,8 +1546,8 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         self = StaticString(lit.value)
 
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
-    def __iter__(self) -> _GraphemeIter[Self.origin]:
-        return _GraphemeIter(self, 0)
+    def __iter__(self) -> GraphemeSliceIter[ImmOrigin(Self.origin)]:
+        return GraphemeSliceIter[ImmOrigin(Self.origin)](self)
 
     # Numeric parsing through the free `atol`/`atof`, which take a `String`.
     def __int__(self) raises -> Int:
@@ -1900,14 +1907,14 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return Span[Byte](unsafe_ptr=self._data, length=self._size)
 
     @inline(.always)
-    def codepoints(self) -> _CodepointIter[Self.origin]:
-        return _CodepointIter(self, 0)
+    def codepoints(self) -> CodepointsIter[ImmOrigin(Self.origin)]:
+        return CodepointsIter[ImmOrigin(Self.origin)](self)
 
-    def codepoint_slices(self) -> _CodepointSliceIter[Self.origin]:
-        return _CodepointSliceIter(self, 0)
+    def codepoint_slices(self) -> CodepointSliceIter[ImmOrigin(Self.origin)]:
+        return CodepointSliceIter[ImmOrigin(Self.origin)](self)
 
-    def graphemes(self) -> _GraphemeIter[Self.origin]:
-        return _GraphemeIter(self, 0)
+    def graphemes(self) -> GraphemeSliceIter[ImmOrigin(Self.origin)]:
+        return GraphemeSliceIter[ImmOrigin(Self.origin)](self)
 
     def to_string(self) -> String:
         var result = String("")
@@ -1965,14 +1972,16 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def count_graphemes(self) -> Int:
         return self._graphemes_between(0, self._size)
 
-    def __reversed__(self) -> _GraphemeReversedIter[Self.origin]:
-        return _GraphemeReversedIter(self, self._size, 0, False)
+    def __reversed__(self) -> GraphemeSliceIter[ImmOrigin(Self.origin), False]:
+        return GraphemeSliceIter[ImmOrigin(Self.origin), False](self)
 
-    def codepoint_slices_reversed(self) -> _CodepointSliceReversedIter[Self.origin]:
-        return _CodepointSliceReversedIter(self, self._size)
+    def codepoint_slices_reversed(
+        self,
+    ) -> CodepointSliceIter[ImmOrigin(Self.origin), False]:
+        return CodepointSliceIter[ImmOrigin(Self.origin), False](self)
 
-    def graphemes_reversed(self) -> _GraphemeReversedIter[Self.origin]:
-        return _GraphemeReversedIter(self, self._size, 0, False)
+    def graphemes_reversed(self) -> GraphemeSliceIter[ImmOrigin(Self.origin), False]:
+        return GraphemeSliceIter[ImmOrigin(Self.origin), False](self)
 
     def bytes(self) -> _BytesIter[Self.origin]:
         return _BytesIter(self, 0)
@@ -2804,166 +2813,6 @@ struct _FormatCurlyEntry(ImplicitlyCopyable):
                     args[i].write_to(writer)
                 elif flag == r_value:
                     args[i].write_repr_to(writer)
-
-
-# The grapheme-cluster iterator behind ordinary String/StringSpan
-# iteration: each step yields the next extended grapheme cluster as a
-# borrowed StringSpan sub-view of the source buffer. The origin parameters
-# stay erased on the bundled template (like `_ListIter`); the loop site
-# retains the source loan through the iteration protocol.
-@fieldwise_init
-struct _GraphemeIter[
-    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
-    comptime Element = StringSpan[Self.iterable_origin]
-
-    var src: StringSpan[Self.iterable_origin]
-    var index: Int
-
-    # An iterator is its own iterable (`for x in s.graphemes()`).
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.index >= self.src.byte_length():
-            raise StopIteration()
-        var start = self.index
-        var end = self.src._next_grapheme_end(start)
-        self.index = end
-        return self.src._sub_view(start, end)
-
-    # Remaining grapheme clusters (`Sized`, as upstream's iterator).
-    def __len__(self) -> Int:
-        return self.src._graphemes_between(self.index, self.src.byte_length())
-
-
-# `graphemes_reversed()` / `__reversed__()`: the clusters back to front. The
-# UAX #29 rules scan forward, so each step forward-scans from a cached safe
-# boundary (`_safe_grapheme_start`) to the cluster ending at `end`.
-@fieldwise_init
-struct _GraphemeReversedIter[
-    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
-    comptime Element = StringSpan[Self.iterable_origin]
-
-    var src: StringSpan[Self.iterable_origin]
-    var end: Int
-    var safe_start: Int
-    var safe_known: Bool
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.end <= 0:
-            raise StopIteration()
-        if not self.safe_known or self.safe_start >= self.end:
-            self.safe_start = self.src._safe_grapheme_start(self.end)
-            self.safe_known = True
-        var start = self.src._prev_grapheme_start(self.end, self.safe_start)
-        var end = self.end
-        self.end = start
-        return self.src._sub_view(start, end)
-
-    def __len__(self) -> Int:
-        return self.src._graphemes_between(0, self.end)
-
-
-# `String.codepoints()`: decoded `Codepoint` values over a borrowed view.
-@fieldwise_init
-struct _CodepointIter[
-    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
-    comptime Element = Codepoint
-
-    var src: StringSpan[Self.iterable_origin]
-    var index: Int
-
-    # An iterator is its own iterable (`for x in s.codepoints()`).
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(mut self) raises StopIteration -> Codepoint:
-        if self.index >= self.src.byte_length():
-            raise StopIteration()
-        var width = self.src._width_at(self.index)
-        var scalar = self.src._scalar_at(self.index, width)
-        var piece = self.src._with_bytes(self.index, width)
-        self.index += width
-        return Codepoint(scalar, text: piece^)
-
-    # The next codepoint without advancing, or None at the end.
-    def peek_next(self) -> Optional[Codepoint]:
-        if self.index >= self.src.byte_length():
-            return None
-        var width = self.src._width_at(self.index)
-        var piece = self.src._with_bytes(self.index, width)
-        var value = Codepoint(self.src._scalar_at(self.index, width), text: piece^)
-        return Optional[Codepoint](value^)
-
-    def __len__(self) -> Int:
-        var total = self.src._codepoints_before(self.src.byte_length())
-        return total - self.src._codepoints_before(self.index)
-
-
-# `String.codepoint_slices()`: one-codepoint sub-views of the source buffer.
-@fieldwise_init
-struct _CodepointSliceIter[
-    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
-    comptime Element = StringSpan[Self.iterable_origin]
-
-    var src: StringSpan[Self.iterable_origin]
-    var index: Int
-
-    # An iterator is its own iterable (`for x in s.codepoint_slices()`).
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.index >= self.src.byte_length():
-            raise StopIteration()
-        var start = self.index
-        var end = start + self.src._width_at(start)
-        self.index = end
-        return self.src._sub_view(start, end)
-
-    # The next codepoint's view without advancing, or None at the end.
-    def peek_next(self) -> Optional[StringSpan[Self.iterable_origin]]:
-        if self.index >= self.src.byte_length():
-            return None
-        return self.src._sub_view(self.index, self.index + self.src._width_at(self.index))
-
-    def __len__(self) -> Int:
-        var total = self.src._codepoints_before(self.src.byte_length())
-        return total - self.src._codepoints_before(self.index)
-
-
-# `codepoint_slices_reversed()`: the one-codepoint sub-views back to front.
-@fieldwise_init
-struct _CodepointSliceReversedIter[
-    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-](Copyable, ImplicitlyCopyable, Iterator, Movable, Sized):
-    comptime Element = StringSpan[Self.iterable_origin]
-
-    var src: StringSpan[Self.iterable_origin]
-    var end: Int
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.end <= 0:
-            raise StopIteration()
-        var start = self.end - 1
-        while start > 0 and self.src._is_continuation(Int(self.src._data[start])):
-            start -= 1
-        var end = self.end
-        self.end = start
-        return self.src._sub_view(start, end)
-
-    def __len__(self) -> Int:
-        return self.src._codepoints_before(self.end)
 
 
 # `bytes()`: the raw UTF-8 bytes of a borrowed view.

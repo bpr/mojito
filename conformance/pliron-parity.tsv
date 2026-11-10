@@ -788,6 +788,7 @@ assets/ok/origin_delegated_call_with_arguments.mojo	main	exe-differential	saniti
 assets/ok/origin_delegated_multi_binder.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_multi_binder_alias_field.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_parameter_receiver.mojo	main	exe-differential	sanitized
+assets/ok/origin_parameter_before_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/os_dir_operations.mojo	main	exe-differential	sanitized
@@ -1253,6 +1254,7 @@ assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_format_declared.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
+assets/ok/string_iterators_upstream.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_construction_copy.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_dunders.mojo	main	exe-differential	sanitized

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2084**.
+Next free ID: **R2085**.
 
 ## Ordered Work
 
@@ -1951,6 +1951,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Dropping the borrow when the declared return names only the struct's own
     origin binders was tried. It lost the only link from `c.get()`'s result
     to the loans `c` carries, which R87 has to supply first.
+  - Probe: in a `mut self` method of `struct I[origin: ImmOrigin]` over
+    `var _slice: StringSpan[Self.origin]`, `var r = self._slice._sub_view(0,
+    1)` then `self._slice = self._slice._sub_view(1, n)` is rejected
+    ("access to 'self._slice' conflicts with live reference 'r'"), and so is
+    `var r = self.peek_next()` before a store to `self._slice`, which
+    upstream's `CodepointSliceIter.next` does; the bundled
+    `std/collections/string/iterators.mojo` shrinks `_slice` through its
+    `_data` and `_size` fields instead (found while landing R1866,
+    2026-11-10).
   - Depends on R87.
   - Model: Fable, Planned.
 
@@ -10815,22 +10824,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1866 The bundled string iterators are not upstream's
-  `CodepointSliceIter`, `CodepointsIter`, and `GraphemeSliceIter`**
+- [ ] **R2084 The bundled string iterators lack upstream's `BytesIter`
+  and `GraphemeIndicesIter`**
 
-  Upstream's `std/collections/string/iterators.mojo` declares
-  `CodepointSliceIter[origin, forward]`, `CodepointsIter[origin]`, and
-  `GraphemeSliceIter[origin, forward]`, where `stdlib/std/string.mojo`
-  declares the private `_CodepointSliceIter`, `_CodepointSliceReversedIter`,
-  `_CodepointIter`, `_GraphemeIter`, and `_GraphemeReversedIter`, one
-  struct per direction.
-  - So `StringLiteral`'s `__iter__`, `__reversed__`, codepoint, and
-    grapheme members, and `StringSpan`'s and `String`'s, name the private
-    structs in their result types, and a user cannot spell
-    `GraphemeSliceIter[ImmStaticOrigin, False]`.
-  - Lever: port upstream's module at its own path, with `forward` as a
-    `Bool` parameter, and re-export it where upstream does.
-  - Found while landing R1655 (2026-11-03).
+  `bytes()` returns the private `_BytesIter` of `std/string.mojo`, and
+  there is no `grapheme_indices()`, where upstream's
+  `std/collections/string/iterators.mojo` declares `BytesIter[origin]` over
+  a `_SpanIter[Byte, origin]` and `GraphemeIndicesIter[origin]` over a
+  `GraphemeSliceIter`.
+  - Probe: `var b: BytesIter[origin_of(s)] = s.bytes()` cannot import
+    `BytesIter` from `std.collections.string`, and `s.grapheme_indices()`
+    is not a member.
+  - The bundled `_SpanIter` has no `bounds`, which `BytesIter.bounds`
+    forwards to.
+  - Lever: port both into `iterators.mojo` beside the other three, return
+    them from `String`'s and `StringSpan`'s `bytes()` and
+    `grapheme_indices()`, and re-export `BytesIter` from the package.
+  - Found while landing R1866 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -12532,6 +12542,10 @@ residue found inside a task moves to the task that owns its fix.
   Extended_Pictographic or Prepend data.
   - Reverse iteration re-scans forward from the nearest CR/LF/Control
     boundary.
+  - Porting upstream's `_grapheme_break` module gives the bundled
+    `GraphemeSliceIter` upstream's `_state` and `_state_primed` fields,
+    which it lacks since it segments through `StringSpan`'s
+    `_next_grapheme_end` (found while landing R1866, 2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

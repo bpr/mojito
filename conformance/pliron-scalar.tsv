@@ -788,6 +788,7 @@ assets/ok/origin_delegated_call_with_arguments.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_multi_binder_alias_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_parameter_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_parameter_before_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
@@ -1253,6 +1254,7 @@ assets/ok/string_escapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_format_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_grapheme_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_iadd_view_operand.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_iterators_upstream.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_construction_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_dunders.mojo	-	ineligible	no-scalar-entry-shape

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std/collections/string/iterators.mojo` bundles upstream's
+  `CodepointSliceIter[origin, forward]`, `CodepointsIter[origin]`, and
+  `GraphemeSliceIter[origin, forward]`, which `std.collections.string`
+  re-exports; the `String`, `StringSpan`, and `StringLiteral` iteration
+  members return them in place of the five private one-direction structs,
+  so `GraphemeSliceIter[ImmStaticOrigin, False]` is spellable and
+  `next_back`/`peek_back` take from the end (R1866,
+  `assets/ok/string_iterators_upstream.mojo`).
 - `canonicalize` turns an elif-free `if` over register-passable trivial
   results into `pop.select`, as the pin's `EmptyIfToSelect` and
   `IfYieldSelect` do: `x = 1 if c else 2` and `if c: y = a else: y = b`
@@ -4362,6 +4370,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An origin parameter ahead of a value parameter binds positionally in
+  order: `W[ImmStaticOrigin]` over `[origin: ImmOrigin, forward: Bool =
+  True]` no longer fails to infer `origin`, and `f[ImmStaticOrigin, 3]()`
+  no longer fails MIR verification
+  (`assets/ok/origin_parameter_before_value_parameter.mojo`).
 - A `comptime if` whose condition the check closes now decides its arms
   before the ownership checks, as upstream's `LowerSemanticCF` does: a dead
   arm keeps no value alive, and the statements after a live `return`,

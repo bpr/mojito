@@ -337,8 +337,15 @@ point, as upstream's toolchain does.
   upstream's `StaticString` alias (`StringSpan[ImmStaticOrigin]`; a
   literal binds a `StaticString` compile-time parameter through the
   `@implicit` literal constructor, which the elaborator runs into a frozen
-  view of the literal's bytes) and `_GraphemeIter`, the grapheme-cluster
-  iterator behind ordinary String/StringSpan/StringLiteral iteration.
+  view of the literal's bytes).
+- `std/collections/string/iterators.mojo` — upstream's
+  `CodepointSliceIter[origin, forward]`, `CodepointsIter[origin]`, and
+  `GraphemeSliceIter[origin, forward]` at their upstream module path, the
+  iterators the `String`, `StringSpan`, and `StringLiteral` iteration
+  members return (`GraphemeSliceIter` behind ordinary iteration, its
+  `False` direction behind `__reversed__`); `string_span.mojo` imports them
+  and the package `__init__.mojo` re-exports `CodepointsIter` and
+  `GraphemeSliceIter`, as upstream's do.
 - `std/collections/string/string_span.mojo` — upstream's
   `_get_kgen_string[string: StaticString, *extra: StaticString]()` at its
   upstream module path, the `!kgen.string` of the views' bytes, which
