@@ -20,7 +20,8 @@
           bb0 {
             instructions: [
               const { dest: %r1, value: int(0) },
-              loop { results: [], label: absent, operands: [%r1], arguments: [%r2], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, const { dest: %r3, value: int(1) }, binary { op: add, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, field.get { dest: %r7, base: %r0, field: _mlir_value }, select { dest: %r6, condition: %r7, on_true: %r4, on_false: %r2 }], terminator: continue { label: absent, values: [%r6] } }] }
+              const { dest: %r3, value: int(1) },
+              loop { results: [], label: absent, operands: [%r1], arguments: [%r2], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, binary { op: add, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }, field.get { dest: %r7, base: %r0, field: _mlir_value }, select { dest: %r6, condition: %r7, on_true: %r4, on_false: %r2 }], terminator: continue { label: absent, values: [%r6] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

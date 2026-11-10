@@ -5,7 +5,9 @@
 //! instruction [`MirInstr::folded_constant`] folds over operands defined
 //! once by a constant becomes that `const`, as MLIR's greedy driver applies
 //! a `fold` that returns an attribute (through the replacement `sccp`
-//! shares, `fold::replace_folded`); an instruction that folds to
+//! shares, `fold::replace_folded`), and every constant is materialized once
+//! per value at its region's entry (`fold::materialize_constants`), as the
+//! driver's `OperationFolder` leaves it; an instruction that folds to
 //! one of its operands ([`MirInstr::forwarded_operand`], an identity
 //! `value.copy`, or a copy of a closure, a struct of pointers) is replaced by that operand in every reader, as MLIR's greedy
 //! driver applies a `fold` that returns an operand; and an instruction
@@ -61,7 +63,8 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 /// Fold constants, simplify the region ops, and erase what `function` no
 /// longer reaches or reads.
 ///
-/// Each instruction over constant operands becomes a `const` and each
+/// Each instruction over constant operands becomes a `const`, each
+/// constant moves to its region's entry, one per value, and each
 /// region op the `hlcf` patterns match is rewritten; identity copies are
 /// forwarded, a call through a known callee becomes a direct call, and
 /// dead instructions are erased.
@@ -86,6 +89,7 @@ pub fn canonicalize(
     loop {
         loop {
             folded_constants += fold_constants(function, declarations);
+            patterns += fold::materialize_constants(function, declarations, None);
             let rewritten = hlcf::hlcf_patterns(function, declarations, &mut erased);
             if rewritten == 0 {
                 break;
@@ -112,9 +116,11 @@ pub fn canonicalize(
     loop {
         let before = erased.len();
         erase_dead_until_none(function, &mut erased);
-        if erased.len() == before {
+        let materialized = fold::materialize_constants(function, declarations, None);
+        if erased.len() == before && materialized == 0 {
             break;
         }
+        patterns += materialized;
         let rewritten = hlcf::hlcf_patterns(function, declarations, &mut erased);
         if rewritten == 0 {
             break;
@@ -186,7 +192,8 @@ fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) ->
             &constant,
             &function.reg_types,
             declarations,
-        );
+        )
+        .len();
         if round == 0 {
             return folded;
         }

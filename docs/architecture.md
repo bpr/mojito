@@ -1910,7 +1910,11 @@ target), and the elaborator judges each one against the type it applies to
 per instance once its `comptime if`s are decided and erases it, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
-error on a mismatch. A field reference at a symbolic index
+error on a mismatch. A value rebind's result is its operand's register,
+retyped at the rebind's type when the rebind is its only reader; a rebind
+of a `const` other instructions read too, as the folder's one constant per
+value is, becomes that constant at the rebind's type, as `kgen.rebind`
+folds over a constant attribute (R1256). A field reference at a symbolic index
 (`reflect[T].field_ref[i](s)` in a `comptime for`) is a place's
 `Proj::FieldAt` step, upstream's index-form `lit.ref.struct.ger`, which the
 elaborator closes to the field's `Proj::Field` per instance.
@@ -6596,21 +6600,34 @@ point where a slot declared in a loop is uninitialized again.
   (`analysis/fold.rs`, as MLIR's `OperationFolder` serves `SCCP` and the
   greedy driver alike), so upstream's first round folds constant operators
   with no `SCCP` in it, and Mojito's first `canonicalize` folds what
-  straight-line constants decide. On a structured body it then applies
+  straight-line constants decide. Before each pattern round, and again
+  after erasure, `fold::materialize_constants` moves every `const` to its
+  insertion region's entry, one per value (value, result type, and a
+  parameter expression's identity), and erases the rest, their reads
+  renamed, as the greedy driver's `insertKnownConstant` and the folder's
+  `getOrCreateConstant` leave every constant at the entry of the isolated
+  region, uniqued (R1256): the insertion region is the body, or for a
+  parameter expression, a function instance, or a constant of a type that
+  is not closed, the innermost `comptime if` arm or `comptime for` region
+  holding it, whose binders or dead arms may leave it meaningless, as a
+  fold interface's `shouldMaterializeInto` claims a region. Only a `const`
+  whose register has one definition and holds a
+  `MirDeclarations::copy_is_identity` value takes part; any other stays
+  where it is (`tests/mir_passes/canonicalize/constants_uniqued_at_entry.mir`). On a structured body it then applies
   upstream's `hlcf` canonicalization patterns (`HLCFOpsCanonicalizers.cpp`,
   in `analysis/canonicalize/hlcf.rs`, R879), innermost regions first and
   alternating with the folding until no pattern applies, as the greedy
   driver's worklist does: `RemoveStaticCondition` splices the arm an `if`
-  on a constant takes (an elif whose condition region is trivial, one
-  block of `const`s whose `if.elifcond.yield` carries no values, is decided
+  on a constant takes (an elif whose condition region is trivial, holding
+  only an `if.elifcond.yield` that carries no values, is decided
   or promoted to the `if`'s condition, and a non-trivial one fails the
   pattern, as upstream's `matchTrivialConstantElifCond` and
   `promoteElifArmToIf` fail on carried values; so no region it splices
   takes arguments, and a dropped elif's arguments are erased with it,
   `tests/mir_passes/canonicalize/static_condition_elif_carrying_values_kept.mir`),
   `ConditionPropagation` reads the
-  condition inside an arm of an `if` without elifs as a constant defined
-  before the `if`, `HoistUnconditionalReturn` hoists one `return`,
+  condition inside an arm of an `if` without elifs as a constant, which
+  the next round materializes at the entry, `HoistUnconditionalReturn` hoists one `return`,
   `break`, or `continue` every arm ends in after a new `if` the arms yield
   to, `HoistConditionalReturn` moves the rest of the block into the one
   arm that yields when the others `return` or `break` (climbing out
@@ -6620,12 +6637,10 @@ point where a slot declared in a loop is uninitialized again.
   unread with its elif condition regions, as upstream does (the pin skips
   a call in such a condition), `RemoveUnusedResults` drops unread results,
   `EmptyIfToSelect` turns an `if` without elifs whose arms hold only
-  `const`s before their `yield` into one `pop.select` per result and
-  removes it, the arms' `const`s moved before the selects (where MLIR's
-  folder materializes them; reading them in the arm is a local stand-in,
-  R1256), `IfYieldSelect` turns a result of an elif-free `if` whose arms
-  both yield a value defined once outside the `if` (or by a `const` in the
-  arm, which moves out) into a `pop.select` after the `if`, which keeps its
+  their `yield` into one `pop.select` per result and removes it,
+  `IfYieldSelect` turns a result of an elif-free `if` whose arms
+  both yield a value defined once outside the `if` into a `pop.select`
+  after the `if`, which keeps its
   effects without that result (both patterns select only a result
   `MirDeclarations::copy_is_identity` accepts, the type `pop.select`
   carries, and read the condition's `!kgen.scalar<bool>` storage through
@@ -7236,7 +7251,10 @@ point where a slot declared in a loop is uninitialized again.
   `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
   The rewrite replaces each instruction that folds over the final lattice
   by a `const` of the same register, which keeps its type and span, through
-  the replacement `canonicalize` shares (`analysis/fold.rs`); the first
+  the replacement `canonicalize` shares (`analysis/fold.rs`), and
+  materializes the constants it created once per value at their region's
+  entry, as `SCCP`'s `OperationFolder` uniques what it creates but leaves
+  the constants it found where they are; the first
   `canonicalize` has already folded what straight-line constants decide,
   so `sccp` adds the folds that need its executable-block reasoning or a
   lattice meet. The pass never rewrites a terminator, which the

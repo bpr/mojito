@@ -5,7 +5,10 @@
 //! close both types and its compile-time branches are decided, the
 //! elaborator asserts each surviving rebind's two types equal and erases it,
 //! as upstream's `processRebindOp` does: an untaken arm's rebind is never
-//! judged, and a mismatch fails the instance.
+//! judged, and a mismatch fails the instance. A rebind of a constant that
+//! other instructions read too becomes that constant at the rebind's type,
+//! as `kgen.rebind` folds over a constant attribute: the folder keeps one
+//! constant per value, so the constant is not the rebind's alone to retype.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -22,15 +25,22 @@ impl Specializer<'_> {
     /// storage's own. A chain's root takes the type of its outermost rebind,
     /// the one the program reads the value at, when only the chain reads it:
     /// a `SIMD` built from its storage (`Self(mlir_value=...)`), built from
-    /// a `SIMD`, is the `SIMD`.
+    /// a `SIMD`, is the `SIMD`. A rebind of a constant others read too
+    /// ([`shared_constants`]) becomes the constant at its own type instead.
     pub(super) fn discharge_rebinds(
         &self,
         template: &str,
         function: &mut MirFunction,
     ) -> Result<(), MonoError> {
         let mut aliases = HashMap::new();
-        judge_blocks(&mut function.body, &function.reg_types, &mut aliases)
-            .map_err(|mismatch| self.rebind_mismatch(template, &mismatch.0, &mismatch.1))?;
+        let shared = shared_constants(function);
+        judge_blocks(
+            &mut function.body,
+            &function.reg_types,
+            &shared,
+            &mut aliases,
+        )
+        .map_err(|mismatch| self.rebind_mismatch(template, &mismatch.0, &mismatch.1))?;
         if !aliases.is_empty() {
             let mut reads = vec![0; function.n_regs as usize];
             count_register_reads(&mut function.body, &mut reads);
@@ -84,12 +94,13 @@ type Mismatch = Box<(Ty, Ty)>;
 fn judge_blocks(
     block: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
+    shared: &HashMap<u32, Const>,
     aliases: &mut HashMap<u32, Reg>,
 ) -> Result<(), Mismatch> {
     let mut judged = Vec::with_capacity(block.instrs.len());
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
-            judge_blocks(region, reg_types, aliases)?;
+            judge_blocks(region, reg_types, shared, aliases)?;
         }
         for place in instruction_places_mut(&mut instruction) {
             discharge_place(place)?;
@@ -100,13 +111,56 @@ fn judge_blocks(
             {
                 return Err(Box::new((input.clone(), result.clone())));
             }
-            aliases.insert(dest.0, value);
+            match shared.get(&value.0) {
+                Some(k) if reg_types.get(&value.0) != reg_types.get(&dest.0) => {
+                    judged.push(MirInstr::Const { dest, k: k.clone() });
+                }
+                _ => {
+                    aliases.insert(dest.0, value);
+                }
+            }
             continue;
         }
         judged.push(instruction);
     }
     block.instrs = judged;
     Ok(())
+}
+
+/// The constant each register of `function` defined once by a `const`
+/// holds, when more than one instruction or terminator reads it.
+fn shared_constants(function: &mut MirFunction) -> HashMap<u32, Const> {
+    let mut reads = vec![0; function.n_regs as usize];
+    count_register_reads(&mut function.body, &mut reads);
+    let mut definitions = HashMap::<u32, u32>::new();
+    let mut constants = HashMap::new();
+    collect_constants(&function.body, &mut definitions, &mut constants);
+    constants.retain(|reg, _| {
+        definitions.get(reg) == Some(&1) && reads.get(*reg as usize).is_some_and(|n| *n > 1)
+    });
+    constants
+}
+
+/// Count every register `block` and its regions define, and record each
+/// `const`'s value.
+fn collect_constants(
+    block: &MirBlock,
+    definitions: &mut HashMap<u32, u32>,
+    constants: &mut HashMap<u32, Const>,
+) {
+    for instruction in &block.instrs {
+        let mut results = Vec::new();
+        mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
+        for reg in results {
+            *definitions.entry(reg.0).or_default() += 1;
+        }
+        if let MirInstr::Const { dest, k } = instruction {
+            constants.insert(dest.0, k.clone());
+        }
+        for region in mojito_mir::mir::instruction_regions(instruction) {
+            collect_constants(region, definitions, constants);
+        }
+    }
 }
 
 /// Erase a place's rebind steps, judging each against the type it applies

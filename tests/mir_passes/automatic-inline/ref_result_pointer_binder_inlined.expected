@@ -19,11 +19,11 @@
         blocks: [
           bb0 {
             instructions: [
+              const { dest: %r5, value: int(0) },
               ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               pointer.convert { dest: %r1, value: %r0 },
               pointer.convert { dest: %r3, value: %r1 },
               var.store { var: $v1, src: %r3, binding_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), in_place: false },
-              const { dest: %r5, value: int(0) },
               ref.make { dest: %r6, place: place { root: $v1, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), projections: [projection { op: index(%r5), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v1 }
             ],
@@ -51,11 +51,11 @@
         blocks: [
           bb0 {
             instructions: [
+              const { dest: %r11, value: int(0) },
               ref.make { dest: %r6, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               pointer.convert { dest: %r7, value: %r6 },
               pointer.convert { dest: %r9, value: %r7 },
               var.store { var: $v4, src: %r9, binding_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(65537), interior: [], subtree: false } }), in_place: false },
-              const { dest: %r11, value: int(0) },
               ref.make { dest: %r12, place: place { root: $v4, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(65537), interior: [], subtree: false } }), projections: [projection { op: index(%r11), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v4 },
               var.store { var: $v2, src: %r12, binding_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), in_place: false },

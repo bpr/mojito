@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2080**.
+Next free ID: **R2081**.
 
 ## Ordered Work
 
@@ -537,27 +537,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1256 `canonicalize` folds a constant in place, where MLIR's
-  folder materializes one per value at the region's entry**
-
-  `OperationFolder` hoists each folded constant to the entry of the
-  isolated region and reuses one per value, and `fold::replace_folded`
-  turns the folded instruction itself into a `const` where it stands.
-  - Shape: an elif condition region holding its own `const bool` is
-    trivial to `RemoveStaticCondition` only because `trivial_condition`
-    accepts `const`s in the region, where upstream's region holds only
-    the yield.
-  - Shape: equal constants stay one `const` per use, so instance sizes
-    count them.
-  - Shape: `EmptyIfToSelect` and `IfYieldSelect`
-    (`canonicalize/hlcf.rs`) read a `const` inside an `if` arm as defined
-    before the `if` and move it out, where upstream's arm already holds
-    only the yield.
-  - Deciding it changes every instance size, so it waits for the
-    structured seam.
-  - Depends on R1254.
-  - Model: Fable, Not Planned.
-
 - [ ] **R924 Mojito inlines `nodebug` callees the pin refuses**
 
   The pin keeps a call to a `nodebug` callee holding `"abc"`-literal
@@ -873,6 +852,24 @@ change that needs a new `MJRT_ABI_VERSION`.
     destroys each replaced element on the VM (R1216) and fails natively
     the same way.
   - Found while landing R1216 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2080 Concrete MIR reads a register in a region its definition
+  does not dominate, which only Pliron's verifier catches**
+
+  `assets/ok/pliron_float_pow.mojo` stops natively with "Use of v… not
+  dominated by definition", where the VM prints `1026.0000000000005` and
+  the parity manifest says `exe-differential`.
+  - The use is an `llvm.select` in the inlined `compute` body whose false
+    operand is an `llvm.maxnum.f64` defined in a sibling block.
+  - It fails at HEAD `5ede61ab8`, before R1256, so it likely came with
+    R1255's `pop.select` patterns or `select`'s folds.
+  - `mir::verify` does not check that a definition dominates its reads,
+    so the VM runs the program and only the native verifier objects.
+  - Lever: a dominance check in `mir::verify` names the pass that first
+    breaks it.
+  - Found while landing R1256 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

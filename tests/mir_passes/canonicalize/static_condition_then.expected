@@ -14,16 +14,16 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r4, type: None }, reg_type { reg: %r5, type: Int }],
+        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r4, type: None }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r1, value: int(1) },
-              call { dest: %r4, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              const { dest: %r5, value: int(2) }
+              const { dest: %r2, value: int(2) },
+              call { dest: %r4, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
-            terminator: return { value: present(%r5) }
+            terminator: return { value: present(%r2) }
           }
         ]
       }

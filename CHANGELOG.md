@@ -158,6 +158,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize` materializes each constant once per value at its region's
+  entry and erases the duplicates, as MLIR's `OperationFolder` does, where
+  it folded a constant in place and left equal constants one per use;
+  `sccp` uniques the constants it creates the same way. `EmptyIfToSelect`,
+  `IfYieldSelect`, and `RemoveStaticCondition` now match only arms and elif
+  conditions that hold just their `yield`, as upstream's do. The
+  elaborator folds a `rebind` of a constant others read too into that
+  constant at the rebind's type, as `kgen.rebind` folds (R1256).
 - A MIR function body and every region of a region op are one `MirBlock`
   by their type, as upstream's `hlcf` regions are `SizedRegion<1>`, where
   they were block lists the verifier held to one block (R1276): its "body

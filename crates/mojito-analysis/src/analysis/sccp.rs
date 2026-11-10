@@ -35,7 +35,11 @@
 //! elaborator's to fold, per instance.
 //!
 //! Each instruction that folds over the final lattice becomes a `const`
-//! through the replacement `canonicalize` shares (`fold::replace_folded`).
+//! through the replacement `canonicalize` shares (`fold::replace_folded`),
+//! materialized once per value at its region's entry
+//! (`fold::materialize_constants`), as `SCCP`'s `OperationFolder` uniques
+//! the constants it creates; a constant it did not create stays where it
+//! is, for the next `canonicalize` to move.
 //! The first `canonicalize` has already folded what straight-line constants
 //! decide, so `sccp` adds the folds that need its executable-block reasoning
 //! or a lattice meet. Region ops are left alone: the `Canonicalizer` after
@@ -83,8 +87,10 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         &function.reg_types,
         declarations,
     );
-    timing::count("folded_constants", folded as u64);
-    folded > 0
+    timing::count("folded_constants", folded.len() as u64);
+    let created = folded.iter().map(|reg| reg.0).collect();
+    fold::materialize_constants(function, declarations, Some(&created));
+    !folded.is_empty()
 }
 
 /// A register's value over the executable regions.

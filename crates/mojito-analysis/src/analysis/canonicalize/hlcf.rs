@@ -327,7 +327,6 @@ impl Walk<'_> {
                     return self.replace_with_region(block, index, &results, then);
                 }
                 (_, Some((promoted, cond))) if promoted == at => {
-                    let hoisted = elif.cond.instrs;
                     let promoted = MirInstr::If {
                         results,
                         cond,
@@ -336,9 +335,7 @@ impl Walk<'_> {
                         else_args,
                         orelse: Box::new(orelse),
                     };
-                    block
-                        .instrs
-                        .splice(index..index, hoisted.into_iter().chain([promoted]));
+                    block.instrs.insert(index, promoted);
                     self.counts.static_conditions += 1;
                     return true;
                 }
@@ -348,26 +345,17 @@ impl Walk<'_> {
         self.replace_with_region(block, index, &results, orelse)
     }
 
-    /// The constant an elif condition region yields when it is trivial:
-    /// one block of `const`s ending in its condition, a `const bool`.
+    /// The constant an elif condition region yields when it is trivial
+    /// and its condition a `const bool`.
     fn trivial_constant_condition(&self, region: &MirBlock) -> Option<bool> {
-        let cond = trivial_condition(region)?;
-        region
-            .instrs
-            .iter()
-            .find_map(|instruction| match instruction {
-                MirInstr::Const {
-                    dest,
-                    k: Const::Bool(value),
-                } if *dest == cond => Some(*value),
-                _ => None,
-            })
-            .or_else(|| self.constants.get(&cond.0).copied())
+        self.constants.get(&trivial_condition(region)?.0).copied()
     }
 
     /// `ConditionPropagation`: inside the `then` arm of an `if` without
     /// elifs its condition is true, and inside the `else` arm false, so each
-    /// read there reads a constant defined before the `if`.
+    /// read there reads a constant, created before the `if` and
+    /// materialized at the body's entry by the next round, as the greedy
+    /// driver's next iteration does.
     fn propagate_condition(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             cond,
@@ -750,14 +738,11 @@ impl Walk<'_> {
         true
     }
 
-    /// `EmptyIfToSelect`: an `if` without elifs whose arms hold only
-    /// constants before their `yield` becomes one `pop.select` per result,
-    /// on the condition's `!kgen.scalar<bool>` storage, and goes. The arms'
-    /// constants move before the selects, the entry MLIR's folder
-    /// materializes them at, as [`trivial_condition`] reads an elif
-    /// condition region. Every result is of a register-passable trivial
-    /// type ([`Self::selectable`]); one `HoistYieldResults` replaced takes
-    /// no select.
+    /// `EmptyIfToSelect`: an `if` without elifs whose arms hold only their
+    /// `yield` becomes one `pop.select` per result, on the condition's
+    /// `!kgen.scalar<bool>` storage, and goes. Every result is of a
+    /// register-passable trivial type ([`Self::selectable`]); one
+    /// `HoistYieldResults` replaced takes no select.
     fn empty_if_to_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -774,8 +759,8 @@ impl Walk<'_> {
             return false;
         }
         let (Some(on_true), Some(on_false)) = (
-            self.constant_arm(then, results.len()),
-            self.constant_arm(orelse, results.len()),
+            yield_only_arm(then, results.len()),
+            yield_only_arm(orelse, results.len()),
         ) else {
             return false;
         };
@@ -793,9 +778,9 @@ impl Walk<'_> {
         {
             return false;
         }
-        let Some(IfParts { then, orelse, .. }) = take_if(block, index) else {
+        if take_if(block, index).is_none() {
             return false;
-        };
+        }
         let (storage, convert) = self.condition_storage(cond);
         let selects = live
             .into_iter()
@@ -805,23 +790,16 @@ impl Walk<'_> {
                 on_true,
                 on_false,
             });
-        let rewritten: Vec<MirInstr> = then
-            .instrs
-            .into_iter()
-            .chain(orelse.instrs)
-            .chain([convert])
-            .chain(selects)
-            .collect();
+        let rewritten: Vec<MirInstr> = std::iter::once(convert).chain(selects).collect();
         block.instrs.splice(index..index, rewritten);
         self.counts.empty_ifs_to_selects += 1;
         true
     }
 
     /// `IfYieldSelect`: a result of an `if` without elifs whose arms both
-    /// yield a value defined outside the `if`, or by a constant the arm
-    /// holds, becomes a `pop.select` after the `if`, which keeps its
-    /// effects without that result. A yielded constant moves before the
-    /// `if`, as [`Self::empty_if_to_select`] moves it. MIR is not SSA, so
+    /// yield a value defined outside the `if` becomes a `pop.select` after
+    /// the `if`, which keeps its effects without that result. MIR is not
+    /// SSA, so
     /// a yielded value and the condition must have one definition: one an
     /// arm redefines is not the value it held before the `if`. The
     /// condition's storage is read after the `if`, since the `if` may be a
@@ -855,7 +833,7 @@ impl Walk<'_> {
             }
         }
         let mut chosen = Vec::new();
-        let mut hoisted = [HashSet::new(), HashSet::new()];
+        let outside = |value: Reg| self.defined_at_most_once(value) && !inside.contains(&value.0);
         for (at, result) in results.iter().enumerate() {
             if self.replaced.contains_key(&result.0)
                 || self.reads.get(result.0 as usize) == Some(&0)
@@ -863,32 +841,9 @@ impl Walk<'_> {
             {
                 continue;
             }
-            let outside = |arm: &MirBlock, value: Reg| -> Option<bool> {
-                if !self.defined_at_most_once(value) {
-                    return None;
-                }
-                if !inside.contains(&value.0) {
-                    return Some(false);
-                }
-                arm.instrs
-                    .iter()
-                    .any(|instruction| {
-                        matches!(instruction, MirInstr::Const { dest, .. } if *dest == value)
-                    })
-                    .then_some(true)
-            };
-            let (Some(from_then), Some(from_else)) =
-                (outside(then, on_true[at]), outside(orelse, on_false[at]))
-            else {
-                continue;
-            };
-            if from_then {
-                hoisted[0].insert(on_true[at].0);
+            if outside(on_true[at]) && outside(on_false[at]) {
+                chosen.push(at);
             }
-            if from_else {
-                hoisted[1].insert(on_false[at].0);
-            }
-            chosen.push(at);
         }
         let cond = *cond;
         if chosen.is_empty() || !self.condition_selects(cond) || !self.defined_at_most_once(cond) {
@@ -904,16 +859,6 @@ impl Walk<'_> {
         else {
             return false;
         };
-        let mut before = Vec::new();
-        for (arm, hoisted) in [&mut **then, &mut **orelse].into_iter().zip(&hoisted) {
-            let (constants, kept) = std::mem::take(&mut arm.instrs)
-                .into_iter()
-                .partition(|instruction| {
-                    matches!(instruction, MirInstr::Const { dest, .. } if hoisted.contains(&dest.0))
-                });
-            arm.instrs = kept;
-            before.extend::<Vec<MirInstr>>(constants);
-        }
         let mut selects = Vec::new();
         for arm in [&mut **then, &mut **orelse] {
             if let MirTerm::Yield(values) = &mut arm.term {
@@ -934,22 +879,8 @@ impl Walk<'_> {
         block
             .instrs
             .extend(std::iter::once(convert).chain(after).chain(tail));
-        block.instrs.splice(index..index, before);
         self.counts.if_yield_selects += 1;
         true
-    }
-
-    /// The values an `if` arm yields when the arm holds only constants
-    /// defined nowhere else, and yields `count` values.
-    fn constant_arm<'r>(&self, region: &'r MirBlock, count: usize) -> Option<&'r [Reg]> {
-        let MirTerm::Yield(values) = &region.term else {
-            return None;
-        };
-        (values.len() == count
-            && region.instrs.iter().all(|instruction| {
-                matches!(instruction, MirInstr::Const { dest, .. } if self.defined_at_most_once(*dest))
-            }))
-        .then_some(values.as_slice())
     }
 
     /// Whether `reg` has at most one definition.
@@ -1379,21 +1310,27 @@ fn body_regions_mut<'a>(
 }
 
 /// The condition an elif condition region yields when the region is
-/// trivial: `const`s ending in its condition and carrying no values, the
-/// shape MLIR's folder leaves once it materializes the constants outside
-/// the region.
-fn trivial_condition(region: &MirBlock) -> Option<Reg> {
+/// trivial: it holds only its `if.elifcond.yield`, carrying no values, the
+/// shape MLIR's folder leaves once it materializes the region's constants
+/// at the body's entry.
+const fn trivial_condition(region: &MirBlock) -> Option<Reg> {
     match region {
         MirBlock {
             instrs,
             term: MirTerm::ElifCond { cond, values },
-        } if values.is_empty()
-            && instrs
-                .iter()
-                .all(|instruction| matches!(instruction, MirInstr::Const { .. })) =>
-        {
-            Some(*cond)
-        }
+        } if values.is_empty() && instrs.is_empty() => Some(*cond),
+        _ => None,
+    }
+}
+
+/// The values an `if` arm yields when the arm holds only its `yield`, of
+/// `count` values.
+const fn yield_only_arm(region: &MirBlock, count: usize) -> Option<&[Reg]> {
+    match region {
+        MirBlock {
+            instrs,
+            term: MirTerm::Yield(values),
+        } if instrs.is_empty() && values.len() == count => Some(values.as_slice()),
         _ => None,
     }
 }

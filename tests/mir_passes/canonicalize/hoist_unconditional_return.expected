@@ -19,9 +19,9 @@
         blocks: [
           bb0 {
             instructions: [
-              var.use { dest: %r0, var: $v0, mode: copy },
               const { dest: %r1, value: int(1) },
               const { dest: %r2, value: int(2) },
+              var.use { dest: %r0, var: $v0, mode: copy },
               field.get { dest: %r6, base: %r0, field: _mlir_value },
               select { dest: %r5, condition: %r6, on_true: %r1, on_false: %r2 }
             ],
