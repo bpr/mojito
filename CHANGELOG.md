@@ -158,6 +158,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize`'s `IfYieldSelect` no longer selects a value an arm
+  yields when an earlier rewrite of the same walk replaced it, since its
+  replacement may be defined in the arm; the next walk judges the
+  replacement. A native `Float64(2) ** 0.5` no longer fails Pliron's
+  dominance check.
 - The elaborator memoizes a compile-time application's result by its
   instance and the structural values of its runtime arguments, instead of a
   string formatted from them, and steps a `comptime for` iterator under one

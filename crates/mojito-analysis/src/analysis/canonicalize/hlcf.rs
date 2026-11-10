@@ -801,7 +801,8 @@ impl Walk<'_> {
     /// the `if`, which keeps its effects without that result. MIR is not
     /// SSA, so
     /// a yielded value and the condition must have one definition: one an
-    /// arm redefines is not the value it held before the `if`. The
+    /// arm redefines is not the value it held before the `if`, and one the
+    /// walk replaced waits for its replacement's walk. The
     /// condition's storage is read after the `if`, since the `if` may be a
     /// raising instruction's error region, which must follow it with no
     /// read of its flag between.
@@ -833,7 +834,14 @@ impl Walk<'_> {
             }
         }
         let mut chosen = Vec::new();
-        let outside = |value: Reg| self.defined_at_most_once(value) && !inside.contains(&value.0);
+        // A value this walk replaced lost its definition but not its reads,
+        // and its replacement may be defined in the arm: the next walk reads
+        // the replacement.
+        let outside = |value: Reg| {
+            self.defined_at_most_once(value)
+                && !inside.contains(&value.0)
+                && !self.replaced.contains_key(&value.0)
+        };
         for (at, result) in results.iter().enumerate() {
             if self.replaced.contains_key(&result.0)
                 || self.reads.get(result.0 as usize) == Some(&0)
