@@ -745,6 +745,11 @@ impl<'a> Flatten<'a> {
             &[MirSubscriptArg::Index(getter_index)],
             target.location(),
         );
+        self.convert_raised(
+            getter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
         self.record_index_parameter(target, index, &mut getter_call);
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
@@ -868,6 +873,11 @@ impl<'a> Flatten<'a> {
                 &[MirSubscriptArg::Index(getter_index)],
                 target.location(),
             );
+            self.convert_raised(
+                getter_call.raises.as_ref(),
+                target.raise_conversion(),
+                target.location(),
+            );
             self.record_index_parameter(target, index, &mut getter_call);
             self.emit_checked_call_boundary(&plan.getter, &target.location());
             let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
@@ -902,6 +912,11 @@ impl<'a> Flatten<'a> {
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &[MirSubscriptArg::Index(getter_index)],
+            target.location(),
+        );
+        self.convert_raised(
+            getter_call.raises.as_ref(),
+            target.raise_conversion(),
             target.location(),
         );
         self.record_index_parameter(target, index, &mut getter_call);
@@ -950,6 +965,11 @@ impl<'a> Flatten<'a> {
             &[MirSubscriptArg::Index(setter_index)],
             target.location(),
         );
+        self.convert_raised(
+            setter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
         self.record_index_parameter(target, index, &mut setter_call);
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
@@ -989,6 +1009,11 @@ impl<'a> Flatten<'a> {
         let (argument, argument_place) = self.slice_set_argument(target, descriptor, bounds);
         let getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
+        self.convert_raised(
+            getter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
         if plan.setter.is_none() {
             self.emit_checked_call_boundary(&plan.getter, &target.location());
             let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
@@ -1024,6 +1049,11 @@ impl<'a> Flatten<'a> {
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
         let setter_call = self.mir_subscript_call_contract(setter.clone(), &[], target.location());
+        self.convert_raised(
+            setter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
@@ -1133,6 +1163,11 @@ impl<'a> Flatten<'a> {
             .collect::<Vec<_>>();
         let getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &getter_args, target.location());
+        self.convert_raised(
+            getter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
 
         let Some(rhs) = value_rhs else {
             self.emit_checked_call_boundary(&plan.getter, &target.location());
@@ -1216,6 +1251,11 @@ impl<'a> Flatten<'a> {
             self.augmented_setter_value(target, setter, value_argument, result);
         let setter_call =
             self.mir_subscript_call_contract(setter.clone(), &setter_args, target.location());
+        self.convert_raised(
+            setter_call.raises.as_ref(),
+            target.raise_conversion(),
+            target.location(),
+        );
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
@@ -1281,7 +1321,7 @@ impl<'a> Flatten<'a> {
             .inplace_dunder()
             .expect("augmented in-place operator has an in-place dunder")
             .to_string();
-        let raises = self.raises(contract.raises.clone(), site.location());
+        let raises = self.call_raises(site, contract.raises.clone());
         self.emit_call(MirInstr::MethodCall {
             dest,
             recv,

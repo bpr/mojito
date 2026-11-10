@@ -633,8 +633,7 @@ impl Checker {
             },
         ));
         if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
-            self.record_call_effect(span, error.clone());
-            self.require_error("call through a stored callable field", error)?;
+            self.require_call_error(span, "call through a stored callable field", error)?;
         }
         Ok(ret)
     }

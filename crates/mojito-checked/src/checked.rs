@@ -608,8 +608,12 @@ pub enum ReflectedFieldStep {
     At(mojito_types::param_expr::ParamExpr),
 }
 
-/// The materialization an implicit conversion applies to its
-/// `@__nonmaterializable(T)` source before its converting constructor.
+/// A conversion through one `@implicit` constructor.
+///
+/// It is the materialization an implicit conversion applies to its
+/// `@__nonmaterializable(T)` source before its converting constructor, or
+/// a raised error's conversion to the error type its context propagates
+/// ([`SemanticAdjustment::RaiseConversion`]).
 ///
 /// Upstream materializes the value to `T` and then converts the `T`: the
 /// target's `@implicit` constructor from the source, the target type, and
@@ -762,6 +766,11 @@ pub enum SemanticAdjustment {
     /// The `ImplicitConversion` at the same site first materializes its
     /// source to its `@__nonmaterializable` target, and converts that.
     ConversionMaterializesSource(Box<ConversionMaterialization>),
+    /// The error this raising call raises converts, in its error region,
+    /// to the error type its context propagates, through that type's
+    /// `@implicit` constructor, as upstream's `emitRaise` converts a raised
+    /// value to its error slot's type.
+    RaiseConversion(Box<ConversionMaterialization>),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -6929,6 +6938,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
         });
     }
     adjustments.extend(conversion_adjustments(facts));
+    if let Some(conversion) = &facts.raise_conversion {
+        adjustments.push(SemanticAdjustment::RaiseConversion(conversion.clone()));
+    }
     // A `^` the checker bound to a read parameter or receiver lends
     // its place and does not move it.
     if matches!(expression.kind, ExprKind::Transfer(_)) && !facts.borrowed_read_call_place {
@@ -7263,6 +7275,9 @@ node_facts! {
         /// The materialization an implicit conversion applies to its
         /// source before its constructor.
         conversion_materialization: Box<ConversionMaterialization>,
+        /// The conversion a raising call's error takes to the error type
+        /// its context propagates.
+        raise_conversion: Box<ConversionMaterialization>,
         ty: Ty,
         binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.

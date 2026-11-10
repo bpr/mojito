@@ -1191,7 +1191,18 @@ fn verify_error_region(
     // inlining and its folds have run, by the values its terminator
     // carries; a `finally` copied before the raise that ends in an exit of
     // its own replaces the raise, as `lowerTryFinally` erases the
-    // terminator it pastes over.
+    // terminator it pastes over. The value stored may be the error
+    // converted to the error type the raise leaves with, which reads the
+    // error, as upstream's `emitRaise` converts the raised value to its
+    // slot's type.
+    let reads_error = |block: &MirBlock| {
+        let mut reads = Vec::new();
+        block.instrs.iter().any(|instruction| {
+            reads.clear();
+            instruction_operand_regs(instruction, &mut reads);
+            reads.contains(&raises.error)
+        })
+    };
     let hands_on = |block: &MirBlock| {
         crate::mir::terminator_regs(&block.term).contains(&raises.error)
             || matches!(
@@ -1204,6 +1215,7 @@ fn verify_error_region(
             || matches!(block.term, MirTerm::TryRaise { .. } | MirTerm::ErrorReturn)
                 && block.instrs.iter().any(|instruction| {
                     matches!(instruction, MirInstr::DefVar { src, .. } if *src == raises.error)
+                        || matches!(instruction, MirInstr::DefVar { .. }) && reads_error(block)
                 })
     };
     if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]

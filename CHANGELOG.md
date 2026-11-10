@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A typed raise converts to the error its context propagates, through that
+  type's `@implicit` initializers, as upstream's `emitRaise` converts a
+  raised value to its error slot's type (R1152): `print(g())` for `def g()
+  raises StopIteration -> Int` runs in a plain `raises` function, a
+  `Writable` struct's raise becomes the `Error` built from it, and a
+  `raise` converts any operand an initializer accepts (`raise 3`). An
+  `@implicit` initializer whose one positional argument is its `*args`
+  collector now converts, so `var e: Error = StopIteration()` and `var e:
+  Error = 5` run (R2012). The bundled `StopIteration` is upstream's
+  `TrivialRegisterPassable`, `Writable` struct, and canonicalize keeps a
+  raising call's error region an `if` rather than folding it into
+  `select`s (`assets/ok/typed_raise_converts_to_context_error.mojo`,
+  `assets/type_error/typed_raise_without_conversion.mojo`).
 - The prelude gains upstream's `rebind_var`, which moves an owned value
   into the type a parameter refinement names, and `std.memory` gains
   `forget_deinit`, which ends a value without running its deinitializer or

@@ -224,8 +224,11 @@ impl Checker {
             .raises
             .then(|| resolved.error.clone().unwrap_or_else(Ty::error));
         if let Some(error) = &call_error {
-            self.record_call_effect(span.clone(), error.clone());
-            self.require_error(format!("call to raising method '{method}'"), error.clone())?;
+            self.require_call_error(
+                span.clone(),
+                format!("call to raising method '{method}'"),
+                error.clone(),
+            )?;
         }
         let selected_target = resolved
             .lowered_name

@@ -333,7 +333,7 @@ impl<'a> Flatten<'a> {
             let (recv, recv_place) = self.lower_method_receiver(e, object);
             let dest = self.fresh(e.location(), None);
             self.emit_interior_invalidations(object, None);
-            let raises = self.raises(e.raises(), e.location());
+            let raises = self.call_raises(e, e.raises());
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,

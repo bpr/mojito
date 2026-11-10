@@ -164,7 +164,7 @@ impl<'a> Flatten<'a> {
             (Vec::new(), Vec::new())
         };
         self.record_call(dest, Some(target.to_string()), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
             dest,
             func: FuncRef::named(target),
@@ -791,7 +791,7 @@ impl<'a> Flatten<'a> {
             (Vec::new(), call.instantiated_args())
         };
         self.record_call(d, callable_target(&node.adjustments), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::MethodCall {
             dest: d,
             recv,

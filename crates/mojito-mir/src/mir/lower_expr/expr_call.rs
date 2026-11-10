@@ -565,7 +565,7 @@ impl<'a> Flatten<'a> {
         // `__call__` transfer effects; its place is the callee's.
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, callable_target(&node.adjustments), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
             MirInstr::CallIndirect {
                 dest,
@@ -650,7 +650,7 @@ impl<'a> Flatten<'a> {
         let transfer_arg_places = arg_places.clone();
         let instantiated_args = call.instantiated_args();
         self.record_call(d, Some(target.clone()), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
@@ -829,7 +829,7 @@ impl<'a> Flatten<'a> {
             self.emit_call_invalidations(call, args, kwargs);
             let receiver = Self::static_receiver(object);
             self.record_call(dest, Some(target.clone()), 0);
-            let raises = self.raises(call.raises(), call.location());
+            let raises = self.call_raises(call, call.raises());
             self.emit_call(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
@@ -883,7 +883,7 @@ impl<'a> Flatten<'a> {
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, callable_target(&node.adjustments), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         let transfer_recv_place = recv_place.clone();
         let transfer_arg_places = arg_places.clone();
         self.emit_call(MirInstr::MethodCall {

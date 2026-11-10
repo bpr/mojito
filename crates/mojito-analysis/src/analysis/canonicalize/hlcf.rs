@@ -742,7 +742,9 @@ impl Walk<'_> {
     /// `yield` becomes one `pop.select` per result, on the condition's
     /// `!kgen.scalar<bool>` storage, and goes. Every result is of a
     /// register-passable trivial type ([`Self::selectable`]); one
-    /// `HoistYieldResults` replaced takes no select.
+    /// `HoistYieldResults` replaced takes no select. A raising
+    /// instruction's error region stays the `if` on its flag that hands its
+    /// error on, whatever its arms hold.
     fn empty_if_to_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -771,7 +773,8 @@ impl Walk<'_> {
             .map(|(result, (on_true, on_false))| (*result, *on_true, *on_false))
             .collect();
         let cond = *cond;
-        if !self.condition_selects(cond)
+        if error_region(block, index, cond)
+            || !self.condition_selects(cond)
             || !live
                 .iter()
                 .all(|(result, on_true, on_false)| self.selectable(*result, [*on_true, *on_false]))
@@ -802,10 +805,10 @@ impl Walk<'_> {
     /// SSA, so
     /// a yielded value and the condition must have one definition: one an
     /// arm redefines is not the value it held before the `if`, and one the
-    /// walk replaced waits for its replacement's walk. The
-    /// condition's storage is read after the `if`, since the `if` may be a
-    /// raising instruction's error region, which must follow it with no
-    /// read of its flag between.
+    /// walk replaced waits for its replacement's walk. The condition's
+    /// storage is read after the `if`. A raising instruction's error
+    /// region keeps its results: the error it yields is the value its
+    /// raise hands on.
     fn if_yield_select(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -854,7 +857,11 @@ impl Walk<'_> {
             }
         }
         let cond = *cond;
-        if chosen.is_empty() || !self.condition_selects(cond) || !self.defined_at_most_once(cond) {
+        if chosen.is_empty()
+            || error_region(block, index, cond)
+            || !self.condition_selects(cond)
+            || !self.defined_at_most_once(cond)
+        {
             return false;
         }
         let (storage, convert) = self.condition_storage(cond);
@@ -1226,6 +1233,16 @@ impl Walk<'_> {
         self.erase_ops(&elif.cond.instrs);
         self.erase_ops(&elif.then.instrs);
     }
+}
+
+/// Whether the `if` at `index` of `block`, on `cond`, is the error region
+/// of a raising instruction before it, whose flag `cond` is.
+fn error_region(block: &MirBlock, index: usize, cond: Reg) -> bool {
+    block.instrs[..index].iter().any(|instruction| {
+        instruction
+            .raise_edge()
+            .is_some_and(|raises| raises.flag == cond)
+    })
 }
 
 /// `checkTrivialBlocks`: the `comptime if` at `index` has no results,

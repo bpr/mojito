@@ -49,7 +49,7 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, Some(contract.target.clone()), 0);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
@@ -121,7 +121,7 @@ impl<'a> Flatten<'a> {
         let transfer_arg_places = arg_places.clone();
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, resolved.clone(), 0);
-        let raises = self.raises(raises, call.location());
+        let raises = self.call_raises(call, raises);
         let callee_ty = self.f.reg_types.get(&callee.0).or(callable_ty).cloned();
         self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
             MirInstr::CallIndirect {
@@ -321,7 +321,7 @@ impl<'a> Flatten<'a> {
                 (Some(contract), arguments)
             });
         self.record_call(d, Some(info.mangled.clone()), info.captures.len());
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::CallIndirect {
             dest: d,
             callee,
@@ -446,7 +446,7 @@ impl<'a> Flatten<'a> {
         let instantiated_args = call
             .instantiated_callable_contract()
             .map_or_else(|| call.instantiated_args(), |(_, arguments)| arguments);
-        let raises = self.raises(call.raises(), call.location());
+        let raises = self.call_raises(call, call.raises());
         // A body that is its storage's method is called on the storage,
         // as upstream calls `fn::__storage::fn`, binding its own
         // parameters from the call's solved arguments.

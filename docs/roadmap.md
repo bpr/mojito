@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2092**.
+Next free ID: **R2094**.
 
 ## Ordered Work
 
@@ -824,6 +824,24 @@ change that needs a new `MJRT_ABI_VERSION`.
     destroys each replaced element on the VM (R1216) and fails natively
     the same way.
   - Found while landing R1216 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2093 Natively, a caught typed error with fields stops the
+  backend**
+
+  Problem: `def m() raises V: raise V(3)` caught by `try: m() except e:
+  print(e.code)` stops natively with "unsupported a caught error of type
+  `V` with fields", where the VM and the pin print `3`.
+  - `store_raised`'s caller in `crates/mojito-pliron/src/lower/errors.rs`
+    stores only an `Error` or a zero-sized error into a `try`'s error slot;
+    any other layout is refused.
+  - A typed error converted to `Error` on the way out (R1152) runs
+    natively; only a handler binding the typed value needs its layout.
+  - Probe: the same over `struct V(Movable)` with one `Int` field and an
+    `@implicit` constructor from another typed error `W`, raised through
+    `def m() raises V: k()` for `def k() raises W`.
+  - Found while landing R1152 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3540,27 +3558,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2012 A lone positional collector's `@implicit` initializer
-  converts nothing, so `raise 3` and `var e: Error = 5` are rejected**
-
-  Upstream's `@implicit def __init__[*Ts: Writable](out self, *args: *Ts)`
-  converts any `Writable` value, and a `raise` converts its operand to the
-  error type through it. The pin prints `caught 3` and `5` for both
-  probes.
-  - `Checker::direct_conversion_constructor` (`checker.rs`) selects only an
-    initializer whose first regular parameter is required. The declaration
-    check (`check_method_inner`, `checker/declarations.rs`) already accepts
-    the collector form.
-  - `StmtKind::Raise` (`checker/statements.rs`) converts only a `String` or
-    string literal operand. Upstream converts any operand the error type's
-    `@implicit` initializers accept.
-  - Probe: `raise 3` in a `raises` function is "raising operation produces
-    'IntLiteral[3]', but this context propagates 'Error'".
-  - Probe: `var e2: Error = 5; print(e2)` prints `5` at the pin.
-  - Found while landing R1938 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1787 A bare parametric struct annotation on an initialized local
   does not infer its parameters from the initializer**
 
@@ -4270,18 +4267,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1152 A typed raise does not convert to the `Error` its context
-  propagates**
+- [ ] **R2092 A `for` loop's raising `__iter__` keeps its exact error
+  contract**
 
-  Problem: `print(g())` inside `def f() raises:` for `def g() raises
-  StopIteration -> Int` is rejected ("raising operation produces
-  'StopIteration', but this context propagates 'Error'"), where the pin
-  runs it and an `except e:` around `f()` prints `caught StopIteration`.
-  - `Checker::require_error` (`checker.rs`) accepts only an error type
-    equal to the context's.
-  - Probe: `ParameterList.__iter__().__next__()` read in a plain `raises`
-    function.
-  - Found while landing R807 (2026-10-19).
+  Problem: `for x in Src()` in a plain `raises` function, where
+  `Src.__iter__` raises `StopIteration`, is rejected ("raising operation
+  produces 'StopIteration', but this context propagates 'Error'"), where
+  the pin runs it and an `except e:` around the call prints `caught
+  StopIteration`.
+  - The loop's protocol hands its raising calls to `Checker::require_error`
+    without a node to record the conversion on (`checker/statements.rs`,
+    the `for` arm, and the comprehension clauses in `checker/inference.rs`).
+  - A call records its conversion with `Checker::require_call_error`, which
+    MIR's error region runs (`Flatten::convert_raised`); the loop's
+    `Flatten::call_iter` and `call_raising_next` (`mir/lower_stmt.rs`) take
+    their error from the `IterationProtocol`, which carries none.
+  - Lever: carry each raising protocol call's conversion in
+    `IterationProtocol` and have both MIR calls register it.
+  - Probe: the same with a typed `__next__` raising a `Writable` error
+    other than `StopIteration`.
+  - Found while landing R1152 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8073,8 +8078,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   or the bundle lacks the trait, so `conforms_to` answers `False` where the
   pin answers `True`.
   - `Writable` (a `write_to`): `Layout`, `Allocation`, `ThinAllocation`,
-    `StopIteration`, `OwnedPointer where T: Writable`, and `StringDict
-    where V: Writable`.
+    `OwnedPointer where T: Writable`, and `StringDict where V: Writable`.
   - `IterableOwned` on `Dict`: an owning `__iter__(var self)` and its
     iterator. Upstream's clause reads `KeyElement` (R1171); `K: Deinitable`
     spells it meanwhile.

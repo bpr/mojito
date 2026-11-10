@@ -3238,6 +3238,16 @@ struct Flatten<'a> {
     /// A borrowed loop's retained-source slot to the place it borrows, until
     /// `GetIter` reads it: a raising `__iter__` is called on it.
     iteration_sources: HashMap<VarId, MirPlace>,
+    /// A raise edge's error register to the conversion its error takes to
+    /// the error type the context propagates, which its error region runs
+    /// before the raise.
+    raise_conversions: HashMap<
+        u32,
+        (
+            mojito_checked::checked::ConversionMaterialization,
+            SourceSpan,
+        ),
+    >,
     runtime_aliases: std::collections::HashSet<VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
@@ -3941,6 +3951,30 @@ impl<'a> Flatten<'a> {
         Some(Raises { ty, flag, error })
     }
 
+    /// The raise edge of the raising call `call`, as [`Self::raises`]
+    /// builds it from the error `ty` the call raises, with the conversion
+    /// the checker recorded for its error to the context's error type.
+    fn call_raises(&mut self, call: Node<'_>, ty: Option<Ty>) -> Option<Raises> {
+        let raises = self.raises(ty, call.location());
+        self.convert_raised(raises.as_ref(), call.raise_conversion(), call.location());
+        raises
+    }
+
+    /// Have the error region of `raises` convert its error by
+    /// `conversion`, the checker's conversion of it to the error type the
+    /// context propagates, at `site`.
+    fn convert_raised(
+        &mut self,
+        raises: Option<&Raises>,
+        conversion: Option<mojito_checked::checked::ConversionMaterialization>,
+        site: SourceSpan,
+    ) {
+        if let (Some(raises), Some(conversion)) = (raises, conversion) {
+            self.raise_conversions
+                .insert(raises.error.0, (conversion, site));
+        }
+    }
+
     /// Emit a raising instruction's error region once its call tail
     /// (keep-alives, transferred loans, a consumed receiver) is in place:
     /// an `if` on its flag whose `then` region raises its error, as
@@ -3951,7 +3985,32 @@ impl<'a> Flatten<'a> {
         let Some(raises) = raises else {
             return;
         };
-        let (instrs, term) = self.raise_exit(raises.error);
+        let (instrs, term) = match self.raise_conversions.remove(&raises.error.0) {
+            Some((conversion, site)) => {
+                let outer = std::mem::take(&mut self.f.body.instrs);
+                let error = self.fresh_typed(site, None, conversion.ty.clone());
+                self.emit(MirInstr::Call {
+                    dest: error,
+                    func: FuncRef::named(&conversion.constructor),
+                    raises: None,
+                    args: vec![raises.error],
+                    kwargs: Vec::new(),
+                    arg_places: vec![None],
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    receiver: None,
+                    instantiated_args: conversion.instantiated_args,
+                    spread: None,
+                });
+                self.record_call(error, Some(conversion.constructor), 0);
+                let (exit, term) = self.raise_exit(error);
+                let mut instrs = std::mem::replace(&mut self.f.body.instrs, outer);
+                instrs.extend(exit);
+                (instrs, term)
+            }
+            None => self.raise_exit(raises.error),
+        };
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
@@ -4912,6 +4971,7 @@ fn lower_cfg_nested(
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
             iteration_sources: HashMap::new(),
+            raise_conversions: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
                 .take(cfg.n_params)

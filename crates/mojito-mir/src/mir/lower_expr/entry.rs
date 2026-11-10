@@ -387,6 +387,7 @@ impl<'a> Flatten<'a> {
             instantiated_args,
             spread: None,
         });
+        self.record_call(dest, Some(target.to_string()), 0);
         if let Some(source_place) = source_place {
             // A view-constructor conversion result borrows its source: bind
             // the temporary into a hidden retained slot whose loan keeps

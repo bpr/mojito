@@ -122,8 +122,11 @@ impl Checker {
                 .struct_dunder_signature_for(&t, op.dunder(), &[])
                 .map(|(_, sig, _)| sig);
             if let Some(error) = signature.and_then(dunder_error) {
-                self.record_call_effect(span, error.clone());
-                self.require_error(format!("raising operator '{}'", op.symbol()), error)?;
+                self.require_call_error(
+                    span,
+                    format!("raising operator '{}'", op.symbol()),
+                    error,
+                )?;
             }
             let convention = signature.map(|sig| sig.self_convention);
             if convention.is_some_and(reads) {

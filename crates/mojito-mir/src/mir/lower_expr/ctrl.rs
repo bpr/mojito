@@ -1135,6 +1135,7 @@ impl<'a> Flatten<'a> {
             .map_or(first, |previous| rest[previous].1);
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
+            raise_conversion: resolved.as_ref().and_then(|_| chain.raise_conversion()),
             resolved,
             method: super::expr::struct_operator_method(op, receiver),
             contract: link.and_then(|link| {

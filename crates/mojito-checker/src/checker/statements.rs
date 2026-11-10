@@ -2398,11 +2398,12 @@ impl Checker {
                 Ok(())
             }
 
-            // `raise` — its operand is the raised error, or a `String` the
-            // `Error` struct's `@implicit` initializer converts, as upstream
-            // converts the operand to the error type. The raises *effect*
-            // (that this must be in a `raises` function or a `try`) is
-            // deliberately not analyzed.
+            // `raise` — its operand converts to the error type the
+            // context propagates, as upstream's `emitRaise` converts the
+            // value to its error slot's type; inside a handling `try`, a
+            // `String` converts to `Error` through its `@implicit`
+            // initializer. The raises *effect* (that this must be in a
+            // `raises` function or a `try`) is deliberately not analyzed.
             StmtKind::Raise(expr) => {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
@@ -2410,18 +2411,14 @@ impl Checker {
                     || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
                         args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
                     });
-                let error = if stringish {
-                    let error = Ty::error();
-                    if !self.record_implicit_conversion(expr, &ty, &error)? {
-                        return Err(TypeError::TypeMismatch {
-                            expected: error.to_string(),
-                            found: ty.to_string(),
-                            context: "'raise'".to_string(),
-                        });
-                    }
-                    error
-                } else {
-                    ty
+                let target = self
+                    .propagated_error()
+                    .cloned()
+                    .or_else(|| stringish.then(Ty::error))
+                    .filter(|target| *target != ty);
+                let error = match target {
+                    Some(target) if self.record_implicit_conversion(expr, &ty, &target)? => target,
+                    _ => ty,
                 };
                 self.require_error("'raise'", error)?;
                 Ok(())

@@ -2396,8 +2396,11 @@ impl Checker {
         self.record_constructor_parameters(span, binding, &effective, args, kwargs);
         if binding.raises {
             let error = binding.error.cloned().unwrap_or_else(Ty::error);
-            self.record_call_effect(span.clone(), error.clone());
-            self.require_error(format!("call to raising constructor '{name}'"), error)?;
+            self.require_call_error(
+                span.clone(),
+                format!("call to raising constructor '{name}'"),
+                error,
+            )?;
         }
         Ok(())
     }
@@ -2899,8 +2902,11 @@ impl Checker {
     /// solves and its own parameters solved from `source`, the converted
     /// value's type (`__init__[T: Movable](out self, var value: T)` takes a
     /// `String` at `T = String`), with those own arguments in declaration
-    /// order. `None` when its own parameters cannot be solved from `source`
-    /// or `source` misses one of their bounds.
+    /// order. A constructor whose one positional argument is its `*args`
+    /// collector (`Error`'s `__init__[*Ts: Writable](out self, *args:
+    /// *Ts)`) takes `source` as the collector's one element. `None` when
+    /// its own parameters cannot be solved from `source` or `source` misses
+    /// one of their bounds.
     pub(super) fn conversion_constructor_parameter(
         &self,
         name: &str,
@@ -2908,7 +2914,21 @@ impl Checker {
         struct_subst: &TySubst,
         source: &Ty,
     ) -> Option<(Ty, Vec<TyArg>)> {
-        let pattern = substitute(sig.params.first()?, struct_subst);
+        let collected = sig.params.is_empty() && sig.variadic.is_some();
+        let parameter = match (sig.params.first(), &sig.variadic) {
+            (None, Some(element)) => element,
+            (parameter, _) => parameter?,
+        };
+        let pattern = substitute(parameter, struct_subst);
+        // A literal element is materialized at its default type, as a
+        // written `Error(42)` passes an `Int`.
+        let defaulted;
+        let source = if collected {
+            defaulted = mojito_types::types::default_literal(source);
+            &defaulted
+        } else {
+            source
+        };
         let own = self
             .solve_constructor_own_params(
                 name,
@@ -2917,6 +2937,11 @@ impl Checker {
                 std::iter::once((pattern.clone(), source.clone())),
             )
             .ok()?;
+        // A collector's one element is the source, at the pack's solved
+        // type.
+        if collected {
+            return Some((source.clone(), own.arguments));
+        }
         Some((own.apply(self, &pattern).ok()?, own.arguments))
     }
 

@@ -3963,7 +3963,13 @@ raise point is a `raise` terminator and drop elaboration destroys at that
 arm's entry what the raise holds, out of the function too. The verifier
 requires the region after each raising instruction in its block, nothing
 between them reading the instruction's results, its `then` region handing
-the error on. The VM sets the flag and error when the instruction raises,
+the error on: storing it, or a value its region converts it to. A call
+raising a type other than the one its context propagates carries the
+checker's conversion (`SemanticAdjustment::RaiseConversion`, recorded by
+`Checker::require_call_error` from the context type's `@implicit`
+initializers), and its region calls that initializer on the error before
+the raise (`Flatten::convert_raised`), as upstream's `emitRaise` converts
+the raised value to its error slot's type. The VM sets the flag and error when the instruction raises,
 a child frame's `raise` popping into its caller's call; Pliron joins the
 callee's outcome branch after the instruction and branches on the flag;
 `inline-parametric` routes an inlined body's raises out of the callee into
@@ -6664,7 +6670,8 @@ point where a slot declared in a loop is uninitialized again.
   a `field.get _mlir_value` of a `Bool`, or `pop.cast_from_builtin` of an
   `i1`, as `_select_register_value` spells it; an `if` with elifs keeps
   its branch, as at the pin, `tests/mir_passes/canonicalize/empty_if_to_select*.mir`,
-  `if_yield_select*.mir`; the pin's `IfToSelect`, whose match its binary
+  `if_yield_select*.mir`; neither folds a raising instruction's error
+  region, whose `if` hands its error on, `error_region_kept.mir`; the pin's `IfToSelect`, whose match its binary
   does not show, is R2078),
   `RemoveDeadLoop` removes a loop whose body only breaks, its results
   replaced by the values the break carries and its arguments by its

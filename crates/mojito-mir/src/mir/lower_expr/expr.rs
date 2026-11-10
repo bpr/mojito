@@ -14,6 +14,9 @@ use mojito_types::types::TyKind;
 pub(in crate::mir) struct OperatorDispatch {
     pub(in crate::mir) resolved: Option<String>,
     pub(in crate::mir) raises: Option<Ty>,
+    /// The conversion the raised error takes to the error type the
+    /// context propagates.
+    pub(in crate::mir) raise_conversion: Option<mojito_checked::checked::ConversionMaterialization>,
     /// The method a struct receiver answers the operator with, when the
     /// operator is that method's call ([`struct_operator_method`]).
     pub(in crate::mir) method: Option<&'static str>,
@@ -291,7 +294,7 @@ impl<'a> Flatten<'a> {
         };
         self.emit_interior_invalidations(container, None);
         self.emit_call_invalidations(node, &[value], &[]);
-        let raises = self.raises(node.raises(), node.location());
+        let raises = self.call_raises(node, node.raises());
         self.emit_call(MirInstr::MethodCall {
             dest: contains,
             recv,
@@ -375,6 +378,7 @@ impl<'a> Flatten<'a> {
         let dispatch = OperatorDispatch {
             resolved: node.resolved_callable(),
             raises: node.raises(),
+            raise_conversion: node.raise_conversion(),
             method: None,
             contract: None,
         };
@@ -397,10 +401,12 @@ impl<'a> Flatten<'a> {
         let OperatorDispatch {
             resolved,
             raises,
+            raise_conversion,
             method,
             contract,
         } = dispatch;
         let raises = self.raises(raises, location.clone());
+        self.convert_raised(raises.as_ref(), raise_conversion, location.clone());
         let d = self.fresh(location, None);
         let (contract, refined_bound) = contract.map_or((None, None), |mut contract| {
             let refined_bound = contract.refined_bound.take().map(MirRefinedBound::boxed);
@@ -899,7 +905,7 @@ impl<'a> Flatten<'a> {
             ra
         };
         let d = self.fresh(node.location(), None);
-        let raises = self.raises(node.raises(), node.location());
+        let raises = self.call_raises(node, node.raises());
         self.emit(MirInstr::UnOp {
             op,
             dest: d,

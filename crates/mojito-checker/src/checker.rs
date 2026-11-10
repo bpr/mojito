@@ -1217,6 +1217,39 @@ impl Checker {
     }
 
     fn require_error(&self, operation: impl Into<String>, error: Ty) -> Result<(), TypeError> {
+        self.require_error_at(None, operation, error)
+    }
+
+    /// Record that the call at `span` raises `error`, and require its
+    /// context to take it: a context propagating another error type takes
+    /// it through that type's `@implicit` constructor, which the call's
+    /// error region runs before the raise, as upstream's `emitRaise`
+    /// converts the raised value to the error slot's type.
+    fn require_call_error(
+        &self,
+        span: SourceSpan,
+        operation: impl Into<String>,
+        error: Ty,
+    ) -> Result<(), TypeError> {
+        self.record_call_effect(span.clone(), error.clone());
+        self.require_error_at(Some(span), operation, error)
+    }
+
+    /// The error type a `raise` here propagates out of the function: the
+    /// declared one, outside every `try` body that handles it.
+    fn propagated_error(&self) -> Option<&Ty> {
+        (self.handled_raise_depth == 0)
+            .then(|| self.raising_context.last())
+            .flatten()
+            .and_then(Option::as_ref)
+    }
+
+    fn require_error_at(
+        &self,
+        site: Option<SourceSpan>,
+        operation: impl Into<String>,
+        error: Ty,
+    ) -> Result<(), TypeError> {
         if self.resolving_accessor_only.get() {
             return Ok(());
         }
@@ -1238,6 +1271,12 @@ impl Checker {
             if *expected == error {
                 return Ok(());
             }
+            if let Some(site) = site
+                && let Some(conversion) = self.raise_conversion(&error, expected)?
+            {
+                self.record_at(site).raise_conversion = Some(Box::new(conversion));
+                return Ok(());
+            }
             return Err(TypeError::RaiseTypeMismatch {
                 expected: expected.to_string(),
                 found: error.to_string(),
@@ -1248,6 +1287,36 @@ impl Checker {
         } else {
             Err(TypeError::UnhandledRaise(operation.into()))
         }
+    }
+
+    /// The conversion of a raised `from` to the error `to` its context
+    /// propagates: `to`'s `@implicit` constructor from it, when that
+    /// neither raises nor borrows its source.
+    fn raise_conversion(
+        &self,
+        from: &Ty,
+        to: &Ty,
+    ) -> Result<Option<mojito_checked::checked::ConversionMaterialization>, TypeError> {
+        let Some(selected) = self
+            .implicit_conversion_constructor(from, to)?
+            .filter(|selected| {
+                selected.error.is_none()
+                    && selected.source_borrow.is_none()
+                    && selected.materialization.is_none()
+            })
+        else {
+            return Ok(None);
+        };
+        Ok(Some(mojito_checked::checked::ConversionMaterialization {
+            instantiated_args: self.conversion_instantiation(
+                to,
+                &selected.target,
+                selected.own_arguments,
+            ),
+            constructor: selected.target,
+            ty: to.clone(),
+            reads: !selected.consumes_source,
+        }))
     }
 
     fn record_call_effect(&self, span: SourceSpan, error: Ty) {
@@ -1915,9 +1984,7 @@ impl Checker {
             .iter()
             .filter(|sig| {
                 sig.implicit
-                    && sig.required.first() == Some(&true)
-                    && sig.required[1..].iter().all(|required| !required)
-                    && sig.variadic.is_none()
+                    && converts_one_argument(sig)
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
                             declarations::refinement_admits(refined, &instance, &sig.decls, to)
@@ -1938,6 +2005,12 @@ impl Checker {
                     .then_some((sig, parameter, own_arguments))
             })
             .collect::<Vec<_>>();
+        // A candidate binding the source to a regular parameter beats one
+        // collecting it, as a call prefers a non-variadic overload.
+        let mut matches = matches;
+        if matches.iter().any(|(sig, ..)| sig.variadic.is_none()) {
+            matches.retain(|(sig, ..)| sig.variadic.is_none());
+        }
         // Several converting constructors may accept the source; one whose
         // parameter is exactly the source type wins (the pin's
         // `IntLiteral[_]` solves to the literal's own `IntLiteral[v]`), and
@@ -2897,6 +2970,33 @@ fn literal_admits_parameter(from: &Ty, parameter: &Ty) -> bool {
         || (from_kind.is_int_literal() && parameter_kind.is_int_literal())
         || (from_kind.is_float_literal() && parameter_kind.is_float_literal())
         || *parameter == mojito_types::types::default_literal(from)
+}
+
+/// Whether `sig` takes exactly one positional argument, as a converting
+/// constructor does: one required regular parameter and no collector, or
+/// no required regular parameter and a borrowed `*args` collector, whose
+/// one element the converted value is (`Error`'s `@implicit
+/// __init__[*Ts: Writable](out self, *args: *Ts)` converts a `Writable`).
+fn converts_one_argument(sig: &MethodSig) -> bool {
+    if sig.kw_variadic.is_some() {
+        return false;
+    }
+    match &sig.variadic {
+        None => {
+            sig.required.first() == Some(&true)
+                && sig.required[1..].iter().all(|required| !required)
+        }
+        Some(_) => {
+            sig.params.is_empty()
+                && !matches!(
+                    sig.variadic_convention,
+                    Some(
+                        mojito_ast::ast::ArgConvention::Var
+                            | mojito_ast::ast::ArgConvention::Deinit
+                    )
+                )
+        }
+    }
 }
 
 /// Whether a struct parameter is an origin slot (`o: Origin[mut=m]`, an

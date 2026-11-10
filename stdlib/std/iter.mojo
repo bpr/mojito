@@ -19,8 +19,9 @@
 from std.collections.optional import Optional
 
 @fieldwise_init
-struct StopIteration:
-    pass
+struct StopIteration(TrivialRegisterPassable, Writable):
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write("StopIteration")
 
 trait Iterator(Deinitable, Movable):
     comptime Element: Movable

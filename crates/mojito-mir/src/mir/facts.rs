@@ -809,6 +809,22 @@ impl<'a> Node<'a> {
             })
     }
 
+    /// The conversion this raising call's error takes to the error type
+    /// its context propagates
+    /// ([`mojito_checked::checked::SemanticAdjustment::RaiseConversion`]).
+    pub(super) fn raise_conversion(
+        self,
+    ) -> Option<mojito_checked::checked::ConversionMaterialization> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::RaiseConversion(conversion) => {
+                    Some((**conversion).clone())
+                }
+                _ => None,
+            })
+    }
+
     /// The materialization this node's implicit conversion applies to its
     /// source before its constructor
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionMaterializesSource`]).
@@ -1086,6 +1102,11 @@ impl<'a> Flatten<'a> {
     ) -> Option<MirSubscriptCall> {
         let contract = node.call_contract()?;
         let mut call = self.mir_subscript_call_contract(contract, operands, node.location());
+        self.convert_raised(
+            call.raises.as_ref(),
+            node.raise_conversion(),
+            node.location(),
+        );
         if let Some((_, index)) = node.index_operands() {
             self.record_index_parameter(node, index, &mut call);
         }

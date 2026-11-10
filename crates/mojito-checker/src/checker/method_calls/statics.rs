@@ -687,8 +687,11 @@ impl Checker {
         }
         if selected.raises {
             let error = selected.error.clone().unwrap_or_else(Ty::error);
-            self.record_call_effect(span, error.clone());
-            self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
+            self.require_call_error(
+                span,
+                format!("call to raising method '{sname}.{method}'"),
+                error,
+            )?;
         }
         Ok(self.close_existentials(selected.return_type, &existentials))
     }
