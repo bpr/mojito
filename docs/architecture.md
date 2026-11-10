@@ -2833,7 +2833,11 @@ call's own type where the two agree once erased, so a caller's dereference of
 `id(Pointer(to=x))` keeps `x`'s origin. The instance's own origin
 binders and its body's own places stay symbolic, as upstream keeps an
 instance's origin parameters unspecialized (`$0`, `$1`), so concrete MIR
-admits `Origin::Param`.
+admits `Origin::Param`. A method instance's bare `Self` is likewise its
+owner's instance over the owner's own origin binders
+(`Bindings::name_owner_origins`, from `MirStructDeclaration::origin_params`),
+as upstream spells it `::Span[$0, $1, $2, $3]`, the same type an explicit
+`Span[T, origin]` names.
 
 A type's node caches whether it is closed (`Ty::is_closed`: no parameter,
 projection, literal or inference type, callable, pointer, reference,

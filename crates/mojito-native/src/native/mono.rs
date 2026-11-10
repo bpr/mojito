@@ -41,7 +41,8 @@ use mojito_types::param_expr::{
     ParamContext, ParamExpr, ParamKind, ParamRef,
 };
 use mojito_types::types::{
-    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, erase_origins,
+    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind,
+    erase_origins,
 };
 use mojito_vm::backend::{ConcreteProgram, VmBackend};
 
@@ -498,6 +499,41 @@ impl Bindings {
             .chain(self.self_instance.iter_mut().map(|(_, ty)| ty))
             .for_each(|ty| *ty = erase_origins(ty));
         self.values.values_mut().for_each(erase_value);
+        self.name_owner_origins();
+    }
+
+    /// Name the owner's own origin parameters in the origin tail of the
+    /// instance a bare `Self` stands for, as upstream spells a method's
+    /// `Self` over its owner's unspecialized parameters
+    /// (`::Span[$0, $1, $2, $3]`): an explicit `Span[T, origin]` keeps its
+    /// `Origin::Param` likewise.
+    fn name_owner_origins(&mut self) {
+        let Some((owner, instance)) = &mut self.self_instance else {
+            return;
+        };
+        let Some(declaration) = self.structs.declaration(owner) else {
+            return;
+        };
+        let prefix = declaration.param_decls.len();
+        let TyKind::Struct(name, arguments) = instance.kind() else {
+            return;
+        };
+        if declaration.origin_params.is_empty()
+            || arguments.len() != prefix + declaration.origin_params.len()
+        {
+            return;
+        }
+        let arguments = arguments[..prefix]
+            .iter()
+            .cloned()
+            .chain(
+                declaration
+                    .origin_params
+                    .iter()
+                    .map(|id| TyArg::Origin(mojito_types::origin::Origin::Param(*id))),
+            )
+            .collect();
+        *instance = instance.reusing(TyKind::Struct(name.clone(), arguments));
     }
 }
 

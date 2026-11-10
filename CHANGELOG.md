@@ -158,6 +158,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method instance's bare `Self` now names its owner's own origin binders
+  (R868), as upstream spells it `::Span[$0, $1, $2, $3]`, instead of the
+  unbound origins R866 left on the owner's erased instance, so it is the
+  same type an explicit `Span[T, origin]` names. Both backends erase
+  origins, so no program's output changes.
 - The MIR verifier's scope and concrete modes now read every type and
   parameter site through `mir::visit::TypeVisitor`, the read-only twin of
   `MutTypeVisitor` expanded from the same site inventory, as MLIR's

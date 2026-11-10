@@ -725,22 +725,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R934.
   - Model: Opus, Not Planned.
 
-- [ ] **R868 A method instance's bare `Self` erases its owner's origin
-  binders**
-
-  `substitute_ty` rewrites a bare `Self` in a method instance to
-  `Bindings::self_instance`, whose origin tail R866 erased to
-  `Origin::Unbound`, where upstream names the owner's own unspecialized
-  parameters (`::Span[$0, $1, $2, $3]`).
-  - An explicit spelling (`Span[T, origin]`) already keeps `Origin::Param`.
-  - The fix needs `MirStructDeclaration` to carry the struct's origin
-    slots, which the checker computes in `struct_origin_slots`; that is a
-    MIR text-schema and package-format bump.
-  - Both backends erase origins, so no output depends on it.
-  - Found while landing R866 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R896 The check types the `paramfor_*` stubs at a cost of about 4 ms
   per stub in a debug build**
 

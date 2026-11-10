@@ -2127,6 +2127,41 @@ fn an_instance_binds_origin_erased_types() {
     assert_eq!(first, instances(&second_run, "first"));
 }
 
+#[test]
+fn a_method_instance_s_bare_self_names_its_owner_s_origin_binders() {
+    use mojito_types::origin::Origin;
+    let source = "struct View[T: Copyable, origin: Origin[mut=False]](Copyable):\n\
+         \x20   var p: UnsafePointer[Self.T, Self.origin]\n\
+         \x20   def __init__(out self, p: UnsafePointer[Self.T, Self.origin]):\n\
+         \x20       self.p = p\n\
+         \x20   def same(self) -> Self:\n\
+         \x20       return Self(self.p)\n\
+         def main():\n\
+         \x20   var x = 5\n\
+         \x20   var v = View[Int, origin_of(x)](UnsafePointer(to=x))\n\
+         \x20   print(v.same().p[])\n";
+    let specialized = specialized_main(source);
+    let (_, same) = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("View") && name.contains("same"))
+        .expect("the `same` instance");
+    let origins = same
+        .param_types
+        .iter()
+        .chain(same.ret_ty.iter())
+        .flat_map(struct_origins)
+        .collect::<Vec<_>>();
+    assert!(
+        !origins.is_empty()
+            && origins
+                .iter()
+                .all(|origin| matches!(origin, Origin::Param(_))),
+        "`same`'s bare `Self` keeps `View`'s own origin binder: {origins:?}"
+    );
+}
+
 /// Elaborate `source` from `main` with the parameters `removed` names
 /// (function, parameter) removed by hand, beside those
 /// `remove-unused-params` removed.
