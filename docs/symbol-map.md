@@ -2867,9 +2867,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   runtime value, the text form `param(...)` (schema 1.20). The checker
   records it as `SemanticAdjustment::ParamValue { value }`
   (`mojito-checked`, `checked.rs`) through `Checker::record_pack_query_value`
-  and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
-  `infer_member` (`Ts.length`, `indexing.rs`) and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
-  `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
+  (`checker/comptime_validation.rs`) from `infer_member` (`Ts.length`,
+  `indexing.rs`), and through `record_pack_proposition_value` from the
+  `Invoke` arm of `infer` (`Ts.contains[X]()`, `Ts.all_conforms_to[T]()`,
+  `inference.rs`), whose value is the condition emitter's
+  `pack_proposition_value` (`checker/constraints.rs`). A value pack that is still a
   parameter (`*values: Int`) declares two binders
   (`ParamDecl::push_value_pack`, `mojito-types`, `types.rs`): the implicit
   infer-only `values.values` typed with the raw list it binds,

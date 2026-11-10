@@ -483,6 +483,25 @@ impl Checker {
             })
     }
 
+    /// The type the enclosing struct's type parameter at `index` denotes
+    /// as `Self` binds it: the argument a concrete `Self` supplies (`Self.T`
+    /// is `Int` while `Self` is `Optional[Int]`), else the parameter itself.
+    pub(super) fn self_type_parameter(&self, index: usize) -> Option<Ty> {
+        let decl = self.self_decls.get(index)?;
+        if matches!(decl, ParamDecl::Type { .. })
+            && let Some((_, arguments)) = self
+                .self_ty
+                .as_ref()
+                .and_then(|ty| ty.kind().as_non_simd_struct())
+            && arguments.len() >= self.self_decls.len()
+            && let Some(TyArg::Ty(bound)) = arguments.get(index)
+            && !matches!(bound.kind(), TyKind::Param { .. })
+        {
+            return Some(bound.clone());
+        }
+        type_parameter(decl)
+    }
+
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         if let Some(reflected) = self.reflected_type_annotation(ty)? {
             return Ok(reflected);
@@ -669,33 +688,15 @@ impl Checker {
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
             // parameter is not a type, so `Self.n` in type position is an error).
-            SourceType::SelfParam(name) => {
-                // A concrete `Self` binds the struct's parameters: `Self.T`
-                // is `Int` while `Self` is `Optional[Int]`.
-                if let Some((_, arguments)) = self
-                    .self_ty
-                    .as_ref()
-                    .and_then(|ty| ty.kind().as_non_simd_struct())
-                    && arguments.len() >= self.self_decls.len()
-                    && let Some(index) = self
-                        .self_decls
-                        .iter()
-                        .position(|d| d.name() == name && matches!(d, ParamDecl::Type { .. }))
-                    && let Some(TyArg::Ty(bound)) = arguments.get(index)
-                    && !matches!(bound.kind(), TyKind::Param { .. })
-                {
-                    return Ok(bound.clone());
-                }
-                match self
-                    .self_decls
-                    .iter()
-                    .find(|d| d.name() == name)
-                    .and_then(type_parameter)
-                {
-                    Some(parameter) => parameter,
-                    None => return self.associated_type_for_self(name),
-                }
-            }
+            SourceType::SelfParam(name) => match self
+                .self_decls
+                .iter()
+                .position(|d| d.name() == name)
+                .and_then(|index| self.self_type_parameter(index))
+            {
+                Some(parameter) => parameter,
+                None => return self.associated_type_for_self(name),
+            },
             // Bare `Self` — the enclosing struct type or a trait's abstract Self.
             // Value-parameterized structs carry their symbolic `CtValue::Expr`
             // arguments here; specialization bakes them out.

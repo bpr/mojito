@@ -817,6 +817,7 @@ assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_beside_value_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_call_nested_def_and_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_constructor_spread_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_contains_self_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_def_scalar_value_binders_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_def_unkept_loop_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_drop_names_element_destructors.mojo	-	ineligible	no-scalar-entry-shape

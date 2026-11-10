@@ -152,6 +152,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `contains` element naming a binder (`Us.contains[Self.T]()`,
+  `Us.contains[T]()`) is read by its declaration rather than re-read by
+  its spelling, and a runtime-position pack proposition emits through the
+  same emitter a `comptime if` uses, as upstream's parameter emitter
+  does. The enclosing struct's binder now works in both positions, where
+  it failed the check or MIR verification (R1949).
 - A callable's `where` clauses compile once: the registered signature
   reads the clauses a compile-time application already emitted, rather
   than compiling them again and publishing over them, as upstream emits a

@@ -312,22 +312,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1949 A `contains` element naming a binder is re-read as a type
-  by its spelling**
-
-  `typelist_proposition_query`'s `PackContains` arm
-  (`comptime_validation.rs`) turns a `ConstraintOperand::Param` element
-  back into a type through `ty_from_anno(Type::Named(param.name))`, where
-  upstream's parameter emitter reads the element's binder once, when it
-  emits the condition.
-  - The lever: build the element's type from the `ParamRef` it already
-    holds (its binder's `TyKind::Param`), not from its spelling.
-  - Probe: `assets/ok/pack_length_runtime_position.mojo`
-    (`Us.contains[T]()` over a type binder `T`).
-  - Found while landing R1899 (2026-11-05).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2074 `stack-reuse` counts a `ref.make` of a slot as an escape**
 
   Upstream's `StackReuse` follows a stack allocation's views

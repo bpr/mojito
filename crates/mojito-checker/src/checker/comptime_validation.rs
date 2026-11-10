@@ -5811,33 +5811,26 @@ impl Checker {
         }
     }
 
-    /// The pack query a `TypeList` proposition over a pack asks, when its
-    /// operand names a type.
-    pub(super) fn typelist_proposition_query(
+    /// Record the `Bool` a `TypeList` proposition over a pack that is still
+    /// a parameter (`Us.contains[T]()`) reads at runtime: the same value the
+    /// proposition emits in a condition, which each instance folds.
+    pub(super) fn record_pack_proposition_value(
         &self,
-        proposition: GenericConstraint,
-    ) -> Option<mojito_types::param_expr::PackQuery> {
-        use mojito_types::param_expr::PackQuery;
-        Some(match proposition {
-            GenericConstraint::ConformsPack { trait_name, .. } => PackQuery::Conforms(trait_name),
-            GenericConstraint::PackPredicate { predicate, all, .. } => {
-                PackQuery::Predicate { predicate, all }
-            }
-            GenericConstraint::PackContains { element, .. } => {
-                let element = match element {
-                    ConstraintOperand::Type(ty) => ty,
-                    ConstraintOperand::Param(param) => self
-                        .ty_from_anno(&mojito_ast::ast::Type::Named(
-                            param.name.to_string(),
-                            Vec::new(),
-                        ))
-                        .ok()?,
-                    _ => return None,
-                };
-                PackQuery::Contains(self.param_context.type_shape(element))
-            }
-            _ => return None,
-        })
+        span: SourceSpan,
+        pack: &ParamExpr,
+        proposition: &GenericConstraint,
+    ) -> Result<(), TypeError> {
+        if pack.as_decl_ref().is_some() {
+            let value = self.pack_proposition_value(proposition)?;
+            self.record_at(span).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value,
+                    materialized: None,
+                    literal_target: None,
+                },
+            ));
+        }
+        Ok(())
     }
 
     /// The type of element `index` of a variadic pack that is still a

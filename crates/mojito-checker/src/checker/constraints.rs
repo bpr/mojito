@@ -3132,7 +3132,7 @@ impl Checker {
     /// The `Bool` value of a pack or `TypeList` proposition the constraint
     /// compiler read: a closed list's answer, else the pack's query, which
     /// the elaborator answers per instance.
-    fn pack_proposition_value(
+    pub(super) fn pack_proposition_value(
         &self,
         proposition: &GenericConstraint,
     ) -> Result<ParamExpr, TypeError> {
@@ -5887,11 +5887,19 @@ impl Checker {
             })
     }
 
-    /// The type an open scope's type parameter `binder` denotes.
-    fn binder_type(&self, binder: &ParamRef) -> Option<Ty> {
+    /// The type the type parameter `binder` denotes, found by its
+    /// declaration among the open scopes' parameters and then the enclosing
+    /// struct's, which `Self` binds.
+    pub(super) fn binder_type(&self, binder: &ParamRef) -> Option<Ty> {
         self.open_type_binders()
             .find(|(open, _)| open.id == binder.id)
             .map(|(_, ty)| ty.clone())
+            .or_else(|| {
+                self.self_decls
+                    .iter()
+                    .position(|decl| decl.id() == &binder.id)
+                    .and_then(|index| self.self_type_parameter(index))
+            })
     }
 
     /// The binder of the type parameter a bare name denotes in the open

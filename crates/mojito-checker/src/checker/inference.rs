@@ -953,9 +953,7 @@ impl Checker {
                     && let Some(pack) = self.type_pack_named(object)
                     && let Some(proposition) = self.compile_typelist_proposition(expr)?
                 {
-                    if let Some(query) = self.typelist_proposition_query(proposition) {
-                        self.record_pack_query_value(expr.source_span(), &pack, query);
-                    }
+                    self.record_pack_proposition_value(expr.source_span(), &pack, &proposition)?;
                     return Ok(Ty::bool());
                 }
                 if let ExprKind::Member { object, field } = &callee.kind
