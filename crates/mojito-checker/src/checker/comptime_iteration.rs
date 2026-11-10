@@ -93,7 +93,10 @@ impl Checker {
     /// Type upstream's desugaring of a `comptime for` over `iter`: the
     /// spelled call `iter.__iter__()`, the iterator type it gives, and the
     /// element type `paramfor_next_value` over that iterator gives, typed
-    /// once per iterator type. The stub calls are typed in a probe, so a
+    /// once per iterator type. Each stub is applied to a value of the
+    /// iterator type, as upstream's `parseParamFor` passes it the iterator
+    /// the `__iter__()` call produced, so the spelled call is not typed
+    /// again per stub. The stub calls are typed in a probe, so a
     /// bound the iterator fails (an iterator that is not `Copyable`) is the
     /// call's own rejection and no fact of theirs survives.
     fn comptime_iterator_protocol(
@@ -159,6 +162,7 @@ impl Checker {
         }
         let element_ty = self
             .probe(|| {
+                let iterator = self.synthetic_store_value(source, &iterator_ty);
                 [
                     "paramfor_has_next",
                     "paramfor_next_iter",
@@ -173,7 +177,7 @@ impl Checker {
                         ExprKind::Call {
                             name: builtin_stub(name),
                             param_args: Vec::new(),
-                            args: vec![call.clone()],
+                            args: vec![iterator.clone()],
                             kwargs: Vec::new(),
                         },
                         source.span,

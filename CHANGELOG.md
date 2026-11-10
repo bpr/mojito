@@ -158,6 +158,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check types the `comptime for` stepping stubs (`paramfor_has_next`,
+  `paramfor_next_iter`, `paramfor_next_value`) against a value of the
+  iterator type, as upstream's `parseParamFor` passes them the iterator,
+  instead of typing the spelled `seq.__iter__()` call again for each
+  argument of each stub (R896). The check's `bodies` phase on
+  `assets/ok/comptime_for_template_served.mojo` drops from about 100 ms to
+  about 50 ms in a debug build; output is unchanged.
 - A method instance's bare `Self` now names its owner's own origin binders
   (R868), as upstream spells it `::Span[$0, $1, $2, $3]`, instead of the
   unbound origins R866 left on the owner's erased instance, so it is the

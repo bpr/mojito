@@ -725,24 +725,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R934.
   - Model: Opus, Not Planned.
 
-- [ ] **R896 The check types the `paramfor_*` stubs at a cost of about 4 ms
-  per stub in a debug build**
-
-  The first `comptime for` over each iterator type types three generic stub
-  calls, about 12 ms in a debug build, before
-  `Checker::comptime_iterator_elements` caches the element type.
-  - A loop over an iterator type already seen costs about 2 ms more than
-    the built-in `range` rule did.
-  - Measured on `assets/ok/comptime_for_template_served.mojo`: the check's
-    `bodies` phase went from 12 ms to 57 ms (`--timings`).
-  - Lever: find what a generic call bounded by `Iterator & Copyable &
-    Deinitable` costs in `comptime_iterator_protocol`
-    (`crates/mojito-checker/src/checker/comptime_iteration.rs`).
-  - Release numbers were not measured.
-  - Found while landing R791 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R897 Each step of a `comptime for` iterator is its own VM call**
 
   An iterator loop of N elements runs about 3N+2 compile-time
