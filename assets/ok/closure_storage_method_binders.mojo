@@ -1,9 +1,11 @@
 # A capturing closure's body is a method of its storage struct, whose
 # own parameters stand for the enclosing binders the closure names: in its body
 # (`n`, a type binder `T`, a `comptime for` index) as in its fields, while
-# its own (`m`) stay the method's. A call by name calls the method on the
-# storage, a closure value is a closure over the method, and a body owning
-# a moved capture writes the storage it is called on, in place.
+# its own (`m`) stay the method's. A `def`'s callable binder (`f`) is such a
+# parameter too, a function symbol in the frame's instance. A call by name
+# calls the method on the storage, a closure value is a closure over the
+# method, and a body owning a moved capture writes the storage it is called
+# on, in place.
 
 
 def seven() -> Int:
@@ -28,7 +30,7 @@ def callable_frame[f: def() thin -> Int](v: Int) -> Int:
     def body() {var x} -> Int:
         return x + f()
 
-    return body()
+    return body() + twice(body)
 
 
 def type_frame[T: ImplicitlyCopyable & Writable & Deinitable](w: Int):

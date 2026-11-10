@@ -450,10 +450,7 @@ impl<'a> Flatten<'a> {
         // A body that is its storage's method is called on the storage,
         // as upstream calls `fn::__storage::fn`, binding its own
         // parameters from the call's solved arguments.
-        if info
-            .storage
-            .as_ref()
-            .is_some_and(|storage| storage.method.is_some())
+        if info.storage.is_some()
             && let [(recv, recv_place)] = captured.as_slice()
         {
             self.record_call(d, Some(info.mangled.clone()), 0);
@@ -641,24 +638,13 @@ impl<'a> Flatten<'a> {
     /// The value of the capture-list `def` `info`, read by name at `node`:
     /// its storage struct, read from the
     /// declaration's slot as any local is, as upstream's `emitClosure`
-    /// returns the storage. A body that is no method of its storage (one
-    /// naming an enclosing `def`'s callable binder) has no value (R2085).
+    /// returns the storage.
     pub(in crate::mir) fn closure_storage_read(
         &mut self,
         node: Node<'a>,
         name: &str,
         info: &NestedInfo,
     ) -> Reg {
-        if info
-            .storage
-            .as_ref()
-            .is_none_or(|storage| storage.method.is_none())
-        {
-            return self.unsupported_value(
-                node.location(),
-                "a closure naming an enclosing callable parameter is not a value (R2085)",
-            );
-        }
         match self.owner_vars.get(&info.binding).copied() {
             Some(var) => self.read_slot(var, node.location(), Some(node.checked)),
             None => self.unsupported_value(
@@ -681,12 +667,6 @@ impl<'a> Flatten<'a> {
             .storage
             .as_ref()
             .expect("a lambda's storage value has a storage");
-        if storage.method.is_none() {
-            return self.unsupported_value(
-                node.location(),
-                "a closure naming an enclosing callable parameter is not a value (R2085)",
-            );
-        }
         let slot = self.lambda_storage_slot(info, storage, &node.location());
         self.take_c(node, crate::mir::call_results::CValue::Slot(slot))
     }

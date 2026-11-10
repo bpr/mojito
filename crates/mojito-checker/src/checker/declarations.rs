@@ -1486,6 +1486,9 @@ impl Checker {
             ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
             _ => return Ok(None),
         };
+        if self.is_local_binding(name) {
+            return Ok(None);
+        }
         let Some(actual) = self.infer_specialized_callable_value(
             expression.source_span(),
             CallableValueSource::Binding(name),
@@ -4253,7 +4256,7 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
-                        let value = self.omitted_callable_value(decl, &value_environment);
+                        let value = omitted_callable_value(decl, &value_environment);
                         tyargs.push(TyArg::Val(value));
                     } else {
                         let unsolved = decl.list_pack(decls).unwrap_or(decl);
@@ -5581,34 +5584,35 @@ fn substituted_own_decl(decl: &ParamDecl, struct_subst: &TySubst) -> ParamDecl {
     solved
 }
 
-impl Checker {
-    /// The value an omitted callable parameter with a default takes: a
-    /// struct's is the function its default names, or the earlier callable
-    /// parameter's symbol it repeats, as the pin keys `S[f = seven]` by
-    /// `#kgen.func.symbol<@seven>`. Any other is the deferred slot the VM
-    /// fills.
-    fn omitted_callable_value(
-        &self,
-        decl: &ParamDecl,
-        environment: &HashMap<String, CtValue>,
-    ) -> CtValue {
-        let symbol = match decl {
-            ParamDecl::Value {
-                callable_default: Some(default),
-                ..
-            } if self.structs.contains_key(&decl.binder().id.owner) => match default {
-                CallableDefault::Symbol(symbol) => Some(CtValue::FuncSymbol(symbol.clone())),
-                CallableDefault::Parameter(earlier) => environment
-                    .get(&*earlier.name)
-                    .filter(|value| matches!(value, CtValue::FuncSymbol(_)))
-                    .cloned(),
-                CallableDefault::If { .. } => None,
-            },
-            _ => None,
-        };
-        symbol.unwrap_or_else(|| CtValue::Deferred(decl.binder()))
-    }
+/// The value an omitted callable parameter with a default takes, for a
+/// struct and a `def` alike: the function its default names, or the
+/// value the earlier callable parameter it repeats took (a symbol or an
+/// enclosing binder's reference), as the pin keys `S[f = seven]` by
+/// `#kgen.func.symbol<@seven>`. A conditional default, and a repeat of
+/// a deferred slot, stay deferred for the elaborator's defaults.
+fn omitted_callable_value(decl: &ParamDecl, environment: &HashMap<String, CtValue>) -> CtValue {
+    let symbol = match decl {
+        ParamDecl::Value {
+            callable_default: Some(default),
+            ..
+        } => match default {
+            CallableDefault::Symbol(symbol) => Some(CtValue::FuncSymbol(symbol.clone())),
+            CallableDefault::Parameter(earlier) => environment
+                .get(&*earlier.name)
+                .filter(|value| match value {
+                    CtValue::FuncSymbol(_) => true,
+                    CtValue::Expr(binder) => binder.as_decl_ref().is_some(),
+                    _ => false,
+                })
+                .cloned(),
+            CallableDefault::If { .. } => None,
+        },
+        _ => None,
+    };
+    symbol.unwrap_or_else(|| CtValue::Deferred(decl.binder()))
+}
 
+impl Checker {
     /// The explicit-bracket binding [`Self::resolve_use_params`] and
     /// [`Self::resolve_partial_use_params`] share: `unbound`, when given,
     /// names the arguments that bind and the slots the list leaves open,
@@ -5839,7 +5843,7 @@ impl Checker {
                 ..
             } = decl
             {
-                TyArg::Val(self.omitted_callable_value(decl, &value_environment))
+                TyArg::Val(omitted_callable_value(decl, &value_environment))
             } else if let ParamDecl::Value {
                 default: Some(value),
                 ty,

@@ -848,11 +848,10 @@ policy or data-model responsibilities to focused children:
   storage to a closure of its body. A generic closure's `__call__` witness
   takes the closure's own parameters and forwards them
   (`lower_storage_call_witness`), so a call through a generic binder with
-  explicit parameters (`f[2](40)`) devirtualizes to it. A body naming an enclosing
-  callable binder, which no struct instance carries as a parameter yet,
-  stays a generator nested in its enclosing declaration, taking the
-  storage as its leading `read` parameter (`ClosureStorage::method`).
-  Every capturing lambda,
+  explicit parameters (`f[2](40)`) devirtualizes to it. Every body with
+  storage is its storage's method (`ClosureStorage::method`), one naming
+  an enclosing callable binder too, the storage taking the binder as a
+  parameter. Every capturing lambda,
   with a capture list or without one (its free names then captured
   `imm`), builds its storage the same way where it stands, once per
   evaluation, as upstream's `resolveAnonymousClosure` sends every
@@ -4803,13 +4802,16 @@ their source arguments remain on the rewritten call. A scalar-controlled branch
 can therefore select code that later invokes a captured callback without asking
 the compile-time universe to own that callback. A function's symbol is a
 compile-time value, `CtValue::FuncSymbol` (upstream's `#kgen.func.symbol`):
-the checker resolves a struct's callable-value argument to it, so `S[seven]`
-is an instance of its own, a method reads `Self.f` as the parameter constant
+the checker resolves a struct's or a `def`'s callable-value argument to it,
+or to an enclosing callable binder's reference, so `S[seven]` and `g[seven]`
+are instances of their own, MIR carries the symbol as a parameter attribute
+rather than a register, a body reads `f` or `Self.f` as the parameter constant
 the elaborator folds to `Const::Function`, and the elaborator binds a callable
-binder, a callable pack's list, and a callable default to it. A `def`'s
-callable-value parameter is still a retained run-time hidden argument, its
-slot `CtValue::Deferred`, where the pin keys the instance by the symbol
-(R2085). `CtValue` has no closure variant: this residualization is not
+binder, a callable pack's list, and a callable default to it. A closure naming
+either binder is its storage's method, the storage taking the binder as a
+parameter. A capture-free nested `def`, a lambda, a static method, and a
+generic function argument keep the slot `CtValue::Deferred`, bound from the
+argument's register (R2087, R2088). `CtValue` has no closure variant: this residualization is not
 arbitrary callable CTFE, and it does not make closures escaping. A closure's storage does not
 convert to a run-time `def(...)` value or bind a compile-time callable value
 (matching current Mojo), while a closure-trait binder `F: def(...)` takes it

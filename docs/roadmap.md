@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2087**.
+Next free ID: **R2089**.
 
 ## Ordered Work
 
@@ -194,13 +194,13 @@ which names the upstream pass each one follows. Each is measured by the
     fails the same way; an `Int` result in a body already runs through a
     lifted thunk (`g[ap[inc](4)]()`).
   - Lever: the symbol-valued `CtValue::FuncSymbol`, which the elaborator
-    already binds and the VM thaws into its function value; admit
-    `callable_bound` binders and function-typed slots once a `def`'s
-    callable parameter is that symbol (R2085).
-  - Related: R2085 (a `def`'s callable parameter is a run-time argument),
-    R1650 (the callable binder's environment erased).
+    already binds and the VM thaws into its function value, and which a
+    `def`'s callable argument now is at the check (`mk[inc]` carries
+    `ct_func_symbol("inc")`); admit `callable_bound` binders and
+    function-typed slots.
+  - Related: R1650 (the callable binder's environment erased).
   - Found while landing R1644 (2026-10-30).
-  - Depends on R2085.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1727 A `@fieldwise_init` struct that declares another `__init__`
@@ -3852,33 +3852,50 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2085 A `def`'s thin callable parameter is a run-time hidden
-  argument, not a function symbol in its instance key**
+- [ ] **R2087 A callable parameter's argument that is no module function
+  has no symbol in the checked instance key**
 
-  The pin specializes `def g[f: def() thin -> Int]` per function symbol;
-  Mojito passes `f` through `param_arg_regs` and reads it back as a
-  `const param`, so its slot is `CtValue::Deferred` and no instance names
-  the function.
-  - Where: `resolve_param_arg`'s callable arm
-    (`checker/type_resolution.rs`) resolves only a struct's argument to
-    `CtValue::FuncSymbol`; `resolve_use_params` and `bind_bracket_params`
-    (`checker/declarations.rs`) fill a `def`'s omitted callable default
-    with `Deferred`; `inline_parametric`'s binder binding and
-    `mir::callable_targets` carry the run-time value.
-  - Probe: `S[f](2).get()` inside `def g[f: def() thin -> Int]()`, over a
-    struct `S[f: def() thin -> Int]`, stops with "vm backend does not
-    support the built-in or callee 'f'"; the pin prints `9`.
-  - Probe: `callable_frame`'s `body() {var x}` in
-    `assets/ok/closure_storage_method_binders.mojo` calls the frame's `f`,
-    so it stays a generator nested in its enclosing declaration
-    (`ClosureStorage::method` is `None`, `mir/nested.rs`), where
-    upstream's `liftClosureIntoMethod` makes every closure body its
-    storage's method; its first-class use lowers to
-    `MirInstr::Unsupported` (`closure_storage_read`,
-    `lambda_storage_value`, `mir/lower_expr/calls.rs`).
-  - Probe: `std.iter.map` applies upstream's `_MapIterator[...,
-    function]` to its own `function` binder (R1411).
-  - Related: R1731, R1650.
+  The pin keys `g[inner]` over a capture-free nested `def` by the
+  generator applied to the enclosing instance, and `g[T.seven]` by the
+  static method's symbol; Mojito's check leaves those slots
+  `CtValue::Deferred` and passes the function through `param_arg_regs`,
+  which the elaborator reads back by dataflow (`callable_targets`).
+  - Where: `resolve_callable_param_arg` (`checker/type_resolution.rs`)
+    resolves only an identifier naming a module function to
+    `CtValue::FuncSymbol`; a nested `def`'s symbol is the lifted
+    closure's, which the check names only at its last step.
+  - The elaborator must rename a `FuncSymbol` naming a nested generator
+    to its instance, as `nested_generators` does for a call.
+  - Probe: `S[inner](1).get()` inside `def outer[n: Int]()`, over a
+    nested `def inner() -> Int: return n` and `struct S[f: def() thin ->
+    Int]`, stops with "solution for `f` is not constant"; the pin prints
+    `5 6` for `outer[4](), outer[5]()`.
+  - Probe: `g[T.seven]()` over a `@staticmethod` runs, with
+    `ct_deferred` in the call's `instantiated_args`.
+  - Probe: `g[lambda -> Int: 3]()` runs, with `ct_deferred` the same way.
+  - Probe: a forwarded binder (`g[f]()` inside `fwd[f: ...]`) carries
+    `ct_expr(param_decl_ref fwd.f)` but still also passes the value in a
+    register (`param_arg { value: present(..) }`), since a symbolic
+    callable argument is no `CtValue::is_parameter_attribute`.
+  - A `CallableDefault::If` default stays `Deferred` at the check, and the
+    elaborator's `apply_defaults` (`native/mono/unify.rs`) evaluates it
+    per instance.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2088 A generic function passed to a callable parameter has no
+  symbol in the checked instance key**
+
+  `callable_value_symbol` (`checker/declarations.rs`) is consulted only
+  at a `TyKind::Func` slot, so a generic function argument at a
+  `def[...] thin` (`TyKind::GenericFunc`) slot stays `CtValue::Deferred`
+  and rides the register path; the output already matches the pin.
+  - Resolving a `GenericFunc` slot through `callable_value_symbol`
+    specializes the function against the generic contract: twelve
+    fixtures broke, e.g. `callable_binder_parameter_inference.mojo` with
+    "cannot infer type parameter 'width' of 'add'".
+  - Lever: the generator's unspecialized symbol, which the elaborator's
+    `bindings.callables` already keys (`native/mono/infer.rs`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -12782,8 +12799,9 @@ residue found inside a task moves to the task that owns its fix.
     its two `map` overloads from `Mojo/stdlib/std/iter/__init__.mojo` into
     `stdlib/std/iter.mojo`.
   - The iterator is a struct over a callable parameter that its
-    `__next__` calls as `Self.function(...)`, which runs; `map` applies
-    it to its own `function` binder, a run-time hidden argument (R2085).
+    `__next__` calls as `Self.function(...)`, which runs, and `map`'s
+    `_MapIterator[..., function]` over its own binder resolves, in its
+    signature and its body.
   - Its `_inner` field needs `Iterator`'s `Deinitable` refinement, and its
     `bounds` reads the trait's default (R669).
   - The `map` bodies call `iter(iterable)` (R670) and `rebind_var`
@@ -12794,7 +12812,7 @@ residue found inside a task moves to the task that owns its fix.
   - An enum case already passes as a `thin` function value
     (`apply[Token.integer](3)` runs).
   - Found while landing `enum` (2026-10-25).
-  - Depends on R2085, R669, R670, R1737, R1152.
+  - Depends on R669, R670, R1737, R1152.
   - Model: Opus, Not Planned.
 
 - [ ] **R1455 The bundle has no `std.python`, so `String` is not

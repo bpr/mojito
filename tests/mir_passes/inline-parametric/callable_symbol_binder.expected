@@ -1,0 +1,83 @@
+  functions: [
+      fn {
+        name: seven,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 31, end: 32, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 31, end: 32, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 31, end: 32, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
+              struct.create { dest: %r2, fields: [%r1] }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: apply,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 113, end: 116, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 113, end: 116, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: param(param_decl_ref { owner: "apply", slot: 0, name: f, type: meta_value(func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] }) }) },
+              call.indirect { dest: %r1, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$"), raises: absent, args: [], kwargs: [], callee_place: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: caller,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: func { environment: thin, param_decls: [], params: [], names: [], return_type: Int, required: [], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [], ref_params: [], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 150, end: 164, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 150, end: 164, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 150, end: 164, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r1, value: function(seven) }, call.indirect { dest: %r2, callee: %r1, resolved: present("__trait_dispatch.__call__$ov$"), raises: absent, args: [], kwargs: [], callee_place: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r2] } }] }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

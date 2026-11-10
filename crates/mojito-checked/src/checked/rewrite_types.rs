@@ -1264,7 +1264,6 @@ impl RewriteTypes for CheckedClosureUses {
         let Self {
             binders,
             parameters,
-            method: _,
         } = self;
         binders.rewrite_types(rewrite);
         parameters.rewrite_types(rewrite);

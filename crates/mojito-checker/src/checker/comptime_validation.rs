@@ -1673,6 +1673,37 @@ impl Checker {
         })
     }
 
+    /// Whether the name `name` reads is a compile-time binding: a module
+    /// name, a value binder, a `comptime for` variable, or a local
+    /// `comptime` constant or display.
+    pub(super) fn reads_compile_time_binding(&self, name: &str) -> bool {
+        self.binding_scope(name).is_none_or(|scope| scope == 0)
+            || self.is_compile_time_binding(name)
+            || self.lookup_owner(name).is_some_and(|owner| {
+                self.value_parameter_owners.contains(&owner)
+                    || self.is_comptime_binding_owner(owner)
+            })
+    }
+
+    /// Whether the local callee `name` is a nested `def` that captures
+    /// nothing: the pin's generator over the enclosing parameters, which a
+    /// compile-time expression calls with the binders in scope.
+    pub(super) fn compile_time_callee(&self, name: &str) -> bool {
+        self.binding_scope(name).is_some_and(|scope| scope > 0)
+            && self
+                .lookup_owner(name)
+                .is_some_and(|owner| self.nested_function_owners.contains(&owner))
+            && self
+                .lookup(name)
+                .and_then(Ty::callable)
+                .is_some_and(|callable| {
+                    callable
+                        .environment
+                        .captures()
+                        .is_none_or(|captures| captures.0.is_empty())
+                })
+    }
+
     /// Whether `expr` is a call of a nested `def` that captures nothing
     /// ([`Self::compile_time_callee`]) by name.
     fn calls_compile_time_callee(&self, expr: &Expr) -> bool {
@@ -1761,37 +1792,6 @@ impl Checker {
                         _ => None,
                     })
             })
-    }
-
-    /// Whether the name `name` reads is a compile-time binding: a module
-    /// name, a value binder, a `comptime for` variable, or a local
-    /// `comptime` constant or display.
-    fn reads_compile_time_binding(&self, name: &str) -> bool {
-        self.binding_scope(name).is_none_or(|scope| scope == 0)
-            || self.is_compile_time_binding(name)
-            || self.lookup_owner(name).is_some_and(|owner| {
-                self.value_parameter_owners.contains(&owner)
-                    || self.is_comptime_binding_owner(owner)
-            })
-    }
-
-    /// Whether the local callee `name` is a nested `def` that captures
-    /// nothing: the pin's generator over the enclosing parameters, which a
-    /// compile-time expression calls with the binders in scope.
-    fn compile_time_callee(&self, name: &str) -> bool {
-        self.binding_scope(name).is_some_and(|scope| scope > 0)
-            && self
-                .lookup_owner(name)
-                .is_some_and(|owner| self.nested_function_owners.contains(&owner))
-            && self
-                .lookup(name)
-                .and_then(Ty::callable)
-                .is_some_and(|callable| {
-                    callable
-                        .environment
-                        .captures()
-                        .is_none_or(|captures| captures.0.is_empty())
-                })
     }
 
     /// The bindings `expr` reads only for their type, once per read: a

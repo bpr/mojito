@@ -429,9 +429,10 @@ impl CheckedProgram {
                     &method.body,
                     defaults(&method.params),
                     &method.symbol,
-                    &BinderScope::of_method(
-                        struct_parameters(&node.module, &declaration.name),
-                        &method.signature.parameters,
+                    &BinderScope::of(
+                        struct_parameters(&node.module, &declaration.name)
+                            .iter()
+                            .chain(&method.signature.parameters),
                     ),
                     &HashMap::new(),
                 );
@@ -440,9 +441,10 @@ impl CheckedProgram {
                 tables.wrapper_roots(index),
                 Vec::new(),
                 &wrapper.lowered_name,
-                &BinderScope::of_method(
-                    struct_parameters(&wrapper.module, &wrapper.declaration),
-                    &wrapper.signature.parameters,
+                &BinderScope::of(
+                    struct_parameters(&wrapper.module, &wrapper.declaration)
+                        .iter()
+                        .chain(&wrapper.signature.parameters),
                 ),
                 &HashMap::new(),
             ),
@@ -464,11 +466,8 @@ impl CheckedProgram {
 /// functions', then its own.
 #[derive(Clone, Default)]
 struct BinderScope {
-    /// The binders that are not callable, in scope order.
+    /// The binders, in scope order.
     declarations: Vec<ParamDecl>,
-    /// The callable value binders ([`ParamDecl::is_callable_binder`]) of an
-    /// enclosing `def`; a struct's are among `declarations`.
-    callables: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
     loop_bindings: Vec<(OwnerId, ParamRef)>,
@@ -479,29 +478,10 @@ impl BinderScope {
         Self::default().with(declarations)
     }
 
-    /// A method's binders: its struct's `parameters`, then its own. A
-    /// struct's callable binder is bound to a function symbol in the
-    /// struct's instance, so a closure naming it is still its storage's
-    /// method, taking it as an ordinary storage parameter.
-    fn of_method<'a>(
-        parameters: &'a [ParamDecl],
-        own: impl IntoIterator<Item = &'a ParamDecl>,
-    ) -> Self {
-        let mut scope = Self::default();
-        scope.declarations.extend(parameters.iter().cloned());
-        scope.with(own)
-    }
-
     /// These binders, then those of a declaration nested inside them.
     fn with<'a>(&self, declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
         let mut scope = self.clone();
-        for declaration in declarations {
-            if declaration.is_callable_binder() {
-                scope.callables.push(declaration.clone());
-            } else {
-                scope.declarations.push(declaration.clone());
-            }
-        }
+        scope.declarations.extend(declarations.into_iter().cloned());
         scope
     }
 
@@ -684,7 +664,7 @@ impl Collector<'_> {
             }
             // A body that is its storage's method declares what is nested
             // in it under the method's symbol, as an ordinary method does.
-            let body = if uses.as_ref().is_some_and(|uses| uses.method) {
+            let body = if uses.is_some() {
                 mojito_symbol::symbol::closure_method_name(&symbol, name)
             } else {
                 symbol.clone()
@@ -728,8 +708,9 @@ fn statement_lambda_operands(op: &CheckedStmtOp) -> Vec<CheckedNodeId> {
 /// `storage` and names `name`, declared where `in_scope` is in scope, with
 /// `registry` the storage type of each closure registered before it: the
 /// binders its fields, its signature, and its body name ([`binder_uses`]),
-/// in scope order, declared as the struct's own parameters too, and
-/// whether its body is the storage's method. A reference field to a
+/// in scope order, declared as the struct's own parameters too; its body
+/// is the storage's method, as upstream's `liftClosureIntoMethod` makes
+/// every closure body. A reference field to a
 /// registered closure names the binders that closure's storage is applied
 /// to. `None` for one whose fields name a binder the scope does not
 /// declare.
@@ -803,7 +784,6 @@ fn closure_uses(
             .any(|declaration| declaration.name().trim_start_matches('*') == name)
     });
     (!unbound).then(|| CheckedClosureUses {
-        method: !in_scope.callables.iter().any(named),
         parameters: mojito_types::types::reown_as_own_parameters(&binders, name).0,
         binders,
     })

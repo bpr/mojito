@@ -1092,10 +1092,11 @@ impl CtValue {
 
     /// Whether a bracket argument solved to this value has no run-time form
     /// at its call, which carries it as a parameter attribute alone, as
-    /// Mojo's call does: a string, [compile-time-only](Self::is_compile_time_only)
-    /// data, or any value [`Self::is_folded_parameter_argument`] accepts.
+    /// Mojo's call does: a string, a function symbol,
+    /// [compile-time-only](Self::is_compile_time_only) data, or any value
+    /// [`Self::is_folded_parameter_argument`] accepts.
     pub fn is_parameter_attribute(&self) -> bool {
-        matches!(self, Self::Str(_))
+        matches!(self, Self::Str(_) | Self::FuncSymbol(_))
             || self.is_compile_time_only()
             || self.is_folded_parameter_argument()
     }

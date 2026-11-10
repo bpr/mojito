@@ -3837,11 +3837,6 @@ pub struct CheckedClosureUses {
     /// for position, as upstream's `liftClosure` declares them, reusing
     /// their spellings.
     pub parameters: Vec<mojito_types::types::ParamDecl>,
-    /// Whether its body becomes the storage's method; not when the body
-    /// names an enclosing `def`'s callable binder, a run-time hidden
-    /// argument (R2085). A struct's callable binder is an ordinary storage
-    /// parameter.
-    pub method: bool,
 }
 
 /// The passability of a [`CheckedClosureStorage`]: `TrivialRegisterPassable`

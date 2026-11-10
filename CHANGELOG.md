@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def`'s callable-value parameter (`def g[f: def() thin -> Int]`) takes
+  the function's symbol in its instance, as a struct's does: the checker
+  resolves `g[seven]` to `ct_func_symbol("seven")`, carried as a parameter
+  attribute rather than a register, and a forwarded binder (`g[f]`) or a
+  struct applied to one (`S[f]`, in a body or a signature) to the enclosing
+  binder's reference, so `S[f](2).get()` inside `g` prints `9` where it
+  stopped at the VM. A closure naming a `def`'s callable binder is its
+  storage's method and so a first-class value (`twice(body)`), and a
+  run-time local holding a function (`var h = seven; g[h]()`) is the pin's
+  "cannot use a dynamic value in a parameter list" (R2085, package format
+  209, `assets/ok/def_callable_parameter_symbol.mojo`).
 - A struct's callable-value parameter (`struct S[f: def() thin -> Int]`)
   runs: the checker keys the instance by the function's symbol, the new
   `CtValue::FuncSymbol` (upstream's `#kgen.func.symbol`, MIR text

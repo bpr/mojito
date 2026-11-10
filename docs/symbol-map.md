@@ -1633,8 +1633,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and body name, which the check collected and declared as the struct's
   own, `CheckedClosureStorage::uses`),
   names its body the storage's method (`NestedInfo::mangled`,
-  `symbol::closure_method_name`) when the check said so
-  (`CheckedClosureUses::method`, `ClosureStorage::method`), reports a
+  `symbol::closure_method_name`, `ClosureStorage::method`), reports a
   storage with no uses as an invariant failure, names each nested
   declaration by its checked symbol (`CheckedDef::symbol`), a lifted
   function's thunk lowering only the lambdas of its own expression

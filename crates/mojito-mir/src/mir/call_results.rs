@@ -323,7 +323,6 @@ impl<'a> Flatten<'a> {
         }
         let info = self.nested_info(e)?;
         let storage = info.storage.as_ref()?;
-        storage.method.as_ref()?;
         Some(self.lambda_storage_slot(&info, storage, &e.location()))
     }
 

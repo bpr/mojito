@@ -4733,7 +4733,7 @@ struct NestedInfo {
     binding: mojito_types::origin::OwnerId,
     source_name: String,
     /// The lifted body every call and closure names: its storage's method
-    /// when it is one ([`ClosureStorage::method`]), else the generator
+    /// when it has storage ([`ClosureStorage::method`]), else the generator
     /// nested in its enclosing declaration.
     mangled: String,
     /// True when this declaration belongs to the function currently being
@@ -4796,14 +4796,8 @@ struct ClosureStorage {
     parameters: Vec<ParamDecl>,
     /// The body as the struct's `read`-self method
     /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's
-    /// `liftClosureIntoMethod` makes it (`CheckedClosureUses::method`).
-    /// `None` for a body naming an enclosing `def`'s callable binder, a
-    /// run-time hidden argument no struct instance carries as a parameter
-    /// (R2085): it stays a generator nested in its enclosing declaration,
-    /// taking the storage as its leading parameter. A struct's callable
-    /// binder is a function symbol its instance carries, so a body naming
-    /// it is a method.
-    method: Option<String>,
+    /// `liftClosureIntoMethod` makes every closure body.
+    method: String,
     /// The declaration the check made: whether a call writes it, its
     /// copyability, and its passability (a call passes a register-passable
     /// storage by value, else by address).

@@ -690,8 +690,7 @@ fn scope_registry(
         }
         let mangled = storage
             .as_ref()
-            .and_then(|storage| storage.method.clone())
-            .unwrap_or_else(|| child.mangled.clone());
+            .map_or_else(|| child.mangled.clone(), |storage| storage.method.clone());
         registry.insert(
             child.binding,
             NestedInfo {
@@ -777,9 +776,7 @@ fn closure_storage(
         fields,
         param_decls: uses.binders.clone(),
         parameters: uses.parameters.clone(),
-        method: uses.method.then(|| {
-            mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name)
-        }),
+        method: mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name),
         declared: declared.clone(),
     })
 }
@@ -906,10 +903,9 @@ fn lower_closure_storage(
             );
         }
     }
-    let writes_self = storage.method.is_some()
-        && captures
-            .iter()
-            .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
+    let writes_self = captures
+        .iter()
+        .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
     declarations.structs.push(MirStructDeclaration {
         name: name.clone(),
         module: String::new(),
@@ -1012,11 +1008,7 @@ fn lower_storage_call_witness(
 ) {
     let (Some((name, _)), Some(method)) = (
         storage.ty.kind().as_non_simd_struct(),
-        storage
-            .method
-            .as_deref()
-            .and_then(|method| declarations.function(method))
-            .cloned(),
+        declarations.function(&storage.method).cloned(),
     ) else {
         return;
     };
@@ -1260,9 +1252,7 @@ fn lower_nested_node(
     // A body that is its storage's method is lowered under the method's
     // symbol, and the declarations nested in it are named under it, as
     // those of an ordinary method are.
-    let method = storage
-        .as_ref()
-        .is_some_and(|storage| storage.method.is_some());
+    let method = storage.is_some();
     let symbol = info.map_or_else(|| node.mangled.clone(), |info| info.mangled.clone());
     let enclosing_binders = &enclosing
         .binders

@@ -332,6 +332,7 @@ assets/ok/decorator_unavailable_function.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/def_aggregate_value_binder_served.mojo	main	exe-differential	sanitized
 assets/ok/def_bound_requirement_call.mojo	main	exe-differential	sanitized
+assets/ok/def_callable_parameter_symbol.mojo	main	exe-differential	sanitized
 assets/ok/def_calls_later_def.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized

@@ -332,6 +332,7 @@ assets/ok/decorator_unavailable_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_aggregate_value_binder_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_bound_requirement_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/def_callable_parameter_symbol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_calls_later_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_converting_constructor.mojo	-	ineligible	no-scalar-entry-shape

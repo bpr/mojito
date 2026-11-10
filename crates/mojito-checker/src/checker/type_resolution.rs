@@ -225,11 +225,14 @@ impl Checker {
     }
 
     /// The argument `expr` of the callable-value parameter `decl`, named
-    /// `name` and typed `ty`: a struct's is the function's symbol, part of
-    /// the instance's identity, as the pin's `S[#kgen.func.symbol<@f>]`. A
-    /// `def`'s stays a run-time value in the VM ABI: MIR evaluates the
-    /// argument into a register and the call frame reifies it under `name`,
-    /// its slot the deferred marker outside generic identity.
+    /// `name` and typed `ty`, part of the instance's identity for a struct
+    /// and a `def` alike: a function is its symbol, as the pin's
+    /// `S[#kgen.func.symbol<@f>]`, and an enclosing callable binder (`f`,
+    /// `Self.f`) its reference, which the elaborator substitutes per
+    /// instance. A run-time local is the pin's dynamic-value rejection. A
+    /// capture-free nested `def`, a lambda, a member, and any argument at
+    /// a generic callable slot keep the deferred marker, which the
+    /// elaborator binds from the argument's register.
     fn resolve_callable_param_arg(
         &self,
         decl: &ParamDecl,
@@ -237,6 +240,21 @@ impl Checker {
         ty: &Ty,
         expr: &Expr,
     ) -> Result<TyArg, TypeError> {
+        // An enclosing callable binder is a compile-time reference, in a
+        // signature as in a body, where no run-time binding names it.
+        if let Ok(CtValue::Expr(binder)) = self.eval_associated_ct(expr)
+            && binder.as_decl_ref().is_some()
+            && let Some(actual) = binder.meta().as_value()
+        {
+            if !self.value_coerces(actual, ty) {
+                return Err(TypeError::TypeMismatch {
+                    expected: ty.to_string(),
+                    found: actual.to_string(),
+                    context: format!("callable-value parameter '{name}'"),
+                });
+            }
+            return Ok(TyArg::Val(CtValue::Expr(binder)));
+        }
         let actual = self.infer(expr)?;
         // A closure's storage is a run-time value, and so is a capturing
         // lambda's closure, as at the pin.
@@ -258,7 +276,17 @@ impl Checker {
                 context: format!("callable-value parameter '{name}'"),
             });
         }
-        if self.structs.contains_key(&decl.binder().id.owner)
+        if let ExprKind::Identifier(local) = &expr.kind
+            && self.is_local_binding(local)
+        {
+            if self.compile_time_callee(local) {
+                return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
+            }
+            if !self.reads_compile_time_binding(local) {
+                return Err(TypeError::DynamicParameterValue);
+            }
+        }
+        if matches!(ty.kind(), TyKind::Func(_))
             && let Some((_, symbol)) = self.callable_value_symbol(expr, ty)?
         {
             return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
