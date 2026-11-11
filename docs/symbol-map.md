@@ -3009,8 +3009,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SIMD`'s one field through `MirDeclarations::struct_instance` (the
   instance the elaborator declares for every closed `SIMD` a discovered
   body holds, in `discover_structs` through `declare_simd_instance`, or
-  else the `SIMD` template at its arguments), and a symbolic `SIMD`'s at
-  its own slots (R1833), so `sroa`
+  else the `SIMD` template at its arguments, where an application to the
+  template's own binders is its declared fields,
+  `types::struct_field_types`), so `sroa`
   splits a `SIMD` slot into that field, and `canonicalize` folds a
   `SIMD`'s `struct.create`/`field.get` pair (`StructFolds::extracted`)
   and, through `MirInstr::folded_constant`, a `struct.create` of a

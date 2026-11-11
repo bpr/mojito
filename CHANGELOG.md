@@ -280,6 +280,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct applied to its own binders (`SIMD[dtype, size]` inside
+  `SIMD`'s methods, upstream's parametric `Self`) has its declared fields,
+  where `types::struct_field_types` answered none and
+  `MirDeclarations::field_types` kept a `SIMD`-only arm for its storage;
+  the arm is gone, and every generic struct's fields are read alike inside
+  its own methods (R1833).
 - A `comptime` name annotated with a value type no longer binds a type
   (R1913): `comptime x: Int = T` over `T: Copyable`, and `Ts[0]` over
   `*Ts: Copyable`, are rejected with the pin's "cannot implicitly convert

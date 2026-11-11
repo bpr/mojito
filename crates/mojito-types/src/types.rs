@@ -5254,6 +5254,10 @@ pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) ->
 /// is `Tuple([A, B])`); the fields are borrowed when none names a binder.
 /// Origin arguments are left as declared.
 ///
+/// An application to the struct's own binders in order (`SIMD[dtype,
+/// size]` inside `SIMD`'s methods, upstream's parametric `Self`) is the
+/// declared fields themselves.
+///
 /// `None` when a field still names one of the struct's own binders: a
 /// missing, erased (`CtValue::RemovedArg`), or unbindable argument, or a
 /// pack the substitution does not expand.
@@ -5264,7 +5268,9 @@ pub fn struct_field_types<'a>(
 ) -> Option<std::borrow::Cow<'a, [(String, Ty)]>> {
     let binders: Vec<ParamRef> = decls.iter().map(ParamDecl::binder).collect();
     let names_own_binder = |ty: &Ty| binders.iter().any(|binder| names_binder(ty, binder));
-    if !fields.iter().any(|(_, field)| names_own_binder(field)) {
+    if is_identity_application(decls, arguments)
+        || !fields.iter().any(|(_, field)| names_own_binder(field))
+    {
         return Some(std::borrow::Cow::Borrowed(fields));
     }
     let context = ParamContext::detached();
@@ -7674,6 +7680,25 @@ fn pack_traits(pack: &Ty) -> Vec<String> {
     }
 }
 
+/// Whether `arguments` name the binders `decls` declares, each its own and
+/// in order: a type binder's type parameter, a value binder's reference.
+fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
+    !decls.is_empty()
+        && decls.len() == arguments.len()
+        && decls
+            .iter()
+            .zip(arguments)
+            .all(|(decl, argument)| match (decl, argument) {
+                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
+                    matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id)
+                }
+                (ParamDecl::Value { id, .. }, TyArg::Val(CtValue::Expr(expr))) => {
+                    matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
+                }
+                _ => false,
+            })
+}
+
 #[cfg(test)]
 mod simd_slot_tests {
     use super::*;
@@ -8167,6 +8192,11 @@ mod struct_field_types_tests {
         );
         assert_eq!(at(&[TyArg::Val(CtValue::RemovedArg)]), None);
         assert_eq!(at(&[]), None);
+        let own = ParamContext::detached().decl_ref(arr.id().clone(), "n", arr.binder_meta());
+        assert_eq!(
+            at(&[TyArg::Val(CtValue::Expr(own))]),
+            Some(lanes_over(&arr))
+        );
 
         let p = type_param("P");
         let fields = vec![(
@@ -8182,6 +8212,10 @@ mod struct_field_types_tests {
                 .map(|fields| fields[0].1.clone())
         };
         assert_eq!(at(&[TyArg::Ty(Ty::int())]), Some(Ty::int()));
+        assert_eq!(
+            at(&[TyArg::Ty(fields[0].1.clone())]),
+            Some(fields[0].1.clone())
+        );
         assert_eq!(at(&[TyArg::Val(CtValue::RemovedArg)]), None);
         assert_eq!(at(&[]), None);
 

@@ -11018,27 +11018,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1833 `struct_field_types` answers no fields for a struct
-  applied to its own binders, where upstream's `Self` inside a struct's
-  methods is the parametric struct with its declared fields**
-
-  An identity application (`SIMD[dtype, length]` inside `SIMD`'s own
-  methods) names its own binders, which `types::struct_field_types`
-  treats as unclosed.
-  - So `MirDeclarations::field_types` keeps a `SIMD` arm answering a
-    symbolic `SIMD`'s `_mlir_value` at its own slots.
-  - Probe: deleting that arm makes `assets/ok/simd_to_bits.mojo`,
-    `simd_hash_member.mojo`, and `template_method_simd_leaf.mojo` fail
-    elaboration ("function instantiation of
-    `_unsigned_integral_type_of` failed").
-  - Lever: `struct_field_types` returns the declared fields when every
-    argument is the declaration's own binder in order; then delete the
-    arm.
-  - Risk: it changes the answer for every generic struct inside its own
-    methods (drop elaboration, SROA, `drop_runs_no_code_within`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2047 An `__mlir_attr` spelled at `: i1` reads as a `Bool`, not
   an `i1`**
 
