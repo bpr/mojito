@@ -1130,9 +1130,9 @@ fn variant_projection(node: &CheckedExpr) -> bool {
 }
 
 /// The struct instance a static read through a parametric struct is a
-/// member of (`P[Int].st`, `Self.gst[3]`), which the check recorded as its
-/// receiver's type: the member read's object, or that of the member a
-/// bracket binds.
+/// member of (`P[Int].st`, `Self.gst[3]`, `Int.__add__`'s `SIMD[DType.int,
+/// 1]`), which the check recorded as its receiver's type: the member read's
+/// object, or that of the member a bracket binds.
 fn static_value_receiver(node: Node<'_>) -> Option<Ty> {
     let member = match node.op() {
         CheckedOp::Member { .. } => node,
@@ -1142,5 +1142,6 @@ fn static_value_receiver(node: Node<'_>) -> Option<Ty> {
     if !matches!(member.op(), CheckedOp::Member { .. }) {
         return None;
     }
-    Flatten::static_receiver(member.object()?)
+    let object = member.object()?;
+    Flatten::static_receiver(object).or_else(|| object.ty().filter(|ty| ty.kind().is_simd()))
 }

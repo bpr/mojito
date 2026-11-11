@@ -405,6 +405,48 @@ impl Checker {
         }
     }
 
+    /// Whether `name` names a module `comptime` alias of a type over its
+    /// own parameters (`comptime W[T: AnyType] = Pt[T]`, the partially
+    /// bound `comptime Bytes = SIMD[DType.uint8, _]`), which a binding or a
+    /// type parameter does not shadow.
+    pub(super) fn generic_type_alias(&self, name: &str) -> bool {
+        self.lookup(name).is_none()
+            && !self.tparams.iter().any(|scope| scope.contains_key(name))
+            && !self
+                .local_type_aliases
+                .iter()
+                .any(|scope| scope.contains_key(name))
+            && self.comptime_aliases.get(name).is_some_and(|alias| {
+                !alias.decls.is_empty() && matches!(alias.body, AliasBody::Type(_))
+            })
+    }
+
+    /// The construction of `expected` from `receiver`, of type `actual`,
+    /// when `actual` converts to `expected` implicitly, as upstream converts
+    /// the argument a type-receiver call (`Float64.__int__(2.5)`) passes to
+    /// `self`: `receiver` checks as that construction over a copy of itself
+    /// under derived identities, which the call dispatches on. `None` when
+    /// no implicit conversion applies.
+    pub(super) fn converted_receiver(
+        &self,
+        receiver: &Expr,
+        actual: &Ty,
+        expected: &Ty,
+    ) -> Result<Option<Expr>, TypeError> {
+        if !self.value_coerces(actual, expected)
+            && self
+                .implicit_conversion_constructor(actual, expected)?
+                .is_none()
+        {
+            return Ok(None);
+        }
+        let operand = *derived_receiver(receiver, receiver);
+        let construction =
+            self.initializer_list_construction(receiver, vec![operand], Vec::new(), expected)?;
+        self.infer_spelled(receiver, construction.clone())?;
+        Ok(Some(construction))
+    }
+
     /// The type the type alias `name` names, and the parameter expression
     /// it was bound to: a local alias, or else a zero-parameter module
     /// alias of a type. `None` when `name` names neither, or a binding or a
@@ -431,22 +473,6 @@ impl Checker {
             self.local_type_aliases[scope].get(name)?,
             self.local_type_alias_values[scope].get(name)?,
         ))
-    }
-
-    /// Whether `name` names a module `comptime` alias of a type over its
-    /// own parameters (`comptime W[T: AnyType] = Pt[T]`, the partially
-    /// bound `comptime Bytes = SIMD[DType.uint8, _]`), which a binding or a
-    /// type parameter does not shadow.
-    fn generic_type_alias(&self, name: &str) -> bool {
-        self.lookup(name).is_none()
-            && !self.tparams.iter().any(|scope| scope.contains_key(name))
-            && !self
-                .local_type_aliases
-                .iter()
-                .any(|scope| scope.contains_key(name))
-            && self.comptime_aliases.get(name).is_some_and(|alias| {
-                !alias.decls.is_empty() && matches!(alias.body, AliasBody::Type(_))
-            })
     }
 
     /// The type a call's head `name[param_args]` denotes when `name` is a

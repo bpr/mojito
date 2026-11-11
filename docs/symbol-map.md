@@ -558,7 +558,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declared `write` like any method; an instance method called through its type with
   the receiver as the first argument — `infer_type_receiver_instance_call`
   in `statics.rs` — records `ReceiverFromFirstArgument`, and MIR lowers the
-  first argument as the receiver), overload scoring
+  first argument as the receiver; a receiver spelled as a generic alias's
+  application, `Scalar[DType.int]` for `Int`, is the type
+  `type_receivers.rs:alias_application_instance` resolves, and a first
+  argument that converts implicitly checks as the construction
+  `initializer_list.rs:converted_receiver` spells over it), overload scoring
   (score ties on receiver-overloaded methods break by the call's explicit `^`
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
   (`infer_struct_static_method` dispatches statics on parameterized structs —
@@ -1352,7 +1356,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Specializer::function_value_instance` names as the instance. A
   parametric struct's static is read at the instance its receiver spells
   (`static_value_receiver`, over `statics.rs`'s
-  `static_receiver_arguments`, or `Self`'s own binders), which the check
+  `static_receiver_arguments`, `Self`'s own binders, or a generic alias
+  application's instance, a `SIMD` one included), which the check
   records as the receiver's type and `callable_constant` carries as
   `Const::FunctionInstance::receiver` for `function_value_instance` to bind
   through `bind_static_receiver`; a bare parametric struct's static is

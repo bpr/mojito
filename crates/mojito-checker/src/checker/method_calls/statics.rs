@@ -94,19 +94,25 @@ impl Checker {
     /// (`method_lowered_name` + `self_instance_ty`); no instantiated owner is
     /// ever spelled.
     /// An instance method called through its type with the receiver as the
-    /// first argument (`List[Int].__len__(xs)`, `Point.norm(p)`), which
-    /// current Mojo checks as the method call on that argument. The argument
-    /// must be an instance of the named type (its explicit type arguments,
-    /// when they resolve, must agree with the receiver's); the call then
-    /// types as `xs.__len__()`, and MIR lowers it that way through
-    /// [`SemanticAdjustment::ReceiverFromFirstArgument`].
+    /// first argument (`List[Int].__len__(xs)`, `Point.norm(p)`,
+    /// `Int8.__add__(x, x)`), which current Mojo checks as the method call
+    /// on that argument once it converts to the type. The type is spelled
+    /// by its struct and bracket (whose explicit type arguments, when they
+    /// resolve, must agree with the receiver's; a bare parametric struct
+    /// takes the receiver's own), or denoted as `instance`
+    /// (an alias's, a `type_of`'s), which a `SIMD` receiver matches
+    /// exactly. An argument of another type that converts implicitly is
+    /// the construction of the type from it (`Float64.__int__(2.5)`). The
+    /// call then types as `xs.__len__()`, and MIR lowers it that way
+    /// through [`SemanticAdjustment::ReceiverFromFirstArgument`].
     pub(in crate::checker) fn infer_type_receiver_instance_call(
         &self,
         span: SourceSpan,
-        (sname, struct_targs, application): (
+        (sname, struct_targs, application, instance): (
             &str,
             &[mojito_ast::ast::ParamArg],
             Option<SourceSpan>,
+            Option<&Ty>,
         ),
         method: &str,
         call: MethodCallArguments<'_>,
@@ -125,8 +131,13 @@ impl Checker {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
         let actual = self.infer(receiver)?;
-        let expected = if struct_targs.is_empty() {
-            None
+        let expected = if let Some(instance) = instance {
+            Some(instance.clone())
+        } else if struct_targs.is_empty() {
+            // A bare parametric struct's arguments are the receiver's own.
+            info.decls
+                .is_empty()
+                .then(|| Self::struct_instance_type(sname, Vec::new()))
         } else {
             let partitioned =
                 self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
@@ -142,27 +153,36 @@ impl Checker {
                     Self::struct_instance_type(sname, bound.arguments)
                 })
         };
-        let compatible = !actual.is_simd()
-            && match (actual.kind(), expected.as_ref().map(Ty::kind)) {
-                (_, None) => mojito_types::types::nominal_parts(&actual)
-                    .is_some_and(|(name, _)| name == sname),
-                (
-                    TyKind::Struct(name, actual_args),
-                    Some(TyKind::Struct(expected_name, expected_args)),
-                ) => {
-                    let type_args = |args: &[TyArg]| {
-                        args.iter()
-                            .filter_map(|arg| match arg {
-                                TyArg::Ty(ty) => Some(ty.clone()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                    };
-                    name == expected_name && type_args(actual_args) == type_args(expected_args)
-                }
-                _ => false,
-            };
-        if !compatible {
+        let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
+            (_, None) => {
+                mojito_types::types::nominal_parts(&actual).is_some_and(|(name, _)| name == sname)
+            }
+            (_, Some(expected_kind)) if expected_kind.is_simd() => {
+                expected.as_ref() == Some(&actual)
+            }
+            (
+                TyKind::Struct(name, actual_args),
+                Some(TyKind::Struct(expected_name, expected_args)),
+            ) => {
+                let type_args = |args: &[TyArg]| {
+                    args.iter()
+                        .filter_map(|arg| match arg {
+                            TyArg::Ty(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                };
+                name == expected_name && type_args(actual_args) == type_args(expected_args)
+            }
+            _ => false,
+        };
+        let converted = match &expected {
+            Some(expected) if !compatible => {
+                self.converted_receiver(receiver, &actual, expected)?
+            }
+            _ => None,
+        };
+        if !compatible && converted.is_none() {
             return Err(TypeError::TypeMismatch {
                 expected: expected.map_or_else(|| sname.to_string(), |ty| ty.to_string()),
                 found: actual.to_string(),
@@ -171,7 +191,7 @@ impl Checker {
         }
         let ty = self.infer_method_call(
             &span,
-            receiver,
+            converted.as_ref().unwrap_or(receiver),
             method,
             MethodCallArguments {
                 param_args,

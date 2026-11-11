@@ -147,7 +147,7 @@ impl Checker {
                 return self
                     .infer_type_receiver_instance_call(
                         span.clone(),
-                        (name, &targs, Some(object.source_span())),
+                        (name, &targs, Some(object.source_span()), None),
                         method,
                         call,
                     )
@@ -159,6 +159,12 @@ impl Checker {
                     .infer_static_method(&object.source_span(), name, &targs, method, args)
                     .map(Some);
             }
+        }
+        // A bracket over a generic type alias (`Scalar[DType.int]`, which
+        // `Int` spells) is the type the alias names, on which upstream
+        // looks the member up as on any spelling of that type.
+        if let Some(instance) = self.alias_application_instance(object) {
+            return self.infer_instance_receiver_call(span, object, &instance?, method, call);
         }
         if let Some(instance) = self.type_of_receiver(object) {
             return self.infer_instance_receiver_call(span, object, &instance?, method, call);
@@ -295,13 +301,20 @@ impl Checker {
             ExprKind::Identifier(name) if name == "Self" => self.self_instance_spelling()?.0,
             ExprKind::Identifier(name) if self.lookup(name).is_none() => name.clone(),
             ExprKind::Identifier(_) => return None,
-            // An applied struct (`P[Int].st`) is a parametric receiver.
+            // An applied struct (`P[Int].st`) is a parametric receiver, as
+            // is an applied generic alias (`Scalar[DType.int].__add__`) the
+            // instance it names.
             _ => {
                 let (name, _) = object.bracket_application()?;
                 if self.lookup(name).is_some() {
                     return None;
                 }
-                name.to_string()
+                match self.alias_application_instance(object) {
+                    Some(instance) => mojito_types::types::nominal_parts(&instance.ok()?)?
+                        .0
+                        .to_string(),
+                    None => name.to_string(),
+                }
             }
         };
         let info = self.structs.get(&owner)?;
@@ -341,6 +354,19 @@ impl Checker {
         })
     }
 
+    /// The type `object` names when it is a bracket over a generic type
+    /// alias no binding shadows (`Scalar[DType.int]`, which `Int` spells):
+    /// the alias's application, on which upstream looks a member up as on
+    /// any spelling of that type. `None` for any other expression.
+    pub(in crate::checker) fn alias_application_instance(
+        &self,
+        object: &Expr,
+    ) -> Option<Result<Ty, TypeError>> {
+        let (name, targs) = object.bracket_application()?;
+        self.generic_type_alias(name)
+            .then(|| self.ty_from_anno(&SourceType::Named(name.to_string(), targs.into_owned())))
+    }
+
     /// Type a call through `object`, a receiver bound to the type `instance`
     /// rather than spelling one (`type_of(t).__len__()`), as upstream looks
     /// the method up on the type value itself: a static of the instance, or
@@ -377,13 +403,29 @@ impl Checker {
             // instance the receiver denotes.
             self.record_at(object.source_span()).ty =
                 Some(TyKind::Struct(name.to_string(), arguments.into_owned()).into());
+            // A receiver spelled through an alias names no struct for
+            // lowering to compose the symbol from.
+            self.record_at(span.clone())
+                .adjustment
+                .get_or_insert_with(|| {
+                    Box::new(
+                        mojito_checked::checked::SemanticAdjustment::ResolveCallable(format!(
+                            "{name}.{method}"
+                        )),
+                    )
+                });
             return Ok(Some(ty));
         }
         if call.args.is_empty() {
             return Err(no_such_method());
         }
-        self.infer_type_receiver_instance_call(span.clone(), (name, &[], None), method, call)
-            .map(Some)
+        self.infer_type_receiver_instance_call(
+            span.clone(),
+            (name, &[], None, Some(instance)),
+            method,
+            call,
+        )
+        .map(Some)
     }
 
     /// Type `Name.method(...)` on a bare struct name: a parametric struct's
@@ -434,7 +476,12 @@ impl Checker {
             && signatures.iter().all(|sig| sig.has_self)
         {
             return self
-                .infer_type_receiver_instance_call(span.clone(), (sname, &[], None), method, call)
+                .infer_type_receiver_instance_call(
+                    span.clone(),
+                    (sname, &[], None, None),
+                    method,
+                    call,
+                )
                 .map(Some);
         }
         let mut matches = Vec::new();
@@ -632,6 +679,16 @@ impl Checker {
         method: &str,
         record: bool,
     ) -> Result<Vec<TyArg>, TypeError> {
+        if let Some(instance) = self.alias_application_instance(object) {
+            let instance = instance?;
+            let arguments = mojito_types::types::nominal_parts(&instance)
+                .map(|(_, arguments)| arguments.into_owned())
+                .unwrap_or_default();
+            if record {
+                self.record_at(object.source_span()).ty = Some(instance);
+            }
+            return Ok(arguments);
+        }
         if let Some((_, struct_targs)) = object.bracket_application() {
             return self.static_receiver_arguments(object, owner, &struct_targs, record);
         }

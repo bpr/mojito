@@ -5905,7 +5905,8 @@ impl<'a> ArenaBuilder<'a> {
     /// lowers the construction where the sugar was written (an
     /// initializer list, a t-string, a value pack read as its
     /// `ParameterList`, a scalar `range` call, a `comptime for` iterable read
-    /// as its `__iter__()` call). A sugar the check lifted as a compile-time
+    /// as its `__iter__()` call, a type-receiver call's converted first
+    /// argument). A sugar the check lifted as a compile-time
     /// application (a module constant's initializer list) lifts its
     /// construction.
     fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
@@ -5922,6 +5923,10 @@ impl<'a> ArenaBuilder<'a> {
                 | ExprKind::Invoke { .. }
                 | ExprKind::Index { .. }
                 | ExprKind::MultiIndex { .. }
+                | ExprKind::Int(_)
+                | ExprKind::Float(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Str(_)
         ) {
             return None;
         }

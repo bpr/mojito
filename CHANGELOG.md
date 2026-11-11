@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An instance method called through a `SIMD` type takes its receiver as
+  the first argument, whatever spelling names the type, as upstream checks
+  `T.method(x, ...)` as `x.method(...)` once `x` converts to `T`:
+  `Int.__add__(x, x)`, `Int8.__add__(y, y)`, `SIMD[DType.int8, 1].__add__(y,
+  y)`, and `Float64.__int__(2.5)` print the pin's `2`, an argument of
+  another type is first converted (`Int8.__add__(100, 100)` wraps), and
+  `var f = Int.__add__` reads as a function value. A static called
+  through a generic alias's application over a symbolic argument
+  (`V[k].get()` over `comptime V[k: Int] = W[k]`) runs (R1838,
+  `assets/ok/type_receiver_simd_call.mojo`).
 - A signature's call to a method closes the callee's own value binders by
   their declarations, as upstream substitutes a signature's own parameter
   declarations, so a callee binder no longer rebinds a caller binder of the

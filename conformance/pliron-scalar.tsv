@@ -1578,6 +1578,7 @@ assets/ok/type_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_param_copy_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_receiver_instance_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_receiver_simd_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typed_raise_converts_to_context_error.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_comptime_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_element_through_bound.mojo	-	ineligible	no-scalar-entry-shape

@@ -590,7 +590,7 @@ impl Specializer<'_> {
         receiver: &Ty,
         bindings: &mut Bindings,
     ) -> Result<(), MonoError> {
-        let Some((receiver_name, arguments)) = receiver.kind().as_non_simd_struct() else {
+        let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver) else {
             return Ok(());
         };
         let template = nominal_template(receiver_name);
@@ -600,13 +600,14 @@ impl Specializer<'_> {
         if struct_decl.param_decls.is_empty() {
             return Ok(());
         }
-        bind_ty_args(&struct_decl.param_decls, arguments, bindings).map_err(|e| {
+        bind_ty_args(&struct_decl.param_decls, &arguments, bindings).map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing receiver for `{target}`: {e}"),
             )
         })?;
-        if bindings.self_instance.is_none() {
+        // A `SIMD` receiver binds its slots; no instance names its methods.
+        if bindings.self_instance.is_none() && !receiver.kind().is_simd() {
             // An erased argument (`S[_REMOVED_ARG]`, spelled where the body
             // removed the parameter it named) binds nothing and names the
             // erased instance.

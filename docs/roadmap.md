@@ -3776,28 +3776,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1838 A type-receiver call on a `SIMD` receiver is rejected**
-
-  Problem: `Int.__add__(x, x)`, `Int8.__add__(x, x)`, and
-  `Float64.__int__(2.5)` fail with "Undefined variable 'Scalar'", and
-  `SIMD[DType.int8, 1].__add__(x, x)` with "expected Int8, found Int8",
-  where the pin prints `2`, `2`, and `2`.
-  - `infer_type_receiver_instance_call` (`method_calls/statics.rs`)
-    refuses every `SIMD` receiver (`!actual.is_simd()`), and compares an
-    explicit application's type arguments only, never a `SIMD`'s value
-    slots.
-  - A receiver spelled through a `comptime` alias of an application
-    (`Int`, `Int8`, `Float64` over `Scalar[...]`) does not reach that
-    function: the alias's head `Scalar` is looked up as a variable.
-  - Upstream checks `T.method(x, ...)` as `x.method(...)` once `x`
-    converts to `T`, whatever spelling names `T`.
-  - Probe: the value read `var f = Int.__add__; print(f(1, 2))` fails
-    with the same "Undefined variable 'Scalar'" where the pin prints `3`,
-    while `List[Int].__len__` reads (found while landing R1795,
-    2026-11-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2033 A `read` function does not convert to a function type
   taking `var`**
 
@@ -7126,12 +7104,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type, which lowering reads in place of its syntax, closes both.
   - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
     = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
-  - Probe: a static call through a generic alias's application over a
-    symbolic argument, `V[k].get()` inside `def f[k: Int]()` over
-    `comptime V[k: Int] = W[k]`, fails with "Undefined variable 'V'",
-    where the pin prints `3` for `f[3]()`: `alias_application_spelling`
-    (`checker/initializer_list.rs`) has no spelling of `W[k]`, while the
-    construction `V[k]()` runs.
   - Probe: a member read through a bare struct name whose infer-only
     parameter has no default, `comptime v = T.four()` and `g[T.four()]()`
     over `struct T[n: Int, //]` with `comptime four = T[n=4]` and `def
