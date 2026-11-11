@@ -1930,6 +1930,11 @@ impl Checker {
                 } else {
                     self.check_place(place).map_err(in_place_destination)?
                 };
+                // A call the check spelled as another (`f(x)` of a closure
+                // value is `f.__call__(x)`) is that call's place, which
+                // lowering reads in its stead.
+                let spelled = self.spelled_construction(place);
+                let place = spelled.as_ref().unwrap_or(place);
                 let getter = if nominal_subscript {
                     let contract = self
                         .fact(&place.source_span(), |facts| facts.selected_call.as_deref())
@@ -3492,8 +3497,15 @@ impl Checker {
             // storage.
             let storage_backed = (lambda || captures_list) && !captures.is_empty();
             let finalized = if storage_backed {
+                let collector = def_shape(params).variadic_idx.map(|index| {
+                    mojito_checked::checked::CheckedCollector {
+                        name: params[index].name.clone(),
+                        convention: params[index].convention,
+                    }
+                });
                 let storage = self.closure_storage(
                     &captures,
+                    collector,
                     with_callable_environment(
                         fn_ty,
                         mojito_types::origin::CallableEnvironment::Capturing(concrete),
@@ -3578,6 +3590,7 @@ impl Checker {
     fn closure_storage(
         &self,
         captures: &[mojito_checked::checked::CheckedCapture],
+        collector: Option<mojito_checked::checked::CheckedCollector>,
         contract: Ty,
     ) -> mojito_checked::checked::CheckedClosureStorage {
         use mojito_ast::ast::CaptureKind;
@@ -3641,6 +3654,7 @@ impl Checker {
             fields,
             origin_arguments,
             contract,
+            collector,
             uses: None,
         }
     }
@@ -4240,7 +4254,7 @@ impl Checker {
             .map(TyArg::Origin)
             .collect();
         let mut methods = MethodTable::default();
-        if let Some(call) = closure_call_method(&contract) {
+        if let Some(call) = closure_call_method(&contract, storage.collector.as_ref()) {
             methods
                 .entry("__call__".to_string())
                 .or_default()
@@ -4800,15 +4814,21 @@ fn alias_dependency_order(stmts: &[Stmt]) -> Vec<usize> {
 
 /// The `__call__` a closure's storage struct declares, as upstream's
 /// `emitClosure` declares the storage method its call node resolves: the
-/// closure's own signature, `contract`, its type parameters the method's.
-/// `None` for a
-/// variadic or reference-returning closure, whose storage lowering
-/// declares no `__call__` witness.
-fn closure_call_method(contract: &Ty) -> Option<MethodSig> {
+/// closure's own signature, `contract`, its type parameters the method's,
+/// its positional collector `collector`, which the function type does not
+/// spell, and its `**kwargs` collector last. `None` when `contract` is no
+/// callable.
+fn closure_call_method(
+    contract: &Ty,
+    collector: Option<&mojito_checked::checked::CheckedCollector>,
+) -> Option<MethodSig> {
     let func = contract.kind().callable()?;
-    if func.variadic.is_some() || func.kw_variadic.is_some() || func.ref_return.is_some() {
-        return None;
-    }
+    // A `*args` collector closes the positional parameters: the regular
+    // ones after it are keyword-only.
+    let variadic_index = func
+        .variadic
+        .as_ref()
+        .map(|_| func.keyword_only.unwrap_or(func.params.len()));
     Some(MethodSig {
         decls: contract
             .kind()
@@ -4828,6 +4848,16 @@ fn closure_call_method(contract: &Ty) -> Option<MethodSig> {
         raises: func.raises,
         error: func.error.clone(),
         ref_params: func.ref_params.clone(),
+        ref_return: func.ref_return.as_deref().cloned(),
+        variadic: func.variadic.clone(),
+        variadic_index,
+        variadic_convention: collector.and_then(|collector| collector.convention),
+        variadic_name: collector.map(|collector| collector.name.clone()),
+        kw_variadic: func.kw_variadic.clone(),
+        kw_variadic_index: func
+            .kw_variadic
+            .as_ref()
+            .map(|_| func.params.len() + usize::from(func.variadic.is_some())),
         ..MethodSig::intrinsic(func.params.clone(), func.ret.clone())
     })
 }

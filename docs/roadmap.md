@@ -3691,39 +3691,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2101 A variadic or reference-returning closure's storage
-  declares no `__call__`, so `v.__call__(1, 2)` is rejected**
-
-  `def v(*xs: Int) {k} -> Int` runs as `v(1, 2)`, but `v.__call__(1, 2)`
-  fails "has no method '__call__'", where the pin prints `6`.
-  - The checker's `closure_call_method` (`checker/statements.rs`) and
-    MIR's `lower_storage_call_witness` (`mir/nested.rs`) both skip a
-    closure with a `*args` or `**kwargs` collector, since the closure's
-    function type (`FuncTy`) holds no collector position or convention
-    for a `MethodSig` or a forwarding witness to take.
-  - Upstream's storage declares a `__call__` witness for every closure,
-    forwarding the collector as it forwards each argument.
-  - Probe: the shape above, and `c.__call__(a=1)` over `def c(var **kw:
-    Int) {k} -> Int: return k + len(kw)`, which prints `4` at the pin.
-  - A reference-returning closure is skipped by the same two functions
-    for the same reason.
-  - Probe: `var g = v; print(g(4))` fails the MIR verifier ("nominal
-    indirect-call callee 'main$v$__storage' records no `def(...)`
-    witness"), as does `var g = pick; var r = g(value)` over `def pick(ref
-    item: Int) {k} -> ref[item] Int`: with no `__call__` the checker
-    keeps the call a `call.indirect` on the storage struct.
-  - Found while landing R1943 (2026-11-11).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2102 The elaborator still devirtualizes a struct-typed
   `call.indirect` callee**
 
   Every call of a struct value should be its `__call__` method call, as
   upstream's `CallNode` resolves it, but the specializer still rewrites a
   `call.indirect` on a struct callee into one.
-  - The callee left is a variadic or reference-returning closure's
-    storage, which declares no `__call__` (R2101).
+  - Since R2101 every closure's storage declares `__call__`, so no
+    checked program should leave such a callee; the deletion confirms it.
   - Then delete the specializer `CallIndirect` arm's struct
     devirtualization (`native/mono/specializer.rs`),
     `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and
@@ -3731,8 +3706,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `capability.rs`), and make a struct-typed `call.indirect` callee a
     verifier error; `callable_witness` stays for the requirement-call
     path.
-  - Probe: `assets/ok/callable_struct_generic_contract.mojo` and the
-    R2101 shapes run on both backends with the verifier rule in place.
+  - Probe: `assets/ok/callable_struct_generic_contract.mojo` and
+    `assets/ok/closure_storage_call_collectors.mojo` run on both backends
+    with the verifier rule in place.
   - Found while landing R2003 (2026-11-11).
   - Depends on R2005, R2101.
   - Model: Opus, Not Planned.

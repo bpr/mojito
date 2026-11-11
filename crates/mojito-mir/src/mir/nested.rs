@@ -998,12 +998,15 @@ fn lower_closure_storage(
 /// returning its result, its signature the method's, defaults included, so
 /// a `f.__call__(x)` leaving an argument out fills it as `f(x)` does, and so
 /// the storage conforms to its closure trait and a call through a value of
-/// it devirtualizes to the witness. A generic closure's witness takes the
-/// method's parameters and forwards them as its own. A variadic or
-/// reference-returning closure gets none: no closure trait spells its
-/// signature.
+/// it devirtualizes to the witness. `parameters` are the method's own
+/// parameter slots, its receiver aside, in slot order, each with its name,
+/// slot type, and convention: a `*args` or `**kwargs` collector forwards
+/// whole as the collector of the method's call, and a reference result is
+/// returned as the reference the call produces. A generic closure's
+/// witness takes the method's parameters and forwards them as its own.
 fn lower_storage_call_witness(
     storage: &ClosureStorage,
+    parameters: &[(String, Ty, Option<ArgConvention>)],
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
@@ -1014,9 +1017,6 @@ fn lower_storage_call_witness(
         return;
     };
     let method = &method;
-    if method.variadic.is_some() || method.kw_variadic.is_some() || method.returns_reference {
-        return;
-    }
     let symbol = format!("{name}.__call__");
     let mut reg_types = HashMap::new();
     let mut register = |ty: &Ty| {
@@ -1033,32 +1033,66 @@ fn lower_storage_call_witness(
     });
     let mut args = Vec::new();
     let mut arg_places = Vec::new();
-    for (index, (ty, convention)) in method
-        .param_types
-        .iter()
-        .zip(&method.param_conventions)
-        .enumerate()
-    {
+    let mut kwargs = Vec::new();
+    let mut kwarg_places = Vec::new();
+    let mut spread = None;
+    for (index, (name, ty, convention)) in parameters.iter().enumerate() {
         let var = index + 1;
         let dest = register(ty);
-        if is_owned(convention) {
+        let place = if is_owned(convention) {
             instrs.push(MirInstr::UseVar {
                 dest,
                 var: var as VarId,
                 mode: UseMode::Move,
                 constructor: None,
             });
-            arg_places.push(None);
+            None
         } else {
             instrs.push(MirInstr::LoadPlace {
                 dest,
                 place: root(var, ty),
             });
-            arg_places.push(Some(root(var, ty)));
+            Some(root(var, ty))
+        };
+        // A keyword-only parameter forwards by its name, the `**kwargs`
+        // collector as the forwarded collector.
+        let keyword = match method.slot_parameter(var) {
+            mojito_checked::declaration::SlotParameter::KwVariadic => {
+                Some(mojito_ast::ast::FORWARDED_KWARGS_NAME.to_string())
+            }
+            mojito_checked::declaration::SlotParameter::Position(position)
+                if method.keyword_only.is_some_and(|first| position >= first) =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        match (keyword, method.slot_parameter(var)) {
+            (Some(keyword), _) => {
+                kwargs.push((keyword, dest));
+                kwarg_places.push(place);
+            }
+            (None, slot) => {
+                if slot == mojito_checked::declaration::SlotParameter::Variadic {
+                    spread = Some(args.len());
+                }
+                args.push(dest);
+                arg_places.push(place);
+            }
         }
-        args.push(dest);
     }
-    let dest = register(&method.ret_ty);
+    // The method's reference result, as the witness returns it.
+    let reference = method
+        .returns_reference
+        .then(|| mojito_types::origin::RefTy {
+            referent: method.ret_ty.clone(),
+            origin: mojito_types::origin::Origin::Untracked { mutable: false },
+            mutability: mojito_types::origin::Mutability::Immutable,
+        });
+    let dest = register(&reference.clone().map_or_else(
+        || method.ret_ty.clone(),
+        |reference| TyKind::Ref(reference).into(),
+    ));
     let error_ty = method.error_ty.clone().unwrap_or_else(Ty::error);
     let raises = method.raises.then(|| Raises {
         ty: error_ty.clone(),
@@ -1066,7 +1100,7 @@ fn lower_storage_call_witness(
         error: register(&error_ty),
     });
     // The witness's error slot follows `self` and the method's parameters.
-    let error_slot = (method.param_types.len() + 1) as VarId;
+    let error_slot = (parameters.len() + 1) as VarId;
     let writes_self = declarations
         .structure(name)
         .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
@@ -1076,15 +1110,15 @@ fn lower_storage_call_witness(
         method: method_name(method),
         resolved: Some(method.lowered_name.clone()),
         raises: raises.clone(),
-        reference_result: None,
+        reference_result: reference.map(Box::new),
         result_adapter: None,
         args,
-        kwargs: Vec::new(),
+        kwargs,
         recv_place: (!storage.declared.register_passable()).then(|| Box::new(root(0, &storage.ty))),
         recv_writes: writes_self,
         receiver_convention: None,
         arg_places,
-        kwarg_places: Vec::new(),
+        kwarg_places,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         param_decls: method.param_decls.clone(),
@@ -1093,7 +1127,7 @@ fn lower_storage_call_witness(
             .iter()
             .map(ParamDecl::own_argument)
             .collect(),
-        spread: None,
+        spread,
         refined_bound: None,
     });
     if let Some(raises) = &raises {
@@ -1136,7 +1170,7 @@ fn lower_storage_call_witness(
     witness.enclosing = None;
     declarations.functions.push(witness);
     let param_types: Vec<Ty> = std::iter::once(storage.ty.clone())
-        .chain(method.param_types.iter().cloned())
+        .chain(parameters.iter().map(|(_, ty, _)| ty.clone()))
         .collect();
     let n_params = param_types.len();
     let error_slot = method.raises.then_some(error_slot);
@@ -1156,17 +1190,22 @@ fn lower_storage_call_witness(
             n_regs: reg_types.len() as u32,
             n_vars: n_params + usize::from(error_slot.is_some()),
             var_names: std::iter::once("self".to_string())
-                .chain(method.param_names.iter().cloned())
+                .chain(parameters.iter().map(|(name, ..)| name.clone()))
                 .chain(error_slot.map(|_| "$error".to_string()))
                 .collect(),
             n_params,
             owned_params: std::iter::once(false)
-                .chain(method.param_conventions.iter().map(is_owned))
+                .chain(
+                    parameters
+                        .iter()
+                        .map(|(.., convention)| is_owned(convention)),
+                )
                 .collect(),
             deinit_params: vec![false; n_params],
             ref_params: std::iter::once(false)
-                .chain(method.ref_params.iter().copied())
+                .chain(parameters.iter().map(|(.., convention)| is_ref(convention)))
                 .collect(),
+            returns_reference: method.returns_reference,
             var_tys,
             param_types,
             reg_types,
@@ -1193,10 +1232,10 @@ fn closure_trait_witness_table(
         names: method.param_names.clone(),
         ret: method.ret_ty.clone(),
         required: vec![true; arity],
-        variadic: None,
-        kw_variadic: None,
+        variadic: method.variadic.clone(),
+        kw_variadic: method.kw_variadic.clone(),
         positional_only: None,
-        keyword_only: None,
+        keyword_only: method.keyword_only,
         raises: method.raises,
         error: method.error_ty.clone(),
         conventions: method.param_conventions.clone(),
@@ -1439,7 +1478,12 @@ fn lower_nested_node(
         provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
     if let Some(storage) = storage.as_ref().filter(|_| method) {
-        lower_storage_call_witness(storage, out, declarations);
+        let parameters: Vec<_> = caller_params
+            .iter()
+            .zip(&ptys[leading..])
+            .map(|((_, parameter), ty)| (parameter.name.clone(), ty.clone(), parameter.convention))
+            .collect();
+        lower_storage_call_witness(storage, &parameters, out, declarations);
     }
     let immutable_captures: HashSet<String> = captures
         .iter()

@@ -3813,6 +3813,10 @@ pub struct CheckedClosureStorage {
     /// `emitClosure` declares the conformance: the closure's function
     /// type, its captures a `Capturing` environment.
     pub contract: Ty,
+    /// The closure's positional collector (`*args`), whose name and
+    /// declared convention its function type does not spell, as the
+    /// storage's `__call__` declares them. `None` without one.
+    pub collector: Option<CheckedCollector>,
     /// Whether a call of the body may write the storage: it owns a field,
     /// or a field is a mutable reference.
     pub writes: bool,
@@ -3840,6 +3844,13 @@ impl CheckedClosureStorage {
     pub fn trivially_register_passable(&self) -> bool {
         self.passability == StoragePassability::TriviallyRegisterPassable
     }
+}
+
+/// A closure's positional collector, as its declaration spells it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedCollector {
+    pub name: String,
+    pub convention: Option<ArgConvention>,
 }
 
 /// The enclosing binders a closure names, as upstream's `usesFromAbove`

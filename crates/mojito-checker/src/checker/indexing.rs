@@ -414,6 +414,11 @@ impl Checker {
             // place, written through and never read out as a value.
             ExprKind::MethodCall { .. } | ExprKind::Call { .. } | ExprKind::Invoke { .. } => {
                 let found = self.infer(place)?;
+                // A call the check spelled as another (`f(x)` of a closure
+                // value is `f.__call__(x)`) is that call's place.
+                if let Some(construction) = self.spelled_construction(place) {
+                    return self.check_place_impl(&construction);
+                }
                 let callee = match &place.kind {
                     ExprKind::MethodCall { method, .. } => format!("method call '{method}()'"),
                     ExprKind::Call { name, .. } => format!("call '{name}()'"),

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A variadic (`*args`, `**kwargs`) or reference-returning closure's
+  storage now declares the `__call__` every closure's storage declares, its
+  witness forwarding the collectors and the reference result, so
+  `v.__call__(1, 2)` over `def v(*xs: Int) {k} -> Int` prints the pin's
+  `6` and a call through a copy (`var g = v; g(4)`) no longer fails the MIR
+  verifier; an assignment through a reference-returning closure call
+  (`pick(value) += k`) writes through the spelled `__call__` (R2101,
+  `assets/ok/closure_storage_call_collectors.mojo`).
 - A call through a generic `def[...]` bound (`f[2](40)` in `def
   invoke[F: def[n: Int](Int) -> Int](f: F)`) lowers to the bound's generic
   `__call__` requirement call, carrying the bound's compile-time

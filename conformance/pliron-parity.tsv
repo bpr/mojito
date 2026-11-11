@@ -125,6 +125,7 @@ assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_converted_middle.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_link_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_operand_copy.mojo	main	exe-differential	sanitized
+assets/ok/closure_storage_call_collectors.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_call_method.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_method_binders.mojo	main	exe-differential	sanitized

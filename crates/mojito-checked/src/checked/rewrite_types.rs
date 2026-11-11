@@ -1250,6 +1250,7 @@ impl RewriteTypes for CheckedClosureStorage {
             fields,
             origin_arguments: _,
             contract,
+            collector: _,
             writes: _,
             copyable: _,
             passability: _,
