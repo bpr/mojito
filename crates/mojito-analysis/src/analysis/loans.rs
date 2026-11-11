@@ -653,6 +653,8 @@ pub(super) fn loan_accesses(
         }
         MirInstr::MethodCall {
             dest,
+            recv,
+            method,
             resolved,
             recv_place,
             recv_writes,
@@ -673,9 +675,20 @@ pub(super) fn loan_accesses(
             };
             // A `def(...)` bound's `__call__` requirement call classifies
             // its arguments by the bound's signature, as a call through the
-            // value did, and charges its capture accesses to the closure
-            // storage its receiver names.
+            // value did, and it and a closure storage's own `__call__`
+            // charge their capture accesses to the storage their receiver
+            // names.
             let bound = mojito_mir::mir::bound_call_contract(instr, &f.reg_types);
+            let calls_closure = method == "__call__"
+                && f.reg_types.get(&recv.0).is_some_and(|ty| {
+                    let mut ty = ty;
+                    while let mojito_types::types::TyKind::Ref(reference) = ty.kind() {
+                        ty = &reference.referent;
+                    }
+                    ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                        mojito_symbol::symbol::is_closure_storage_name(name)
+                    })
+                });
             let argument_access = |argument: usize| match (bound, resolved) {
                 (Some(contract), _) => contract
                     .conventions
@@ -708,7 +721,10 @@ pub(super) fn loan_accesses(
                         .map(|place| (place, LoanAccess::Write, span_for(*dest))),
                 )
                 .collect::<Vec<_>>();
-            let storage = bound.and(recv_place.as_deref()).map(|place| place.root);
+            let storage = (bound.is_some() || calls_closure)
+                .then_some(recv_place.as_deref())
+                .flatten()
+                .map(|place| place.root);
             accesses.extend(
                 capture_accesses
                     .iter()
@@ -792,8 +808,23 @@ fn check_loans_at(
             if reference_loans.is_empty() {
                 continue;
             }
-            if place.through == Some(*reference) {
-                if access == LoanAccess::Write && reference_loans.iter().any(|loan| !loan.mutable) {
+            // An access through a reference reborrowing this one's own
+            // storage (an element reference into a list of closures) holds
+            // this reference's permission, as an access through it does.
+            let reborrowed = place.through.and_then(|through| {
+                let loans = reaching_loans(state, generations, through);
+                (through != *reference
+                    && !loans.is_empty()
+                    && loans.iter().all(|loan| loan.place.root == *reference))
+                .then_some(loans)
+            });
+            if place.through == Some(*reference) || reborrowed.is_some() {
+                if access == LoanAccess::Write
+                    && reference_loans
+                        .iter()
+                        .chain(reborrowed.iter().flatten())
+                        .any(|loan| !loan.mutable)
+                {
                     return Err(loan_error(f, &place, *reference, span));
                 }
                 continue;

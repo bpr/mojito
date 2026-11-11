@@ -776,10 +776,10 @@ impl Checker {
 
     /// Type the call `value[params](args)` of a struct value declaring
     /// `__call__` and none of `__getitem__`, `__setitem__`, and
-    /// `__getattr__`, other than a closure's storage, as the parameterized
-    /// method call `value.__call__[params](args)`, as upstream's
-    /// `SubscriptNode` binds such a bracket to `__call__`'s parameters.
-    /// `None` for any other value.
+    /// `__getattr__` as the parameterized method call
+    /// `value.__call__[params](args)`, as upstream's `SubscriptNode` binds
+    /// such a bracket to `__call__`'s parameters. `None` for any other
+    /// value.
     pub(super) fn infer_bracketed_call_method(
         &self,
         call: &Expr,
@@ -791,8 +791,7 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         let (struct_name, _) = ty.kind().as_non_simd_struct()?;
         let info = self.structs.get(struct_name)?;
-        if is_closure_storage(ty)
-            || !info.methods.contains_key("__call__")
+        if !info.methods.contains_key("__call__")
             || ["__getitem__", "__setitem__", "__getattr__"]
                 .iter()
                 .any(|method| info.methods.contains_key(method))
@@ -974,8 +973,7 @@ impl Checker {
     /// resolves a callee that is no function: a struct value declaring
     /// `__call__`, or a value of a type parameter whose bounds declare it.
     /// The checked arena hands HIR the spelled method call in the call's
-    /// place. `None` for any other callee, including a closure's storage,
-    /// which a call still goes through as a callable value.
+    /// place. `None` for any other callee.
     pub(super) fn infer_call_method(
         &self,
         call: &Expr,
@@ -991,15 +989,14 @@ impl Checker {
                 ..
             }
         );
-        let declared = !is_closure_storage(ty)
-            && ty
-                .kind()
-                .as_non_simd_struct()
-                .is_some_and(|(struct_name, _)| {
-                    self.structs
-                        .get(struct_name)
-                        .is_some_and(|info| info.methods.contains_key("__call__"))
-                });
+        let declared = ty
+            .kind()
+            .as_non_simd_struct()
+            .is_some_and(|(struct_name, _)| {
+                self.structs
+                    .get(struct_name)
+                    .is_some_and(|info| info.methods.contains_key("__call__"))
+            });
         if !bound && !declared {
             return None;
         }

@@ -1697,9 +1697,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   closure's finalization and again for each closure of a carried body
   (`Checker::carry_body`): it declares the `__call__` method its
   closure's signature spells (`closure_call_method`), which an explicit
-  `f.__call__(x)` resolves and whose capture accesses
-  `record_selected_method_call` records, while a call `f(x)` still goes
-  through the value (`infer_call_method` skips a closure's storage);
+  `f.__call__(x)` and a call `f(x)` (`infer_call_method`,
+  `infer_bracketed_call_method`) resolve and whose capture accesses
+  `record_selected_method_call` records, and which the loan check charges
+  through the receiver's storage (`analysis/loans.rs`, `loan_accesses`);
   its `callable_conformance` is the closure trait
   (`CheckedClosureStorage::contract`, which a call binds against and
   `unify_through_callable_bounds` solves a bound from), its conformances

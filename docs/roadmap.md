@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2102**.
+Next free ID: **R2103**.
 
 ## Ordered Work
 
@@ -3691,33 +3691,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2003 An indirect call still takes a struct callee, which the
-  elaborator devirtualizes**
-
-  `var g = add_k; print(g(5))` on a capture-list closure lowers to a
-  `call.indirect` whose callee is the closure's storage struct, where
-  upstream calls the storage's `__call__` method.
-  - A closure storage declares `__call__` now, but `infer_call_method`
-    and `infer_bracketed_call_method` (`checker/call_inference.rs`) skip
-    a receiver `is_closure_storage` names; dropping that exclusion makes
-    the checker spell the call as a method call, so no struct callee
-    reaches `call.indirect`.
-  - The method path then owns the call-through's capture accesses, which
-    `record_selected_method_call` already records for a closure's
-    `__call__`.
-  - Then delete the specializer `CallIndirect` arm's struct
-    devirtualization (`native/mono/specializer.rs`) and
-    `Self::callable_witness` if nothing else uses it,
-    `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and
-    Pliron's un-devirtualized nominal callable rejection
-    (`lower/closures.rs`, `capability.rs`), and make a struct-typed
-    `call.indirect` callee a verifier error.
-  - Probe: `emit-mir` of the shape above holds no `call.indirect` on a
-    struct-typed register, and it still prints `8` on both backends.
-  - Found while landing R1933 (2026-11-07).
-  - Depends on R1943.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2005 A call through a generic `def[...]` bound is a `call.indirect`,
   not the bound's `__call__` requirement call**
 
@@ -3740,8 +3713,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2101 A variadic closure's storage declares no `__call__`, so
-  `v.__call__(1, 2)` is rejected**
+- [ ] **R2101 A variadic or reference-returning closure's storage
+  declares no `__call__`, so `v.__call__(1, 2)` is rejected**
 
   `def v(*xs: Int) {k} -> Int` runs as `v(1, 2)`, but `v.__call__(1, 2)`
   fails "has no method '__call__'", where the pin prints `6`.
@@ -3754,8 +3727,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     forwarding the collector as it forwards each argument.
   - Probe: the shape above, and `c.__call__(a=1)` over `def c(var **kw:
     Int) {k} -> Int: return k + len(kw)`, which prints `4` at the pin.
+  - A reference-returning closure is skipped by the same two functions
+    for the same reason.
+  - Probe: `var g = v; print(g(4))` fails the MIR verifier ("nominal
+    indirect-call callee 'main$v$__storage' records no `def(...)`
+    witness"), as does `var g = pick; var r = g(value)` over `def pick(ref
+    item: Int) {k} -> ref[item] Int`: with no `__call__` the checker
+    keeps the call a `call.indirect` on the storage struct.
   - Found while landing R1943 (2026-11-11).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2102 The elaborator still devirtualizes a struct-typed
+  `call.indirect` callee**
+
+  Every call of a struct value should be its `__call__` method call, as
+  upstream's `CallNode` resolves it, but the specializer still rewrites a
+  `call.indirect` on a struct callee into one.
+  - The callees left are a call through a generic `def[...]` bound once
+    it closes on a struct (R2005), and a variadic or
+    reference-returning closure's storage, which declares no `__call__`
+    (R2101).
+  - Then delete the specializer `CallIndirect` arm's struct
+    devirtualization (`native/mono/specializer.rs`),
+    `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and
+    Pliron's nominal-callable rejection (`lower/closures.rs`,
+    `capability.rs`), and make a struct-typed `call.indirect` callee a
+    verifier error; `callable_witness` stays for the requirement-call
+    path.
+  - Probe: `assets/ok/callable_struct_generic_contract.mojo` and the
+    R2101 shapes run on both backends with the verifier rule in place.
+  - Found while landing R2003 (2026-11-11).
+  - Depends on R2005, R2101.
   - Model: Opus, Not Planned.
 
 - [ ] **R2006 A struct field of a `def(...)`-bound type is rejected as

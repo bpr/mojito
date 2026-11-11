@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of a capture-list closure's value (`var g = add_k; g(5)`,
+  `extend[0](4)`) is checked as its storage's `__call__` method call, as
+  upstream's `CallNode` resolves it, instead of an indirect call on the
+  storage struct; the loan check charges the call's capture accesses
+  through the element reference the receiver reborrows (R2003).
 - A capture-list closure's storage struct declares the `__call__` method
   its closure's signature spells, so `f.__call__(2)` on `def f(x: Int)
   {k} -> Int` prints the pin's `6` instead of reporting "has no method
