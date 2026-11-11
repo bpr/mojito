@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2107**.
+Next free ID: **R2109**.
 
 ## Ordered Work
 
@@ -503,6 +503,18 @@ which names the upstream pass each one follows. Each is measured by the
     += r.nxt()`, `except: pass`, over an `@always_inline("nodebug")`
     `nxt(self) raises StopIteration` returning `W[1](self.end).get()`,
     costs 25 here after cleanup and 10 at the pin.
+  - Second-run probe: a plain `@always_inline` `leaf` holding n
+    `sink(W(x + i))`, `W(x)` being `var s = 0; s += x + 1; return s`,
+    called from a plain `gen`. The pin inlines it up to n = 6 and keeps it
+    from n = 7. Mojito keeps it from n = 4, pricing it 50 at n = 4 and 86
+    at n = 7 against the bound 32.
+  - There a cleaned `W` costs 10 here (`d2s(x) = e1(x) + e1(x + 1)` 13),
+    and its splice adds about 7 to `leaf`. The flips imply about one
+    operation beyond the call at the pin. Probably `0 + y` and the
+    `struct.create`/extract pairs around `Int` arithmetic stay unfolded
+    here (compare R2079).
+  - The same series with `nodebug` `other(x)` holding `sink(d2s(x))`
+    flips at the pin between 2 and 4 calls.
   - Lever: calibrate both against the pin's operation counts after its
     canonicalizer, as `INLINE_SIZE_BOUND` was.
   - Found while landing R1979 (2026-11-08).
@@ -551,7 +563,7 @@ which names the upstream pass each one follows. Each is measured by the
   differently from `CostWalk` (`inline_parametric.rs`), so the first
   `inline-parametric` run can disagree on refusing a plain callee holding
   one. Comparisons through `__gt__` and `__lt__` (`if x > 0`) already agree.
-  - Prices below are for `H` in R2081's harness: ten `sink(H(x + i))` in
+  - Prices below are for `H` in R2108's harness: ten `sink(H(x + i))` in
     `leaf`. The pin's price is 32 minus the fewest `sink(x)` statements
     that, added to `H`, make `leaf` KEPT.
   - `if x == 0: return x`, then `return x`: pin 17, Mojito 23. `__eq__`
@@ -613,9 +625,46 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2081 The pin keeps a `nodebug` callee whose own calls to plain
-  `@always_inline` functions the first `inline-parametric` run refused,
-  when its caller reaches a cycle, by a rule not yet known**
+- [ ] **R2107 The pin's first `InlineParametric` does not splice a
+  callee whose body calls a plain callee it refuses for size, by a rule not
+  yet known**
+
+  At the pin, a `nodebug` `other(x)` holding `sink(d2s(x))` stays a call in
+  the first-run body of the `leaf` that calls it, and so does a plain `P2`
+  holding two such calls. Mojito splices both there.
+  - Harness: R2108's. `d2s(x)` is `e1(x) + e1(x + 1)`, with `e1(x)` `x +
+    1`. The pin's first run refuses `d2s` for size, its second admits it.
+  - Evidence: `other` + `other2` (`sink(d2s(x + 5))`) in `leaf` is KEPT,
+    yet `other3` (three `sink(d2s(..))`) is INLINED at any size. Only if
+    the first run leaves `other`, `other2`, and `other3` unspliced does
+    the second run splice two sites into `leaf` in the one case and one
+    in the other.
+  - `leaf` itself is such a callee: the pin decides it only in its second
+    run, while Mojito's first run splices it into `gen` though it still
+    calls the refused `W`.
+  - The rule is not "a body still holding a refused call stays a call". A
+    `leaf` holding `sink(BIG(x))`, with `BIG` forty `s += x` refused by
+    both runs, is inlined in the second run. Wrapping it in a `nodebug`
+    `ob(x)` never counts as a site.
+  - So the rule separates `d2s` (refused once) from `BIG` (refused twice).
+    Either the first run splices `ob` but not `other`, or neither, and a
+    second-run splice bringing in no newly admitted body is not counted.
+  - Pin probes to tell these apart: a plain `leaf` priced just under the
+    bound in the second run holding one `ob` versus one `other`, `other`
+    around a callee refused for a cycle rather than for size, and `d2s`
+    reached through a `nodebug` intermediary.
+  - Lever: `Admission::admits` or `Callees::body`
+    (`inline_parametric.rs`, `pre_elaboration.rs`), given a record of what
+    the callee's own run refused beside `FreshSplices`. At the package
+    seam a body is finished through both runs before any caller reads it,
+    so its first-run state is gone.
+  - Pin it with an `assets/type_error` fixture through R2108's trace.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2108 The pin keeps a `nodebug` callee its second
+  `InlineParametric` spliced two plain callees into, when its caller
+  reaches a cycle, by a rule not yet known**
 
   The pin keeps an instance of a `nodebug` `leaf[n]` that
   `inline-parametric` inlines here. `leaf` reaches no cycle, so R924's
@@ -625,61 +674,44 @@ which names the upstream pass each one follows. Each is measured by the
     `rec[1](x)` under `comptime if t == 0`. `leaf[k]` holds `comptime
     assert k < 3`, then the body below. `gen[n]` holds `_ = rec[1](x)` and
     `leaf[n](x)`, and `main` prints `gen[5](1)`. KEPT means the pin's trace
-    carries `("k": 5)`. Mojito's trace names `gen` in every probe below.
-  - Rerun on the pin itself (`1.3.0.dev2026110105`, the environment in
-    `docs/mojo-nightly.md`). It agrees with `1.3.0.dev2026110505` on every
-    row.
-  - Working reading, three conditions. The calls below are those `leaf`'s
-    own body spells, not calls that reach `leaf` inside a spliced body.
-  - Condition (a): `leaf`'s calls hold at least two "counted" calls. A
-    counted call goes to a plain callee the pin's first `InlineParametric`
-    refuses for size, so only the second run splices it. R2100 makes
-    Mojito agree with the pin on which callees those are.
-  - Condition (b): the size of `leaf` after the second run splices those
-    bodies reaches a threshold near `INLINE_SIZE_BOUND`.
-  - Condition (c): `leaf`'s caller reaches a cycle of followed calls and
-    lies on none. The caller may itself be followed: `gen` decorated
-    `@always_inline` or `nodebug` still gives KEPT.
-  - Rows for (a). `W` (see R2100) ×3 is KEPT. `W` ×2 is INLINED.
-    `W` ×1 with up to 500 `sink(x)` is INLINED. `W` beside its twin
-    `W2` counts as two.
-  - Rows for (a), counted callees. `A3`, `c3`, `I`, `X`, and `d2s` count.
-    `A2`, `c2` (INLINED at 30 calls), `e1`, and `d2` (INLINED at 10 calls)
-    do not. A `nodebug` callee never counts.
-  - Rows for (b). `W` ×2 flips from INLINED to KEPT at four extra
-    `sink(x)`, placed before or after. `X` ×2 flips at two. A heavier `W`
-    (three `s +=`) ×2 is KEPT with none. `d2s` ×2 is KEPT with none.
-    One extra `sink(e1(x))` gives INLINED and two give KEPT. Eight dead
-    `_ = x + i` or eight dead `var t = x` give INLINED.
-  - Rows against a plain count. A `nodebug` `other` whose body holds
-    `sink(d2s(..))` ×3, called from `leaf`, is INLINED, also with 20 extra
-    `sink(x)`. Yet `other` plus one direct `sink(d2s(x))` is KEPT, while
-    one direct `d2s` with 20 `sink(x)` is INLINED. No count of refused
-    calls or measure of `leaf` that has been tried fits all three.
+    carries `("k": 5)`. Pin: `1.3.0.dev2026110105` (`docs/mojo-nightly.md`).
+  - Mojito's trace names `gen` in every probe because its first run
+    already splices `leaf` into `gen`, so its second run never decides
+    `leaf`. The pin decides it in its second run.
+  - Working rule, three conditions. (a) The second run splices at least
+    two call sites into `leaf`. (b) `leaf`'s price after those splices
+    reaches a threshold of about half `INLINE_SIZE_BOUND`. (c) `leaf`'s
+    caller reaches a cycle of followed calls and lies on none.
+  - Rows for (a) and (b), with `W(x)` `var s = 0; s += x + 1; return s`
+    and "+k" for k extra `sink(x)` in `leaf`. `sink(W(x + i))` ×3 is
+    KEPT, ×2 INLINED, ×2 +4 KEPT, ×2 +3 INLINED. `sink(W(x))` ×3 is
+    INLINED and ×3 +2 KEPT. `W` with `d2s` is INLINED at +0 and KEPT at
+    +1. `d2s` ×2 is KEPT. `W` ×1 is INLINED at +6, +10, +40.
+  - Fitting an additive size to those flips, in units of one `sink(x)`:
+    `sink(W(x + i))` costs 5, `sink(W(x))` 4, `sink(d2s(x + i))` 8, and
+    the threshold is about `leaf`'s base + 14.
   - Rows for (c). `gen` reaching `rec` through a plain `@always_inline` or
-    `nodebug` intermediary, or holding it after `leaf[n]`, is KEPT. `rec`
-    reached through `@no_inline`, through a self-recursive plain `def`,
-    `gen` calling itself, `rec` in `main` instead, or no `rec` at all is
-    INLINED.
-  - Ruled out: "the counted body holds splices of its own" (`W` and `I`
-    hold none). Also "only `leaf`'s own splices count" (`W` ×2 needs the
-    extra statements). Also "the same generator twice" (twins count).
-    And a single additive size of `leaf`.
-  - Only `-O3`, `mojo run`'s default, shows the effect. The pin's IR is not
-    observable, since `MODULAR_DEBUG` rejects every `mlir-print-ir-*`
-    spelling. Its pass timing does show `ApplyInliner` just before the
-    second `InlineParametric`, which Mojito has no counterpart for.
+    `nodebug` intermediary, or holding it after `leaf[n]`, is KEPT, and so
+    is a `gen` itself `@always_inline` or `nodebug`. `rec` reached through
+    `@no_inline` or a self-recursive plain `def`, `gen` calling itself,
+    `rec` in `main`, or no `rec` is INLINED. A `gen` holding `_ = BIG(x)`,
+    refused for size, is INLINED: the condition is about cycles.
   - R924's `print()` probe is this shape: `print`'s literal defaults are
     plain `StaticString` conversions.
-  - Next: explain the `other` rows, which point at the provenance of a
-    call (written in `leaf`, or spliced from a `nodebug` body) rather than
-    at a count. Then state the rule and match it in `Callees::body`'s
-    `Cycles::Reached` arm (`pre_elaboration.rs`). That arm needs a caller-side
-    reach set that `bottom_up_order` does not compute today, since its
-    reaching set holds followed rows only. It also needs a record of what
-    `leaf`'s runs refused, which `fresh_splices` does not keep.
-  - Depends on R2100 (Mojito must refuse the callees the pin refuses
-    before any rule can be matched).
+  - Explain before matching. Only `-O3` shows the effect, and the pin's
+    IR is not observable. Its binary names `kgen.recursive_inlined_form`
+    and MLIR's `!inline_history`, which may carry condition (c). Its pass
+    timing shows `ApplyInliner` just before the second `InlineParametric`.
+  - Lever: `Callees::body`'s `Cycles::Reached` arm (`pre_elaboration.rs`).
+    It needs a caller-side reach set over every row, which
+    `bottom_up_order` lacks (its `reaching` holds followed rows only), and
+    a count of the sites spliced since the last `mem-2-reg` in
+    `FreshSplices`.
+  - Fixture: an `assets/type_error` twin of
+    `always_inline_nodebug_reaches_cycle_kept.mojo` with `sink(W(x + i))`
+    ×2 +4, beside its INLINED counterpart at +3.
+  - Depends on R2107 (which sites the second run splices) and R2057
+    (second-run prices of cleaned bodies).
   - Model: Fable, Not Planned.
 
 - [ ] **R1414 A display's elements are not bound as its literal

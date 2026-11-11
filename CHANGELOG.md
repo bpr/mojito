@@ -316,6 +316,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric`'s second run prices a program callee it splices
+  after the earlier round cleaned it as that cleaned body, as the pin's
+  second `InlineParametric` splices it, rather than at the first run's
+  uncleaned prices: a plain `leaf` holding four cleaned `W` splices now
+  prices 50, not 128. No fixture's or probe's decision changes yet. R2081
+  is split into R2107 (the pin's first run holds back a callee calling one
+  it refused) and R2108 (the keep rule itself), with the remaining
+  second-run price gap added to R2057.
 - `inline-parametric`'s first run now refuses the same plain
   `@always_inline` callees as the pin's first `InlineParametric`
   (`A3(x) = x + 1 + 2 + 3`, `W`, `c3`, `I`) and splices `d2(x) = e1(x) +

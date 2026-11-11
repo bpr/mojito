@@ -170,6 +170,15 @@ impl Callees<'_> {
         package.get(name)
     }
 
+    /// Whether the body [`Self::body`] answers for `name` is one of the
+    /// program's, which the seam ran this pass's earlier rounds over
+    /// beside the caller, rather than a package body finished whole.
+    pub fn is_program_body(&self, name: &str) -> bool {
+        self.program
+            .as_ref()
+            .is_some_and(|program| program.rows.contains_key(name))
+    }
+
     /// The finished body of a callee compiled in the caller's own unit, as
     /// [`Self::body`] finds it: the program's at the program seam, never a
     /// package's, as upstream's `RemoveUnusedParams` skips an external

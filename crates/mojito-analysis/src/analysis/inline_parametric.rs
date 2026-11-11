@@ -191,17 +191,17 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
 };
 use mojito_mir::mir::{
-    Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel, MirBlock, MirCaptureAccess,
-    MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame,
-    RegisterEnds, TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
-    count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
-    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
-    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors,
-    operator_method, region_exit, removed_argument_operands, renumber_block_slots,
-    storage_construction, subscript_store_call, terminator_regs, terminator_regs_mut,
-    with_removed_argument_forwards_erased, without_removed_arguments,
+    CleanSplice, Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel, MirBlock,
+    MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
+    MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg,
+    RegionFrame, RegisterEnds, TypeConstructionError, UseMode, callable_targets,
+    construct_type_parameters, count_register_reads, dunder_method_call, erase_removed_operands,
+    fresh_register, has_no_destructor, instruction_regions, instruction_regions_mut,
+    instruction_regs_mut, instruction_slots, instruction_subscript_call,
+    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
+    member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
+    renumber_block_slots, storage_construction, subscript_store_call, terminator_regs,
+    terminator_regs_mut, with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin, RefTy};
@@ -273,11 +273,15 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// any cleanup, so the bodies spliced into `callee` since its last
 /// `mem-2-reg` ([`MirFunction::fresh_splices`]) are priced as they stand
 /// (the private `CostWalk`), `declarations` naming the field order a
-/// trivial copy keeps.
+/// trivial copy keeps. A splice of a program body that had already been
+/// cleaned, as the pin's second run splices one, is priced as that body.
 pub fn inline_cost(callee: &MirFunction, declarations: &MirDeclarations) -> usize {
     let mut walk = CostWalk::new(callee, declarations);
     walk.allocas()
-        + callee.fresh_splices.map_or(0, |fresh| fresh.rebinds)
+        + callee
+            .fresh_splices
+            .as_ref()
+            .map_or(0, |fresh| fresh.rebinds)
         + walk.blocks(&callee.body, false)
         + LOOP_COST * structured_back_edges(&callee.body)
         + if callee.raises { RAISES_COST } else { 0 }
@@ -359,6 +363,7 @@ pub fn inline_calls(
         admission,
         dropped_operands: false,
         rebinds: 0,
+        clean: Vec::new(),
         loop_binders: Vec::new(),
         owned,
         instances: RefCell::new(HashMap::new()),
@@ -367,16 +372,20 @@ pub fn inline_calls(
         regs: inliner.function.n_regs,
         vars: inliner.function.n_vars,
         rebinds: 0,
+        clean: Vec::new(),
     };
     let changed = inliner.block_list(&mut blocks);
     let dropped_operands = inliner.dropped_operands;
     let rebinds = inliner.rebinds;
+    let clean = std::mem::take(&mut inliner.clean);
     function.body = blocks;
     if dropped_operands {
         erase_removed_operands(function, declarations, &reads);
     }
     if changed {
-        function.fresh_splices.get_or_insert(unspliced).rebinds += rebinds;
+        let fresh = function.fresh_splices.get_or_insert(unspliced);
+        fresh.rebinds += rebinds;
+        fresh.clean.extend(clean);
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
         lower_copies_and_moves(function, &|name| declarations.function(name));
@@ -432,6 +441,8 @@ struct Inliner<'f, 'c> {
     dropped_operands: bool,
     /// The [`FreshSplices::rebinds`] of the bodies spliced so far.
     rebinds: usize,
+    /// The [`FreshSplices::clean`] splices so far.
+    clean: Vec<CleanSplice>,
     /// The binders of the `comptime for` loops enclosing the block list
     /// being inlined into, outermost first.
     loop_binders: Vec<ParamId>,
@@ -481,6 +492,9 @@ struct Inlinable<'c> {
     closures: Vec<(VarId, Reg)>,
     /// The [`FreshSplices::rebinds`] the splice adds to the caller's.
     rebinds: usize,
+    /// Whether the callee is a program body cleaned since its own last
+    /// splice ([`FreshSplices::clean`]).
+    clean: bool,
 }
 
 /// A callee instantiated at a call: its body, and each callable binder's
@@ -914,6 +928,7 @@ impl<'c> Inliner<'_, 'c> {
                 changed |= self.instruction_regions(&mut caller.instrs[index]);
             }
             let store = self.setter_call(&mut caller.instrs[index]);
+            let (regs, vars) = (self.function.n_regs, self.function.n_vars);
             if let Some(Inlinable {
                 dest,
                 mut callee,
@@ -922,6 +937,7 @@ impl<'c> Inliner<'_, 'c> {
                 dropped,
                 closures,
                 rebinds,
+                clean,
             }) = self.inlinable(caller, index)
                 && let Some(mut blocks) =
                     self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
@@ -965,6 +981,12 @@ impl<'c> Inliner<'_, 'c> {
                         (&bindings, &closures),
                         blocks,
                     );
+                if clean {
+                    self.clean.push(CleanSplice {
+                        regs: regs..self.function.n_regs,
+                        vars: vars..self.function.n_vars,
+                    });
+                }
                 continue;
             }
             if let Some((original, dest)) = store {
@@ -999,6 +1021,24 @@ impl<'c> Inliner<'_, 'c> {
         self.declarations
             .function(target)
             .is_some_and(MirFunctionDeclaration::is_closure_method)
+    }
+
+    /// The type of the owner a call's `receiver` binds, so declared: the
+    /// constructed result's, `dest`'s, for an `out self` constructor, and
+    /// the receiver argument's for a method; `None` when a constructor's
+    /// receiver is not `out` or the type is unknown.
+    fn owner_ty(
+        &self,
+        receiver: Receiver,
+        declaration: &MirFunctionDeclaration,
+        dest: Reg,
+    ) -> Option<&Ty> {
+        match receiver {
+            Receiver::Constructed => (declaration.receiver_convention == Some(ArgConvention::Out))
+                .then(|| self.function.reg_types.get(&dest.0))
+                .flatten(),
+            Receiver::Argument(recv) => self.function.reg_types.get(&recv.0),
+        }
     }
 
     /// The declaration of `name`, when every binder of the regions it, and
@@ -1332,13 +1372,7 @@ impl<'c> Inliner<'_, 'c> {
             other => other.is_some(),
         };
         let owner_ty = match receiver {
-            Some(Receiver::Constructed) => {
-                if declaration.receiver_convention != Some(ArgConvention::Out) {
-                    return None;
-                }
-                Some(self.function.reg_types.get(&dest.0)?)
-            }
-            Some(Receiver::Argument(recv)) => Some(self.function.reg_types.get(&recv.0)?),
+            Some(receiver) => Some(self.owner_ty(receiver, declaration, dest)?),
             None => None,
         };
         if !is_closed(callee, declaration)
@@ -1404,6 +1438,7 @@ impl<'c> Inliner<'_, 'c> {
         }
         Some(Inlinable {
             rebinds: parametric_rebinds(&callee, declaration, owner.as_ref()),
+            clean: full.fresh_splices.is_none() && self.callees.is_program_body(&target),
             dest,
             callee,
             inline: declaration.inline,
@@ -3654,9 +3689,18 @@ fn address_cost(place: &MirPlace) -> usize {
 /// such splices also tests each `if` and `elif` condition through the
 /// splice of `Bool.__mlir_i1__` ([`SPLICED_CONDITION_COST`]), and carries
 /// the [`FreshSplices::rebinds`] of its splices' type parameters.
+///
+/// A splice of a program body cleaned since its own last splice
+/// ([`FreshSplices::clean`]) is the pin's second-run splice of the body
+/// its earlier round cleaned: its wrapper is walked as a cleaned body is,
+/// its own slots promoted, and only the caller's slots it reaches priced
+/// as above.
 struct CostWalk {
     constants: BTreeSet<String>,
     fresh: Option<FreshSplices>,
+    /// Whether the walk is inside the wrapper of a splice of a cleaned
+    /// body ([`FreshSplices::clean`]).
+    clean: bool,
     /// The parameter slots bound to arguments.
     bound: HashSet<VarId>,
     /// The binding stores themselves.
@@ -3675,10 +3719,11 @@ struct CostWalk {
 impl CostWalk {
     fn new(function: &MirFunction, declarations: &MirDeclarations) -> Self {
         let block = &function.body;
-        let fresh = function.fresh_splices;
+        let fresh = function.fresh_splices.clone();
         let mut walk = Self {
             constants: BTreeSet::new(),
             fresh,
+            clean: false,
             bound: HashSet::new(),
             bindings: HashSet::new(),
             unpromoted: HashSet::new(),
@@ -3686,7 +3731,7 @@ impl CostWalk {
             constructions: 0,
             read: HashSet::new(),
         };
-        if let Some(fresh) = fresh {
+        if let Some(fresh) = &walk.fresh {
             walk.copies = TrivialCopies::of(function, declarations);
             walk.bindings = parameter_bindings(block, fresh, &mut walk.bound);
             unpromoted_slots(block, fresh, false, &mut walk.unpromoted);
@@ -3738,7 +3783,7 @@ impl CostWalk {
             }
             MirInstr::DefVar { var, src, .. } => {
                 let computed = spliced
-                    && self.fresh.is_some_and(|fresh| !fresh.var(*var))
+                    && self.fresh.as_ref().is_some_and(|fresh| !fresh.var(*var))
                     && !self.read.contains(&src.0);
                 usize::from(!binding && unpromoted(var)) + usize::from(computed)
             }
@@ -3765,7 +3810,7 @@ impl CostWalk {
             ),
             MirInstr::Try { .. } => TRY_COST,
             MirInstr::If { elifs, .. } => {
-                let condition = if self.fresh.is_some() {
+                let condition = if self.fresh.is_some() && !self.clean {
                     SPLICED_CONDITION_COST
                 } else {
                     0
@@ -3773,11 +3818,20 @@ impl CostWalk {
                 (1 + elifs.len()) * (1 + condition)
             }
             MirInstr::Loop { body, .. }
-                if self
-                    .fresh
-                    .is_some_and(|fresh| is_fresh_wrapper(instruction, fresh)) =>
+                if !self.clean
+                    && self
+                        .fresh
+                        .as_ref()
+                        .is_some_and(|fresh| is_fresh_wrapper(instruction, fresh)) =>
             {
-                return self.blocks(body, true);
+                let clean = self
+                    .fresh
+                    .as_ref()
+                    .is_some_and(|fresh| is_clean_wrapper(instruction, fresh));
+                self.clean = clean;
+                let cost = self.blocks(body, !clean);
+                self.clean = false;
+                return cost;
             }
             MirInstr::MakeStruct { .. } | MirInstr::GetField { .. }
                 if self.copies.contains(instruction) =>
@@ -3908,7 +3962,7 @@ fn gather_extracts<'b>(block: &'b MirBlock, extracts: &mut HashMap<u32, (Reg, &'
 /// names as a place or a slot.
 fn unpromoted_slots(
     block: &MirBlock,
-    fresh: FreshSplices,
+    fresh: &FreshSplices,
     spliced: bool,
     slots: &mut HashSet<VarId>,
 ) {
@@ -3918,7 +3972,13 @@ fn unpromoted_slots(
                 .into_iter()
                 .map(|place| place.root),
         );
-        slots.extend(named.filter(|var| spliced || fresh.var(*var)));
+        slots.extend(named.filter(|var| {
+            if fresh.var(*var) {
+                !fresh.clean_var(*var)
+            } else {
+                spliced
+            }
+        }));
         let inner = spliced || is_fresh_wrapper(instruction, fresh);
         for region in instruction_regions(instruction) {
             unpromoted_slots(region, fresh, inner, slots);
@@ -3931,7 +3991,7 @@ fn unpromoted_slots(
 /// before that body's wrapper loop, their slots gathered into `bound`.
 fn parameter_bindings(
     block: &MirBlock,
-    fresh: FreshSplices,
+    fresh: &FreshSplices,
     bound: &mut HashSet<VarId>,
 ) -> HashSet<*const MirInstr> {
     let mut bindings = HashSet::new();
@@ -3958,7 +4018,29 @@ fn parameter_bindings(
 /// Whether `instruction` is the wrapper loop of a body spliced since the
 /// last `mem-2-reg`: a loop labelled [`LoopLabel::INLINED_CF_SCOPE`] one
 /// of whose results, or whose first instruction, is that body's.
-fn is_fresh_wrapper(instruction: &MirInstr, fresh: FreshSplices) -> bool {
+fn is_fresh_wrapper(instruction: &MirInstr, fresh: &FreshSplices) -> bool {
+    wrapper_made_by(instruction, |reg| fresh.reg(reg), |var| fresh.var(var))
+}
+
+/// Whether `instruction` is the wrapper loop of a splice of a cleaned body
+/// ([`FreshSplices::clean`]), by the same test as [`is_fresh_wrapper`].
+fn is_clean_wrapper(instruction: &MirInstr, fresh: &FreshSplices) -> bool {
+    wrapper_made_by(
+        instruction,
+        |reg| fresh.clean_reg(reg),
+        |var| fresh.clean_var(var),
+    )
+}
+
+/// Whether `instruction` is a loop labelled
+/// [`LoopLabel::INLINED_CF_SCOPE`] one of whose results `reg` holds of, or
+/// whose first instruction defines such a register or names a slot `var`
+/// holds of.
+fn wrapper_made_by(
+    instruction: &MirInstr,
+    reg: impl Fn(Reg) -> bool,
+    var: impl Fn(VarId) -> bool,
+) -> bool {
     let MirInstr::Loop {
         label: Some(LoopLabel::INLINED_CF_SCOPE),
         results,
@@ -3968,14 +4050,11 @@ fn is_fresh_wrapper(instruction: &MirInstr, fresh: FreshSplices) -> bool {
     else {
         return false;
     };
-    results.iter().any(|reg| fresh.reg(*reg))
+    results.iter().any(|result| reg(*result))
         || body.instrs.first().is_some_and(|first| {
             let mut defined = Vec::new();
             instruction_result_regs(first, &mut defined);
-            defined.into_iter().any(|reg| fresh.reg(reg))
-                || instruction_slots(first)
-                    .into_iter()
-                    .any(|var| fresh.var(var))
+            defined.into_iter().any(&reg) || instruction_slots(first).into_iter().any(&var)
         })
 }
 
@@ -5137,7 +5216,10 @@ fn parametric_rebinds(
     declaration: &MirFunctionDeclaration,
     owner: Option<&OwnerInstance<'_>>,
 ) -> usize {
-    callee.fresh_splices.map_or(0, |fresh| fresh.rebinds)
+    callee
+        .fresh_splices
+        .as_ref()
+        .map_or(0, |fresh| fresh.rebinds)
         + if declaration.inline == InlineLevel::Builtin {
             0
         } else {
@@ -5428,6 +5510,7 @@ mod tests {
             regs: 1,
             vars: 1,
             rebinds: 0,
+            clean: Vec::new(),
         });
         assert_eq!(inline_cost(&function, &declarations), 4);
     }
@@ -5436,7 +5519,9 @@ mod tests {
     /// five, an assertion standing for a `pop` verifier at nothing, and
     /// each `if` test two more for its `Bool.__mlir_i1__` splice, as the
     /// pin's first `InlineParametric` measures them; a cleaned body prices
-    /// none of these.
+    /// none of these, nor does a splice of one ([`FreshSplices::clean`]),
+    /// which the pin's second `InlineParametric` splices cleaned, though
+    /// the caller's own test still pays for the splices beside it.
     #[test]
     fn fresh_splices_price_constructions_and_conditions() {
         let assert = |message: String| MirInstr::ComptimeAssert {
@@ -5481,8 +5566,19 @@ mod tests {
             regs: 1,
             vars: 0,
             rebinds: 2,
+            clean: Vec::new(),
         });
         assert_eq!(inline_cost(&function, &declarations), 2 + 1 + 5 + 3);
+        function.fresh_splices = Some(FreshSplices {
+            regs: 1,
+            vars: 0,
+            rebinds: 2,
+            clean: vec![CleanSplice {
+                regs: 1..3,
+                vars: 0..0,
+            }],
+        });
+        assert_eq!(inline_cost(&function, &declarations), 2 + 1 + 3);
     }
 
     /// A structured body prices each loop its `continue`s resume as one

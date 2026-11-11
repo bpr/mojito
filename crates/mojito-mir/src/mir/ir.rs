@@ -3894,7 +3894,9 @@ pub struct MirFunction {
 /// Where the bodies spliced into a function since its last `mem-2-reg`
 /// begin ([`MirFunction::fresh_splices`]), beside the operations their
 /// splices hold upstream that no instruction of theirs stands for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// It also records which of them were spliced already cleaned.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshSplices {
     pub regs: u32,
     pub vars: usize,
@@ -3902,18 +3904,42 @@ pub struct FreshSplices {
     /// for binding a non-builtin callee's type parameters, which the
     /// substitution here leaves no trace of.
     pub rebinds: usize,
+    /// The registers and slots of each splice of a program body that had
+    /// had its `mem-2-reg` since its own last splice: a body upstream's
+    /// second `InlineParametric` splices as its earlier round cleaned it.
+    pub clean: Vec<CleanSplice>,
 }
 
 impl FreshSplices {
     /// Whether `reg` was made by a body spliced since.
-    pub const fn reg(self, reg: Reg) -> bool {
+    pub const fn reg(&self, reg: Reg) -> bool {
         reg.0 >= self.regs
     }
 
     /// Whether `var` is a slot of a body spliced since.
-    pub const fn var(self, var: VarId) -> bool {
+    pub const fn var(&self, var: VarId) -> bool {
         var as usize >= self.vars
     }
+
+    /// Whether `reg` was made by a splice of a cleaned body.
+    pub fn clean_reg(&self, reg: Reg) -> bool {
+        self.clean.iter().any(|splice| splice.regs.contains(&reg.0))
+    }
+
+    /// Whether `var` is a slot of a splice of a cleaned body.
+    pub fn clean_var(&self, var: VarId) -> bool {
+        self.clean
+            .iter()
+            .any(|splice| splice.vars.contains(&(var as usize)))
+    }
+}
+
+/// The registers and slots one splice of a cleaned body made
+/// ([`FreshSplices::clean`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanSplice {
+    pub regs: std::ops::Range<u32>,
+    pub vars: std::ops::Range<usize>,
 }
 
 /// A call lowered from a checked call: the register its result writes, the

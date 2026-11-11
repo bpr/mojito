@@ -6837,7 +6837,13 @@ point where a slot declared in a loop is uninitialized again.
   `elif` test costs two more, for the pin's `Bool.__mlir_i1__` splice.
   The stores binding a parameter to its argument right before the wrapper
   loop and the copies read from such a parameter stay free, as the pin
-  substitutes them by value. A splice of a non-builtin callee generic over
+  substitutes them by value. A splice of a program body that has had its
+  `mem-2-reg` since its own last splice is the pin's second-run splice of
+  a body its earlier round cleaned: `inline_calls` records its registers
+  and slots (`FreshSplices::clean`, `mir::CleanSplice`, through
+  `Callees::is_program_body`), and `CostWalk` walks it as a cleaned body,
+  its own slots promoted, pricing only the caller slots it reaches as
+  above. A splice of a non-builtin callee generic over
   a type adds its binding operations to `FreshSplices::rebinds` (the
   private `parametric_rebinds`): one per binder its signature names, one
   for a parametric result, and two per parametric `mut` parameter. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
