@@ -603,6 +603,7 @@ assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_declared_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_operator_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_rule_value_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/literal_unary_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_deinterleave.mojo	-	ineligible	no-scalar-entry-shape
@@ -669,6 +670,7 @@ assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_overload_parameter_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_signature_calls_later_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_struct_comptime_parameter_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape

@@ -345,6 +345,8 @@ mod body_carry;
 mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;
+mod method_table;
+use method_table::MethodTable;
 mod node_facts;
 pub use interface::{DeclarationInterfaces, InstalledInterfaces, InterfaceExport};
 mod overload_support;
@@ -2793,8 +2795,7 @@ struct StructInfo {
     /// and substituted per application. See [`ParameterizedMember`].
     #[serde(serialize_with = "interface::sorted")]
     parameterized_associated: HashMap<String, ParameterizedMember>,
-    #[serde(serialize_with = "interface::sorted")]
-    methods: HashMap<String, Vec<MethodSig>>,
+    methods: MethodTable,
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     #[serde(serialize_with = "interface::sorted")]

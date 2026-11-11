@@ -1121,7 +1121,7 @@ impl DeclarationInterface {
             }
             let methods = project_methods(name, info, lowered)?;
             if methods.is_some() {
-                info.methods = HashMap::new();
+                info.methods = MethodTable::default();
             }
             info.decls = Vec::new();
             info.fields = Vec::new();
@@ -2016,7 +2016,7 @@ mod tests {
             associated_spellings: HashMap::new(),
             associated_constraints: HashMap::new(),
             parameterized_associated: HashMap::new(),
-            methods: rows,
+            methods: rows.into(),
             fieldwise_init: false,
             explicit_destroy_message: None,
             explicit_destructors: HashMap::new(),

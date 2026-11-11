@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method's signature may call a method its struct, or another struct of
+  the program, declares below it, as upstream emits a signature on demand
+  (R1853): a lookup of a declared method not yet registered registers that
+  method's signatures first, and two signatures that read each other are
+  the pin's "attempt to resolve a recursive reference to declaration". The
+  bundled `IntLiteral` gains upstream's `__neg__`, `__invert__`, and
+  `__ceildiv__`, and `FloatLiteral` its `__neg__` and `__ceildiv__`, so a
+  literal's unary `-` and `~` are the declared dunders rather than the
+  checker's literal rule (`assets/ok/method_signature_calls_later_method.mojo`,
+  `assets/ok/literal_unary_dunders.mojo`,
+  `assets/type_error/method_signature_recursive_reference.mojo`).
 - `std.iter.map` is upstream's: the lazy `_MapIterator` over a callable
   parameter and `map`'s borrowed and owned overloads, exported by the
   prelude, and `next` is upstream's body raising `StopIteration` (R1411).

@@ -1,16 +1,14 @@
 # Upstream's `std/builtin/float_literal.mojo`, in part: the
 # `FloatLiteral[value]` struct with its default initializer, `is_nan`,
 # `is_neg_zero`, `_is_normal`, `__int_literal__`, `__int__`, `__float__`,
-# `write_to`, `write_repr_to`, `__bool__`, the arithmetic dunders but
-# `__ceildiv__`, and the comparison dunders. A literal `2.5` is its
-# application `FloatLiteral[2.5]`, as is an explicit one
-# (`FloatLiteral[(2.5).value]()`).
+# `write_to`, `write_repr_to`, `__bool__`, `__neg__`, the arithmetic
+# dunders, and the comparison dunders. A literal `2.5` is its application
+# `FloatLiteral[2.5]`, as is an explicit one (`FloatLiteral[(2.5).value]()`).
 # Not ported: the implicit initializer from `IntLiteral[_]`, whose
 # declaration has no `out self` (R1784); the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the
-# compiler's exact rational cannot hold (R1783); `__neg__` and
-# `__ceildiv__`, which negate an `IntLiteral` (R1853); and the reflected
-# dunders, whose `type_of(rhs OP self)` captures their own `rhs` (R1854).
+# compiler's exact rational cannot hold (R1783); and the reflected dunders,
+# whose `type_of(rhs OP self)` captures their own `rhs` (R1854).
 """Implements the FloatLiteral class.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -158,6 +156,15 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
         """
         return self != 0.0
 
+    @always_inline("builtin")
+    def __neg__(self) -> type_of(self * -1):
+        """Return the negation of the FloatLiteral value.
+
+        Returns:
+            The negated FloatLiteral value.
+        """
+        return {}
+
     # ===------------------------------------------------------------------===#
     # Arithmetic Operators
     # ===------------------------------------------------------------------===#
@@ -285,6 +292,20 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
 
         Returns:
             The remainder of dividing self by rhs.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __ceildiv__(
+        self, denominator: FloatLiteral
+    ) -> type_of(-(self // -denominator)):
+        """Return the rounded-up result of dividing self by denominator.
+
+        Args:
+            denominator: The denominator.
+
+        Returns:
+            The ceiling of dividing numerator by denominator.
         """
         return {}
 

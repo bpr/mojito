@@ -304,7 +304,13 @@ which names the upstream pass each one follows. Each is measured by the
   - The lever: make the registered signature's emitter reachable from type
     resolution, then delete `in_signature_clause_scope`, both
     `compile_application_constraints` calls, and the entry's separate
-    classification. R1853 and R2052 need the same on-demand resolver.
+    classification. R2052 needs the same on-demand resolver.
+  - Method signatures already register in demand order, but by restarting
+    the dependent signature (`register_method_signature`,
+    `checker/traits.rs`: a `MethodTable` miss records a demand, the
+    attempt is forgotten and retyped) rather than by suspending it, for the
+    same `&self` obstacle; the same emitter would let the lookup register
+    the demanded signature in place.
   - Probe: `assets/ok/where_applied_field_type_clause.mojo` and its
     `type_error` twin keep their output.
   - Probe: a trace where `publish_constraints` fills an empty slot fires
@@ -2702,34 +2708,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`checker/traits.rs`) compares run-time signatures only.
   - Upstream's `IntLiteral.__pow__` is such a pair (R1821).
   - Found while planning R1166 (2026-10-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1853 A method's signature cannot call a method its struct declares
-  later**
-
-  `def neg(self) -> type_of(self.sub(self))` declared before `sub` is
-  "type 'W[n]' has no method 'sub'", where the pin resolves it.
-  - `register_struct_method_signatures` (`checker/traits.rs`) types each
-    signature in declaration order and registers it after, so a signature
-    sees only the methods above it.
-  - Upstream resolves a signature's calls against the whole struct.
-  - Probe: `struct W[n: Int]` with `neg` as above before `def sub(self, o:
-    W[_]) -> W[Self.n - o.n + 7]`: `print(W[3]().neg().n)` prints `7` at
-    the pin.
-  - Landing it ports upstream's `IntLiteral.__neg__` (`type_of(0 -
-    self)`), `__invert__`, and `__ceildiv__`, and `FloatLiteral.__neg__`
-    and `__ceildiv__`, which read `__sub__`, `__xor__`, `__floordiv__`, and
-    `__mul__` declared below them. Each fails the bundled library's
-    packaging today.
-  - It then deletes the prefix literal arms of `Checker::infer_prefix`
-    (`checker/operators.rs`): `-N` and `~N` become the declared dunders.
-  - Probe: `print(-4, ~4, (7).__ceildiv__(2), (2.5).__neg__())` prints `-4
-    -5 4 -2.5` at the pin.
-  - Probe: `comptime X = 12`, then `print(X.__neg__())`, prints `-12` at
-    the pin; the unannotated constant is the `IntLiteral[12]`, so the call
-    reaches the unported `IntLiteral.__neg__`.
-  - Found while landing R1753 (2026-11-02).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

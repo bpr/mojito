@@ -308,21 +308,28 @@ impl Checker {
             &mut waiting_conformers,
             &mut constructing_structs,
         )?;
-        for (index, statement) in stmts.iter().enumerate() {
-            let Some(declaration) = struct_declaration(statement) else {
-                continue;
-            };
-            if parked_conformers.contains(&index) || constructing_structs.contains(&index) {
-                continue;
-            }
-            self.check_struct_method_signatures(&declaration)?;
+        // A signature may read a method of any struct this loop registers,
+        // declared before or after it.
+        let ready: Vec<StructDeclaration<'_>> = stmts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                !parked_conformers.contains(index) && !constructing_structs.contains(index)
+            })
+            .filter_map(|(_, statement)| struct_declaration(statement))
+            .collect();
+        self.begin_method_registration(&ready)?;
+        let registered = ready.iter().try_for_each(|declaration| {
+            self.check_struct_method_signatures_among(declaration, &ready)?;
             self.retry_deferred_traits(
                 stmts,
                 &mut deferred_traits,
                 &mut waiting_conformers,
                 &mut constructing_structs,
-            )?;
-        }
+            )
+        });
+        self.end_method_registration(&ready);
+        registered?;
         // An alias constructing a struct of this program
         // (`AHasher[SIMD[DType.uint64, 4](0)]`) registers once that struct's
         // initializers have, and so do the shell defaults naming it.
@@ -4238,7 +4245,7 @@ impl Checker {
                 associated_spellings: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
-                methods: HashMap::new(),
+                methods: MethodTable::default(),
                 fieldwise_init: false,
                 explicit_destroy_message: None,
                 explicit_destructors: HashMap::new(),

@@ -1,17 +1,16 @@
 # Upstream's `std/builtin/int_literal.mojo`, in part: the
 # `IntLiteral[value]` struct with its default initializer, the comparison
-# dunders, `__pos__`, the `IntLiteral[_]`-taking `__add__`, `__sub__`, and
-# `__mul__`, `__floordiv__`, `__mod__`, the shifts and bitwise dunders,
-# `__bool__`, `__int__`, `__ceil__`, `__floor__`, `__trunc__`, `write_to`,
-# `write_repr_to`, `__mlir_index__`, and the non-negative-exponent
-# `__pow__`. A literal `4` is its application `IntLiteral[4]`, as is an
-# explicit one (`IntLiteral[(4).value]()`), and a bare `IntLiteral`
-# parameter is upstream's per-call `IntLiteral[_]`. Not ported: `__neg__`,
-# `__invert__`, and `__ceildiv__`, whose signatures call a dunder declared
-# below them (R1853); the `FloatLiteral`-taking `__add__`, `__sub__`, and
-# `__mul__` and `__truediv__`, which construct a `FloatLiteral` from `self`
-# (R1784); and the negative-exponent `__pow__`, which differs from the
-# other only in its `where` clause (R1821).
+# dunders, `__pos__`, `__neg__`, `__invert__`, the `IntLiteral[_]`-taking
+# `__add__`, `__sub__`, and `__mul__`, `__floordiv__`, `__mod__`, the
+# shifts and bitwise dunders, `__bool__`, `__int__`, `__ceil__`,
+# `__floor__`, `__trunc__`, `write_to`, `write_repr_to`, `__ceildiv__`,
+# `__mlir_index__`, and the non-negative-exponent `__pow__`. A literal `4`
+# is its application `IntLiteral[4]`, as is an explicit one
+# (`IntLiteral[(4).value]()`), and a bare `IntLiteral` parameter is
+# upstream's per-call `IntLiteral[_]`. Not ported: the `FloatLiteral`-taking
+# `__add__`, `__sub__`, and `__mul__` and `__truediv__`, which construct a
+# `FloatLiteral` from `self` (R1784); and the negative-exponent `__pow__`,
+# which differs from the other only in its `where` clause (R1821).
 """Implements the IntLiteral class."""
 
 from std.math import Ceilable, Floorable, Truncable
@@ -170,6 +169,24 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
             The +self value.
         """
         return self
+
+    @always_inline("builtin")
+    def __neg__(self) -> type_of(0 - self):
+        """Return -self.
+
+        Returns:
+            The -self value.
+        """
+        return 0 - self
+
+    @always_inline("builtin")
+    def __invert__(self) -> type_of(self ^ -1):
+        """Return ~self.
+
+        Returns:
+            The ~self value.
+        """
+        return {}
 
     @always_inline("builtin")
     def __add__(
@@ -483,6 +500,21 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
             writer: The Writer to write the value to.
         """
         Int(self).write_repr_to(writer)
+
+    @always_inline("builtin")
+    def __ceildiv__(
+        self, denominator: IntLiteral
+    ) -> type_of(-(self // -denominator)):
+        """Return the rounded-up result of dividing self by denominator.
+
+
+        Args:
+            denominator: The denominator.
+
+        Returns:
+            The ceiling of dividing numerator by denominator.
+        """
+        return {}
 
     # ===-------------------------------------------------------------------===#
     # Methods

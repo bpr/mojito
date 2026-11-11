@@ -157,6 +157,10 @@ pub enum TypeError {
     },
     /// Re-declaring a name already bound in the same scope.
     Redeclaration(String),
+    /// A declaration whose signature's resolution reaches the declaration
+    /// itself (`W.a` returning `type_of(self.b())` while `b` returns
+    /// `type_of(self.a())`). Carries the declaration's dotted name.
+    RecursiveReference(String),
     /// A free or nested function uses a word reserved for future Mojo syntax.
     /// These words remain lexer-level identifiers so later syntax can adopt
     /// them contextually.
@@ -720,6 +724,12 @@ impl fmt::Display for TypeError {
             }
             Self::Redeclaration(name) => {
                 write!(f, "'{name}' is already declared in this scope")
+            }
+            Self::RecursiveReference(name) => {
+                write!(
+                    f,
+                    "attempt to resolve a recursive reference to declaration '{name}'"
+                )
             }
             Self::ReservedName(name) => {
                 write!(f, "'{name}' is a reserved word and cannot name a function")

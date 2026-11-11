@@ -2251,7 +2251,7 @@ folds its operators through the shared folder (`folds_as_struct`,
 `types::copy_is_identity`); and a read its use materializes is the
 conversion's value, never a borrowed place (`lower_borrowed_name_read`).
 The checker's literal rule types the operators whose dunders are not
-ported yet (R1784, R1853, R1854).
+ported yet (R1784, R1854).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`
@@ -2686,7 +2686,16 @@ It is responsible for:
 - struct declarations and field layouts
 - function and method signatures, every module function's declared ahead of
   any body (after struct method signatures), so file-scope functions
-  resolve in any order; a nested function binds at its statement
+  resolve in any order; a nested function binds at its statement. Method
+  signatures register in upstream's demand order: while the structs of the
+  signatures pass register, each declared method name not yet registered
+  is pending in its struct's `MethodTable`, and a lookup that misses a
+  pending name records a demand, so `register_method_signature` forgets
+  the attempt, registers the demanded name's overloads first (in their
+  own struct's scope when it is another struct), and types the signature
+  again; a demand for a name whose registration is under way that leaves
+  the signature untyped is the pin's "attempt to resolve a recursive
+  reference to declaration 'W.a'"
 - overload sets and selected overload targets
 - trait declarations and a limited trait-conformance model
 - trait receiver conventions and associated compile-time facts

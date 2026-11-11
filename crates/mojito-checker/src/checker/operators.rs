@@ -55,28 +55,9 @@ impl Checker {
             return Ok(ty);
         }
         match (op, t.kind()) {
-            // A literal's `-x`, `~x`, and `+x` are the literal its dunder's
-            // signature types (`IntLiteral.__neg__` is `type_of(0 - self)`,
-            // `__invert__` `type_of(self ^ -1)`, `FloatLiteral.__neg__`
-            // `type_of(self * -1)`, `__pos__` `Self`), so `-2.5` is
-            // `FloatLiteral[-2.5]`.
+            // The pin accepts `+2.5` though `FloatLiteral` declares no
+            // `__pos__`: a literal's `+x` is the literal itself.
             (PrefixOp::Pos, kind) if kind.is_numeric_literal() => return Ok(t),
-            (PrefixOp::Neg, kind) if kind.is_int_literal() => {
-                return self.literal_rule_type(InfixOp::Sub, &Ty::int_literal_of(&0.into()), &t);
-            }
-            (PrefixOp::Neg, kind) if kind.is_float_literal() => {
-                let minus_one = Ty::float_literal_of(
-                    &mojito_common::literal::FloatLiteral::from_int(&(-1).into()),
-                );
-                return self.literal_rule_type(InfixOp::Mul, &t, &minus_one);
-            }
-            (PrefixOp::Invert, kind) if kind.is_int_literal() => {
-                return self.literal_rule_type(
-                    InfixOp::BitXor,
-                    &t,
-                    &Ty::int_literal_of(&(-1).into()),
-                );
-            }
             (PrefixOp::Not, kind) if kind.is_bool() => return Ok(Ty::bool()),
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
             // `not (a == b)` over `UInt64`s.

@@ -603,6 +603,7 @@ assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/literal_declared_conformance.mojo	main	exe-differential	sanitized
 assets/ok/literal_operator_dunders.mojo	main	exe-differential	sanitized
 assets/ok/literal_rule_value_type.mojo	main	exe-differential	sanitized
+assets/ok/literal_unary_dunders.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic_deinterleave.mojo	main	exe-differential	sanitized
@@ -669,6 +670,7 @@ assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
 assets/ok/method_overload_parameter_pack.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
+assets/ok/method_signature_calls_later_method.mojo	main	exe-differential	sanitized
 assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_struct_comptime_parameter_argument.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_argument_instances.mojo	main	exe-differential	sanitized

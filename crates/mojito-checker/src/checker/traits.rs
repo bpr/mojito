@@ -582,7 +582,7 @@ impl Checker {
                 associated_spellings: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
-                methods: HashMap::new(),
+                methods: MethodTable::default(),
                 fieldwise_init: declaration.fieldwise_init,
                 explicit_destroy_message,
                 explicit_destructors,
@@ -1042,9 +1042,46 @@ impl Checker {
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
+        self.check_struct_method_signatures_among(declaration, &[])
+    }
+
+    /// Marks every method of each struct in `peers` pending: until its
+    /// struct registers it, a signature that reads it registers it first
+    /// ([`Self::check_struct_method_signatures_among`]).
+    pub(super) fn begin_method_registration(
+        &mut self,
+        peers: &[StructDeclaration<'_>],
+    ) -> Result<(), TypeError> {
+        peers.iter().try_for_each(|peer| {
+            let groups = method_groups(peer);
+            self.declared_methods_mut(peer.name)?
+                .begin_pending(groups.into_iter().map(str::to_string));
+            Ok(())
+        })
+    }
+
+    /// Ends [`Self::begin_method_registration`]'s registration: no method
+    /// of `peers` is pending any more.
+    pub(super) fn end_method_registration(&mut self, peers: &[StructDeclaration<'_>]) {
+        for peer in peers {
+            if let Some(info) = self.structs.get_mut(peer.name) {
+                info.methods.settle_all();
+            }
+        }
+    }
+
+    /// [`Self::check_struct_method_signatures`] while the methods of
+    /// `peers` are pending ([`Self::begin_method_registration`]): a
+    /// signature reading one registers that method's signatures first, in
+    /// its own struct's scope, as upstream emits a declaration on demand.
+    pub(super) fn check_struct_method_signatures_among(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        peers: &[StructDeclaration<'_>],
+    ) -> Result<(), TypeError> {
         let name = declaration.name;
         let (_, saved) = self.enter_struct_scope(declaration)?;
-        let result = self.register_struct_method_signatures(declaration);
+        let result = self.register_struct_method_signatures(declaration, peers);
         self.exit_struct_scope(saved);
         result?;
         // `@fieldwise_init` and a hand-written `__init__` both define a
@@ -1061,94 +1098,236 @@ impl Checker {
         Ok(())
     }
 
+    /// Registers every method signature of struct `declaration` in upstream's
+    /// demand order: each name's overloads in source order, but a name a
+    /// signature reads before its struct has registered it first, whatever
+    /// its position ([`MethodTable`]).
     fn register_struct_method_signatures(
         &mut self,
         declaration: &StructDeclaration<'_>,
+        peers: &[StructDeclaration<'_>],
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         self.generated_declaration.set(name.contains('$'));
-        for (method_index, m) in declaration.methods.iter().enumerate() {
-            let method_name = lifecycle_method_name(m);
-            let (all_types, mut sig) =
-                self.declared_method_signature(declaration, method_index, m)?;
-            self.publish_method_constraints(
-                declaration,
-                method_index,
-                m,
-                &sig.decls,
-                &sig.availability,
-            );
-            self.generic_parameters.borrow_mut().insert(
-                mojito_checked::checked::GenericSite::Method {
-                    module: declaration.module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                },
-                sig.decls.clone(),
-            );
-            if let Some(info) = self.structs.get(name) {
-                sig.parametric_origin_writes =
-                    parametric_origin_writes_in_body(&m.body, &info.fields);
-            }
-            for (param, ty) in all_types.iter().enumerate() {
-                self.declaration_types.borrow_mut().insert(
-                    mojito_checked::checked::AnnotationSite::MethodParam {
-                        module: declaration.module.clone(),
-                        declaration: name.to_string(),
-                        method: method_index,
-                        param,
-                    },
-                    ty.clone(),
-                );
-            }
-            self.declaration_types.borrow_mut().insert(
-                mojito_checked::checked::AnnotationSite::MethodReturn {
-                    module: declaration.module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                },
-                sig.ret.clone(),
-            );
-            self.declaration_effects.borrow_mut().insert(
-                mojito_checked::checked::AnnotationSite::MethodReturn {
-                    module: declaration.module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                },
-                mojito_checked::checked::DeclarationEffect {
-                    raises: sig.raises,
-                    error: sig.raises.then(|| sig.error.clone()).flatten(),
-                    returns_reference: sig.ref_return.is_some(),
-                    param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
-                        &sig.conventions,
-                        &sig.ref_params,
-                    ),
-                    availability: sig.availability.clone(),
-                },
-            );
-            let info = self.structs.get_mut(name).ok_or_else(|| {
-                TypeError::InvariantViolation(format!("struct '{name}' was not registered"))
-            })?;
-            let overloads = info.methods.entry(method_name.to_string()).or_default();
-            if let Some(existing) = overloads.iter().find(|existing| {
-                same_method_shape(existing, &sig)
-                    && existing.has_self == sig.has_self
-                    && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
-                        || existing.self_convention == sig.self_convention)
-            }) {
-                // Initializers differing only in their refined result type
-                // overload on it, which the pin rejects in its own words.
-                return Err(if existing.refined_self == sig.refined_self {
-                    TypeError::Redeclaration(method_name.to_string())
-                } else {
-                    TypeError::InvalidReceiver(format!(
-                        "redefinition of function '{method_name}', cannot overload on return type"
-                    ))
-                });
-            }
-            overloads.push(sig);
+        let groups = method_groups(declaration);
+        if !peers.iter().any(|peer| peer.name == name) {
+            self.declared_methods_mut(name)?
+                .begin_pending(groups.iter().map(|group| (*group).to_string()));
         }
+        let mut registration = MethodRegistration {
+            peers,
+            in_progress: Vec::new(),
+        };
+        let registered = groups
+            .iter()
+            .try_for_each(|group| self.resolve_method_group(declaration, group, &mut registration));
+        self.declared_methods_mut(name)?.settle_all();
+        registered?;
         self.register_default_wrappers(declaration)
+    }
+
+    /// The method table of registered struct `name`.
+    fn declared_methods_mut(&mut self, name: &str) -> Result<&mut MethodTable, TypeError> {
+        self.structs
+            .get_mut(name)
+            .map(|info| &mut info.methods)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!("struct '{name}' was not registered"))
+            })
+    }
+
+    /// Registers every overload of method `group` of struct `declaration`,
+    /// in source order, unless an earlier demand already has or its
+    /// registration is under way.
+    fn resolve_method_group(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        group: &str,
+        registration: &mut MethodRegistration<'_, '_>,
+    ) -> Result<(), TypeError> {
+        let key = (declaration.name.to_string(), group.to_string());
+        if !self
+            .declared_methods_mut(declaration.name)?
+            .is_pending(group)
+            || registration.in_progress.contains(&key)
+        {
+            return Ok(());
+        }
+        registration.in_progress.push(key);
+        for (method_index, m) in declaration.methods.iter().enumerate() {
+            if lifecycle_method_name(m) == group {
+                self.register_method_signature(declaration, method_index, m, registration)?;
+            }
+        }
+        registration.in_progress.pop();
+        self.declared_methods_mut(declaration.name)?.settle(group);
+        Ok(())
+    }
+
+    /// Registers method `group` of `owner`, which `declaration`'s
+    /// registration demanded: in `owner`'s own struct scope when it is
+    /// another struct.
+    fn resolve_demanded_group(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        (owner, group): &(String, String),
+        registration: &mut MethodRegistration<'_, '_>,
+    ) -> Result<(), TypeError> {
+        if owner == declaration.name {
+            return self.resolve_method_group(declaration, group, registration);
+        }
+        let Some(peer) = registration.peers.iter().find(|peer| peer.name == owner) else {
+            return Ok(());
+        };
+        let (_, saved) = self.enter_struct_scope(peer)?;
+        let generated = self.generated_declaration.replace(peer.name.contains('$'));
+        let resolved = self.resolve_method_group(peer, group, registration);
+        self.generated_declaration.set(generated);
+        self.exit_struct_scope(saved);
+        resolved
+    }
+
+    /// The pending methods read since the last call, of `declaration` and
+    /// of every struct `peers` lists, each beside its struct's name.
+    fn take_method_demands(
+        &self,
+        declaration: &StructDeclaration<'_>,
+        peers: &[StructDeclaration<'_>],
+    ) -> Vec<(String, String)> {
+        std::iter::once(declaration.name)
+            .chain(
+                peers
+                    .iter()
+                    .map(|peer| peer.name)
+                    .filter(|peer| *peer != declaration.name),
+            )
+            .filter_map(|owner| Some((owner, self.structs.get(owner)?)))
+            .flat_map(|(owner, info)| {
+                info.methods
+                    .take_demands()
+                    .into_iter()
+                    .map(move |group| (owner.to_string(), group))
+            })
+            .collect()
+    }
+
+    /// Types and registers method `m`, the `method_index`-th of struct
+    /// `declaration`. When typing it reads a pending method
+    /// ([`MethodTable`]), the attempt is forgotten, that method's
+    /// signatures are registered first, and `m` is typed again; reading one
+    /// whose registration is under way is the pin's recursive reference
+    /// when the signature then fails to type.
+    fn register_method_signature(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        method_index: usize,
+        m: &Method,
+        registration: &mut MethodRegistration<'_, '_>,
+    ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        let method_name = lifecycle_method_name(m);
+        let (all_types, mut sig) = loop {
+            self.take_method_demands(declaration, registration.peers);
+            let lifted = self.lifted_applications.borrow().len();
+            let counts = self.lifted_counts.borrow().clone();
+            let attempt = self.declared_method_signature(declaration, method_index, m);
+            let (recursive, demanded): (Vec<_>, Vec<_>) = self
+                .take_method_demands(declaration, registration.peers)
+                .into_iter()
+                .partition(|demand| registration.in_progress.contains(demand));
+            if demanded.is_empty() {
+                break attempt.map_err(|error| {
+                    registration
+                        .in_progress
+                        .iter()
+                        .find(|member| recursive.contains(member))
+                        .map_or(error, |(owner, group)| {
+                            TypeError::RecursiveReference(format!("{owner}.{group}"))
+                        })
+                })?;
+            }
+            self.lifted_applications.borrow_mut().truncate(lifted);
+            *self.lifted_counts.borrow_mut() = counts;
+            for demand in &demanded {
+                self.resolve_demanded_group(declaration, demand, registration)?;
+            }
+        };
+        self.publish_method_constraints(
+            declaration,
+            method_index,
+            m,
+            &sig.decls,
+            &sig.availability,
+        );
+        self.generic_parameters.borrow_mut().insert(
+            mojito_checked::checked::GenericSite::Method {
+                module: declaration.module.clone(),
+                declaration: name.to_string(),
+                method: method_index,
+            },
+            sig.decls.clone(),
+        );
+        if let Some(info) = self.structs.get(name) {
+            sig.parametric_origin_writes = parametric_origin_writes_in_body(&m.body, &info.fields);
+        }
+        for (param, ty) in all_types.iter().enumerate() {
+            self.declaration_types.borrow_mut().insert(
+                mojito_checked::checked::AnnotationSite::MethodParam {
+                    module: declaration.module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                    param,
+                },
+                ty.clone(),
+            );
+        }
+        self.declaration_types.borrow_mut().insert(
+            mojito_checked::checked::AnnotationSite::MethodReturn {
+                module: declaration.module.clone(),
+                declaration: name.to_string(),
+                method: method_index,
+            },
+            sig.ret.clone(),
+        );
+        self.declaration_effects.borrow_mut().insert(
+            mojito_checked::checked::AnnotationSite::MethodReturn {
+                module: declaration.module.clone(),
+                declaration: name.to_string(),
+                method: method_index,
+            },
+            mojito_checked::checked::DeclarationEffect {
+                raises: sig.raises,
+                error: sig.raises.then(|| sig.error.clone()).flatten(),
+                returns_reference: sig.ref_return.is_some(),
+                param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
+                    &sig.conventions,
+                    &sig.ref_params,
+                ),
+                availability: sig.availability.clone(),
+            },
+        );
+        let overloads = self
+            .declared_methods_mut(name)?
+            .entry(method_name.to_string())
+            .or_default();
+        if let Some(existing) = overloads.iter().find(|existing| {
+            same_method_shape(existing, &sig)
+                && existing.has_self == sig.has_self
+                && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
+                    || existing.self_convention == sig.self_convention)
+        }) {
+            // Initializers differing only in their refined result type
+            // overload on it, which the pin rejects in its own words.
+            return Err(if existing.refined_self == sig.refined_self {
+                TypeError::Redeclaration(method_name.to_string())
+            } else {
+                TypeError::InvalidReceiver(format!(
+                    "redefinition of function '{method_name}', cannot overload on return type"
+                ))
+            });
+        }
+        overloads.push(sig);
+        Ok(())
     }
 
     /// Method `m`'s parameter types and signature, the `method_index`-th of
@@ -4314,6 +4493,26 @@ pub(super) struct SavedStructScope {
     self_ty: Option<Ty>,
     bundled_stdlib: bool,
     enum_declaration: bool,
+}
+
+/// One struct's method registration in demand order: the structs whose
+/// pending methods a signature may demand, and the methods whose
+/// registration is under way, the outermost first, each beside its struct.
+struct MethodRegistration<'d, 'a> {
+    peers: &'d [StructDeclaration<'a>],
+    in_progress: Vec<(String, String)>,
+}
+
+/// The method names `declaration` declares, in first-occurrence order.
+fn method_groups<'a>(declaration: &StructDeclaration<'a>) -> Vec<&'a str> {
+    let mut groups: Vec<&str> = Vec::new();
+    for m in declaration.methods {
+        let method_name = lifecycle_method_name(m);
+        if !groups.contains(&method_name) {
+            groups.push(method_name);
+        }
+    }
+    groups
 }
 
 /// The resolved member types of one struct declaration: fields, associated

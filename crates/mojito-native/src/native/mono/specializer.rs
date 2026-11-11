@@ -2713,8 +2713,8 @@ impl<'a> Specializer<'a> {
 
     /// Whether a prefix operator on `ty` calls its declared `dunder`. A
     /// numeric literal's calls it only where the bundled library declares
-    /// it: `IntLiteral.__neg__` and `__invert__` are not ported yet (R1853),
-    /// so `-3` keeps the compiler's operator.
+    /// it: `FloatLiteral` declares no `__pos__`, as upstream's does not, so
+    /// `+2.5` keeps the compiler's operator.
     fn declares_prefix_dunder(&self, ty: &Ty, dunder: &str) -> bool {
         declared_operator_receiver(ty)
             && (!ty.is_numeric_literal()

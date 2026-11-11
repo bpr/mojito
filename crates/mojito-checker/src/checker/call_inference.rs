@@ -794,7 +794,7 @@ impl Checker {
         if !info.methods.contains_key("__call__")
             || ["__getitem__", "__setitem__", "__getattr__"]
                 .iter()
-                .any(|method| info.methods.contains_key(*method))
+                .any(|method| info.methods.contains_key(method))
         {
             return None;
         }
