@@ -3513,6 +3513,20 @@ impl MirInstr {
                 value,
                 target,
             } => (dest, operand(*value)?.folded_conversion(*target)?),
+            // A numeric literal's value is its type's attribute, so its
+            // construction (`return {}` in a builtin literal dunder, once
+            // inlined) is that constant.
+            Self::MakeStruct { dest, fields } if fields.is_empty() => {
+                let ty = reg_types.get(&dest.0)?;
+                let value = ty
+                    .int_literal_value()
+                    .map(|value| CtValue::IntLiteral(value.clone()))
+                    .or_else(|| {
+                        ty.float_literal_value()
+                            .map(|value| CtValue::FloatLiteral(value.clone()))
+                    })?;
+                (dest, value)
+            }
             // A `SIMD` created from a constant storage is that constant
             // (upstream's `StructCreateOp::fold`), and a constant `SIMD`'s
             // storage is its value at the storage type

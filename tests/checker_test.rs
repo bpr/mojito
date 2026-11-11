@@ -3009,7 +3009,7 @@ fn imported_names_are_not_made_available() {
 #[test]
 fn accepts_print_of_various_values() {
     ok_std(
-        "@fieldwise_init\nstruct P(Writable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.x)\n\nprint(1, \"a\", True, 3.5, None, P(5))\nprint()\n",
+        "@fieldwise_init\nstruct P(Writable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.x)\n\nprint(1, \"a\", True, 3.5, NoneType(), P(5))\nprint()\n",
     );
 }
 

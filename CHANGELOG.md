@@ -278,6 +278,16 @@ to evolve under the `0.x` compatibility rules.
   `MOJITO_CORPUS_FOCUS` to run only the listed fixtures, and the shared
   script helpers moved to `scripts/tierlib.py`.
 
+### Fixed
+
+- Each literal receiver is its own instance owner, as each literal is its
+  own type upstream: `(-0.5).__neg__()` and `(-709.4).__neg__()`, or
+  `2.5 * 3.0` and `1.5 * 3.0`, no longer share the first instance's
+  declaration, so `exp`, `**`, and `atof` run at compile time again. A
+  field-less construction of a numeric literal folds to its value, so
+  `~m` over a `SIMD[DType.bool, n]` lowers natively
+  (`assets/ok/literal_dunder_instances.mojo`).
+
 ### Changed
 
 - A struct applied to its own binders (`SIMD[dtype, size]` inside

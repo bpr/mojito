@@ -510,13 +510,19 @@ impl<'a> Specializer<'a> {
                     .collect::<Result<_, _>>()?;
                 None
             }
-            Some((_, instance)) if let Some((name, _)) = instance.kind().as_non_simd_struct() => {
+            Some((_, instance))
+                if let Some((name, _)) = instance.kind().as_non_simd_struct()
+                    && !instance.is_numeric_literal()
+                    && !instance.is_string_literal() =>
+            {
                 Some(name.clone())
             }
-            // The `SIMD` bridge is no struct instance a member retargets to
-            // (R1558): its owner arguments lead the member's own, as a
+            // The `SIMD` bridge and a literal, whose application keeps its
+            // template name, are no struct instance a member retargets to
+            // (R1558): their owner arguments lead the member's own, as a
             // generator's kept ones do, so `Int`'s and `UInt`'s instances
-            // of one member are two.
+            // of one member are two, as are `(2.5).__neg__`'s and
+            // `(1.5).__neg__`'s.
             Some((owner_template, _)) => {
                 let decls = self
                     .structs
