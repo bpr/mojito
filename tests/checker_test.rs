@@ -2011,9 +2011,28 @@ fn rejects_conflicting_inherited_associated_member_kinds() {
     let e = err(
         "trait TypeMember:\n    comptime Item: AnyType\n\ntrait ValueMember:\n    comptime Item: Int\n\ntrait Invalid(TypeMember, ValueMember):\n    def marker(self): ...\n",
     );
-    assert!(
-        matches!(e, TypeError::Unsupported(message) if message.contains("conflicting inherited associated member 'Item'"))
+    assert!(matches!(
+        e,
+        TypeError::InvalidRedefinition { name, found, expected }
+            if name == "Item" && found == "AnyType" && expected == "Int"
+    ));
+}
+
+#[test]
+fn merges_restated_parameterized_requirements_by_their_generator_types() {
+    ok(
+        "trait HasM:\n    comptime M[k: Int]: Int\n    comptime T[k: Int]: AnyType\n\ntrait MoreM(HasM):\n    comptime M[k: Int]: Int\n    comptime T[k: Int]: AnyType\n",
     );
+    let e = err(
+        "trait HasT:\n    comptime T[k: Int]: AnyType\n\ntrait MoreT(HasT):\n    comptime T[j: Int]: AnyType\n",
+    );
+    assert!(matches!(
+        e,
+        TypeError::InvalidRedefinition { name, found, expected }
+            if name == "T"
+                && found == "__generator_type[k: Int] AnyType"
+                && expected == "__generator_type[j: Int] AnyType"
+    ));
 }
 
 #[test]

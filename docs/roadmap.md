@@ -7496,22 +7496,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1900 A refining trait may restate its parent's parameterized
-  `comptime` requirement**
-
-  Mojito merges a refinement's `comptime M[j: Int]: Int` with its
-  parent's `comptime M[k: Int]: Int`, where the pin rejects it as "invalid
-  redefinition of 'M'", even when the two match in everything but names.
-  - `merge_associated_requirement` (`traits_support.rs`) accepts a
-    generator requirement whose signature matches the inherited one,
-    names aside.
-  - A restated parameterized type requirement with the same parameter
-    list is merged too (`comptime T[k: Int]: AnyType` in both).
-  - Ledger name: `conformance/probes/trait_refinement_restates_generator.mojo`.
-  - Found while landing R1896 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1819 `with c:` copies a named context manager, where the pin
   enters and exits `c` itself**
 

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1151
+# swept-count	1154
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -1089,8 +1089,11 @@ assets/type_error/trait_parameter_not_inferred.mojo	compile-reject	agree	error: 
 assets/type_error/trait_parameter_runtime_read.mojo	compile-reject	agree	error: dynamic type values not permitted yet; try creating a 'comptime' instead of a 'var'
 assets/type_error/trait_parameter_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[AnyType]' type, but value has type 'AnyStruct[Int]'
 assets/type_error/trait_parameter_unrefined_trait.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
+assets/type_error/trait_parents_rename_generator_param.mojo	compile-reject	agree	error: invalid redefinition of 'M': cannot convert '__generator_type[k: Int] Int' to the other trait's member's type '__generator_type[j: Int] Int'
 assets/type_error/trait_reads_missing_struct_member.mojo	compile-reject	agree	error: 'M' value has no attribute 'Y'
 assets/type_error/trait_refined_out_self.mojo	compile-reject	agree	error: 'self' argument must have type 'Self' in trait method declaration, but actually has type 'Int'
+assets/type_error/trait_refinement_parameterizes_type_member.mojo	compile-reject	agree	error: invalid redefinition of 'T': cannot convert 'AnyType' to the other trait's member's type '__generator_type[k: Int] AnyType'
+assets/type_error/trait_refinement_renames_generator_param.mojo	compile-reject	agree	error: invalid redefinition of 'M': cannot convert '__generator_type[k: Int] Int' to the other trait's member's type '__generator_type[j: Int] Int'
 assets/type_error/trait_requirement_collector_convention.mojo	compile-reject	agree	error: 'C' does not implement all requirements for 'Eater'
 assets/type_error/trait_requirement_collector_missing.mojo	compile-reject	agree	error: 'Bad' does not implement all requirements for 'Taker'
 assets/type_error/trait_requirement_pack_element_mismatch.mojo	compile-reject	agree	error: 'S' does not implement all requirements for 'Getter'

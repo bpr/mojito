@@ -272,6 +272,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Two traits' declarations of one `comptime` member now merge as upstream
+  merges them: a parameterized requirement (`comptime M[k: Int]: Int`, or
+  `comptime T[k: Int]: AnyType`) must restate its generator type exactly,
+  parameter names and bounds included, and a value requirement its type;
+  anything else is "invalid redefinition of 'M': cannot convert …" (R1900).
+  Mojito previously merged a renamed restatement and rejected the rest as
+  unsupported.
+
 - A bare parametric struct is not concrete outside an argument's
   annotation, as at the pin: `def g() -> W`, a named `out r: W`, and a
   nested `List[W]` report "'W[_]' is not concrete, use '[]' to bind

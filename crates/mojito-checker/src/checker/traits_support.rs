@@ -10,52 +10,60 @@ use mojito_types::types::{FuncTy, TransferSet};
 
 pub(super) use mojito_types::types::same_generator_signature;
 
-/// Compose inherited associated-member requirements. Type-valued members with
-/// the same name denote one associated type, so refinement accumulates their
-/// bounds instead of treating stronger composition as an ambiguity. Value
-/// members must retain one exact type; mixing value and type requirements is a
-/// real conflict.
+/// Compose inherited associated-member requirements, as upstream merges
+/// two traits' declarations of one member. Unparameterized type-valued
+/// members denote one associated type, so refinement accumulates their
+/// bounds instead of treating stronger composition as an ambiguity. Every
+/// other requirement has a type of its own (a value's type, or a
+/// parameterized member's `__generator_type`) that the other declaration
+/// must restate exactly, parameter names included; anything else is
+/// upstream's "invalid redefinition".
 pub(super) fn merge_associated_requirement(
     existing: &mut CtMemberReq,
     incoming: &CtMemberReq,
     member: &str,
 ) -> Result<(), TypeError> {
-    match (existing, incoming) {
+    let agrees = match (&mut *existing, incoming) {
         (
             CtMemberReq::Type { bounds, params },
             CtMemberReq::Type {
                 bounds: more,
                 params: more_params,
             },
-        ) => {
-            // A refined associated type must keep the same parameterization.
-            if !params.is_empty() && !more_params.is_empty() && params != more_params {
-                return Err(TypeError::Unsupported(format!(
-                    "refined associated type '{member}' changes its parameter list"
-                )));
-            }
-            if params.is_empty() {
-                params.clone_from(more_params);
-            }
+        ) if params.is_empty() && more_params.is_empty() => {
             for bound in more {
                 if !bounds.contains(bound) {
                     bounds.push(bound.clone());
                 }
             }
-            Ok(())
+            true
         }
-        (CtMemberReq::Value(left), CtMemberReq::Value(right)) if left == right => Ok(()),
+        (CtMemberReq::Type { .. }, CtMemberReq::Type { .. })
+        | (CtMemberReq::Value(_), CtMemberReq::Value(_)) => *existing == *incoming,
         (
             CtMemberReq::Generator { params, result },
             CtMemberReq::Generator {
                 params: more_params,
                 result: more_result,
             },
-        ) if result == more_result && same_generator_signature(params, more_params) => Ok(()),
-        _ => Err(TypeError::Unsupported(format!(
-            "conflicting inherited associated member '{member}'"
-        ))),
+        ) => {
+            result == more_result
+                && same_generator_signature(params, more_params)
+                && params
+                    .iter()
+                    .zip(more_params)
+                    .all(|(left, right)| left.name() == right.name())
+        }
+        _ => false,
+    };
+    if agrees {
+        return Ok(());
     }
+    Err(TypeError::InvalidRedefinition {
+        name: member.to_string(),
+        found: requirement_type(existing),
+        expected: requirement_type(incoming),
+    })
 }
 
 /// `constraint` over the binders `from_owner` owns restated over `to`'s,
@@ -328,4 +336,33 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
         });
     }
     lifted
+}
+
+/// A requirement's type as upstream spells it in a redefinition error.
+fn requirement_type(requirement: &CtMemberReq) -> String {
+    match requirement {
+        CtMemberReq::Value(ty) => ty.to_string(),
+        CtMemberReq::Generator { params, result } => {
+            Ty::generator(params.clone(), result.clone()).to_string()
+        }
+        CtMemberReq::Type { bounds, params } => {
+            let bounds = if bounds.is_empty() {
+                "AnyType".to_string()
+            } else {
+                bounds.join(" & ")
+            };
+            if params.is_empty() {
+                return bounds;
+            }
+            let params = params
+                .iter()
+                .map(|param| match param.bounds.as_slice() {
+                    [] => param.name.clone(),
+                    bounds => format!("{}: {}", param.name, bounds.join(" & ")),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("__generator_type[{params}] {bounds}")
+        }
+    }
 }

@@ -163,6 +163,14 @@ pub enum TypeError {
     },
     /// Re-declaring a name already bound in the same scope.
     Redeclaration(String),
+    /// Two traits' requirements of one associated member whose types do
+    /// not agree: `found` is the first one met, `expected` the other
+    /// trait's, each spelled as upstream spells its type.
+    InvalidRedefinition {
+        name: String,
+        found: String,
+        expected: String,
+    },
     /// A declaration whose signature's resolution reaches the declaration
     /// itself (`W.a` returning `type_of(self.b())` while `b` returns
     /// `type_of(self.a())`). Carries the declaration's dotted name.
@@ -735,6 +743,14 @@ impl fmt::Display for TypeError {
             Self::Redeclaration(name) => {
                 write!(f, "'{name}' is already declared in this scope")
             }
+            Self::InvalidRedefinition {
+                name,
+                found,
+                expected,
+            } => write!(
+                f,
+                "invalid redefinition of '{name}': cannot convert '{found}' to the other trait's member's type '{expected}'"
+            ),
             Self::RecursiveReference(name) => {
                 write!(
                     f,
