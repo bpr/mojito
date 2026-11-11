@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2101**.
+Next free ID: **R2102**.
 
 ## Ordered Work
 
@@ -3697,9 +3697,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `var g = add_k; print(g(5))` on a capture-list closure lowers to a
   `call.indirect` whose callee is the closure's storage struct, where
   upstream calls the storage's `__call__` method.
-  - Once a closure storage declares `__call__` (R1943), the checker spells
-    that call as a method call, and no struct callee reaches
-    `call.indirect`.
+  - A closure storage declares `__call__` now, but `infer_call_method`
+    and `infer_bracketed_call_method` (`checker/call_inference.rs`) skip
+    a receiver `is_closure_storage` names; dropping that exclusion makes
+    the checker spell the call as a method call, so no struct callee
+    reaches `call.indirect`.
+  - The method path then owns the call-through's capture accesses, which
+    `record_selected_method_call` already records for a closure's
+    `__call__`.
   - Then delete the specializer `CallIndirect` arm's struct
     devirtualization (`native/mono/specializer.rs`) and
     `Self::callable_witness` if nothing else uses it,
@@ -3732,6 +3737,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `42` on both backends, and `emit-mir` of `invoke` holds a
     `call.method` of `__call__`.
   - Found while landing R1933 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2101 A variadic closure's storage declares no `__call__`, so
+  `v.__call__(1, 2)` is rejected**
+
+  `def v(*xs: Int) {k} -> Int` runs as `v(1, 2)`, but `v.__call__(1, 2)`
+  fails "has no method '__call__'", where the pin prints `6`.
+  - The checker's `closure_call_method` (`checker/statements.rs`) and
+    MIR's `lower_storage_call_witness` (`mir/nested.rs`) both skip a
+    closure with a `*args` or `**kwargs` collector, since the closure's
+    function type (`FuncTy`) holds no collector position or convention
+    for a `MethodSig` or a forwarding witness to take.
+  - Upstream's storage declares a `__call__` witness for every closure,
+    forwarding the collector as it forwards each argument.
+  - Probe: the shape above, and `c.__call__(a=1)` over `def c(var **kw:
+    Int) {k} -> Int: return k + len(kw)`, which prints `4` at the pin.
+  - Found while landing R1943 (2026-11-11).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11649,24 +11672,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1894 (2026-11-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1943 A closure's explicit `f.__call__(x)` is rejected, where
-  upstream calls its storage struct's `__call__` method**
-
-  The checker's storage struct for a closure
-  (`Checker::register_closure_storage`) declares no `__call__` method, so
-  a method call naming it fails ("has no method '__call__'"), where
-  upstream's storage declares the method its call node resolves.
-  - Give the struct a `__call__` `MethodSig` built from the closure's own
-    signature (names, defaults, conventions, type parameters).
-  - The lift step retargets only a `Call` or `Invoke` through a closure
-    (`CheckedTables::storage_calls`); it must also retarget a method
-    call on the nested struct to the lifted struct's `__call__`.
-  - Probe: `var k = 3; def f(x: Int) {k} -> Int: return x * k;
-    print(f.__call__(2))` prints `6`, as at the pin.
-  - Found while landing R1893 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1945 A nested `def` without a capture list calls a sibling
   capture-list closure, which the pin rejects**

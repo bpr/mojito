@@ -50,15 +50,21 @@ impl Checker {
         let receiver_elided = self.receiver_is_elided(obj_ty, method, &target);
         let arguments = checked_call_arguments(resolved, &conventions);
         // A capturing closure bound to a compile-time callable parameter
-        // runs while the call is active, as a runtime callable argument does.
-        let argument_types = self
-            .runtime_param_arg_expressions(param_args)
+        // runs while the call is active, as a runtime callable argument does,
+        // and a closure's own `__call__` runs it, as a call through it does.
+        let called_closure =
+            (method == "__call__" && is_closure_storage(obj_ty)).then(|| obj_ty.clone());
+        let argument_types = called_closure
             .into_iter()
-            .chain(args)
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .filter_map(|expression| {
-                self.fact(&expression.source_span(), |facts| facts.ty.as_ref())
-            })
+            .chain(
+                self.runtime_param_arg_expressions(param_args)
+                    .into_iter()
+                    .chain(args)
+                    .chain(kwargs.iter().map(|argument| &argument.value))
+                    .filter_map(|expression| {
+                        self.fact(&expression.source_span(), |facts| facts.ty.as_ref())
+                    }),
+            )
             .collect::<Vec<_>>();
         let captures = self.call_capture_effects(&argument_types);
         let parameter_arguments = self.checked_parameter_arguments(param_args);

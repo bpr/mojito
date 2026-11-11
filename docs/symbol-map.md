@@ -1695,7 +1695,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   fields), and a call's capture accesses (`concrete_callable_captures`,
   over `Checker::is_callable_struct`) read its origin arguments, at the
   closure's finalization and again for each closure of a carried body
-  (`Checker::carry_body`): its `callable_conformance` is the closure trait
+  (`Checker::carry_body`): it declares the `__call__` method its
+  closure's signature spells (`closure_call_method`), which an explicit
+  `f.__call__(x)` resolves and whose capture accesses
+  `record_selected_method_call` records, while a call `f(x)` still goes
+  through the value (`infer_call_method` skips a closure's storage);
+  its `callable_conformance` is the closure trait
   (`CheckedClosureStorage::contract`, which a call binds against and
   `unify_through_callable_bounds` solves a bound from), its conformances
   the storage's copyability and passability, and it prints as the trait
@@ -1707,7 +1712,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `closure_uses.rs`, over `ClosureStorageTypes`, a `TyRewrite` keeping
   each occurrence's origin tail, and
   `CheckedProgram::rewrite_types`), pointing each call through a storage
-  at its witness (`CheckedTables::storage_calls`,
+  at its witness, a `__call__` method call on it included
+  (`CheckedTables::storage_calls`,
   `CheckedProgram::retarget_call`), so MIR lowers struct-typed closure
   values and reads a call's signature from `NestedInfo::contract`. The lifted body is
   the storage's method, its declaration's receiver the storage

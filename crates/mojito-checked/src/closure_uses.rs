@@ -172,7 +172,8 @@ impl CheckedTables {
 
     /// Each call through a closure one of `storages` types, with the
     /// `__call__` of its storage: a call naming a binding the closure
-    /// types, or invoking an expression it types.
+    /// types, invoking an expression it types, or naming the `__call__`
+    /// method of an expression it types.
     fn storage_calls(&self, storages: &HashMap<String, Ty>) -> Vec<(CheckedNodeId, String)> {
         let mut bindings: HashMap<OwnerId, &Ty> = HashMap::new();
         for statement in &self.statements {
@@ -191,6 +192,9 @@ impl CheckedTables {
                 let callee = match &node.op {
                     CheckedOp::Call { .. } => *bindings.get(&node.binding?)?,
                     CheckedOp::Invoke { callee, .. } => self.expression(*callee)?.ty.as_ref()?,
+                    CheckedOp::MethodCall { object, method, .. } if method == "__call__" => {
+                        self.expression(*object)?.ty.as_ref()?
+                    }
                     _ => return None,
                 };
                 let (name, _) = storages

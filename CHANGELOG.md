@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-list closure's storage struct declares the `__call__` method
+  its closure's signature spells, so `f.__call__(2)` on `def f(x: Int)
+  {k} -> Int` prints the pin's `6` instead of reporting "has no method
+  '__call__'", with defaults, keywords, generic binders, `mut` captures,
+  and raising calls as at the pin; its storage's `__call__` witness now
+  keeps the closure's defaults (R1943,
+  `assets/ok/closure_storage_call_method.mojo`).
 - A struct conforming to a function type with its own value binders
   (`struct Adder(def[n: Int](Int) -> Int)`) conforms through a `__call__`
   declaring the same binders, as upstream reads the function type as a

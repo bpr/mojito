@@ -995,7 +995,8 @@ fn lower_closure_storage(
 /// Push upstream's `__call__` witness of the closure storage `storage`
 /// (`emitStorageCallWitness`): an always-inline method forwarding every
 /// argument to the storage's method, as `declarations` declares it, and
-/// returning its result, so
+/// returning its result, its signature the method's, defaults included, so
+/// a `f.__call__(x)` leaving an argument out fills it as `f(x)` does, and so
 /// the storage conforms to its closure trait and a call through a value of
 /// it devirtualizes to the witness. A generic closure's witness takes the
 /// method's parameters and forwards them as its own. A variadic or
@@ -1130,8 +1131,6 @@ fn lower_storage_call_witness(
     }
     let mut witness = method.clone();
     witness.lowered_name.clone_from(&symbol);
-    witness.defaults = vec![None; method.param_types.len()];
-    witness.required = vec![true; method.param_types.len()];
     witness.inline = mojito_checked::declaration::InlineLevel::Always;
     witness.provenance = mojito_checked::declaration::FunctionProvenance::Synthesized;
     witness.enclosing = None;

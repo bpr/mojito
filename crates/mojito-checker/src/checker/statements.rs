@@ -4239,6 +4239,13 @@ impl Checker {
             .cloned()
             .map(TyArg::Origin)
             .collect();
+        let mut methods = MethodTable::default();
+        if let Some(call) = closure_call_method(&contract) {
+            methods
+                .entry("__call__".to_string())
+                .or_default()
+                .push(call);
+        }
         self.structs.insert(
             name.clone(),
             super::StructInfo {
@@ -4258,7 +4265,7 @@ impl Checker {
                 associated_spellings: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
-                methods: MethodTable::default(),
+                methods,
                 fieldwise_init: false,
                 explicit_destroy_message: None,
                 explicit_destructors: HashMap::new(),
@@ -4789,4 +4796,38 @@ fn alias_dependency_order(stmts: &[Stmt]) -> Vec<usize> {
         }
     }
     order
+}
+
+/// The `__call__` a closure's storage struct declares, as upstream's
+/// `emitClosure` declares the storage method its call node resolves: the
+/// closure's own signature, `contract`, its type parameters the method's.
+/// `None` for a
+/// variadic or reference-returning closure, whose storage lowering
+/// declares no `__call__` witness.
+fn closure_call_method(contract: &Ty) -> Option<MethodSig> {
+    let func = contract.kind().callable()?;
+    if func.variadic.is_some() || func.kw_variadic.is_some() || func.ref_return.is_some() {
+        return None;
+    }
+    Some(MethodSig {
+        decls: contract
+            .kind()
+            .as_generic_func()
+            .map(|generic| generic.decls.clone())
+            .unwrap_or_default(),
+        names: func.names.clone(),
+        required: func.required.clone(),
+        defaults: func
+            .required
+            .iter()
+            .map(|required| (!required).then_some(SignatureDefault::Evaluated))
+            .collect(),
+        positional_only: func.positional_only,
+        keyword_only: func.keyword_only,
+        conventions: func.conventions.clone(),
+        raises: func.raises,
+        error: func.error.clone(),
+        ref_params: func.ref_params.clone(),
+        ..MethodSig::intrinsic(func.params.clone(), func.ret.clone())
+    })
 }
