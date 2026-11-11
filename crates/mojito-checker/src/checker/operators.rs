@@ -221,9 +221,9 @@ impl Checker {
                 .ok_or_else(|| bad_infix_operator(op, &lt, &rt));
         }
         // An operator over two literals is the left literal's declared
-        // dunder, `a.__add__(b)` else the reflected `b.__radd__(a)`, as
-        // upstream's `emitBinOpCall` resolves it, so its type carries the
-        // value the dunder's attribute folds (`2 + 3` is `IntLiteral[5]`).
+        // dunder, `a.__add__(b)`, as upstream's `emitBinOpCall` resolves
+        // it, so its type carries the value the dunder's attribute folds
+        // (`2 + 3` is `IntLiteral[5]`).
         // An operator neither literal declares (`2 / 3`) falls through to
         // the literal rule below. In a compile-time position its
         // value is the shared folder's (`infix_value`).
@@ -781,10 +781,9 @@ impl Checker {
     /// operator whose upstream `IntLiteral` dunder the bundled library does
     /// not declare yet: the literal that dunder's signature computes,
     /// through [`Self::literal_rule_type`]. `IntLiteral.__truediv__` (`/`)
-    /// and the `FloatLiteral`-taking `+ - *` overloads are R1784's, the
-    /// reflected `FloatLiteral.__radd__`… R1854's. `None` for any other
-    /// operator or operands, which the declared dunders and the left
-    /// operand's materialization answer.
+    /// and the `FloatLiteral`-taking `+ - *` overloads are R1784's. `None`
+    /// for any other operator or operands, which the declared dunders and
+    /// the left operand's materialization answer.
     fn literal_rule(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Option<Ty>, TypeError> {
         use InfixOp::{Add, Div, Mul, Sub};
         if !numeric_literals(lt, rt) || !lt.is_int_literal() {
@@ -873,9 +872,12 @@ impl Checker {
     }
 
     /// `left op right` over two value-carrying literals as the declared
-    /// dunder of the left one, else the reflected dunder of the right one,
-    /// with no materialization; `None` when neither declares a dunder that
-    /// takes the other operand.
+    /// dunder of the left one, with no materialization; `None` when it
+    /// declares none that takes the right operand. Upstream's
+    /// `emitBinOpCall` then materializes the left literal, whose `Int` or
+    /// `Float64` dunder takes any literal right operand, so a literal
+    /// pair never reaches the right literal's reflected dunder (`7 // 2.5`
+    /// is `Int.__floordiv__`, not `FloatLiteral.__rfloordiv__`).
     fn infer_literal_operator(
         &self,
         span: &SourceSpan,
@@ -901,23 +903,7 @@ impl Checker {
         {
             return Ok(Some(ty));
         }
-        let Some(reflected) = op.reflected_dunder() else {
-            return Ok(None);
-        };
-        if self.declared_receiver_member(rt, reflected).is_none() {
-            return Ok(None);
-        }
-        let ty = self.infer_operator_method_call(
-            span,
-            right,
-            rt,
-            reflected,
-            std::slice::from_ref(left),
-        )?;
-        if ty.is_some() {
-            self.record_at(span.clone()).reflected_operator = true;
-        }
-        Ok(ty)
+        Ok(None)
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is

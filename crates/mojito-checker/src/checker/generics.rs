@@ -1117,7 +1117,7 @@ impl Checker {
             arguments: tyargs,
             ..
         } = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
-        let values = Self::value_argument_environment(&decls, &tyargs);
+        let values = DependentValues::own(&self.param_context, &decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
@@ -1572,7 +1572,7 @@ impl Checker {
             arguments: tyargs,
             attributes,
         } = self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
-        let values = Self::value_argument_environment(&signature.decls, &tyargs);
+        let values = DependentValues::own(&self.param_context, &signature.decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &signature.decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
@@ -1747,7 +1747,7 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Ty {
         let ty = self.resolve_assoc_ty(ty);
-        let values = Self::value_argument_environment(decls, arguments);
+        let values = DependentValues::own(&self.param_context, decls, arguments);
         if values.is_empty() {
             return ty;
         }

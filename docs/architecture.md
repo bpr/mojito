@@ -2251,7 +2251,7 @@ folds its operators through the shared folder (`folds_as_struct`,
 `types::copy_is_identity`); and a read its use materializes is the
 conversion's value, never a borrowed place (`lower_borrowed_name_read`).
 The checker's literal rule types the operators whose dunders are not
-ported yet (R1784, R1854).
+ported yet (R1784).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`

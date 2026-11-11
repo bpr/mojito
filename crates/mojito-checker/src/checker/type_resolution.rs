@@ -38,6 +38,81 @@ pub(super) struct BoundParameters {
     pub(super) attributes: BracketAttributes,
 }
 
+/// The value parameters a use binds, for [`Checker::resolve_dependent_ty`]:
+/// replacement bindings, plus each bound list as it was bound, which a pack
+/// element selects from whether or not its types are closed. A callee's own
+/// arguments ([`Self::own`]) bind its declarations by identity, as upstream
+/// substitutes a signature's own parameter declarations, so a caller binder
+/// of the same spelling an argument mentions is never rebound.
+#[derive(Debug, Default)]
+pub(super) struct DependentValues {
+    bindings: mojito_types::param_expr::ParamBindings,
+    lists_by_id: HashMap<mojito_types::param_expr::ParamId, Vec<CtValue>>,
+    lists_by_name: HashMap<String, Vec<CtValue>>,
+}
+
+impl DependentValues {
+    /// `decls`' value arguments, bound by their declarations' identities.
+    pub(super) fn own(
+        context: &mojito_types::param_expr::ParamContext,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Self {
+        let mut values = Self::default();
+        for (decl, argument) in decls.iter().zip(arguments) {
+            let TyArg::Val(value) = argument else {
+                continue;
+            };
+            if decl.is_type_pack() {
+                continue;
+            }
+            if let CtValue::Tuple(elements) = value {
+                values
+                    .lists_by_id
+                    .insert(decl.id().clone(), elements.clone());
+            }
+            if let Ok(bound) = context.constant(value.clone()) {
+                values.bindings.bind(decl.id().clone(), bound);
+            }
+        }
+        values
+    }
+
+    /// A name → value map's bindings, each reference bound by its spelling.
+    pub(super) fn named(
+        context: &mojito_types::param_expr::ParamContext,
+        values: &HashMap<String, CtValue>,
+    ) -> Self {
+        Self {
+            bindings: mojito_types::param_expr::ParamBindings::from_named_values(context, values),
+            lists_by_id: HashMap::new(),
+            lists_by_name: values
+                .iter()
+                .filter_map(|(name, value)| match value {
+                    CtValue::Tuple(elements) => {
+                        Some((name.trim_start_matches('*').to_string(), elements.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.bindings.is_empty() && self.lists_by_id.is_empty() && self.lists_by_name.is_empty()
+    }
+
+    fn list(&self, reference: &mojito_types::param_expr::ParamRef) -> Option<&[CtValue]> {
+        self.lists_by_id
+            .get(&reference.id)
+            .or_else(|| {
+                self.lists_by_name
+                    .get(reference.name.trim_start_matches('*'))
+            })
+            .map(Vec::as_slice)
+    }
+}
+
 /// Whether a bound argument is still symbolic: an expression over open
 /// parameters, or an aggregate holding one.
 pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
@@ -866,7 +941,7 @@ impl Checker {
                 } else {
                     let elements = self.dependent_type_sequence(base)?;
                     let index = self.compile_dependent_ct_expr(index)?;
-                    self.resolve_dependent_index(elements, &index, &HashMap::new())?
+                    self.resolve_dependent_index(elements, &index, &DependentValues::default())?
                 }
             }
         })
@@ -2270,14 +2345,13 @@ impl Checker {
         &self,
         elements: Vec<Ty>,
         index: &ParamExpr,
-        parameters: &HashMap<String, CtValue>,
+        values: &DependentValues,
     ) -> Result<Ty, TypeError> {
         let context = &self.param_context;
-        let bindings =
-            mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
+        let bindings = &values.bindings;
         // Selecting a type needs the index's value, so it is evaluated.
         context
-            .replace(index, &bindings)
+            .replace(index, bindings)
             .and_then(|index| context.fold(&index))
             .and_then(|index| context.select(elements, &index))
             .map(DependentType::resolve)
@@ -2290,16 +2364,16 @@ impl Checker {
     pub(super) fn resolve_dependent_ty(
         &self,
         ty: &Ty,
-        parameters: &HashMap<String, CtValue>,
+        values: &DependentValues,
     ) -> Result<Ty, TypeError> {
         Ok(match ty.kind() {
             TyKind::Dependent(dependent) => match dependent.selection() {
                 Some((elements, index)) => {
                     let elements = elements
                         .iter()
-                        .map(|element| self.resolve_dependent_ty(element, parameters))
+                        .map(|element| self.resolve_dependent_ty(element, values))
                         .collect::<Result<Vec<_>, _>>()?;
-                    self.resolve_dependent_index(elements, index, parameters)?
+                    self.resolve_dependent_index(elements, index, values)?
                 }
                 // An element of a pack that is still a parameter closes as
                 // its pack and index bind, and a generator's application as
@@ -2309,21 +2383,18 @@ impl Checker {
                         dependent.expr().kind(),
                         mojito_types::param_expr::ParamKind::BindParams { .. }
                     ))
-                    && !parameters.is_empty() =>
+                    && !values.is_empty() =>
                 {
                     let context = &self.param_context;
-                    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(
-                        context, parameters,
-                    );
+                    let bindings = &values.bindings;
                     // A pack bound to a list of types selects the indexed
                     // one, whether or not each is closed (`Tuple[T, Int]`
                     // over a binder `T`).
                     if let Some((list, index)) = dependent.pack_element()
-                        && let Some(CtValue::Tuple(elements)) = list
-                            .as_decl_ref()
-                            .and_then(|pack| parameters.get(pack.name.trim_start_matches('*')))
+                        && let Some(elements) =
+                            list.as_decl_ref().and_then(|pack| values.list(pack))
                         && let Some(position) = context
-                            .replace(index, &bindings)
+                            .replace(index, bindings)
                             .ok()
                             .as_ref()
                             .and_then(ParamExpr::as_constant)
@@ -2335,7 +2406,7 @@ impl Checker {
                         return Ok((*element).clone());
                     }
                     context
-                        .replace(dependent.expr(), &bindings)
+                        .replace(dependent.expr(), bindings)
                         .map(DependentType::resolve)
                         .map_err(param_error)?
                 }
@@ -2348,26 +2419,24 @@ impl Checker {
                 || kind.string_literal_value().is_some()
                 || kind.is_numeric_literal()
                 || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. }))
-                && !parameters.is_empty()
+                && !values.is_empty()
                 && mojito_types::types::is_symbolic(ty) =>
             {
                 let context = &self.param_context;
-                let bindings =
-                    mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
-                mojito_types::types::replace_parameters(context, ty, &bindings, 0)
+                let bindings = &values.bindings;
+                mojito_types::types::replace_parameters(context, ty, bindings, 0)
                     .map_err(param_error)?
             }
             // A spread of a list computed from packs closes as they bind.
             struct_ty
                 if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
-                    && !parameters.is_empty()
+                    && !values.is_empty()
                     && let Some(list) = mojito_types::types::list_spread_argument(arguments) =>
             {
                 let context = &self.param_context;
-                let bindings =
-                    mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
+                let bindings = &values.bindings;
                 let spread = context
-                    .replace(list, &bindings)
+                    .replace(list, bindings)
                     .and_then(|list| mojito_types::types::spread_arguments(name, &list))
                     .map_err(param_error)?;
                 ty.reusing(TyKind::Struct(name.clone(), spread))
@@ -2378,20 +2447,15 @@ impl Checker {
                     arguments
                         .iter()
                         .map(|argument| match argument {
-                            TyArg::Ty(ty) => {
-                                self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty)
-                            }
+                            TyArg::Ty(ty) => self.resolve_dependent_ty(ty, values).map(TyArg::Ty),
                             // A residual value argument closes under the use's
                             // bindings and re-folds: `Buf[n + 1]` at `n = 3` is
                             // `Buf[4]`.
-                            TyArg::Val(value @ CtValue::Expr(_)) if !parameters.is_empty() => {
+                            TyArg::Val(value @ CtValue::Expr(_)) if !values.is_empty() => {
                                 let context = &self.param_context;
-                                let bindings =
-                                    mojito_types::param_expr::ParamBindings::from_named_values(
-                                        context, parameters,
-                                    );
+                                let bindings = &values.bindings;
                                 mojito_types::types::replace_value_parameters(
-                                    context, value, &bindings,
+                                    context, value, bindings,
                                 )
                                 .map(TyArg::Val)
                                 .map_err(param_error)
@@ -2402,42 +2466,42 @@ impl Checker {
                         .collect::<Result<Vec<_>, TypeError>>()?,
                 )),
             TyKind::ComptimeList(element) => {
-                TyKind::ComptimeList(self.resolve_dependent_ty(element, parameters)?).into()
+                TyKind::ComptimeList(self.resolve_dependent_ty(element, values)?).into()
             }
             TyKind::ParamList(element) => {
-                TyKind::ParamList(self.resolve_dependent_ty(element, parameters)?).into()
+                TyKind::ParamList(self.resolve_dependent_ty(element, values)?).into()
             }
             TyKind::Tuple(elements) => TyKind::Tuple(
                 elements
                     .iter()
-                    .map(|element| self.resolve_dependent_ty(element, parameters))
+                    .map(|element| self.resolve_dependent_ty(element, values))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
             TyKind::RuntimePack(elements) => TyKind::RuntimePack(
                 elements
                     .iter()
-                    .map(|element| self.resolve_dependent_ty(element, parameters))
+                    .map(|element| self.resolve_dependent_ty(element, values))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
             TyKind::VariadicPack(element) => {
-                TyKind::VariadicPack(self.resolve_dependent_ty(element, parameters)?).into()
+                TyKind::VariadicPack(self.resolve_dependent_ty(element, values)?).into()
             }
             TyKind::Variant(alternatives) => TyKind::Variant(
                 alternatives
                     .iter()
-                    .map(|alternative| self.resolve_dependent_ty(alternative, parameters))
+                    .map(|alternative| self.resolve_dependent_ty(alternative, values))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
             TyKind::Pointer { element, origin } => TyKind::Pointer {
-                element: self.resolve_dependent_ty(element, parameters)?,
+                element: self.resolve_dependent_ty(element, values)?,
                 origin: origin.clone(),
             }
             .into(),
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
-                referent: self.resolve_dependent_ty(&reference.referent, parameters)?,
+                referent: self.resolve_dependent_ty(&reference.referent, values)?,
                 origin: reference.origin.clone(),
                 mutability: reference.mutability,
             })
@@ -2467,25 +2531,25 @@ impl Checker {
                     environment: environment.clone(),
                     params: params
                         .iter()
-                        .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
+                        .map(|parameter| self.resolve_dependent_ty(parameter, values))
                         .collect::<Result<Vec<_>, _>>()?,
                     names: names.clone(),
-                    ret: self.resolve_dependent_ty(ret, parameters)?,
+                    ret: self.resolve_dependent_ty(ret, values)?,
                     required: required.clone(),
                     variadic: variadic
                         .as_ref()
-                        .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
+                        .map(|parameter| self.resolve_dependent_ty(parameter, values))
                         .transpose()?,
                     kw_variadic: kw_variadic
                         .as_ref()
-                        .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
+                        .map(|parameter| self.resolve_dependent_ty(parameter, values))
                         .transpose()?,
                     positional_only: *positional_only,
                     keyword_only: *keyword_only,
                     raises: *raises,
                     error: error
                         .as_ref()
-                        .map(|error| self.resolve_dependent_ty(error, parameters))
+                        .map(|error| self.resolve_dependent_ty(error, values))
                         .transpose()?,
                     conventions: conventions.clone(),
                     ref_params: ref_params.clone(),
@@ -2497,27 +2561,12 @@ impl Checker {
             TyKind::Overload(candidates) => TyKind::Overload(
                 candidates
                     .iter()
-                    .map(|candidate| self.resolve_dependent_ty(candidate, parameters))
+                    .map(|candidate| self.resolve_dependent_ty(candidate, values))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
             _ => ty.clone(),
         })
-    }
-
-    pub(super) fn value_argument_environment(
-        decls: &[ParamDecl],
-        arguments: &[TyArg],
-    ) -> HashMap<String, CtValue> {
-        decls
-            .iter()
-            .zip(arguments)
-            .filter(|(declaration, _)| !declaration.is_type_pack())
-            .filter_map(|(declaration, argument)| match argument {
-                TyArg::Val(value) => Some((declaration.spelling().to_string(), value.clone())),
-                TyArg::Ty(_) | TyArg::Origin(_) => None,
-            })
-            .collect()
     }
 
     pub(super) fn associated_type_for_self(&self, name: &str) -> Result<Ty, TypeError> {

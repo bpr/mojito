@@ -2119,7 +2119,7 @@ impl Checker {
                             std::slice::from_ref(source),
                         )
                         .ok()?;
-                    let values = Self::value_argument_environment(decls, &bound.arguments);
+                    let values = DependentValues::own(&self.param_context, decls, &bound.arguments);
                     let solved = self
                         .resolve_dependent_ty(&substitute(param, &bound.subst), &values)
                         .ok()?;
@@ -2166,7 +2166,7 @@ impl Checker {
             .map(|signature| {
                 (
                     struct_subst(&signature.decls, &own_arguments),
-                    Self::value_argument_environment(&signature.decls, &own_arguments),
+                    DependentValues::own(&self.param_context, &signature.decls, &own_arguments),
                     &signature.decls,
                 )
             });
@@ -3726,7 +3726,7 @@ impl Checker {
         let bound = self
             .resolve_use_params(name, &decls, param_args, &patterns, &actuals)
             .ok()?;
-        let values = Self::value_argument_environment(&decls, &bound.arguments);
+        let values = DependentValues::own(&self.param_context, &decls, &bound.arguments);
         let resolve = |ty: &Ty| {
             self.resolve_dependent_ty(&substitute(ty, &bound.subst), &values)
                 .ok()
@@ -6193,7 +6193,8 @@ impl Checker {
                 }
             })
             .collect();
-        self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
+        self.resolve_dependent_ty(&ty, &DependentValues::named(&self.param_context, &values))
+            .unwrap_or(ty)
     }
 
     /// The bounded type parameter an element of an unbound variadic pack, of

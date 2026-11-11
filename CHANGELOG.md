@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A signature's call to a method closes the callee's own value binders by
+  their declarations, as upstream substitutes a signature's own parameter
+  declarations, so a callee binder no longer rebinds a caller binder of the
+  same spelling: `type_of(rhs.add(self))` over `add(self, rhs: W[_])` is
+  `W[21]` at `W[1]().radd(W[2]())`, as at the pin, and a callee parameter
+  typed by the receiver's binders no longer rejects the call (R1854). The
+  bundled `FloatLiteral` gains upstream's reflected `__radd__`, `__rsub__`,
+  `__rmul__`, `__rtruediv__`, `__rfloordiv__`, and `__rmod__`; as at the
+  pin, an operator over two literals never reaches one
+  (`assets/ok/method_call_callee_binder_spelling.mojo`,
+  `assets/ok/float_literal_reflected_dunders.mojo`).
 - A method's signature may call a method its struct, or another struct of
   the program, declares below it, as upstream emits a signature on demand
   (R1853): a lookup of a declared method not yet registered registers that

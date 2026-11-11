@@ -2711,29 +2711,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1854 A signature's call to a method whose `_` binder shares a
-  caller binder's spelling captures it**
-
-  `def radd(self, rhs: W[_]) -> type_of(rhs.add(self))` over `def add(self,
-  rhs: W[_]) -> W[Self.n * 10 + rhs.n]` gives `W[1]().radd(W[2]()).n ==
-  11`, where the pin prints `21`.
-  - The same signature with the caller's parameter renamed (`other:
-    W[_]`) prints `21`, so the callee's auto-parameterized binder
-    (`auto_binder_name`, `comptime/auto_parameterize.rs`) and the
-    caller's are substituted as one.
-  - Instantiating the callee's return type must bind its own binders
-    simultaneously, never through a caller binder of the same spelling.
-  - Landing it ports upstream's reflected `FloatLiteral` dunders
-    (`__radd__`, `__rsub__`, `__rmul__`, `__rtruediv__`, each
-    `type_of(rhs OP self)`), which give `2 + 2.5 == 5.0` today, so `2 +
-    2.5` becomes `FloatLiteral.__radd__`, and deletes the mixed-family
-    case of `Checker::literal_rule` (`checker/operators.rs`).
-  - Probe: `print(2 + 2.5, 1 / 2.0, 3 - 0.5, (2.5).__radd__(1.0))` prints
-    `4.5 0.5 2.5 3.5` at the pin.
-  - Found while landing R1753 (2026-11-02).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1625 A written-back subscript is loaded once where an augmented
   store loads it twice**
 
@@ -3564,6 +3541,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The parameter folder's `IntLiteral`-left/`FloatLiteral`-right arm
     (`param_expr::fold::fold_infix`, `+ - * /` only) stands for the same
     overloads and goes with them.
+  - It also deletes the rest of `Checker::literal_rule`
+    (`checker/operators.rs`): its `Add | Sub | Mul` arm over a
+    `FloatLiteral` right operand stands for those overloads.
+  - Probe: `def r(x: IntLiteral[_], y: FloatLiteral[_]) ->
+    type_of(y.__radd__(x))` is "no overload matches", since a symbolic
+    `IntLiteral` reaches the declared reflected dunder's `FloatLiteral`
+    parameter only through the implicit initializer, where the pin prints
+    `1.5` for `r(1, 0.5)`.
   - Found while landing R1507 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5226,6 +5211,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime y = IntLiteral[(5).value](); print(y)` fails
     elaboration ("keeps the parameter constant `$comptime$main$c0()`"),
     where the pin prints `5`.
+  - Probe: `comptime a = (7.5).__mod__(2.0); print(a)` fails the same
+    way at `Float64` ("return of FloatLiteral[1.5]"), where the pin prints
+    `1.5`; so do `(7.5).__ceildiv__(2.0)`, `(7).__ceildiv__(2)`,
+    `(7.5).__neg__()`, and the reflected `(2.5).__radd__(1.0)`.
   - Found while landing R1855 (2026-11-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

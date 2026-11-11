@@ -5018,7 +5018,10 @@ impl Checker {
         if values.is_empty() {
             return Ok(expected);
         }
-        self.resolve_dependent_ty(&expected, values)
+        self.resolve_dependent_ty(
+            &expected,
+            &DependentValues::named(&self.param_context, values),
+        )
     }
 
     /// An `__init__`'s own compile-time parameters (`__init__[other_dtype:
@@ -5053,7 +5056,7 @@ impl Checker {
         } = self.resolve_use_params(&initializer, &decls, explicit, &patterns, &actuals)?;
         unify_through_callable_bounds(self, &decls, &mut subst)?;
         Ok(OwnParameters {
-            values: Self::value_argument_environment(&decls, &arguments),
+            values: DependentValues::own(&self.param_context, &decls, &arguments),
             subst,
             arguments,
         })
@@ -5990,7 +5993,7 @@ fn bracket_bindings<'a>(
 #[derive(Default)]
 struct OwnParameters {
     subst: TySubst,
-    values: HashMap<String, CtValue>,
+    values: DependentValues,
     arguments: Vec<TyArg>,
 }
 

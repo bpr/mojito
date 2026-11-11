@@ -3703,8 +3703,8 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    BoundParameters, BracketAttributes, ForwardedBrackets, bracket_attribute, tyarg_is_symbolic,
-    types_attributes,
+    BoundParameters, BracketAttributes, DependentValues, ForwardedBrackets, bracket_attribute,
+    tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;

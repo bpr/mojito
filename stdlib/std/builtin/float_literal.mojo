@@ -2,13 +2,12 @@
 # `FloatLiteral[value]` struct with its default initializer, `is_nan`,
 # `is_neg_zero`, `_is_normal`, `__int_literal__`, `__int__`, `__float__`,
 # `write_to`, `write_repr_to`, `__bool__`, `__neg__`, the arithmetic
-# dunders, and the comparison dunders. A literal `2.5` is its application
+# dunders, the reflected arithmetic dunders, and the comparison dunders. A literal `2.5` is its application
 # `FloatLiteral[2.5]`, as is an explicit one (`FloatLiteral[(2.5).value]()`).
 # Not ported: the implicit initializer from `IntLiteral[_]`, whose
 # declaration has no `out self` (R1784); the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the
-# compiler's exact rational cannot hold (R1783); and the reflected dunders,
-# whose `type_of(rhs OP self)` captures their own `rhs` (R1854).
+# compiler's exact rational cannot hold (R1783).
 """Implements the FloatLiteral class.
 
 These are Mojo built-ins, so you don't need to import them.
@@ -306,6 +305,84 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
 
         Returns:
             The ceiling of dividing numerator by denominator.
+        """
+        return {}
+
+    # TODO - maybe __pow__?
+
+    # ===------------------------------------------------------------------===#
+    # Reversed Operators, allowing things like "1 / 2.0" to work
+    # ===------------------------------------------------------------------===#
+
+    @always_inline("builtin")
+    def __radd__(self, rhs: FloatLiteral) -> type_of(rhs + self):
+        """Reversed addition operator.
+
+        Args:
+            rhs: The value to add.
+
+        Returns:
+            The sum of this and the given value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __rsub__(self, rhs: FloatLiteral) -> type_of(rhs - self):
+        """Reversed subtraction operator.
+
+        Args:
+            rhs: The value to subtract from.
+
+        Returns:
+            The result of subtracting this from the given value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __rmul__(self, rhs: FloatLiteral) -> type_of(rhs * self):
+        """Reversed multiplication operator.
+
+        Args:
+            rhs: The value to multiply.
+
+        Returns:
+            The product of the given number and this.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __rmod__(self, rhs: FloatLiteral) -> type_of(rhs.__mod__(self)):
+        """Return the remainder of rhs divided by self.
+
+        Args:
+            rhs: The value to divide on.
+
+        Returns:
+            The remainder of dividing rhs by self.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __rfloordiv__(self, rhs: FloatLiteral) -> type_of(rhs // self):
+        """Returns rhs divided by self, rounded down to the nearest integer.
+
+        Args:
+            rhs: The value to be divided by self.
+
+        Returns:
+            `floor(rhs / self)` value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __rtruediv__(self, rhs: FloatLiteral) -> type_of(rhs / self):
+        """Reversed division.
+
+        Args:
+            rhs: The value to be divided by this.
+
+        Returns:
+            The result of dividing the given value by this.
         """
         return {}
 

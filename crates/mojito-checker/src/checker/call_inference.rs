@@ -1984,7 +1984,7 @@ impl Checker {
             arguments: tyargs,
             attributes,
         } = self.resolve_call_params(name, decls, param_args, &use_params, &arg_tys)?;
-        let values = Self::value_argument_environment(decls, &tyargs);
+        let values = DependentValues::own(&self.param_context, decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
