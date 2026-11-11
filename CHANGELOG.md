@@ -280,6 +280,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime` name annotated with a value type no longer binds a type
+  (R1913): `comptime x: Int = T` over `T: Copyable`, and `Ts[0]` over
+  `*Ts: Copyable`, are rejected with the pin's "cannot implicitly convert
+  'Copyable' value to 'Int'", as are a struct member's `Self.T`, a generic
+  alias's own binder, and a struct type (`'AnyStruct[Int]' value to
+  'String'`, or "'Int' type as a value to an instance of 'Int'"), where
+  Mojito bound the type and dropped the annotation, or rejected it with a
+  generic type mismatch.
 - The `None` type and the `NoneType` struct are two types, as at the pin
   (R2097, R1885). `None`, a `-> None` result, and a function without one
   are upstream's `!kgen.none`, which conforms to no trait, so `print(None)`,

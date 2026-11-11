@@ -2202,6 +2202,13 @@ impl Checker {
                     return Err(TypeError::ParametricConstruction(shown));
                 }
                 if type_params.is_empty()
+                    && let Some(mismatch) = ty
+                        .as_ref()
+                        .and_then(|annotation| self.type_initializer_mismatch(annotation, value))
+                {
+                    return Err(mismatch);
+                }
+                if type_params.is_empty()
                     && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
                 {
                     return Ok(());
@@ -4363,6 +4370,12 @@ impl Checker {
             return Err(TypeError::Unsupported(
                 "a generic comptime alias must be declared at module scope".to_string(),
             ));
+        }
+        if type_params.is_empty()
+            && let Some(mismatch) =
+                ty.and_then(|annotation| self.type_initializer_mismatch(annotation, value))
+        {
+            return Err(mismatch);
         }
         let generator = self.partially_bound_generator(type_params, value)?;
         let (type_params, value) = generator

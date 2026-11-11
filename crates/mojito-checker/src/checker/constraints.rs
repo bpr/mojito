@@ -367,6 +367,11 @@ impl Checker {
                     let _lifting = self.lifting_position();
                     let mut value = self.eval_associated_ct(&member.value)?;
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
+                        if let CtValue::Type(ty) = &value
+                            && let Some(mismatch) = self.type_value_mismatch(ty.clone(), declared)
+                        {
+                            return Err(mismatch);
+                        }
                         self.check_raw_list_member(&member.name, &value, declared)?;
                         if let Some(converted) = self
                             .param_context
@@ -779,6 +784,13 @@ impl Checker {
                 .param_context
                 .constant_as(value.clone(), ty)
                 .map_err(|_| mismatch(value.to_string()));
+        }
+        // A type body converts through its metatype, which converts to no
+        // value type.
+        if let ParamKind::TypeShape(shape) = compiled.kind()
+            && let Some(mismatch) = self.type_value_mismatch(shape.clone(), ty)
+        {
+            return Err(mismatch);
         }
         match compiled.meta().as_value() {
             Some(actual) if coerces(actual, ty) => Ok(compiled),

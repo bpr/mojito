@@ -571,6 +571,21 @@ pub(super) struct ApplicableDeclaration<'a> {
     type_params: &'a [mojito_ast::ast::TypeParam],
 }
 
+/// Whether a compile-time value declared of type `ty` may be a type: `ty`
+/// is a type of types (a trait metatype, `AnyType`'s own type, a
+/// trait-valued binder's dependent type, a pack's list, a generator).
+pub(super) fn admits_type(ty: &Ty) -> bool {
+    matches!(
+        ty.kind(),
+        TyKind::TypeType
+            | TyKind::Trait(_)
+            | TyKind::AnyTrait(_)
+            | TyKind::Dependent(_)
+            | TyKind::ParamList(_)
+            | TyKind::Generator(_)
+    )
+}
+
 /// The rejection of a raw parameter list (`KGENParamList[T]`, a pack's
 /// `vs.values`) read as a runtime value, which the pin materializes and
 /// Mojito does not.
@@ -4264,6 +4279,53 @@ impl Checker {
     /// MIR gives it no runtime form. Returns `false` when the binding is not
     /// symbolic, or when the ordinary binding path still types its runtime
     /// reads.
+    /// The rejection of a `comptime` declaration whose annotation names a
+    /// value type and whose initializer is a type (`comptime x: Int = T`),
+    /// as [`Self::type_value_mismatch`] reports it. `None` when the
+    /// annotation admits a type or the initializer is not one.
+    pub(super) fn type_initializer_mismatch(
+        &self,
+        annotation: &SourceType,
+        value: &Expr,
+    ) -> Option<TypeError> {
+        let CtMemberReq::Value(expected) = self.ct_member_req_from_anno(&[], annotation).ok()?
+        else {
+            return None;
+        };
+        let operand = self.comptime_type_operand(value).ok()??;
+        self.type_value_mismatch(operand, &expected)
+    }
+
+    /// The rejection of the type `ty` bound where a value of `expected` is
+    /// declared: upstream converts the type's metatype to `expected`, and a
+    /// type binder's metatype (its trait bound) or a struct's
+    /// (`AnyStruct[S]`) converts to no value type. `None` when `expected`
+    /// is itself a type of types.
+    pub(super) fn type_value_mismatch(&self, ty: Ty, expected: &Ty) -> Option<TypeError> {
+        if admits_type(expected) {
+            return None;
+        }
+        let ty = self.opaque_element(&ty).unwrap_or(ty);
+        let found = match ty.kind() {
+            TyKind::Param { bounds, .. } => self.binder_metatype(bounds),
+            _ if ty == *expected => return Some(TypeError::TypeAsInstance(ty.to_string())),
+            _ => format!("AnyStruct[{ty}]"),
+        };
+        Some(TypeError::MetatypeConversion {
+            found,
+            expected: expected.to_string(),
+        })
+    }
+
+    /// The metatype of a type binder bounded by `bounds`, as upstream
+    /// spells it: the canonical trait composition, or `AnyType`.
+    pub(super) fn binder_metatype(&self, bounds: &[String]) -> String {
+        if bounds.is_empty() {
+            return "AnyType".to_string();
+        }
+        self.canonical_trait_set(bounds).join(" & ")
+    }
+
     pub(super) fn bind_template_comptime(
         &mut self,
         stmt: &Stmt,

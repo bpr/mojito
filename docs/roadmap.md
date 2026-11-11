@@ -5804,6 +5804,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     where the pin reports "'AnyTrait[AnyType]' does not implement the
     '__eq__' method": a trait name in expression position has no value
     either.
+  - Probe: `var x: Int = T` over `T: Copyable` stops with "Undefined
+    variable 'T'", where the pin reports "cannot implicitly convert
+    'Copyable' value to 'Int'", the conversion a `comptime x: Int = T`
+    declaration already reports.
   - Found while landing R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9122,21 +9126,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     application supplies it, as upstream's inference does.
   - Probe: `V[origin_of(l)](5)` over a local `l` runs at both.
   - Found while landing R1192 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1913 A type binder bound to a value-annotated `comptime` name
-  is accepted**
-
-  `comptime x: Int = T` in `def go[T: Copyable]` runs here, where the pin
-  rejects it: "cannot implicitly convert 'Copyable' value to 'Int'".
-  - The checker judges a `comptime` initializer against its annotation
-    only as a value; a type binder's value is its metatype (the trait it
-    is bounded by), which converts to no value type.
-  - Probe: `comptime x: Int = T` over `T: Copyable`.
-  - Probe: `comptime x: Int = Ts[0]` over `*Ts: Copyable`, the same
-    message at the pin.
-  - Found while landing R1492 (2026-11-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

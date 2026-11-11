@@ -321,6 +321,16 @@ pub enum TypeError {
         found: String,
         expected: String,
     },
+    /// A type bound where its annotation declares a value (`comptime x:
+    /// Int = T`): the type's metatype (`found`, a binder's trait bound or
+    /// `AnyStruct[S]`) converts to no value type, as upstream.
+    MetatypeConversion {
+        found: String,
+        expected: String,
+    },
+    /// A struct type bound where its annotation declares an instance of
+    /// that struct (`comptime x: Int = Int`).
+    TypeAsInstance(String),
     /// An operator applied to operand type(s) it is not defined for.
     BadOperator {
         op: String,
@@ -922,6 +932,17 @@ impl fmt::Display for TypeError {
                     "cannot implicitly convert '{found}' value to '{expected}'"
                 )
             }
+            Self::MetatypeConversion { found, expected } => {
+                write!(
+                    f,
+                    "cannot implicitly convert '{found}' value to '{expected}'"
+                )
+            }
+            Self::TypeAsInstance(ty) => write!(
+                f,
+                "cannot implicitly convert '{ty}' type as a value to an instance of '{ty}'; did \
+                 you mean to instantiate '{ty}'?"
+            ),
             Self::TypeMismatch {
                 expected,
                 found,
