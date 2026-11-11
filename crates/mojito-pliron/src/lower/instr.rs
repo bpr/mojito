@@ -62,13 +62,14 @@ impl FnLowering<'_> {
         };
         for (var, param_ty) in param_tys.iter().enumerate() {
             match param_ty {
-                // A zero-sized parameter's slot is never read (its uses
-                // erase); a null placeholder keeps the slot indexes aligned.
+                // A zero-sized parameter has no physical argument and its
+                // value uses erase, but a reference to it is still an
+                // address: its slot is one-byte storage, as a fieldless
+                // struct's is, never a null pointer that a dereference guard
+                // would classify as dangling.
                 Some(LowerTy::ZeroSized) => {
-                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                    let null = ZeroOp::new(ctx, ptr_ty);
-                    self.append(ctx, null.get_operation(), None);
-                    self.var_slots.push(null.get_result(ctx));
+                    let slot = self.entry_alloca(ctx, 0, 1);
+                    self.var_slots.push(slot);
                 }
                 Some(LowerTy::Aggregate { ty, layout }) if self.copied_param(var) => {
                     let incoming = entry.deref(ctx).get_argument(physical_index(var));
@@ -91,15 +92,10 @@ impl FnLowering<'_> {
                             alloca.get_result(ctx)
                         }
                         LowerTy::Aggregate { ty, layout } => self.value_storage(ctx, &ty, layout),
-                        // A zero-sized local, such as an inlined callee's
-                        // zero-sized parameter, holds nothing: its stores and
-                        // reads erase, as a zero-sized parameter's do.
-                        LowerTy::ZeroSized => {
-                            let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                            let null = ZeroOp::new(ctx, ptr_ty);
-                            self.append(ctx, null.get_operation(), None);
-                            null.get_result(ctx)
-                        }
+                        // A zero-sized local holds nothing (its stores and
+                        // reads erase), but `ref.make` of it yields its slot,
+                        // so the slot is real one-byte storage.
+                        LowerTy::ZeroSized => self.entry_alloca(ctx, 0, 1),
                     };
                     self.var_slots.push(slot);
                 }

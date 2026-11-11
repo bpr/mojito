@@ -144,13 +144,20 @@ point, as upstream's toolchain does.
   field, `get_stack_trace`, and `__mojo_debugger_raise_hook` are omitted
   (R2011), and the `depth` keyword is kept and ignored; the file header
   lists each departure. The prelude exports `Error`.
+- `std/builtin/none.mojo` — upstream's `struct NoneType` over the
+  `!kgen.none` type of the `None` expression, with its two initializers
+  (the `@implicit` one converts `None`), `write_to`, and `write_repr_to`.
+  The `@implicit` initializer spells `` __mlir_type.`!kgen.none` `` where
+  upstream writes `Self._mlir_type` (R2007), as do `Optional`'s and
+  `OptionalReg`'s initializers from the raw `None`. The prelude exports
+  `NoneType`.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
   and `TrivialRegisterPassable` traits; the prelude exports all three.
   `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,
   `Movable`, and `RegisterPassable`, so a struct declaring it is copyable.
   `Defaultable.__init__` stays a requirement until a trait default can
   construct `self` field by field, as upstream's reflective default does
-  (R1119). The compiler-modelled scalars, `Bool`, `NoneType`, and `DType`
+  (R1119). The compiler-modelled scalars, `Bool`, and `DType`
   conform as the upstream structs they stand in for declare.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
   `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime

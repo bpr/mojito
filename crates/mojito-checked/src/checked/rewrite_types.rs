@@ -772,10 +772,12 @@ impl RewriteTypes for CheckedSliceLiteral {
             target,
             constructor: _,
             omitted,
+            marker,
             indirect_result: _,
         } = self;
         target.rewrite_types(rewrite);
         omitted.rewrite_types(rewrite);
+        marker.rewrite_types(rewrite);
     }
 }
 

@@ -640,7 +640,8 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "UInt" => Some(Ty::uint()),
         "Bool" => Some(Ty::bool()),
         "Float64" => Some(Ty::float64()),
-        "None" | "NoneType" => Some(Ty::none()),
+        "None" => Some(Ty::none()),
+        "NoneType" => Some(Ty::none_type()),
         // The (qualified) `String` spelling deliberately falls through to
         // ordinary struct resolution: in type-argument and type-value
         // positions it denotes the nominal stdlib struct. Value-parameter

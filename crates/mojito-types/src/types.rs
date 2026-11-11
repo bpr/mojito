@@ -628,6 +628,10 @@ impl fmt::Display for LaneMask {
 /// lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
+    /// Upstream's `!kgen.none`, displayed `None`: the type of the `None`
+    /// expression, of a `-> None` result, and of a function without one. It
+    /// has no members and conforms to no trait; the `NoneType` struct
+    /// `std.builtin.none` declares wraps it.
     None,
     /// Bottom type: no runtime value can inhabit it.
     Never,
@@ -777,10 +781,7 @@ pub enum TyKind {
     /// numeric trait. Either slot is a parameter expression while its
     /// declaration is symbolic. Both backends hold it as they hold the
     /// vector.
-    KgenSimd {
-        dtype: SimdDtype,
-        width: SimdWidth,
-    },
+    KgenSimd { dtype: SimdDtype, width: SimdWidth },
     /// Upstream's KGEN vector of addresses `!kgen.simd<width, address>`,
     /// displayed ``__mlir_type.`!kgen.simd<4, address>` ``: `width`
     /// untyped pointers, LLVM's `<width x ptr>`, the base-pointer operand
@@ -789,9 +790,7 @@ pub enum TyKind {
     /// apart from [`TyKind::KgenSimd`]. It has no members and conforms to
     /// no trait. The width is a parameter expression while its declaration
     /// is symbolic. Both backends lay it out as `width` pointers.
-    KgenAddressSimd {
-        width: SimdWidth,
-    },
+    KgenAddressSimd { width: SimdWidth },
     /// Upstream's generator type `!kgen.generator`, spelled
     /// `__generator_type[idx: Int] Int`: the type of a parameterized
     /// `comptime` declaration read unapplied, and of a parameter that takes
@@ -806,10 +805,7 @@ pub enum TyKind {
     /// build and read, and the array of element pointers a call builds for
     /// a `*xs: T` callee's `VariadicList`, in a slot of its own
     /// (`__passed_varargs__`).
-    PopArray {
-        size: ArraySize,
-        element: Ty,
-    },
+    PopArray { size: ArraySize, element: Ty },
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
@@ -916,6 +912,16 @@ impl Ty {
         static TY: LazyLock<Ty> = LazyLock::new(|| {
             Ty(Arc::new(TyNode::new(TyKind::Struct(
                 BOOL_TYPE_NAME.to_string(),
+                Vec::new(),
+            ))))
+        });
+        TY.clone()
+    }
+    /// `NoneType`, the struct `std.builtin.none` declares over `!kgen.none`.
+    pub fn none_type() -> Self {
+        static TY: LazyLock<Ty> = LazyLock::new(|| {
+            Ty(Arc::new(TyNode::new(TyKind::Struct(
+                NONE_TYPE_NAME.to_string(),
                 Vec::new(),
             ))))
         });
@@ -1177,6 +1183,11 @@ impl TyKind {
     /// Whether this is `Bool`, the struct `std.builtin.bool` declares.
     pub fn is_bool(&self) -> bool {
         matches!(self, Self::Struct(name, args) if name == BOOL_TYPE_NAME && args.is_empty())
+    }
+
+    /// Whether this is `NoneType`, the struct `std.builtin.none` declares.
+    pub fn is_none_type(&self) -> bool {
+        matches!(self, Self::Struct(name, args) if name == NONE_TYPE_NAME && args.is_empty())
     }
 
     /// Whether this is `Int`.
@@ -1609,9 +1620,18 @@ pub const SIMD_FROM_INT_LITERAL: &str = "SIMD.__init__$ov$IntLiteral";
 /// splats a float literal across a vector's lanes.
 pub const SIMD_FROM_FLOAT_LITERAL: &str = "SIMD.__init__$ov$FloatLiteral";
 
+/// The symbol of upstream's `@implicit NoneType.__init__(!kgen.none)`,
+/// which converts the `None` a display passes as its literal marker
+/// (`__list_literal__=None`) to the marker's `NoneType` parameter.
+pub const NONE_TYPE_FROM_NONE: &str = "NoneType.__init__$ov$None";
+
 /// The name of upstream's `Bool`, declared in `std.builtin.bool`
 /// ([`Ty::is_bool`]).
 pub const BOOL_TYPE_NAME: &str = "Bool";
+
+/// The name of upstream's `NoneType`, declared in `std.builtin.none`
+/// ([`TyKind::is_none_type`]).
+pub const NONE_TYPE_NAME: &str = "NoneType";
 
 /// The name `std.builtin.string_literal` declares a string literal's struct
 /// under ([`TyKind::string_literal_value`]).
@@ -1705,6 +1725,7 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
         "!pop.float_literal" => Some(TyKind::PopFloatLiteral.into()),
         "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
         "!kgen.target" => Some(TyKind::KgenTarget.into()),
+        "!kgen.none" => Some(Ty::none()),
         _ => name
             .strip_prefix("!kgen.scalar<")
             .and_then(|rest| rest.strip_suffix('>'))
@@ -2247,7 +2268,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
         kind if kind.is_float_literal() => "SIMD[DType.float64, 1]".to_string(),
         kind if let Some((dtype, width)) = kind.as_simd() => format!("SIMD[{dtype}, {width}]"),
         kind if kind.is_string_literal() => "StringLiteral".to_string(),
-        TyKind::None => "NoneType".to_string(),
+        TyKind::None => "None".to_string(),
         TyKind::Struct(name, args) => {
             // A public tuple's specialization symbol encodes its elements;
             // spell it as upstream's `Tuple[...]`.

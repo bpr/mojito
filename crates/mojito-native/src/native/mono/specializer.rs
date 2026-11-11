@@ -2293,7 +2293,7 @@ impl<'a> Specializer<'a> {
     /// (`MirDeclarations::translated_type`), asked of a struct instance's
     /// template at the instance's arguments, since the instance is
     /// declared only once its body is discovered.
-    fn translated_type(&self, ty: &Ty) -> Ty {
+    pub(super) fn translated_type(&self, ty: &Ty) -> Ty {
         let template = match ty.kind() {
             struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 Ty::new(TyKind::Struct(

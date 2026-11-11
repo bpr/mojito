@@ -222,10 +222,28 @@ impl Checker {
         self.is_trivial_register_passable(operand)
     }
 
+    /// The type LLVM translation sees for the closed `ty`, which a rebind
+    /// between two closed types compares, as upstream's `processRebindOp`
+    /// compares them once lowered: a register-passable struct of one field
+    /// is that field's type, unwrapped again while the field is such a
+    /// struct (`NoneType` is its `!kgen.none`).
+    fn rebind_translated_ty(&self, ty: &Ty) -> Ty {
+        let mut translated = ty.clone();
+        while let Some((name, args)) = translated.kind().as_non_simd_struct()
+            && let Some(info) = self.structs.get(name)
+            && let [(_, field)] = info.fields.as_slice()
+            && self.is_trivial_register_passable(&translated)
+        {
+            translated = substitute(field, &struct_subst(&info.decls, args));
+        }
+        translated
+    }
+
     /// `Dest` for an operand of type `ty`. Under source validation, or where
     /// either side is still symbolic, the target stands in for the operand
     /// type and the elaborator asserts the equality per instance; between
-    /// two closed types the check requires the two to be the same type.
+    /// two closed types the check requires the two to be the same type as
+    /// LLVM translation sees them ([`Self::rebind_translated_ty`]).
     fn rebound_ty(&self, target: &ParamArg, ty: &Ty, site: &SourceSpan) -> Result<Ty, TypeError> {
         let dest = self.rebind_target_ty(target)?;
         self.record_at(site.clone()).rebind_assertion =
@@ -239,7 +257,11 @@ impl Checker {
         // function: a dependent target (`TypeList[...]()[id]`) may fold
         // closed here in a body no call ever instantiates.
         let closed = !is_symbolic(ty) && !is_symbolic(&dest);
-        if closed && *ty != dest && !self.checking_parametric_body() {
+        if closed
+            && *ty != dest
+            && self.rebind_translated_ty(ty) != self.rebind_translated_ty(&dest)
+            && !self.checking_parametric_body()
+        {
             return Err(TypeError::TypeMismatch {
                 expected: dest.to_string(),
                 found: ty.to_string(),

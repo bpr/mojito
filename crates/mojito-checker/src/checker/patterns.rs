@@ -1122,7 +1122,7 @@ impl Checker {
         }
         let (case, name) = self.enum_case(head, subject)?;
         let payload = self.enum_case_payload(&subject.ty, case)?;
-        if matches!(payload.kind(), TyKind::None) {
+        if payload.kind().is_none_type() {
             return Err(TypeError::MatchPattern(format!(
                 "enum case '{name}' has no associated value"
             )));

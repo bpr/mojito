@@ -1691,9 +1691,6 @@ impl Checker {
         if name == "Never" && args.is_empty() {
             return Ok(Some((Ty::never(), Vec::new())));
         }
-        if name == "NoneType" && args.is_empty() {
-            return Ok(Some((Ty::none(), Vec::new())));
-        }
         if args.is_empty()
             && let Some(parameter) = self.lookup_tparam(name)
         {

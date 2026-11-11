@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2098**.
+Next free ID: **R2100**.
 
 ## Ordered Work
 
@@ -4382,6 +4382,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2098 A bare `return` is not upstream's `return None`, so a
+  result type that converts from `None` rejects it**
+
+  At the pin a bare `return` in a function with a result returns `None`,
+  converted to the result type as any returned value is. Mojito checks it
+  as a `None` with no conversion site.
+  - Cause: `StmtKind::Return(None)` carries no value expression, so the
+    return check (`checker/statements.rs`) has nowhere to record the
+    `@implicit` conversion and HIR/MIR lower no construction.
+  - A named result (`out x`) keeps the bare `return` as it is, at the pin
+    too.
+  - Probe: `def k() -> NoneType: return` then `print(k())` prints `None`
+    at the pin. Mojito: "type mismatch for return: expected NoneType,
+    found None".
+  - Probe: `def k() -> Optional[Int]: return` then `print(k().__bool__())`
+    prints `False` at the pin, and fails the same way here.
+  - Probe: `def k() -> Int: return` is rejected by both ("cannot
+    implicitly convert 'None' value to 'Int'" at the pin).
+  - Found while landing R2097 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -4442,6 +4464,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `!kgen.dtype` where upstream writes `Self._mlir_type`
     (`stdlib/std/builtin/dtype.mojo`'s header); restore upstream's
     spelling once this lands.
+  - Probe: the bundled `NoneType`'s `@implicit __init__`
+    (`stdlib/std/builtin/none.mojo`) spells `` __mlir_type.`!kgen.none` ``
+    where upstream writes `Self._mlir_type`. Upstream's spelling leaves the
+    parameter unresolved when the library's comptime members convert
+    `None`, so every `NoneType = None` default fails "type mismatch for a
+    compile-time value declared with a type". Restore it once this lands.
+  - Probe: the bundled `Optional` and `OptionalReg` initializers from the
+    raw `None` (`stdlib/std/collections/optional.mojo`) spell
+    `` __mlir_type.`!kgen.none` `` where upstream writes
+    `NoneType._mlir_type`, which fails the same way at `_plugin/_trait.mojo`'s
+    `OptionalReg[...] = None` members. Restore it once this lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7420,6 +7453,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2099 `reflect[T].name()` over an MLIR type spells the type,
+  where the pin prints `__MLIRType`**
+
+  At the pin `reflect[T].name()` over any `__mlir_type` is
+  `std.builtin._stubs.__MLIRType[<unprintable>]`. Mojito prints the
+  type's own spelling.
+  - Cause: `TypeNameSpeller::name` (`mojito-symbol/src/symbol.rs`) falls
+    back to the type's display for every non-struct leaf.
+  - Probe: `reflect[type_of(None)].name()` prints `None` here.
+  - Probe: `reflect[type_of(True.__mlir_i1__())].name()` prints
+    `__mlir_type.i1` here.
+  - Found while landing R2097 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -8711,6 +8759,16 @@ retained on purpose and re-probed rather than fixed; they are listed in
     type does not match the result type"). The pin rejects
     `!kgen.scalar<f32>` into `Float64` ("rebind input type
     '!kgen.scalar<f32>' does not match result type '!kgen.scalar<f64>'").
+  - A trivially register-passable struct of one field already agrees
+    with that field's type: the checker (`rebind_translated_ty`) and the
+    elaborator (`MirDeclarations::translated_type`) compare so, which
+    `rebind[NoneType](None)` in `llvm_intrinsic` needs.
+  - Probe: `rebind[Bool](b._mlir_value)` prints `True` at the pin, and
+    the elaborator rejects it here ("rebind input type
+    '!kgen.scalar<bool>' does not match result type 'Bool'"):
+    `MirDeclarations::translated_type` does not unwrap `Bool`.
+  - Probe: `rebind[Int](i._mlir_value)` prints `3` at the pin, and the
+    checker rejects it here: `rebind_translated_ty` skips `SIMD`.
   - Pinned by `conformance/probes/rebind_layout_identical_struct.mojo`.
   - Ledger name: `rebind-layout-identical-struct`.
   - Found while landing R314 (2026-10-08).
@@ -9067,24 +9125,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1885 `print(None)` runs, where the pin rejects the `None` type
-  as not `Writable`**
-
-  `print(None)`, `f[T: Writable](None)`, and `String(None)` run here, where
-  the pin rejects them: "an element of 'values' with type 'None' does not
-  conform to trait 'Writable'".
-  - The pin's `NoneType` struct does conform to `Writable`: `var x:
-    NoneType = None` then `print(x)` prints `None` at both.
-  - Only the bare `None` type (`!kgen.none`) is not `Writable`, and
-    Mojito has one `TyKind::None` for both, so no conformance answer in
-    `mojito_types::conformance::modelled_conformance` fits both.
-  - Once R2097 splits them, the `None` leaf joins the non-`Writable`
-    leaves there.
-  - Found while planning R1287 (2026-11-03).
-  - Depends on R2097 (the `None` type and the `NoneType` struct are one
-    `TyKind`).
-  - Model: Opus, Not Planned.
-
 - [ ] **R1913 A type binder bound to a value-annotated `comptime` name
   is accepted**
 
@@ -9296,32 +9336,6 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
-
-- [ ] **R2097 The `None` type and the `NoneType` struct are one type**
-
-  Mojito types the `None` expression, a `-> None` result, and a `NoneType`
-  annotation as one `TyKind::None`, where upstream has two types.
-  - Upstream's `None` is the MLIR `!kgen.none` type, displayed `None`.
-  - Upstream's `NoneType` is a struct in `std/builtin/none.mojo` wrapping
-    `!kgen.none`, declaring `Writable` (`write_to`, `write_repr_to`) and an
-    `@implicit` constructor from the `None` type.
-  - The bundled std has no `NoneType` struct, and
-    `checker/type_resolution.rs` resolves the name to `Ty::none()`.
-  - Probe: `var x = None` then `print(x)` is rejected at the pin ("type
-    'None' does not conform to trait 'Writable'"), as is `print(k())` over
-    `def k() -> None` and `print(t[1])` over `t = (1, None)`. Mojito fails
-    each at run time ("vm backend does not support methods on None yet").
-  - Probe: `var x: NoneType = None` then `print(x)`, and `def h(x:
-    NoneType): print(x)` called as `h(None)`, print `None` at the pin.
-    Mojito fails at run time the same way.
-  - Probe: `print(NoneType())` and `g(NoneType())` over `def g[T:
-    Writable](x: T)` print `None` at the pin, while Mojito reports
-    "Undefined variable 'NoneType'".
-  - Probe: `String(NoneType())` builds `"None"` at the pin.
-  - Lever: declare upstream's `NoneType` struct in the bundled std and give
-    the `None` expression its own `!kgen.none` leaf that converts to it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**

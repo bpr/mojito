@@ -280,6 +280,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The `None` type and the `NoneType` struct are two types, as at the pin
+  (R2097, R1885). `None`, a `-> None` result, and a function without one
+  are upstream's `!kgen.none`, which conforms to no trait, so `print(None)`,
+  `print(x)` over `var x = None`, `String(None)`, and `x == None` are
+  rejected. `NoneType` is upstream's `std/builtin/none.mojo` struct, which
+  the prelude exports: `print(NoneType())`, `var x: NoneType = None`, and a
+  `NoneType` argument or field run on both backends. `Optional` and
+  `OptionalReg` take upstream's initializer from the raw `None`. A `rebind`
+  between two closed types now compares them as LLVM translation sees them,
+  so `rebind[NoneType](None)` agrees. A reference to a zero-sized value is
+  a real one-byte stack slot natively, no longer a null pointer the
+  dereference guard reports as dangling.
 - R1885's diagnosis is corrected: the pin's `NoneType` struct conforms to
   `Writable`, and only the bare `None` type does not. Mojito types both as one
   `TyKind::None`, so the fix waits on splitting them (R2097); no behavior

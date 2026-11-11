@@ -318,9 +318,10 @@ pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
     }
 }
 
-/// Whether the declared `return_type` may receive a result of kind `kind`:
-/// integer kinds need an integer scalar type, pointer kinds a `Pointer`
-/// (`Pointer[Int32, _]` for `int *`), `Void` the unit type.
+/// Whether the declared `return_type` may receive a result of kind `kind`.
+///
+/// Integer kinds need an integer scalar type, pointer kinds a `Pointer`
+/// (`Pointer[Int32, _]` for `int *`), and `Void` `None` or `NoneType`.
 pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
     match kind {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
@@ -332,7 +333,7 @@ pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
         CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr => {
             matches!(ty.kind(), TyKind::Pointer { .. })
         }
-        CType::Void => matches!(ty.kind(), TyKind::None),
+        CType::Void => matches!(ty.kind(), TyKind::None) || ty.kind().is_none_type(),
     }
 }
 

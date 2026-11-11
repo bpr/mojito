@@ -502,9 +502,9 @@ pub enum CtValue {
     /// An exact finite floating literal which has not yet been materialized.
     FloatLiteral(FloatLiteral),
     Bool(bool),
-    /// The `NoneType` value — upstream's `None` parameter (a
-    /// `NoneType = None` default, an `OptionalReg[T] = None` member). It
-    /// displays as `None`.
+    /// The `None` value, of upstream's `!kgen.none` type, which a
+    /// `NoneType` parameter also holds (a `NoneType = None` default, an
+    /// `OptionalReg[T] = None` member). It displays as `None`.
     None,
     Str(String),
     Tuple(Vec<Self>),
@@ -1208,7 +1208,7 @@ impl CtValue {
             Self::Index(_) => crate::types::MLIR_INDEX_TYPE_SPELLING.to_string(),
             Self::Float(_) | Self::FloatLiteral(_) => "Float64".to_string(),
             Self::Bool(_) => "Bool".to_string(),
-            Self::None => "NoneType".to_string(),
+            Self::None => "None".to_string(),
             Self::Str(_) => "String".to_string(),
             Self::Dtype(_) => crate::types::KGEN_DTYPE_TYPE_SPELLING.to_string(),
             Self::Simd { dtype, lanes } => {
@@ -1316,6 +1316,7 @@ impl CtValue {
             (value @ Self::Index(_), TyKind::Index)
             | (value @ Self::Bool(_), TyKind::I1)
             | (value @ Self::None, TyKind::None) => Some(value),
+            (value @ Self::None, kind) if kind.is_none_type() => Some(value),
             (value @ Self::Str(_), kind) if kind.is_string_literal() => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
@@ -1745,7 +1746,7 @@ impl CtValue {
     }
 
     /// A field or element of a closed aggregate parameter value: a scalar,
-    /// itself a closed aggregate, or frozen memory whose present slots are
+    /// the `None` a `NoneType` holds, itself a closed aggregate, or frozen memory whose present slots are
     /// closed leaves or strings (a string inside memory is the backend's to
     /// write, since no constructor builds an arbitrary pointer-owning
     /// struct).
@@ -1758,6 +1759,7 @@ impl CtValue {
             | Self::IntLiteral(_)
             | Self::FloatLiteral(_)
             | Self::Bool(_)
+            | Self::None
             | Self::Dtype(_) => true,
             // A frozen enum case: its payload, if any, is a closed leaf.
             Self::Variant { payload, .. } => payload.as_deref().is_none_or(Self::is_closed_leaf),

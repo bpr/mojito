@@ -1,4 +1,4 @@
-# expect: (load_from_mem Array[Int, 2](2, 1, None)[0])
+# expect: (load_from_mem Array[Int, 2](2, 1, NoneType(None))[0])
 # An explicit `__getitem__` call in a type argument is `load_from_mem` of
 # its application, not the element it computes, so the parameter is not
 # `2`, as at the pin.

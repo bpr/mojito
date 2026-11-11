@@ -487,11 +487,7 @@ impl<'a> Flatten<'a> {
             // literal overload, and the `length` parameter argument
             // reifies the constructed value's `value_params`.
             let regs = self.display_elements(node, &elements);
-            let none = self.fresh_typed(node.location(), None, Ty::none());
-            self.emit(MirInstr::Const {
-                dest: none,
-                k: Const::None,
-            });
+            let none = self.literal_marker(node);
             let length = mojito_types::types::array_parts(&target)
                 .map_or(elements.len() as i64, |(_, length)| length);
             let length_reg = self.fresh_typed(node.location(), None, Ty::int());
@@ -1108,13 +1104,26 @@ impl<'a> Flatten<'a> {
         mut kwargs: Vec<(String, Reg)>,
         marker: &str,
     ) -> Reg {
+        let none = self.literal_marker(node);
+        kwargs.push((marker.to_string(), none));
+        self.constructor_call(node, func, ty, args, kwargs)
+    }
+
+    /// The `None` a display passes as its literal marker keyword, converted
+    /// to the marker's `NoneType` parameter as an argument converts.
+    fn literal_marker(&mut self, node: Node<'a>) -> Reg {
         let none = self.fresh_typed(node.location(), None, Ty::none());
         self.emit(MirInstr::Const {
             dest: none,
             k: Const::None,
         });
-        kwargs.push((marker.to_string(), none));
-        self.constructor_call(node, func, ty, args, kwargs)
+        self.constructor_call(
+            node,
+            mojito_types::types::NONE_TYPE_FROM_NONE,
+            Ty::none_type(),
+            vec![none],
+            Vec::new(),
+        )
     }
 }
 

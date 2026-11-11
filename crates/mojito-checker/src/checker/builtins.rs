@@ -79,7 +79,6 @@ impl Checker {
         is_numeric(ty)
             || ty.is_bool()
             || ty.is_string_literal()
-            || matches!(ty.kind(), TyKind::None)
             || mojito_types::types::is_dtype(ty)
             || self.equatable_bound(ty)
     }

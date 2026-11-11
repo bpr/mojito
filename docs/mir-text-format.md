@@ -509,7 +509,8 @@ Schema 1.103 adds `variant.tag { dest, variant }`, the index of a variant's
 active alternative as an `Int`, which an `enum` storage's
 `get_discriminant()` reads, and the `ct_variant { alternatives, index,
 payload }` compile-time value, a frozen variant whose `payload` is absent
-for an alternative of type `NoneType` (an enum case without a payload). An
+for an alternative of type `NoneType` (an enum case without a payload;
+`NoneType` is the `std.builtin.none` struct). An
 older artifact holds neither. The package format moves to `mojito-package
 93`, whose source statements also carry an `enum` declaration's cases.
 
@@ -952,8 +953,9 @@ after `triple`, the name of the stdlib plugin the target selects. A reader
 takes `"default"` where an attribute omits it. The package format moves to
 `mojito-package 159`.
 
-Schema 1.144 adds the compile-time value `ct_none`, the `NoneType` value
-(a `NoneType = None` parameter default, an `OptionalReg[T] = None`
+Schema 1.144 adds the compile-time value `ct_none`, the `None` value of
+upstream's `!kgen.none` type, which a `NoneType` slot also holds (a
+`NoneType = None` parameter default, an `OptionalReg[T] = None`
 member). The package format moves to `mojito-package 160`.
 
 Schema 1.145 lowers `pop.div` and `index.divs` to `binary div`, as
@@ -1156,6 +1158,11 @@ source (`ConversionMaterializesSource`, and the call boundary's
 `MaterializeSource`), which MIR lowering emits as the target's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
+
+The package format moves to `mojito-package 210` when a checked slice
+literal records how the `None` it passes as `__slice_literal__` reaches
+the marker's `NoneType` parameter (`CheckedSliceLiteral::marker`), as an
+omitted operand's already did (R2097). The MIR text is unchanged.
 
 Schema 1.184 adds the compile-time value `ct_func_symbol("symbol")`,
 upstream's `#kgen.func.symbol<@symbol>`: a thin function's symbol bound
@@ -1791,8 +1798,9 @@ compile-time memory, upstream's `#lit.store_to_mem`: the value it reads.
 A backend thaws it as a fresh compile-time memory slot holding that value;
 it has no run-time form.
 
-`ct_none` (schema 1.144) is the `NoneType` value, upstream's `None`
-parameter. A backend thaws it as the `None` value.
+`ct_none` (schema 1.144) is the `None` value of upstream's `!kgen.none`
+type, which a `NoneType` parameter also holds, inside a `ct_struct` of
+`NoneType` too. A backend thaws it as the `None` value.
 
 `ct_removed_arg` (schema 1.63) is a struct argument that mentions a
 parameter its instance's generator removed, upstream's `_REMOVED_ARG`. It

@@ -870,7 +870,8 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     }
 }
 
-/// Two closed types a rebind names must already agree; the elaborator
+/// Two closed types a rebind names must already agree, as LLVM translation
+/// sees them (`MirDeclarations::translated_type`); the elaborator
 /// judges one over a parameter per instance, and one at a position judged
 /// per instance (`RegionContext::judged_per_instance`): an inlined
 /// `comptime if type == NoneType: return rebind[type](None)`, or an inlined
@@ -878,6 +879,10 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
 fn verify_rebind(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
     if let (Some(found), Some(expected)) = (cx.reg_ty(value), cx.reg_ty(dest))
         && !types_compatible(found, expected)
+        && !types_compatible(
+            &cx.declarations.translated_type(found),
+            &cx.declarations.translated_type(expected),
+        )
         && !cx.context.judged_per_instance()
     {
         errors.push(format!(

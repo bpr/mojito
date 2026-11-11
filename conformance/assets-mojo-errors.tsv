@@ -33,7 +33,13 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1157
+# swept-count	1163
+assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
+assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/none_result_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/none_type_to_none_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'NoneType' to 'None'
+assets/type_error/none_type_to_none_return.mojo	compile-reject	agree	error: cannot implicitly convert 'NoneType' value to 'None' in return value
+assets/type_error/none_value_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment

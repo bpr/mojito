@@ -1354,15 +1354,6 @@ pub fn method_of_symbol<'s>(
     (!method.is_empty() && !method.contains('.')).then_some((method, qualifier))
 }
 
-/// Whether an overload symbol's signature qualifier is exactly the `NoneType`
-/// parameter spelling (`…$ov$None`).
-///
-/// The `@implicit` None-conversion constructor, which arity-based selection
-/// must exclude when a bound can never be `None`.
-pub fn is_none_overload(symbol: &str) -> bool {
-    symbol.ends_with("$ov$None")
-}
-
 /// If `symbol` is a signature-qualified `__init__` overload (`Type.__init__$ov$…`),
 /// the struct it constructs.
 pub fn init_overload_struct(symbol: &str) -> Option<&str> {
@@ -1735,9 +1726,6 @@ fn ast_raw(
             // stable `String` spelling.
             "String".to_string()
         }
-        // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
-        // which mangles as `None`.
-        Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
         // A scalar alias (`Byte`), a `Scalar`/`SIMD` application over
         // concrete or binder arguments, spells as `ty_raw` displays the
         // resolved `SIMD` application.
@@ -2027,7 +2015,6 @@ fn annotation_display(
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
         }
-        Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
         Type::Named(name, args)
             if let Some(spelling) = simd_annotation_spelling(name, args, scope, comptimes) =>
         {
@@ -3398,7 +3385,6 @@ impl TypeNameSpeller<'_> {
             kind if kind.is_int_literal() => self.simd(&"DType.int", &1),
             kind if kind.is_float_literal() => self.simd(&"DType.float64", &1),
             kind if kind.is_bool() => self.qualify("std.builtin.bool", "Bool"),
-            TyKind::None => self.qualify("std.builtin.none", "NoneType"),
             kind if kind.is_error() => self.qualify("std.builtin.error", "Error"),
             kind if kind.is_string_literal() => {
                 self.qualify("std.builtin.string_literal", "StringLiteral")
@@ -3535,7 +3521,6 @@ fn reflected_base_name(ty: &Ty) -> String {
         kind if kind.is_simd() || kind.is_numeric_literal() => "SIMD",
 
         kind if kind.is_bool() => "Bool",
-        TyKind::None => "NoneType",
         kind if kind.is_error() => "Error",
         kind if kind.is_string_literal() => "StringLiteral",
         TyKind::Variant(_) => "Variant",

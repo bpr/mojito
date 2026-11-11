@@ -1275,7 +1275,8 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 /// The list-literal initializer call over `elements` of type `element`, as
 /// MIR lowers a display: the call builds the `VariadicList` over the
 /// elements (`owned` for the initializer's `var` collector, each element
-/// then the list's) and passes it, `__list_literal__` selects the overload,
+/// then the list's) and passes it, `__list_literal__` (a `NoneType` built
+/// from `None`) selects the overload,
 /// and the `length` parameter argument reifies the constructed value's
 /// length. Concrete MIR holds no lifetime marker, so the slots an owned
 /// list's construction ends and what it keeps live past the call go
@@ -1298,6 +1299,7 @@ fn array_literal_construction(
             .collect(),
     );
     let none = frame.fresh_register(Ty::none());
+    let marker = frame.fresh_register(Ty::none_type());
     let length_reg = frame.fresh_register(Ty::int());
     let unbound = || mojito_mir::mir::MirParamArg {
         name: None,
@@ -1310,6 +1312,20 @@ fn array_literal_construction(
             dest: none,
             k: Const::None,
         },
+        MirInstr::Call {
+            dest: marker,
+            func: mojito_mir::mir::FuncRef::named(mojito_types::types::NONE_TYPE_FROM_NONE),
+            raises: None,
+            arg_places: vec![None],
+            args: vec![none],
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        },
         MirInstr::Const {
             dest: length_reg,
             k: Const::Int(length),
@@ -1320,7 +1336,7 @@ fn array_literal_construction(
             raises: None,
             arg_places: vec![None],
             args: vec![built.list],
-            kwargs: vec![("__list_literal__".to_string(), none)],
+            kwargs: vec![("__list_literal__".to_string(), marker)],
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
             param_arg_regs: vec![

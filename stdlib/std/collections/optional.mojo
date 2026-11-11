@@ -129,6 +129,16 @@ struct Optional[T: AnyType](
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
 
+    # Upstream's second `None` initializer, from the raw `!kgen.none`: a
+    # `None` argument converts in one step rather than through `NoneType`.
+    # It spells `!kgen.none` where upstream writes `NoneType._mlir_type`
+    # (R2007).
+    @doc_hidden
+    @implicit
+    def __init__(out self, value: __mlir_type.`!kgen.none`):
+        self._size = 0
+        self.data = unsafe_alloc[Self.T](1)
+
     # Upstream's `@implicit` value constructor: `var x: Optional[Int] = 5` and
     # `f(5)` for an `Optional[Int]` parameter both convert.
     @implicit
@@ -372,6 +382,12 @@ struct OptionalReg[T: TrivialRegisterPassable](
     @inline(.always)
     @implicit
     def __init__(out self, value: NoneType):
+        self._value = Optional[Self.T]()
+
+    @doc_hidden
+    @inline(.always)
+    @implicit
+    def __init__(out self, value: __mlir_type.`!kgen.none`):
         self._value = Optional[Self.T]()
 
     def __is__(self, other: NoneType) -> Bool:

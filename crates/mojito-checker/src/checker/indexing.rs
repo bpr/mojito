@@ -2529,17 +2529,17 @@ impl Checker {
                     self.record_implicit_conversion(operand, &found, parameter)?;
                 }
                 Some(_) => {}
-                None => {
-                    let conversion = if self.value_coerces(&Ty::none(), parameter) {
-                        None
-                    } else {
-                        self.implicit_conversion_target(&Ty::none(), parameter)?
-                            .map(|(constructor, _)| (constructor, parameter.clone()))
-                    };
-                    *omitted = Some(mojito_checked::checked::OmittedSliceOperand { conversion });
-                }
+                None => *omitted = Some(self.passed_none(parameter)?),
             }
         }
+        let marker = signature
+            .names
+            .iter()
+            .position(|name| name == "__slice_literal__")
+            .and_then(|position| signature.params.get(position))
+            .map(|parameter| self.passed_none(&substitute(parameter, &substitution)))
+            .transpose()?
+            .unwrap_or(mojito_checked::checked::OmittedSliceOperand { conversion: None });
         let instance = self.self_instance_ty(name);
         let constructor = constructor_symbol(
             name,
@@ -2555,8 +2555,24 @@ impl Checker {
             target: target.clone(),
             constructor,
             omitted,
+            marker,
             indirect_result,
         }))
+    }
+
+    /// How a synthesized `None` argument reaches `parameter`: as is, or
+    /// through the `@implicit` constructor of `parameter`'s type taking it.
+    fn passed_none(
+        &self,
+        parameter: &Ty,
+    ) -> Result<mojito_checked::checked::OmittedSliceOperand, TypeError> {
+        let conversion = if self.value_coerces(&Ty::none(), parameter) {
+            None
+        } else {
+            self.implicit_conversion_target(&Ty::none(), parameter)?
+                .map(|(constructor, _)| (constructor, parameter.clone()))
+        };
+        Ok(mojito_checked::checked::OmittedSliceOperand { conversion })
     }
 }
 

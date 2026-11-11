@@ -1385,15 +1385,21 @@ pub struct CheckedSliceLiteral {
     /// Per operand (lower, upper, stride): `None` when the operand is
     /// written, or how the omitted operand's `None` reaches its parameter.
     pub omitted: [Option<OmittedSliceOperand>; 3],
+    /// How the `None` the call passes as `__slice_literal__` reaches its
+    /// parameter.
+    pub marker: OmittedSliceOperand,
     /// Whether the constructor returns through memory, as a call's
     /// [`SemanticAdjustment::IndirectResult`] records: the constructed
     /// value then lives in a call-result slot its subscript reads.
     pub indirect_result: bool,
 }
 
-/// The `None` an omitted slice-literal operand passes: as is to a
-/// `NoneType` parameter, or through `conversion`, the `@implicit`
-/// constructor building the parameter's type (`Optional[Int]`) from it.
+/// How the `None` an omitted slice-literal operand or the
+/// `__slice_literal__` marker passes reaches its parameter.
+///
+/// It passes as is to a parameter of `None`'s own type, or through
+/// `conversion`, the `@implicit` constructor building the parameter's type
+/// (`NoneType`, `Optional[Int]`) from it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OmittedSliceOperand {
     pub conversion: Option<(String, Ty)>,

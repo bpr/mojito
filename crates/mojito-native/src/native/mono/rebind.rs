@@ -3,8 +3,9 @@
 //! A template reads a `rebind[Dest](x)` operand at `Dest` through a value
 //! rebind or a place's [`Proj::Rebind`] step. Once an instance's bindings
 //! close both types and its compile-time branches are decided, the
-//! elaborator asserts each surviving rebind's two types equal and erases it,
-//! as upstream's `processRebindOp` does: an untaken arm's rebind is never
+//! elaborator asserts each surviving rebind's two types equal as LLVM
+//! translation sees them (`NoneType` is its `!kgen.none` field) and erases
+//! it, as upstream's `processRebindOp` does: an untaken arm's rebind is never
 //! judged, and a mismatch fails the instance. A rebind of a constant that
 //! other instructions read too becomes that constant at the rebind's type,
 //! as `kgen.rebind` folds over a constant attribute: the folder keeps one
@@ -34,10 +35,15 @@ impl Specializer<'_> {
     ) -> Result<(), MonoError> {
         let mut aliases = HashMap::new();
         let shared = shared_constants(function);
+        let agree = |input: &Ty, result: &Ty| {
+            types_agree(input, result)
+                || types_agree(&self.translated_type(input), &self.translated_type(result))
+        };
         judge_blocks(
             &mut function.body,
             &function.reg_types,
             &shared,
+            &agree,
             &mut aliases,
         )
         .map_err(|mismatch| self.rebind_mismatch(template, &mismatch.0, &mismatch.1))?;
@@ -95,19 +101,20 @@ fn judge_blocks(
     block: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
     shared: &HashMap<u32, Const>,
+    agree: &dyn Fn(&Ty, &Ty) -> bool,
     aliases: &mut HashMap<u32, Reg>,
 ) -> Result<(), Mismatch> {
     let mut judged = Vec::with_capacity(block.instrs.len());
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
-            judge_blocks(region, reg_types, shared, aliases)?;
+            judge_blocks(region, reg_types, shared, agree, aliases)?;
         }
         for place in instruction_places_mut(&mut instruction) {
             discharge_place(place)?;
         }
         if let MirInstr::Rebind { dest, value } = instruction {
             if let (Some(input), Some(result)) = (reg_types.get(&value.0), reg_types.get(&dest.0))
-                && !types_agree(input, result)
+                && !agree(input, result)
             {
                 return Err(Box::new((input.clone(), result.clone())));
             }

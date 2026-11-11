@@ -36,6 +36,7 @@ from std.builtin.int import Indexer, Intable, IntableRaising, index
 from std.builtin.simd_length import SIMDLength
 from std.builtin.dtype import DType
 from std.builtin.error import Error
+from std.builtin.none import NoneType
 from std.simd import (
     SIMD,
     Byte,

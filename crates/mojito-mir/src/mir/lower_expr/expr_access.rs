@@ -447,24 +447,11 @@ impl<'a> Flatten<'a> {
             .zip(&construction.omitted)
             .map(|(written, omitted)| {
                 written.unwrap_or_else(|| {
-                    let none = self.none_register(node);
-                    match omitted
-                        .as_ref()
-                        .and_then(|omitted| omitted.conversion.as_ref())
-                    {
-                        Some((constructor, ty)) => self.constructor_call(
-                            node,
-                            constructor,
-                            ty.clone(),
-                            vec![none],
-                            Vec::new(),
-                        ),
-                        None => none,
-                    }
+                    self.passed_none(node, omitted.as_ref().and_then(|o| o.conversion.as_ref()))
                 })
             })
             .collect();
-        let marker = self.none_register(node);
+        let marker = self.passed_none(node, construction.marker.conversion.as_ref());
         let value = self.constructor_call(
             node,
             &construction.constructor,
@@ -478,6 +465,18 @@ impl<'a> Flatten<'a> {
         let slot = self.call_result_slot(value, construction.target.clone(), true);
         let (read, place) = self.read_c(node, CValue::Slot(slot));
         (MirSubscriptArg::Index(read), place)
+    }
+
+    /// A synthesized `None` argument, built into its parameter's type by
+    /// `conversion` when one applies.
+    fn passed_none(&mut self, node: Node<'a>, conversion: Option<&(String, Ty)>) -> Reg {
+        let none = self.none_register(node);
+        match conversion {
+            Some((constructor, ty)) => {
+                self.constructor_call(node, constructor, ty.clone(), vec![none], Vec::new())
+            }
+            None => none,
+        }
     }
 
     /// Emit the read of `object` subscripted by the one constructed slice

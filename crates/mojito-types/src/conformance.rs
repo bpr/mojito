@@ -155,14 +155,15 @@ pub fn refines<'a>(
 
 /// Whether a closed `conforms_to(ty, Tr)` is `False` for every trait.
 ///
-/// The pin answers so for an MLIR type (`!kgen.string`, `!kgen.deferred`,
-/// `index`, `i1`, `!kgen.simd`, `!kgen.pointer`, `!lit.ref`), not even
+/// The pin answers so for an MLIR type (`!kgen.none`, `!kgen.string`,
+/// `!kgen.deferred`, `index`, `i1`, `!kgen.simd`, `!kgen.pointer`, `!lit.ref`), not even
 /// `AnyType`. A trait-bounded binder still binds one, and `conforms_to` over
 /// that binder answers by the type's shape, as at the pin.
 pub fn reflects_no_conformance(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::KgenString
+        TyKind::None
+            | TyKind::KgenString
             | TyKind::PopIntLiteral
             | TyKind::PopFloatLiteral
             | TyKind::KgenDeferred
@@ -251,19 +252,19 @@ pub fn leaf_conforms(
 ///
 /// `StringLiteral` and `DType` list `Hashable`; none lists `Hasher`.
 ///
-/// `SIMD`, the literals, and `NoneType` list `Defaultable`, and
-/// `SIMD`, `Bool`, the numeric literals, `NoneType`, and `DType`
-/// `TrivialRegisterPassable`, which refines `RegisterPassable`; `Tuple`
+/// `SIMD` and the literals list `Defaultable`, and `SIMD`, `Bool`, the
+/// numeric literals, and `DType` `TrivialRegisterPassable`, which refines `RegisterPassable`; `Tuple`
 /// lists `Defaultable` and `RegisterPassable` where every element
 /// conforms, which `element` answers. A thin function is
 /// `TrivialRegisterPassable`, and a closure's storage `RegisterPassable`
 /// or `TrivialRegisterPassable` where each of its captures is.
 ///
-/// Every modelled leaf but a callable lists `Writable`; `Tuple` and
+/// Every modelled leaf but a callable or an MLIR type (`None` among them)
+/// lists `Writable`; `Tuple` and
 /// `Variant` list it where every element conforms, which `element` answers.
 ///
-/// A struct or a type parameter answers by its own declaration or bounds
-/// instead.
+/// A struct (`NoneType` among them) or a type parameter answers by its own
+/// declaration or bounds instead.
 pub fn modelled_conformance(
     ty: &Ty,
     trait_name: &str,
@@ -286,6 +287,7 @@ pub fn modelled_conformance(
             TyKind::Func(_)
             | TyKind::GenericFunc(_)
             | TyKind::Overload(_)
+            | TyKind::None
             | TyKind::Index
             | TyKind::I1
             | TyKind::Ui8
@@ -303,7 +305,7 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 return every(items, trait_name, element);
             }
-            _ => is_numeric_like(ty) || ty.is_string_literal() || matches!(ty.kind(), TyKind::None),
+            _ => is_numeric_like(ty) || ty.is_string_literal(),
         },
         "TrivialRegisterPassable" => modelled_trivial_register_passable(ty),
         "RegisterPassable" => match ty.kind() {
@@ -339,7 +341,7 @@ pub fn modelled_declares(
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases are out of the way.
 pub fn is_scalar(ty: &Ty) -> bool {
-    ty.is_bool() || ty.is_string_literal() || matches!(ty.kind(), TyKind::None)
+    ty.is_bool() || ty.is_string_literal()
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
@@ -367,8 +369,8 @@ pub fn thin_callable(ty: &Ty) -> bool {
 
 /// Whether the compiler-modelled `ty` stands in for an upstream struct
 /// declaring `TrivialRegisterPassable`, or is a type upstream gives that
-/// conformance: a `SIMD` value, `Bool`, a numeric literal, `NoneType`,
-/// a `Pointer`, or a thin function.
+/// conformance: a `SIMD` value, `Bool`, a numeric literal, a `Pointer`, a
+/// thin function, or an MLIR register type (`None` among them).
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
