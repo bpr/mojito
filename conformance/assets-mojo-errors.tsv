@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1154
+# swept-count	1156
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -106,6 +106,7 @@ assets/ownership_error/pointer_to_owner_across_for_loop.mojo	runs	subset	the pin
 assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pointer_to_ref_second_write_rejected.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/print_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/reference_argument_read_after_invalidation.mojo	compile-reject	agree	error: use of invalidated interior reference 'lst["element"]'
 assets/ownership_error/reference_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'tup'
 assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
@@ -121,6 +122,7 @@ assets/ownership_error/use_after_move.mojo	compile-reject	agree	error: use of un
 assets/ownership_error/use_after_move_after_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/use_after_move_in_try_else.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/use_after_move_in_try_handler.mojo	compile-reject	agree	error: use of uninitialized value 's'
+assets/ownership_error/variadic_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/write_through_moved.mojo	compile-reject	agree	error: value 'p' cannot be consumed, because 'p.x' is used later
 assets/parse_error/assert_reserved_keyword.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/assert_statement_extra_message.mojo	compile-reject	agree	error: statements must start at the beginning of a line

@@ -5036,6 +5036,24 @@ fn postfix_transfer_binds_tighter_than_infix_operators() {
 }
 
 #[test]
+fn postfix_transfer_abuts_a_closing_parenthesis() {
+    // A parenthesized expression keeps its inner span, so the sigil abuts the
+    // `)` token, not the operand: `(s)^` transfers `s`, `(a) ^ b` is xor.
+    assert_eq!(
+        parse_expr("(s)^"),
+        Expr::from(ExprKind::Transfer(ident("s")))
+    );
+    assert_eq!(
+        parse_expr("(a) ^ b"),
+        Expr::from(ExprKind::Infix(InfixOp::BitXor, ident("a"), ident("b")))
+    );
+    assert!(matches!(
+        parse_expr("(lambda {var t^} -> Int: t.id)^").kind,
+        ExprKind::Transfer(inner) if matches!(inner.kind, ExprKind::Lambda { .. })
+    ));
+}
+
+#[test]
 fn parses_comptime_assert_as_its_own_statement() {
     // `comptime assert cond[, message]`: a parenthesized condition is an
     // ordinary parenthesized expression, so `assert(c, "m")` asserts a tuple.

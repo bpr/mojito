@@ -4492,6 +4492,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A postfix `^` after a closing parenthesis is now the transfer sigil, so
+  `var t = (s)^` over a `String` and `var q = (lambda {var u^} -> Int:
+  u.n)^` run as at the pin, where both stopped with "Expected an
+  expression" (R1869, `assets/ok/transfer_after_closing_paren.mojo`).
+- A local moved before a call is now rejected as "use of uninitialized
+  value" when the call takes it as a variadic argument (`f(s)` over `*xs:
+  String`, `print(s)`), which ownership analysis previously accepted and
+  the VM then failed on at run time.
+
 - An origin parameter ahead of a value parameter binds positionally in
   order: `W[ImmStaticOrigin]` over `[origin: ImmOrigin, forward: Bool =
   True]` no longer fails to infer `origin`, and `f[ImmStaticOrigin, 3]()`

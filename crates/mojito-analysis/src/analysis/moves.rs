@@ -366,7 +366,8 @@ pub(super) struct MoveContext {
     /// storage, which a move through the local must refill by every exit,
     /// as a reference parameter's.
     caller_aliases: HashSet<VarId>,
-    /// Each register a direct call takes as an operand.
+    /// Each register a direct call takes as an operand, or a variadic pack
+    /// collects for one.
     call_operands: HashSet<u32>,
 }
 
@@ -799,6 +800,11 @@ fn move_context(f: &MirFunction) -> MoveContext {
                     .chain(kwargs.iter().map(|(_, register)| register))
                     .map(|register| register.0),
             );
+        }
+        MirInstr::MakeArray { elems, .. } | MirInstr::MakeRefPack { elems, .. } => {
+            context
+                .call_operands
+                .extend(elems.iter().map(|register| register.0));
         }
         MirInstr::MakeRef { dest, place }
             if place.through.is_none()

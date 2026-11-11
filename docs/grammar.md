@@ -1178,7 +1178,9 @@ Notes:
   values, unsafe pointers, and supported user indexing protocols provide
   reads; writable containers also support indexed assignment.
 - **`^` (transfer sigil)** is a postfix that marks an ownership *move* of its operand
-  (`x^`, `raise e^`). MIR represents whole-value and projected-field moves;
+  (`x^`, `raise e^`). It is the sigil when it abuts the last token of its
+  operand, a closing parenthesis included (`(s)^`, `(lambda {var t^} -> Int:
+  t.id)^`); a whitespace-separated `^` is bitwise xor. MIR represents whole-value and projected-field moves;
   ownership analysis rejects use-after-move, double moves, conditional moves,
   and invalid partial-move uses.
 - **`factor`** has unary `+`, `-`, and `~`. Unary `-` applies to `Int`

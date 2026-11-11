@@ -8781,22 +8781,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1869 A postfix `^` after a closing parenthesis does not parse**
-
-  `var t = (s)^` over a `String` local, and `var q = (lambda {var u} ->
-  Int: u.n)^`, which the pin's own diagnostic suggests for a lambda whose
-  storage cannot be implicitly copied, both stop with "Expected an
-  expression"; the pin runs both.
-  - `parse_infix` (`parser/exprs.rs`) reads `^` as the transfer sigil only
-    when it abuts `left`'s span, and a parenthesized expression's node
-    keeps its inner span, so the sigil after `)` reads as `^` xor.
-  - A transfer of a lambda then moves its storage variable, so the check
-    must admit it where `check_consuming_as` rejects the copy.
-  - Probe: the two bindings above.
-  - Found while landing R1435 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1890 A struct's generic `__call__` does not conform to a
   generic closure trait with value binders**
 

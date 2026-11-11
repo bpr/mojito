@@ -28,7 +28,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // which binds tightest: `p + q^` transfers `q`, not the sum. A
             // whitespace-separated `^` remains the bitwise-xor operator.
             let precedence = if matches!(self.peek_token()?, Some(Token::Caret))
-                && left.span.1 == self.peek_start()
+                && self.last_span.1 == self.peek_start()
             {
                 Precedence::Call
             } else {
@@ -444,7 +444,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // Every node built here spans from `left`'s start to the last token consumed.
         let start = left.span.0;
         // Postfix transfer sigil `expr '^'`.
-        if matches!(self.peek_token()?, Some(Token::Caret)) && left.span.1 == self.peek_start() {
+        if matches!(self.peek_token()?, Some(Token::Caret)) && self.last_span.1 == self.peek_start()
+        {
             self.next_token()?; // consume '^'
             return Ok(self.node(ExprKind::Transfer(Box::new(left)), start));
         }
