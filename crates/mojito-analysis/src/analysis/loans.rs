@@ -808,12 +808,16 @@ fn check_loans_at(
             if reference_loans.is_empty() {
                 continue;
             }
-            // An access through a reference reborrowing this one's own
-            // storage (an element reference into a list of closures) holds
-            // this reference's permission, as an access through it does.
+            // A capture access reached through a reference reborrowing this
+            // one's own storage (an element reference into a list of
+            // closures) holds this reference's permission, as an access
+            // through it does. A projection of the reborrowing reference
+            // itself reaches what that reference's own loans name, not what
+            // this one holds, so it is checked by overlap.
             let reborrowed = place.through.and_then(|through| {
                 let loans = reaching_loans(state, generations, through);
                 (through != *reference
+                    && place.root != through
                     && !loans.is_empty()
                     && loans.iter().all(|loan| loan.place.root == *reference))
                 .then_some(loans)
