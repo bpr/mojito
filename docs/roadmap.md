@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2103**.
+Next free ID: **R2107**.
 
 ## Ordered Work
 
@@ -544,36 +544,72 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2100 `inline_cost` prices a body right after its own splices
-  unlike the pin, so the first `inline-parametric` run disagrees with the
-  pin on which plain callees it refuses**
+- [ ] **R2103 `inline_cost` prices a fresh splice of `==`, a direct
+  `__bool__()`, or a mask condition unlike the pin**
 
-  The pin's first `InlineParametric` refuses a plain `@always_inline`
-  callee whose body, priced right after its own splices, reaches the size
-  bound. Mojito's price for that uncleaned body (`CostWalk` over
-  `MirFunction::fresh_splices`, `inline_parametric.rs`) is too low for
-  some shapes and too high for others.
-  - Mojito prices `A3(x) = x + 1 + 2 + 3` at 27, `W(x) = var s = 0; s +=
-    x + 1; return s` at 28, and `c3(x) = c2(x) + 3` over `c2(x) = c1(x) +
-    2` at 31. It splices all three in the first run, and the pin refuses
-    them.
-  - Mojito prices `d2(x) = e1(x) + f1(x)`, over plain `e1(x) = x + 1` and
-    `f1(x) = x + 2`, at 33 and refuses it. The pin splices it.
-  - Unaffected: `A2` at 18, `c2` at 20, and `e1` at 9 are spliced on both.
-    `X` (`var s = 0; s += e1(x + 1)`) at 39, `I` (`if x > 0: return x + 1`,
-    then `return x`) at 37, and `d2s(x) = e1(x) + e1(x + 1)` at 42 are
-    refused on both.
-  - The chain `A_k(x) = x + 1 + ... + k` flips at `k = 3` on the pin and at
-    `k = 4` here. So a spliced `Int.__add__` of a literal costs more on the
-    pin than its 9 here, and two plain splices with their binding slots
-    cost less.
-  - Observable only through R2081's shape. Ten `sink(A(x+i))` calls in
-    R2081's `leaf` are KEPT on the pin exactly when the first run refuses
-    `A`. No output differs.
-  - Lever: calibrate `CostWalk`'s fresh-splice prices (bound parameter
-    slots, unpromoted slots, repeated constants) against these flips.
-    Keep the cleaned-body calibration of `INLINE_SIZE_BOUND` (31 `s += x`
-    inline) unchanged.
+  Before cleanup, the pin prices these `Bool`-producing comparisons
+  differently from `CostWalk` (`inline_parametric.rs`), so the first
+  `inline-parametric` run can disagree on refusing a plain callee holding
+  one. Comparisons through `__gt__` and `__lt__` (`if x > 0`) already agree.
+  - Prices below are for `H` in R2081's harness: ten `sink(H(x + i))` in
+    `leaf`. The pin's price is 32 minus the fewest `sink(x)` statements
+    that, added to `H`, make `leaf` KEPT.
+  - `if x == 0: return x`, then `return x`: pin 17, Mojito 23. `__eq__`
+    reads `self.eq(rhs)._mlir_value` through a temporary slot here (a
+    store, a field load, and a drop). The pin extracts from the value.
+  - `if x.__bool__(): return x`: pin 8, Mojito 13. `if
+    x.gt(0).__bool__(): return x`: pin 18, Mojito 22. A builtin called
+    directly costs less at the pin than the same body reached through
+    `__gt__`, by a rule not yet known.
+  - `if x.gt(0): sink(x)`: pin 19, Mojito 14. Mojito converts the mask
+    with a `ScalarCast`. The pin splices the `nodebug`
+    `Bool.__init__(Scalar[bool])` and its `__bool__`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2104 `parametric_rebinds` misses part of the pin's cost of
+  splicing a callee generic over a type**
+
+  The pin's first `InlineParametric` holds more operations for a
+  non-builtin callee generic over a type parameter than for its concrete
+  twin. `parametric_rebinds` (`inline_parametric.rs`) counts one per
+  binder the signature names, one for a parametric result, and two per
+  parametric `mut` parameter. That matches `g6[dt](a: Scalar[dt]) ->
+  Scalar[dt]: return a`, its two-binder and two-argument variants,
+  `put5[dt](mut a, b): a = b`, `bump5[dt](mut a, b): a = a + b`, and
+  SIMD's in-place dunders. Prices below are as R2103 measures them.
+  - `g5[dt](a: Scalar[dt]) -> Scalar[dt]: return a * a`, as `H`'s
+    result: pin 11, Mojito 10.
+  - `g11[dt](a: Scalar[dt]): pass`, called after `sink(x * x)`: pin 10,
+    Mojito 9.
+  - `g12[T: Copyable](a: T) -> T: return a.copy()` at `Int`: the pin
+    refuses `H` (32 or more), Mojito prices it 13.
+  - Two `nop(s)` over `nodebug nop(mut a: Int): pass`: pin 1, Mojito 0.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2105 A spliced closed `comptime assert` costs one in
+  `inline_cost` and nothing at the pin**
+
+  `comptime assert True, "x"` in a `nodebug` callee costs nothing in the
+  pin's first-run price of a body it is spliced into. `CostWalk` prices
+  every spliced `ComptimeAssert` at one, and MIR no longer tells a closed
+  source assertion from one a substitution closed.
+  - Probe: `bump3(mut a: Int, b: Int)` holding that assert and `a = a +
+    b`, spliced into `H` as `var s = x; bump3(s, x); return s`: pin 17,
+    Mojito 18. Without the assert both price it 17.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2106 `inline-parametric`'s first run keeps a call to a `nodebug`
+  callee that applies an in-place operator to its `mut` parameter**
+
+  `bump2(mut a: Int, b: Int): a += b`, marked `nodebug`, stays a call in
+  the first-run body of a plain `@always_inline` `H` that calls it. The pin
+  splices it there, and prices `H` one above `s += x`'s 22. Called from
+  `main`, Mojito inlines it too.
+  - Probe: `H` is `var s = x; bump2(s, x); return s`. The pin prices it
+    23, Mojito 4, with no splice.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

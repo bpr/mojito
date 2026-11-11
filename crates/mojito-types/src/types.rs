@@ -4398,6 +4398,22 @@ pub fn has_host_scalar_value(ty: &TyKind) -> bool {
     ty.is_int() || ty.is_uint() || ty.is_float64()
 }
 
+/// The message of the instance assertion standing for `op`'s verifier.
+///
+/// The `pop` operation `op` over a symbolic dtype admits the element types
+/// `dtypes` describes. Upstream judges it in the op's verifier rather than
+/// as an operation of the body.
+pub fn operand_verification_message(op: &str, dtypes: &str) -> String {
+    format!("'{op}' op operand #0 must be SIMD type whose element type is {dtypes} dtype")
+}
+
+/// Whether `message` is an [`operand_verification_message`].
+pub fn is_operand_verification_message(message: &str) -> bool {
+    message.starts_with("'pop.")
+        && message.contains("' op operand #0 must be SIMD type whose element type is ")
+        && message.ends_with(" dtype")
+}
+
 /// The message of the `comptime assert Self.length == 1` of upstream's
 /// implicit `SIMD.__init__(out self: SIMD[DType.bool, Self.length], value:
 /// Bool)`, verbatim.

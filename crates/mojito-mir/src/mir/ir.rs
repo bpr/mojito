@@ -3892,11 +3892,16 @@ pub struct MirFunction {
 }
 
 /// Where the bodies spliced into a function since its last `mem-2-reg`
-/// begin ([`MirFunction::fresh_splices`]).
+/// begin ([`MirFunction::fresh_splices`]), beside the operations their
+/// splices hold upstream that no instruction of theirs stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshSplices {
     pub regs: u32,
     pub vars: usize,
+    /// The operations upstream's `InlineParametric` leaves in those bodies
+    /// for binding a non-builtin callee's type parameters, which the
+    /// substitution here leaves no trace of.
+    pub rebinds: usize,
 }
 
 impl FreshSplices {

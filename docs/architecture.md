@@ -6825,13 +6825,22 @@ point where a slot declared in a loop is uninitialized again.
   priced uncleaned: `inline_calls` records the register and slot counts
   the function had before its first such splice
   (`MirFunction::fresh_splices`, `mir::FreshSplices`, not encoded), which
-  `mem-2-reg` clears, and the private `CostWalk` charges each of their
-  wrapper loops and its breaks, each of their constants, `comptime
-  assert`s, and copies and drops running no code, and an alloca and each
-  whole read or write for each of their slots and each caller slot they
-  reach, whose address the call passed, but not the stores binding a
-  parameter to its argument right before the wrapper loop nor the copies
-  read from such a parameter, which the pin substitutes by value. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
+  `mem-2-reg` clears, and the private `CostWalk` prices each spliced body
+  at its callee's own uncleaned price, calibrated on pin probes: its
+  wrapper loop and breaks are free; each of their constants, `comptime
+  assert`s (but one standing for a `pop` verifier), and copies and drops
+  running no code cost one; a construction costs five, one more for each
+  after the first, and an `out` slot declared for one costs one; an
+  alloca and each whole read or write cost one for each of their slots and
+  each caller slot they reach, whose address the call passed, and a
+  computed value written into a caller slot one more; each `if` and
+  `elif` test costs two more, for the pin's `Bool.__mlir_i1__` splice.
+  The stores binding a parameter to its argument right before the wrapper
+  loop and the copies read from such a parameter stay free, as the pin
+  substitutes them by value. A splice of a non-builtin callee generic over
+  a type adds its binding operations to `FreshSplices::rebinds` (the
+  private `parametric_rebinds`): one per binder its signature names, one
+  for a parametric result, and two per parametric `mut` parameter. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
   `shouldInline` compares with `getNumOperations`, less three operations
   every body holds there. Every body is placed as upstream's `inlineGeneratorCall`
   places it (the private `splice_region`): in a `loop` labelled

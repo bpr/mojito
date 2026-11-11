@@ -306,10 +306,7 @@ impl Checker {
             self.record_instance_constraint(
                 span,
                 value,
-                &format!(
-                    "'{name}' op operand #0 must be SIMD type whose element type is {} dtype",
-                    lanes.describe()
-                ),
+                &mojito_types::types::operand_verification_message(name, lanes.describe()),
             );
         }
         Ok(())

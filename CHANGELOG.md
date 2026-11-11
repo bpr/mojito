@@ -316,6 +316,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric`'s first run now refuses the same plain
+  `@always_inline` callees as the pin's first `InlineParametric`
+  (`A3(x) = x + 1 + 2 + 3`, `W`, `c3`, `I`) and splices `d2(x) = e1(x) +
+  f1(x)` as it does. Its price of a body right after its own splices was
+  recalibrated against pin probes. A spliced construction costs 5. An
+  assertion standing for a `pop` verifier costs nothing. A spliced `out`
+  slot declaration costs one, as does a computed value written into the
+  caller's slot. Each `if` test costs two more for the `Bool.__mlir_i1__`
+  splice. A non-builtin callee generic over a type adds its binding
+  operations (`FreshSplices::rebinds`). No output changes. The remaining
+  mismatches are R2103 through R2106 (R2100).
 - The elaborator no longer devirtualizes a `call.indirect` whose callee is
   a struct value: every call of a struct value is its `__call__` method
   call from the check on, as upstream's `CallNode` resolves it, and the MIR

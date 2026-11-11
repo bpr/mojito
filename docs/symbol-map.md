@@ -3454,7 +3454,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SIMD` dunder's or `pop` op's per-instance assertion is the checker's
   `SemanticAdjustment::InstanceAssertion { value, message }`
   (`Checker::record_instance_constraint`, `checker/operators.rs`), which
-  `Flatten::expr_unconverted` emits as a `ComptimeAssert`.
+  `Flatten::expr_unconverted` emits as a `ComptimeAssert`; a `pop` op's
+  carries `types::operand_verification_message`, which
+  `types::is_operand_verification_message` recognizes so `inline_cost`
+  prices it as the verifier it stands for.
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` (an untyped attribute
   crossing as the opaque `Value::Attribute`) and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the
