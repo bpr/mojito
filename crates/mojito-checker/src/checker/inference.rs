@@ -2239,14 +2239,21 @@ impl Checker {
         };
         let expected = solved_expected.as_ref().unwrap_or(expected);
 
-        // A tuple display against a tuple-typed context checks each element
-        // contextually, so an element may convert implicitly (a string
-        // literal where the nominal String element is expected). A context
+        // A tuple display a storage site emits under a tuple type
+        // ([`Self::infer_in_context`]) checks each element contextually, so
+        // an element may convert implicitly (`var t: Tuple[Int8, Int8] =
+        // (1, 2)`). Anywhere else (a call argument, an operand, a list
+        // display's element) upstream deduces the display's `Ts` first and
+        // converts the whole tuple, so it infers plainly. A context
         // spreading a pack that is still a parameter (`Tuple[*Self.Ts]`, the
         // field of a variadic struct whose pack the display is about to
         // solve) has no element list yet, so the display infers plainly.
         if let (ExprKind::TupleLit(values), Some(expected_elements)) =
             (&expression.kind, tuple_elements(expected))
+            && self
+                .storage_contexts
+                .borrow()
+                .contains_key(&expression.source_span())
             && !expected_elements.iter().any(|element| {
                 mojito_types::types::pack_spread(std::slice::from_ref(*element)).is_some()
             })
@@ -2442,16 +2449,17 @@ impl Checker {
     /// storage site's value (a binding annotation, an assignment, a
     /// `return`, a store, a default): a conditional expression converts
     /// each arm to `expected` when every arm converts
-    /// ([`Self::infer_conditional`]), and so does one a tuple display
-    /// holds under a tuple type. A call argument is emitted without one,
-    /// so argument sites keep [`Self::infer_with_expected`].
+    /// ([`Self::infer_conditional`]), and a tuple display converts each
+    /// element to its element type, a nested display or conditional
+    /// included. A call argument is emitted without one, so argument
+    /// sites keep [`Self::infer_with_expected`].
     pub(super) fn infer_in_context(
         &self,
         expression: &Expr,
         expected: &Ty,
         record: bool,
     ) -> Result<Ty, TypeError> {
-        self.mark_conditional_contexts(expression, expected);
+        self.mark_storage_contexts(expression, expected);
         self.infer_with_expected(expression, expected, record)
     }
 
@@ -3371,22 +3379,25 @@ impl Checker {
         Ok(found)
     }
 
-    /// Mark each conditional expression `expression` emits under
-    /// `expected`: itself, or a tuple display's elements under a tuple
-    /// type's.
-    fn mark_conditional_contexts(&self, expression: &Expr, expected: &Ty) {
+    /// Mark each conditional expression and tuple display `expression`
+    /// emits under `expected`: itself, and a tuple display's elements under
+    /// a tuple type's.
+    fn mark_storage_contexts(&self, expression: &Expr, expected: &Ty) {
         match &expression.kind {
             ExprKind::IfExpr { .. } => {
-                self.conditional_contexts
+                self.storage_contexts
                     .borrow_mut()
                     .insert(expression.source_span(), expected.clone());
             }
             ExprKind::TupleLit(values) => {
+                self.storage_contexts
+                    .borrow_mut()
+                    .insert(expression.source_span(), expected.clone());
                 if let Some(elements) = tuple_elements(expected)
                     && elements.len() == values.len()
                 {
                     for (value, element) in values.iter().zip(elements) {
-                        self.mark_conditional_contexts(value, element);
+                        self.mark_storage_contexts(value, element);
                     }
                 }
             }
@@ -3436,7 +3447,7 @@ impl Checker {
             }
         }
         let contextual = self
-            .conditional_contexts
+            .storage_contexts
             .borrow()
             .get(&expr.source_span())
             .cloned();

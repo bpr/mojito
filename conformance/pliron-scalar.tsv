@@ -1550,6 +1550,7 @@ assets/ok/tuple_comparison_dunder_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_discard.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_consume_elements_print.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_display_converts_at_storage_sites.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_index_int_comptime_expression.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_move_runs_element_moves.mojo	-	ineligible	no-scalar-entry-shape

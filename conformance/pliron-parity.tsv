@@ -1550,6 +1550,7 @@ assets/ok/tuple_comparison_dunder_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_consume_elements_discard.mojo	main	exe-differential	sanitized
 assets/ok/tuple_consume_elements_len.mojo	main	exe-differential	sanitized
 assets/ok/tuple_consume_elements_print.mojo	main	exe-differential	sanitized
+assets/ok/tuple_display_converts_at_storage_sites.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_index_int_comptime_expression.mojo	main	exe-differential	sanitized
 assets/ok/tuple_move_runs_element_moves.mojo	main	exe-differential	sanitized

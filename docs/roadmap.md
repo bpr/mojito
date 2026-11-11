@@ -9067,32 +9067,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1852 A tuple display converts element-wise to any tuple-typed
-  context, where the pin converts it only at a binding**
-
-  `g((1, 2.5))` over `def g(t: Tuple[Int8, Float32])` runs here, where the
-  pin deduces `Tuple[Int, Float64]` first and rejects it with "value passed
-  to 't' cannot be converted from 'Tuple[Int, Float64]'".
-  - `infer_with_expected`'s contextual `TupleLit` arm
-    (`checker/inference.rs`) types each element against any tuple-typed
-    expected type, and call, method, operator, and list-display binding
-    all pass their parameter type as that context.
-  - The pin keeps the element-wise context only for a `var` annotation,
-    an assignment target, a `return`, and a nested tuple display.
-  - Probe: `g((1, 2.0))` over `def g(t: Tuple[Float64, Float64])`.
-  - Probe: `List[Tuple[Int8, Int8]]().append((1, 2))`.
-  - Probe: `var l: List[Tuple[Int8, Int8]] = [(1, 2)]` ("no matching
-    function in initialization" at the pin).
-  - Probe: `t == (1, 2)` over `t: Tuple[Int8, Int8]`.
-  - A list display keeps its context in argument position: `f([1, 2])`
-    into `List[Int8]` runs at both.
-  - Lever: give the arm its context only from the binding, assignment,
-    `return`, and nested-display callers; the other callers infer the
-    display plainly and reach the pin's rejection.
-  - Found while landing R1786 (2026-11-02).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1885 `NoneType` conforms to `Writable`, where the pin's does not**
 
   `print(None)` and `f[T: Writable](None)` run here, where the pin rejects

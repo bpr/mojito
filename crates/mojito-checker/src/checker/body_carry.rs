@@ -146,7 +146,7 @@ pub struct InternalStores {
     statement_desugars: FactMap<SourceSpan, super::desugar::StatementDesugar>,
     lifted_expressions: FactMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
     copyable_reference_result_reads: FactSet<SourceSpan>,
-    conditional_contexts: FactMap<SourceSpan, Ty>,
+    storage_contexts: FactMap<SourceSpan, Ty>,
     discarded_reference_results: FactSet<SourceSpan>,
     borrowed_reference_receivers: FactSet<SourceSpan>,
     unconsumed_temporaries: FactSet<SourceSpan>,
@@ -229,7 +229,7 @@ macro_rules! carried_stores {
             internal map statement_desugars = statement_desugars;
             internal map lifted_expressions = lifted_expressions;
             internal set copyable_reference_result_reads = copyable_reference_result_reads;
-            internal map conditional_contexts = conditional_contexts;
+            internal map storage_contexts = storage_contexts;
             internal set discarded_reference_results = discarded_reference_results;
             internal set borrowed_reference_receivers = borrowed_reference_receivers;
             internal set unconsumed_temporaries = unconsumed_temporaries;
@@ -370,7 +370,7 @@ macro_rules! define_carry_ops {
                     statement_desugars: self.statement_desugars.into_inner(),
                     lifted_expressions: self.lifted_expressions.into_inner(),
                     copyable_reference_result_reads: self.copyable_reference_result_reads.into_inner(),
-                    conditional_contexts: self.conditional_contexts.into_inner(),
+                    storage_contexts: self.storage_contexts.into_inner(),
                     discarded_reference_results: self.discarded_reference_results.into_inner(),
                     borrowed_reference_receivers: self.borrowed_reference_receivers.into_inner(),
                     unconsumed_temporaries: self.unconsumed_temporaries.into_inner(),

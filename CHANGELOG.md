@@ -280,6 +280,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A tuple display converts element-wise only where a storage site emits
+  it (a `var` annotation, an assignment, a `return`, a nested display), as
+  at the pin; as a call argument, an operand, or a list display's element
+  it deduces its materialized type first, so `g((1, 2.5))` over
+  `Tuple[Int8, Float32]` is rejected with the deduced `Tuple[Int, Float64]`
+  (R1852). Mojito previously converted the display at any tuple-typed
+  context.
 - Two traits' declarations of one `comptime` member now merge as upstream
   merges them: a parameterized requirement (`comptime M[k: Int]: Int`, or
   `comptime T[k: Int]: AnyType`) must restate its generator type exactly,

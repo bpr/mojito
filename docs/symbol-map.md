@@ -1536,7 +1536,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `coerceTypesToEachOther`, over `Checker::common_type` (`CommonType`,
   `checker/operators.rs`), upstream's `findCommonType`; a conditional
   expression a storage site emits through `Checker::infer_in_context`
-  (`checker/inference.rs`, recorded in `Checker::conditional_contexts`)
+  (`checker/inference.rs`, recorded in `Checker::storage_contexts`)
   passes its contextual type as the merge's fourth step
   (`Checker::infer_conditional`). A list or set display merges its
   elements through the same `common_type` (`Checker::infer_list_elem`),

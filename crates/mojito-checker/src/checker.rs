@@ -937,10 +937,12 @@ pub struct Checker {
     /// constraint environment. Final validation runs after those method scopes
     /// have been popped, so it must retain rather than recompute this fact.
     copyable_reference_result_reads: RefCell<FactSet<SourceSpan>>,
-    /// Conditional expressions emitted under a contextual type, as
-    /// upstream's storage sites emit them: each arm converts to it when
-    /// every arm does ([`Self::infer_in_context`]).
-    conditional_contexts: RefCell<FactMap<SourceSpan, Ty>>,
+    /// Conditional expressions and tuple displays emitted under a
+    /// contextual type, as upstream's storage sites emit them
+    /// ([`Self::infer_in_context`]): a conditional's arms convert to it
+    /// when every arm does, and a tuple display's elements convert to its
+    /// element types.
+    storage_contexts: RefCell<FactMap<SourceSpan, Ty>>,
     /// Reference results a statement discards (`f.params(1)` as a
     /// statement, `_ = f.params(1)`): no value is read, so no copy is
     /// required (upstream only warns that the value is unused).
@@ -1181,7 +1183,7 @@ impl Checker {
                 crate::explicit_destroy::CheckedDeletability::default(),
             ),
             copyable_reference_result_reads: RefCell::new(FactSet::default()),
-            conditional_contexts: RefCell::new(FactMap::default()),
+            storage_contexts: RefCell::new(FactMap::default()),
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
             slice_literals: RefCell::new(HashMap::new()),
