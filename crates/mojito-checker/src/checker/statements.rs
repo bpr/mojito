@@ -2195,6 +2195,12 @@ impl Checker {
                     self.register_named_bindings(value)?;
                 }
                 let _position = self.comptime_position();
+                if let Some(shown) = ty
+                    .as_ref()
+                    .and_then(|annotation| self.unconstructible_comptime_annotation(annotation))
+                {
+                    return Err(TypeError::ParametricConstruction(shown));
+                }
                 if type_params.is_empty()
                     && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
                 {
@@ -4306,13 +4312,19 @@ impl Checker {
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
                 // omitting an origin slot rejects, a placeholder is inferred
-                // (a bare `Pointer[T, _]` is concrete here only).
-                self.resolving_parameter_annotation.set(true);
-                let resolved = self.resolve_storage_annotation(
-                    &parameter.ty,
-                    super::StorageStrictness::AllowBare,
-                );
-                self.resolving_parameter_annotation.set(false);
+                // (a bare `Pointer[T, _]` is concrete here only). A named
+                // `out` result is the result, and resolves as one.
+                let resolved = if mojito_ast::ast::DeclaredParam::is_named_result(parameter) {
+                    self.resolve_return_annotation(&parameter.ty)
+                } else {
+                    self.resolving_parameter_annotation.set(true);
+                    let resolved = self.resolve_storage_annotation(
+                        &parameter.ty,
+                        super::StorageStrictness::AllowBare,
+                    );
+                    self.resolving_parameter_annotation.set(false);
+                    resolved
+                };
                 let resolved = existential_at_slot(resolved?, slot);
                 let declared = match parameter.kind {
                     mojito_ast::ast::ParamKind::Variadic => {

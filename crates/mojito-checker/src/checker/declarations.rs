@@ -1967,13 +1967,20 @@ impl Checker {
             // (pin-attested): a bare origin-slotted generic infers per call,
             // a partial application that omits an origin slot rejects, and a
             // placeholder marks the slot explicitly inferred (a bare
-            // `Pointer[T, _]` is concrete here only).
-            self.resolving_parameter_annotation.set(true);
+            // `Pointer[T, _]` is concrete here only). A named `out` result
+            // is the result, and resolves as one.
+            let named_result = p.is_named_result();
+            self.resolving_parameter_annotation.set(!named_result);
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
-            let resolved =
-                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
+            let resolved = if named_result && !m.name.contains('$') {
+                self.resolve_return_annotation(&p.ty)
+            } else if named_result {
+                self.resolve_generated_return_annotation(&p.ty)
+            } else {
+                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare)
+            };
             self.generated_declaration.set(generated);
             self.resolving_parameter_annotation.set(false);
             let mut pty = existential_at_slot(resolved?, index);

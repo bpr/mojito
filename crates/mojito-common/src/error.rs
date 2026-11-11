@@ -92,9 +92,15 @@ pub enum TypeError {
     /// An inherited default's compile-time parameter is named like one of
     /// its conformer's own parameters.
     TraitDefaultParameterConflict(String),
-    /// A storage annotation (a struct field or local `var` type) applied a
-    /// generic whose explicit origin parameters were left entirely unbound.
+    /// A position that names a concrete type (a result, a struct field, an
+    /// uninitialized local, a type argument) spelled a parametric struct
+    /// with parameters left unbound; the payload is the type as shown
+    /// (`W[_]`).
     NotConcrete(String),
+    /// A `comptime` binding's annotation names a parametric struct with
+    /// parameters left unbound, so its value cannot be constructed; the
+    /// payload is the type as shown (`W[_]`).
+    ParametricConstruction(String),
     /// A storage annotation omitted an explicit parameter the position cannot
     /// infer (origin slots infer only from constructor value arguments).
     CannotInferParam {
@@ -655,9 +661,13 @@ impl fmt::Display for TypeError {
                 "name conflict between parameter '{name}' in the default trait method and a \
                  parameter in the struct"
             ),
-            Self::NotConcrete(name) => write!(
+            Self::NotConcrete(shown) => write!(
                 f,
-                "'{name}[_]' is not concrete; use '[]' to bind missing parameters"
+                "'{shown}' is not concrete, use '[]' to bind missing parameters"
+            ),
+            Self::ParametricConstruction(shown) => write!(
+                f,
+                "cannot construct a value with parametric type: '{shown}'"
             ),
             Self::CannotInferParam { name, param } => write!(
                 f,

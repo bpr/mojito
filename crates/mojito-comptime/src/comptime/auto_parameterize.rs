@@ -3,7 +3,7 @@
 //! leaves unbound becomes an infer-only parameter of the declaration that
 //! takes the argument.
 
-use mojito_ast::ast::{FnParam, ParamArg, auto_binder_name};
+use mojito_ast::ast::{DeclaredParam, FnParam, ParamArg, auto_binder_name};
 use mojito_ast::call::Unbound;
 use mojito_ast::visit::MutVisitor;
 
@@ -164,7 +164,12 @@ impl<'a> Declared<'a> {
                 parameter.value_type = Some(bound);
             }
         }
-        for parameter in params.iter_mut() {
+        // A named `out` result is the declaration's result, not an
+        // argument: its type is never parameterized.
+        for parameter in params
+            .iter_mut()
+            .filter(|parameter| !parameter.is_named_result())
+        {
             if let Some(bound) = self.bind(
                 &parameter.ty,
                 &parameter.name,

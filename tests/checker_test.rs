@@ -7250,7 +7250,7 @@ fn storage_annotations_require_bound_origin_slots() {
     let bare_field = format!(
         "{holder}@fieldwise_init\nstruct Wrap:\n    var inner: Holder\n\ndef main():\n    pass\n"
     );
-    assert!(matches!(err(&bare_field), TypeError::NotConcrete(name) if name == "Holder"));
+    assert!(matches!(err(&bare_field), TypeError::NotConcrete(shown) if shown == "Holder[_]"));
 
     // A bare generic on an UNINITIALIZED local has nothing to infer from and
     // is not concrete; with an initializer the whole parameter list may infer
@@ -7259,7 +7259,7 @@ fn storage_annotations_require_bound_origin_slots() {
         "{holder}def main():\n    var data: List[Int] = [7]\n    ref r = data\n    var v: Holder\n    v = Holder(r)\n    print(v.value[0])\n"
     );
     assert!(
-        matches!(err(&uninitialized_local), TypeError::NotConcrete(name) if name == "Holder"),
+        matches!(err(&uninitialized_local), TypeError::NotConcrete(shown) if shown == "Holder[_]"),
         "{:?}",
         err(&uninitialized_local)
     );
@@ -7338,7 +7338,7 @@ fn nested_origin_slotted_type_argument_must_bind_its_slot() {
             "{holder}def stash(mut sink: {spelling}):\n    pass\n\ndef main():\n    pass\n"
         ));
         assert!(
-            matches!(&error, TypeError::NotConcrete(name) if name == "Holder"),
+            matches!(&error, TypeError::NotConcrete(shown) if shown == "Holder[_]"),
             "{spelling}: got {error:?}"
         );
     }

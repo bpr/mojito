@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2095**.
+Next free ID: **R2097**.
 
 ## Ordered Work
 
@@ -3577,23 +3577,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1857 A bare parametric struct as a result or `comptime`
-  annotation reports a failed inference, where upstream rejects the
-  annotation itself**
+- [ ] **R2095 A `comptime` binding annotated with an explicit `_` hole
+  reports a failed inference, where upstream rejects the annotation**
 
-  Problem: `def g() -> W` over `struct W[v: Int]` reports "cannot infer
-  type parameter 'v' of 'W' from the arguments", where the pin says
-  "'W[_]' is not concrete, use '[]' to bind missing parameters".
-  - Cause: outside a run-time parameter, a bare parametric struct
-    annotation resolves as the struct with its parameters unbound, and the
-    rejection comes later from inference, not from the annotation's
-    position as upstream's does.
-  - Probe: `comptime x: W = W[1]()` reports the same, where the pin says
-    "cannot construct a value with parametric type: 'W[_]'".
-  - Probe: `def g() -> StringLiteral` and `comptime x: StringLiteral =
-    "a"` report "cannot infer type parameter 'value' of 'StringLiteral'",
-    where the pin reports the two texts above for `'StringLiteral[_]'`.
-  - Found while landing R1658 (2026-11-03).
+  Problem: `comptime y: W[_] = W[1]()` over `struct W[v: Int]` reports
+  "cannot infer type parameter 'v' of 'W' from the arguments", where the
+  pin says "cannot construct a value with parametric type: 'W[_]'".
+  - Cause: `Checker::unconstructible_comptime_annotation`
+    (`checker/type_resolution.rs`) recognizes only the bare spelling. A
+    hole resolves through `resolve_use_params` as an inference slot, which
+    a `comptime` binding never fills.
+  - Probe: `comptime y: P[1, _] = P[1, 2]()` over `struct P[a: Int, b:
+    Int]`, which the pin rejects as "cannot construct a value with
+    parametric type: 'P[Int(1), _]'".
+  - Found while landing R1857 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3964,7 +3961,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R102 A method's `*Ts` pack does not take a `Span` argument**
 
   Problem: `S().show(Span(xs), 1)` over `def show[*Ts: Copyable](self,
-  *args: *Ts)` is rejected with "'Span[_]' is not concrete; use '[]' to bind
+  *args: *Ts)` is rejected with "'Span[_]' is not concrete, use '[]' to bind
   missing parameters"; the pin runs it.
   - The same pack on a module `def` takes the span.
   - Once it binds, argument exclusivity already judges the method's
@@ -4616,6 +4613,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: `parse_type` admits an empty argument list on `Tuple`, and the
     checker resolves it to the zero-element tuple.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2096 A module alias of a bare parametric struct does not name
+  the struct with its parameters unbound**
+
+  Problem: `comptime A = W` over `struct W[v: Int]` fails with "cannot
+  infer type parameter 'v' of 'W' from the arguments", where the pin binds
+  `A` to `W` unapplied and prints `3` for `print(A[3]().v)`.
+  - Cause: the alias body resolves as a concrete type when the alias
+    registers, so a bare parametric struct meets inference with nothing
+    to infer from. Upstream's alias holds the unbound `W[_]`, which a use
+    applies or rejects.
+  - Probe: `def g() -> A` over the alias above, which the pin rejects as
+    "'A' is not concrete, use '[]' to bind missing parameters".
+  - Found while landing R1857 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

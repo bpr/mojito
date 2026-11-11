@@ -1335,6 +1335,16 @@ impl Checker {
             }
         }
         if let Some(info) = self.structs.get(name) {
+            // A bare parametric struct is not concrete where the position
+            // must name a concrete type; only a run-time or compile-time
+            // parameter's own annotation, or an initialized binding's,
+            // leaves its parameters to inference.
+            if args.is_empty()
+                && self.application_strictness() == super::StorageStrictness::Full
+                && let Some(shown) = unbound_struct_spelling(name, &info.source_params)
+            {
+                return Err(TypeError::NotConcrete(shown));
+            }
             let decls = info.decls.clone();
             let source_params = info.source_params.clone();
             let BoundParameters {
@@ -1938,30 +1948,7 @@ impl Checker {
             explicit_origins: Vec::new(),
             tail: vec![Origin::Unbound; origin_slots],
         };
-        // A struct applied as a type argument of another application
-        // (`List[RefBox]`, `List[RefBox[_]]`) must bind its origin slots in
-        // every position, as at the pin; only the outermost application may
-        // leave them to inference. A compiler-generated declaration rebinds
-        // already-checked spellings and keeps its context's leniency.
-        let generated = self.generated_declaration.get()
-            || self.self_ty.as_ref().is_some_and(|ty| {
-                ty.kind()
-                    .as_non_simd_struct()
-                    .is_some_and(|(name, _)| name.contains('$'))
-            });
-        let nested = self.annotation_depth.get() > 1 && !generated;
-        let strict = if nested {
-            super::StorageStrictness::Full
-        } else {
-            self.strict_storage_annotation.get()
-        };
-        // A storage annotation must bind explicit origin slots. A bare name
-        // is not concrete unless an initializer can infer the whole
-        // parameter list (`AllowBare`); a partial application names the
-        // first omitted slot in either strict mode.
-        if strict == super::StorageStrictness::Full && origin_slots > 0 && args.is_empty() {
-            return Err(TypeError::NotConcrete(name.to_string()));
-        }
+        let strict = self.application_strictness();
         // No origin slots — or a variadic explicit list, whose positional
         // alignment the erased-decl binder owns — resolves as before.
         if origin_slots == 0 || args.is_empty() || explicit.iter().any(|p| p.name.starts_with('*'))
@@ -2023,7 +2010,7 @@ impl Checker {
                 // reject exactly like an omitted slot.
                 if origin_placeholder(argument) {
                     if strict == super::StorageStrictness::Full {
-                        return Err(TypeError::NotConcrete(name.to_string()));
+                        return Err(TypeError::NotConcrete(format!("{name}[_]")));
                     }
                     let attribute = self.accept_origin_argument(
                         name,
@@ -2101,7 +2088,7 @@ impl Checker {
             {
                 if origin_placeholder(argument) {
                     if strict == super::StorageStrictness::Full {
-                        return Err(TypeError::NotConcrete(name.to_string()));
+                        return Err(TypeError::NotConcrete(format!("{name}[_]")));
                     }
                     let attribute = self.accept_origin_argument(
                         name,
@@ -2223,12 +2210,49 @@ impl Checker {
         result
     }
 
+    /// The `comptime` binding annotation `annotation` as shown when it
+    /// spells a parametric struct bare (`comptime x: W = W[1]()`), whose
+    /// value cannot be constructed, as at the pin.
+    pub(super) fn unconstructible_comptime_annotation(
+        &self,
+        annotation: &mojito_ast::ast::SourceType,
+    ) -> Option<String> {
+        let SourceType::Named(name, args) = annotation else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let info = self.structs.get(name)?;
+        unbound_struct_spelling(name, &info.source_params)
+    }
+
     /// Accept one resolved origin argument against its declared slot: a slot
     /// declared `Origin[mut=True]` rejects a provably immutable argument, and
     /// a value-shaped accepted argument records `origin` as its attribute —
     /// it is compile-time data on the construction, never a runtime value. A
     /// storage annotation is never lowered, so its arguments record nothing.
     /// Answers the bracket attribute the argument bound to.
+    /// How strictly the struct application being resolved must bind its
+    /// parameters. A struct applied as a type argument of another
+    /// application (`List[RefBox]`, `List[W]`) must name a concrete type in
+    /// every position, as at the pin; only the outermost application may
+    /// leave parameters to inference. A compiler-generated declaration
+    /// rebinds already-checked spellings and keeps its context's leniency.
+    fn application_strictness(&self) -> super::StorageStrictness {
+        let generated = self.generated_declaration.get()
+            || self.self_ty.as_ref().is_some_and(|ty| {
+                ty.kind()
+                    .as_non_simd_struct()
+                    .is_some_and(|(name, _)| name.contains('$'))
+            });
+        if self.annotation_depth.get() > 1 && !generated {
+            super::StorageStrictness::Full
+        } else {
+            self.strict_storage_annotation.get()
+        }
+    }
+
     fn accept_origin_argument(
         &self,
         struct_name: &str,
@@ -5341,6 +5365,22 @@ fn pointer_origin_attribute(
         }
         other => other.as_origin(),
     }
+}
+
+/// The struct `name` spelled bare as shown when it declares parameters:
+/// a hole per parameter the application spells (`P[_, _]`), or `W` alone
+/// when every parameter is infer-only. `None` for a struct without
+/// parameters or a compiler-minted specialization.
+fn unbound_struct_spelling(name: &str, params: &[mojito_ast::ast::TypeParam]) -> Option<String> {
+    if params.is_empty() || mojito_symbol::symbol::specialization_template(name).is_some() {
+        return None;
+    }
+    let holes = params.iter().filter(|param| !param.infer_only).count();
+    Some(if holes == 0 {
+        name.to_string()
+    } else {
+        format!("{name}[{}]", vec!["_"; holes].join(", "))
+    })
 }
 
 fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {

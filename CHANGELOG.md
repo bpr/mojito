@@ -262,6 +262,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A bare parametric struct is not concrete outside an argument's
+  annotation, as at the pin: `def g() -> W`, a named `out r: W`, and a
+  nested `List[W]` report "'W[_]' is not concrete, use '[]' to bind
+  missing parameters", and `comptime x: W = W[1]()` reports "cannot
+  construct a value with parametric type: 'W[_]'", where each reported a
+  failed inference (R1857). A named `out` result is no longer
+  auto-parameterized, and the not-concrete text takes the pin's comma.
+
 - The bundled consuming `List` iterator is upstream's `_ListIterOwned`,
   holding the drained `List` as `_list` beside `_index`, so
   `reflect[type_of(xs^.__iter__())]` answers the pin's name and fields;
