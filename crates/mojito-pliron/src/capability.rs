@@ -198,7 +198,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call.indirect",
         CapabilityStatus::Partial,
-        "contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject",
+        "contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, and generic callable values reject; a struct callee is a verifier error, its call being a `__call__` method call",
     ),
     (
         "call.method",

@@ -85,14 +85,6 @@ impl FnLowering<'_> {
         while let TyKind::Ref(reference) = contract.kind() {
             contract = reference.referent.clone();
         }
-        // Monomorphization devirtualizes a call through a nominal callable
-        // into a direct `__call__` method call.
-        if let Some((name, _)) = contract.kind().as_non_simd_struct() {
-            return Err(self.unsupported_reg(
-                format!("indirect call through nominal callable `{name}`"),
-                dest,
-            ));
-        }
         let abi = self.contract_abi(ctx, &contract, dest)?;
         let bound =
             self.bind_contract_slots(ctx, dest, &abi, args, kwargs, arg_places, kwarg_places)?;

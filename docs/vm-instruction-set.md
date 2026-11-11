@@ -105,7 +105,7 @@ accessed; the compact notation omits this analysis-only field.
 |---|---|---|
 | `call` | `Call` | Call a free function, constructor, or builtin |
 | `closure.make` | `MakeClosure` | Make a function value of a capture-free lifted function |
-| `call.indirect` | `CallIndirect` | Invoke a function, closure, or nominal callable value |
+| `call.indirect` | `CallIndirect` | Invoke a function or closure value |
 | `call.method` | `MethodCall` | Invoke a method on a receiver |
 
 ### Places and aggregate access
@@ -527,13 +527,16 @@ destructor.
 call.indirect %dest, %callee(%r0, %r1)
 ```
 
-Invokes the function, closure, or nominal callable value in `%callee`. Function
+Invokes the function or closure value in `%callee`. A struct value's call is
+its `__call__` method call (`call.method`); the verifier rejects a
+struct-typed callee. Function
 values carry a resolved MIR symbol; arguments use the target's normal signature
 and execution pushes the same explicit frame as a direct user-function call.
 The instruction retains positional and keyword caller places, an optional
-callable place for a `mut`/`ref __call__` receiver, the callable type's selected
-error contract, source-ordered compile-time arguments, the selected generic
-callable contract declarations, and a checker-selected nominal target. A
+callable place the loan check charges the call's captures through, the
+callable type's selected error contract, source-ordered compile-time arguments,
+the selected generic callable contract declarations, and the contract's
+dispatch target. A
 compile-time argument retains its optional source name independently of its
 optional register, so a named value can skip an earlier default while an erased
 type argument still occupies its selected source slot. Omitted values are
@@ -546,12 +549,10 @@ dependent indexed parameter/result types to resolve before checking executable
 registers; it never infers compile-time values by scanning preceding constant
 instructions. Symbolic dependent types are permitted only for calls which stay
 under their generic callable's explicit value binders. The verifier checks this
-parameter ABI before the VM normalizes it to declaration order. For a statically known
-callable struct this is the exact lowered `Type.__call__$ov$Signature` symbol; a
-`def(...)` value carries an abstract symbol with the same signature suffix,
-which is retargeted only if the runtime value is nominal. Same-arity overloads
-therefore never depend on arity-only lookup. Origin-specialized function values
-and nominal callable contracts retain reference parameter/result signatures as
+parameter ABI before the VM normalizes it to declaration order. A
+`def(...)` value carries an abstract symbol with the callable contract's
+signature suffix, so same-arity overloads never depend on arity-only lookup.
+Origin-specialized function values and callable contracts retain reference parameter/result signatures as
 checked metadata; the VM consumes their already-resolved caller handles without
 dynamically reconstructing origins.
 

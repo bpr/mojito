@@ -842,13 +842,13 @@ policy or data-model responsibilities to focused children:
   (`Flatten::closure_storage_read`) and a call's signature from the
   closure trait the check records (`CheckedClosureStorage::contract`). A
   `F: def(...)` binder is therefore instantiated at the struct, and
-  `native::mono` devirtualizes a call through `f` to the witness. The
+  `native::mono` folds the requirement call through `f` to the witness. The
   storage is the closure's only value: the `capturing` effect is a parse
   error, so no type names a capturing environment and no use converts the
   storage to a closure of its body. A generic closure's `__call__` witness
   takes the closure's own parameters and forwards them
   (`lower_storage_call_witness`), so a call through a generic binder with
-  explicit parameters (`f[2](40)`) devirtualizes to it. Every body with
+  explicit parameters (`f[2](40)`) folds to it. Every body with
   storage is its storage's method (`ClosureStorage::method`), one naming
   an enclosing callable binder too, the storage taking the binder as a
   parameter. Every capturing lambda,
@@ -4574,10 +4574,12 @@ signature over the callee's binders), and on a function value, which has no
 witness table, to the value's own `CallIndirect`
 (`mir::indirect_from_bound_call`). The ownership analyses bind its arguments
 to the bound's signature (`register_ends::Callee::Contract`). A generic
-`def[...]` bound still lowers to `CallIndirect`. The elaborator
-devirtualizes every nominal-callee `CallIndirect`, which now comes only from a
-closure-storage value called by name (R1943), into a `MethodCall` naming
-the `__call__` instance, and that call is what demands the member (R1009).
+`def[...]` bound's call is the generic requirement call (R2005). Every call
+of a struct value is its `__call__` `MethodCall` from the check on, as
+upstream's `CallNode` resolves it, so `mir::verify` rejects a struct-typed
+`CallIndirect` callee and the elaborator rewrites none; the folded
+requirement call names the `__call__` instance, and that call is what
+demands the member (R1009, R2102).
 The member is the one the struct's witness table records for its
 `def(...)` conformance (`StructDeclaration::callable_witness`), as for a
 declared trait's requirement: the checker records that table beside the

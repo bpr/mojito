@@ -316,6 +316,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator no longer devirtualizes a `call.indirect` whose callee is
+  a struct value: every call of a struct value is its `__call__` method
+  call from the check on, as upstream's `CallNode` resolves it, and the MIR
+  verifier now rejects a struct-typed indirect callee. The verifier's
+  nominal-target branch and the Pliron backend's nominal-callable rejection
+  go with it (R2102).
 - R2081 is narrowed rather than fixed. Rerun on the pin, the `nodebug`
   callee the pin keeps when its caller reaches a cycle depends on plain
   callees that the pin's first `InlineParametric` refuses for size. Mojito

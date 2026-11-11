@@ -10,7 +10,7 @@ The next step is always at the top. Finished steps are deleted;
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R2102`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps <ID>`. Every command runs on
 Opus. `--plan-fable-on-opus` gives a plan pass to every entry whose
 `Model:` bullet says Fable, `Planned` or not. `--task` runs an entry after
 its open prerequisites. `--only` runs exactly the entries named. A single
@@ -29,19 +29,12 @@ and 11-04 (*Measure*), so the size steps still matter.
    `write_repr_to`, and the iteration step are requirement calls now (R1466,
    R1544, R1882, R1280), and so are `write_string` (R1938) and the hash
    leaves, which only a dead `Variant` storage shape kept (R2010): the
-   type-reached member list is gone. Left:
-   - A call through a `def(...)` bound, a generic `def[...]` one
-     included, is the bound's `__call__` requirement call (R1933, R2005). A
-     call of closure storage is its `__call__` method call (R2003), a
-     variadic or reference-returning closure's included (R2101), so the
-     elaborator's struct-callee devirtualization goes next (R2102).
+   type-reached member list is gone. Every call of a struct value is its
+   `__call__` method call and the elaborator devirtualizes none (R2102).
+   Left:
    - The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
      filed. Their first piece landed with R1832: the synthesized `copy` is
      upstream's `Self(copy=self)` for every struct.
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R2102 -n 0
-   ```
 
 2. **Gap D′ is finished**: R1932 (11-08) made the verifier reject an
    unnamed `drop.reg` of a memory-only register as well.
@@ -125,8 +118,8 @@ and 11-04 (*Measure*), so the size steps still matter.
   arguments), R695 after it, R1415 (fieldwise keywords), and R1416
   (hand-written MIR).
 - Gap D′'s verifier rule is whole (R1932, 11-08).
-- Gap F has the elaborator's struct-callee devirtualization left
-  (step 1, R2102). Gaps H and I have
+- Gap F has only the unfiled lifecycle traits left (step 1). Gaps H and I
+  have
   their cores and their binder reads in. Their members are filed against
   shapes that have since changed, so each needs a re-probe.
 - Of the 10-25 conformance blocks, five have landed: type versus value
@@ -158,7 +151,7 @@ R1411 and R1413 under *Entries outside the gaps*.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | none | about 15 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | none | R788, R378, R472, R508, R602 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R2102 | about 20 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | none filed (lifecycle traits) | about 20 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | none | none | landed |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R1948, R1949 | about 25 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R2077 | about 20 (below) | slight |
@@ -187,13 +180,13 @@ R1411 and R1413 under *Entries outside the gaps*.
   any more but the lifecycle members (R1938 and R2010 landed). A call
   through a `def(...)` bound, generic or not, is the bound's `__call__`
   requirement call (R1933, R2005). A call of any closure's storage is
-  its `__call__` method call (R2003, R2101).
+  its `__call__` method call (R2003, R2101), and the verifier rejects an
+  indirect call of a struct value (R2102).
 - **Upstream**: the traits are library declarations with default bodies,
   and every operator and protocol step is a `kgen.call` of the
   requirement, which substitution folds to the member.
 - **Size**: R987 counts 868 `List.__len__` and 523 `Span.__len__`
   instances reached through trait-bound calls.
-- **Closes**: R2102.
 - **Shrinks** R987, R1291, R113, R1119, R25, R817, and R860.
 
 ### G. A capture-list closure is a capture list

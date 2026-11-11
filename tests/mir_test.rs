@@ -5574,6 +5574,51 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .any(|error| error.contains("argument 0 of") && error.contains("declared Bool")),
         "the verifier must reject a stale/wrong nominal overload target: {errors:?}"
     );
+    *nominal(&mut mir) = Some("Choose.__call__$ov$Int".to_string());
+
+    // A struct value's call is its `__call__` method call: an indirect call
+    // on one is no checked program's.
+    let choose = {
+        let main = &mir
+            .functions
+            .iter()
+            .find(|(name, _)| name == "main")
+            .expect("main lowered")
+            .1;
+        main.body
+            .instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall { recv, method, .. } if method == "__call__" => {
+                    main.reg_types.get(&recv.0).cloned()
+                }
+                _ => None,
+            })
+            .expect("the receiver is typed")
+    };
+    let invoke = &mut mir
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "invoke")
+        .expect("invoke lowered")
+        .1;
+    let callee = invoke
+        .body
+        .instrs
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::CallIndirect { callee, .. } => Some(*callee),
+            _ => None,
+        })
+        .expect("indirect call lowered");
+    invoke.reg_types.insert(callee.0, choose);
+    let errors = mojito::mir::verify::verify(&mir);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("is its `__call__` method call, not an indirect call")),
+        "the verifier must reject a struct-typed indirect callee: {errors:?}"
+    );
 }
 
 #[test]

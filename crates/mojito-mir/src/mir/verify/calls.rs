@@ -1126,22 +1126,29 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             "{prefix}: nongeneric indirect call carries compile-time parameter metadata"
         ));
     }
-    let nominal_name = match cx.reg_ty(*callee).map(Ty::kind) {
-        Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-            Some(name.as_str())
-        }
+    // A call of a struct value, or through a reference to one, is its
+    // `__call__` method call, as upstream's `CallNode` resolves a callee
+    // that is no function.
+    let referent = std::iter::successors(cx.reg_ty(*callee), |ty| match ty.kind() {
+        TyKind::Ref(reference) => Some(&reference.referent),
         _ => None,
-    };
+    })
+    .last();
+    if let Some((name, _)) = referent.and_then(|ty| ty.kind().as_non_simd_struct()) {
+        errors.push(format!(
+            "{prefix}: a call of the struct value '{name}' is its `__call__` method call, not an indirect call"
+        ));
+        return;
+    }
     if let Some(target) = resolved {
-        if nominal_name.is_none()
-            && let Some(expected) = cx
-                .reg_ty(*callee)
-                .and_then(mojito_symbol::symbol::callable_contract_target)
+        if let Some(expected) = cx
+            .reg_ty(*callee)
+            .and_then(mojito_symbol::symbol::callable_contract_target)
             && target != &expected
         {
             errors.push(format!(
-                        "{prefix}: indirect-call target '{target}' does not match callable contract '{expected}'"
-                    ));
+                "{prefix}: indirect-call target '{target}' does not match callable contract '{expected}'"
+            ));
         }
         let is_call_target =
             mojito_symbol::symbol::split_method_symbol(target).is_some_and(|(_, method)| {
@@ -1152,25 +1159,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                 "{prefix}: indirect-call target '{target}' is not a __call__ method"
             ));
         }
-        // A struct callee runs the `__call__` its `def(...)` conformance's
-        // witness table records, as the elaborator resolves the call.
-        let concrete = match nominal_name {
-            Some(name) => {
-                let Some(member) = cx
-                    .declarations
-                    .structure(mojito_types::types::struct_template(name))
-                    .and_then(|declaration| declaration.callable_witness())
-                else {
-                    errors.push(format!(
-                        "{prefix}: nominal indirect-call callee '{name}' records no `def(...)` witness"
-                    ));
-                    return;
-                };
-                member.to_string()
-            }
-            None => target.clone(),
-        };
-        if let Some(declaration) = declared(cx.declarations, &concrete) {
+        if let Some(declaration) = declared(cx.declarations, target) {
             verify_direct_call(
                 prefix,
                 cx.function,
@@ -1180,15 +1169,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                 arg_places,
                 errors,
             );
-        } else if nominal_name.is_some() {
-            errors.push(format!(
-                "{prefix}: nominal indirect-call target '{concrete}' is undeclared"
-            ));
         }
-    } else if let Some(name) = nominal_name {
-        errors.push(format!(
-            "{prefix}: nominal callable '{name}' has no checker-selected __call__ target"
-        ));
     }
 }
 

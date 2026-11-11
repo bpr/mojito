@@ -3691,28 +3691,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2102 The elaborator still devirtualizes a struct-typed
-  `call.indirect` callee**
-
-  Every call of a struct value should be its `__call__` method call, as
-  upstream's `CallNode` resolves it, but the specializer still rewrites a
-  `call.indirect` on a struct callee into one.
-  - Since R2101 every closure's storage declares `__call__`, so no
-    checked program should leave such a callee; the deletion confirms it.
-  - Then delete the specializer `CallIndirect` arm's struct
-    devirtualization (`native/mono/specializer.rs`),
-    `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and
-    Pliron's nominal-callable rejection (`lower/closures.rs`,
-    `capability.rs`), and make a struct-typed `call.indirect` callee a
-    verifier error; `callable_witness` stays for the requirement-call
-    path.
-  - Probe: `assets/ok/callable_struct_generic_contract.mojo` and
-    `assets/ok/closure_storage_call_collectors.mojo` run on both backends
-    with the verifier rule in place.
-  - Found while landing R2003 (2026-11-11).
-  - Depends on R2005, R2101.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2006 A struct field of a `def(...)`-bound type is rejected as
   non-`Deinitable`**
 

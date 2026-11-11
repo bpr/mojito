@@ -3151,20 +3151,16 @@ impl<'a> Specializer<'a> {
                         self.reduce_method_call(owner, &target, instruction)?;
                     }
                 }
-                // An indirect call whose callee is a nominal callable
-                // struct devirtualizes into a direct `__call__` method
-                // call — the VM's `runtime_method_name` dispatch, made
-                // static — so the ordinary method lowering (mut-receiver
-                // write-back, outcome, sret) serves it. Func-typed
-                // callees keep the instruction and lower through their
-                // two-word `{invoke, env}` value.
+                // An indirect call of a function value naming a known body
+                // becomes its direct call; any other keeps the
+                // instruction and lowers through its two-word
+                // `{invoke, env}` value.
                 MirInstr::CallIndirect {
                     dest,
                     callee,
                     raises,
                     args,
                     kwargs,
-                    callee_place,
                     arg_places,
                     kwarg_places,
                     capture_accesses,
@@ -3324,67 +3320,6 @@ impl<'a> Specializer<'a> {
                             mojito_symbol::symbol::callable_contract_target(receiver)
                     {
                         *target = contract;
-                    }
-                    let Some((receiver_name, _)) = peel_refs(receiver).kind().as_non_simd_struct()
-                    else {
-                        continue;
-                    };
-                    // The struct's `def(...)` conformance records the
-                    // `__call__` answering the function type's one
-                    // requirement, as a declared trait's table does.
-                    let target = self.callable_witness(owner, receiver_name)?;
-                    let (target, bindings, arguments) = self.infer_call(
-                        owner,
-                        function,
-                        &target,
-                        Some(*callee),
-                        *dest,
-                        (args, *spread),
-                        kwargs,
-                        param_arg_regs,
-                        &[],
-                        None,
-                    )?;
-                    // A `__call__` returning a reference hands the call
-                    // the reference its destination register holds.
-                    let reference_result = self
-                        .declarations
-                        .get(target.as_str())
-                        .filter(|declaration| declaration.returns_reference)
-                        .and_then(|_| match function.reg_types.get(&dest.0).map(Ty::kind) {
-                            Some(TyKind::Ref(reference)) => Some(reference.clone()),
-                            _ => None,
-                        });
-                    let receiver_convention = self
-                        .declarations
-                        .get(target.as_str())
-                        .and_then(|declaration| declaration.receiver_convention);
-                    let reduced = bindings.reduced;
-                    let concrete = self.enqueue(&target, bindings, arguments)?;
-                    *instruction = MirInstr::MethodCall {
-                        dest: *dest,
-                        recv: *callee,
-                        method: "__call__".to_string(),
-                        resolved: Some(concrete),
-                        raises: raises.clone(),
-                        reference_result: reference_result.map(Box::new),
-                        result_adapter: None,
-                        args: std::mem::take(args),
-                        kwargs: std::mem::take(kwargs),
-                        recv_place: callee_place.take(),
-                        recv_writes: true,
-                        receiver_convention,
-                        arg_places: std::mem::take(arg_places),
-                        kwarg_places: std::mem::take(kwarg_places),
-                        capture_accesses: Vec::new(),
-                        param_arg_regs: Vec::new(),
-                        param_decls: Vec::new(),
-                        instantiated_args: Vec::new(),
-                        spread: spread.take(),
-                        refined_bound: None,
-                    };
-                    if reduced {
-                        self.reduce_method_call(owner, &target, instruction)?;
                     }
                 }
                 // A generic function's value names its instance at the
