@@ -9,7 +9,7 @@
 //! function value, which has no witness table, to its own
 //! [`MirInstr::CallIndirect`].
 
-use super::{MirInstr, generic_callable_param_decls};
+use super::MirInstr;
 use mojito_symbol::symbol::{
     callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
 };
@@ -65,7 +65,9 @@ pub fn bound_call_contract<'t, S: BuildHasher>(
 /// A function value has no witness table, so upstream's call of the
 /// requirement on it is the call of the value. The rewritten call names
 /// the receiver's own contract and keeps every operand, place, and capture
-/// access.
+/// access. A generic bound's call keeps the bound's compile-time parameter
+/// declarations, which its parameter arguments name, so the bound's
+/// binders and defaults, not the value's own, bind them.
 pub fn indirect_from_bound_call<S: BuildHasher>(
     instruction: &mut MirInstr,
     reg_types: &HashMap<u32, Ty, S>,
@@ -83,6 +85,7 @@ pub fn indirect_from_bound_call<S: BuildHasher>(
         kwarg_places,
         capture_accesses,
         param_arg_regs,
+        param_decls,
         instantiated_args,
         spread,
         ..
@@ -111,7 +114,7 @@ pub fn indirect_from_bound_call<S: BuildHasher>(
         kwarg_places: std::mem::take(kwarg_places),
         capture_accesses: std::mem::take(capture_accesses),
         param_arg_regs: std::mem::take(param_arg_regs),
-        param_decls: generic_callable_param_decls(receiver),
+        param_decls: std::mem::take(param_decls),
         // A generic value applied to solved arguments names the signature
         // they instantiate, as the call of the value by its own type does.
         instantiated_contract: (!instantiated_args.is_empty())
