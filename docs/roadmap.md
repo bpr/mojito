@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2097**.
+Next free ID: **R2098**.
 
 ## Ordered Work
 
@@ -9067,18 +9067,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1885 `NoneType` conforms to `Writable`, where the pin's does not**
+- [ ] **R1885 `print(None)` runs, where the pin rejects the `None` type
+  as not `Writable`**
 
-  `print(None)` and `f[T: Writable](None)` run here, where the pin rejects
-  them: "an element of 'values' with type 'None' does not conform to
-  trait 'Writable'".
-  - `mojito_types::conformance::modelled_conformance` lists `Writable` for
-    every modelled leaf but a callable, `TyKind::None` among them.
-  - Probe: `String(None)` prints `None`, where the pin rejects it: "an
-    element of 'args' with type 'None' does not conform to trait
-    'Writable'".
+  `print(None)`, `f[T: Writable](None)`, and `String(None)` run here, where
+  the pin rejects them: "an element of 'values' with type 'None' does not
+  conform to trait 'Writable'".
+  - The pin's `NoneType` struct does conform to `Writable`: `var x:
+    NoneType = None` then `print(x)` prints `None` at both.
+  - Only the bare `None` type (`!kgen.none`) is not `Writable`, and
+    Mojito has one `TyKind::None` for both, so no conformance answer in
+    `mojito_types::conformance::modelled_conformance` fits both.
+  - Once R2097 splits them, the `None` leaf joins the non-`Writable`
+    leaves there.
   - Found while planning R1287 (2026-11-03).
-  - Depends on nothing.
+  - Depends on R2097 (the `None` type and the `NoneType` struct are one
+    `TyKind`).
   - Model: Opus, Not Planned.
 
 - [ ] **R1913 A type binder bound to a value-annotated `comptime` name
@@ -9292,6 +9296,32 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R2097 The `None` type and the `NoneType` struct are one type**
+
+  Mojito types the `None` expression, a `-> None` result, and a `NoneType`
+  annotation as one `TyKind::None`, where upstream has two types.
+  - Upstream's `None` is the MLIR `!kgen.none` type, displayed `None`.
+  - Upstream's `NoneType` is a struct in `std/builtin/none.mojo` wrapping
+    `!kgen.none`, declaring `Writable` (`write_to`, `write_repr_to`) and an
+    `@implicit` constructor from the `None` type.
+  - The bundled std has no `NoneType` struct, and
+    `checker/type_resolution.rs` resolves the name to `Ty::none()`.
+  - Probe: `var x = None` then `print(x)` is rejected at the pin ("type
+    'None' does not conform to trait 'Writable'"), as is `print(k())` over
+    `def k() -> None` and `print(t[1])` over `t = (1, None)`. Mojito fails
+    each at run time ("vm backend does not support methods on None yet").
+  - Probe: `var x: NoneType = None` then `print(x)`, and `def h(x:
+    NoneType): print(x)` called as `h(None)`, print `None` at the pin.
+    Mojito fails at run time the same way.
+  - Probe: `print(NoneType())` and `g(NoneType())` over `def g[T:
+    Writable](x: T)` print `None` at the pin, while Mojito reports
+    "Undefined variable 'NoneType'".
+  - Probe: `String(NoneType())` builds `"None"` at the pin.
+  - Lever: declare upstream's `NoneType` struct in the bundled std and give
+    the `None` expression its own `!kgen.none` leaf that converts to it.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**

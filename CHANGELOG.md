@@ -280,6 +280,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- R1885's diagnosis is corrected: the pin's `NoneType` struct conforms to
+  `Writable`, and only the bare `None` type does not. Mojito types both as one
+  `TyKind::None`, so the fix waits on splitting them (R2097); no behavior
+  changed.
 - A tuple display converts element-wise only where a storage site emits
   it (a `var` annotation, an assignment, a `return`, a nested display), as
   at the pin; as a call argument, an operand, or a list display's element
