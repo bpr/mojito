@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct conforming to a function type with its own value binders
+  (`struct Adder(def[n: Int](Int) -> Int)`) conforms through a `__call__`
+  declaring the same binders, as upstream reads the function type as a
+  trait whose one requirement is that generic `__call__`: `invoke(Adder(1))`
+  calling `f[2](40)` prints the pin's `43` instead of reporting the
+  declared contract 'def(Int) -> Int' incompatible, and a `__call__`
+  without the binder, or with it at another type, does not conform (R1890,
+  `assets/ok/callable_struct_generic_contract.mojo`).
 - An instance method called through a `SIMD` type takes its receiver as
   the first argument, whatever spelling names the type, as upstream checks
   `T.method(x, ...)` as `x.method(...)` once `x` converts to `T`:

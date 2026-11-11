@@ -114,6 +114,7 @@ assets/ok/callable_contract_names_other_parameters.mojo	-	ineligible	no-scalar-e
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_pack_cases.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/callable_struct_generic_contract.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_transfer_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_callable_parameter_with_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_generic_callable_parameter_environment.mojo	-	ineligible	no-scalar-entry-shape

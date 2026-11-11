@@ -381,6 +381,21 @@ fn nominal_callable_accepts_alpha_equivalent_mutability_binders() {
 }
 
 #[test]
+fn nominal_callable_generic_contract_requires_matching_value_binders() {
+    ok(
+        "struct Good(def[n: Int](Int) -> Int):\n    def __call__[k: Int](self, value: Int) -> Int:\n        return value\n",
+    );
+    let unbound = err(
+        "struct Bad(def[n: Int](Int) -> Int):\n    def __call__(self, value: Int) -> Int:\n        return value\n",
+    );
+    assert!(matches!(unbound, TypeError::TraitMethodMismatch { .. }));
+    let retyped = err(
+        "struct Bad(def[n: Int](Int) -> Int):\n    def __call__[n: Bool](self, value: Int) -> Int:\n        return value\n",
+    );
+    assert!(matches!(retyped, TypeError::TraitMethodMismatch { .. }));
+}
+
+#[test]
 fn nominal_callable_rejects_a_reference_mutability_mismatch() {
     let error = err(
         "struct Bad(def[origin: Origin[mut=True]](ref[origin] Int) -> None):\n    def __call__[origin: Origin[mut=False]](self, ref[origin] value: Int, /):\n        print(value)\n",

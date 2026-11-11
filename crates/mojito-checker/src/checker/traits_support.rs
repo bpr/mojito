@@ -237,6 +237,17 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
     .into()
 }
 
+/// Whether `method`, a read-receiver `__call__`, answers a struct's
+/// `def(...)` conformance `contract`: a generic contract's binders must be
+/// its own, up to spelling, over a mutually coercible signature.
+pub(super) fn call_method_matches_contract(method: &MethodSig, contract: &Ty) -> bool {
+    if matches!(contract.kind(), TyKind::GenericFunc(_)) {
+        return generic_callable_shapes_match(&method_generic_callable_ty(method), contract);
+    }
+    let actual = method_callable_ty(method);
+    coerces(&actual, contract) && coerces(contract, &actual)
+}
+
 /// The function type of `method`'s call surface, its receiver excluded,
 /// in `environment`.
 pub(super) fn method_func_ty(
@@ -365,4 +376,32 @@ fn requirement_type(requirement: &CtMemberReq) -> String {
             format!("__generator_type[{params}] {bounds}")
         }
     }
+}
+
+/// `method`'s call surface as a callable contract with its own binders:
+/// the generic function type a `def[...]` contract's `__call__` must match.
+fn method_generic_callable_ty(method: &MethodSig) -> Ty {
+    let func = method_func_ty(method, mojito_types::origin::CallableEnvironment::Default);
+    if method.decls.is_empty() {
+        return TyKind::Func(Box::new(func)).into();
+    }
+    TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: method.decls.clone(),
+        func,
+    }))
+    .into()
+}
+
+/// Whether two generic callables are one contract: the same binders up to
+/// spelling, each with the same constraints, over mutually coercible
+/// signatures.
+fn generic_callable_shapes_match(actual: &Ty, expected: &Ty) -> bool {
+    use mojito_types::types::erase_generic_callable_binders;
+    erase_generic_callable_binders(actual)
+        .zip(erase_generic_callable_binders(expected))
+        .is_some_and(|((actual_decls, actual), (expected_decls, expected))| {
+            actual_decls == expected_decls
+                && coerces(&actual, &expected)
+                && coerces(&expected, &actual)
+        })
 }

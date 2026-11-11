@@ -8781,27 +8781,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1890 A struct's generic `__call__` does not conform to a
-  generic closure trait with value binders**
-
-  `struct Adder(def[n: Int](Int) -> Int)` declaring `def __call__[n:
-  Int](self, value: Int) -> Int` is rejected where a binder takes it
-  ("declared callable contract 'def(Int) -> Int' is incompatible"); the pin
-  prints `43` for `invoke(Adder(1))` calling `f[2](40)`.
-  - The struct's declared contract is lowered by `ty_from_anno` in
-    `Checker::resolve_struct_member_types` (`checker/traits.rs`), which
-    keeps origin binders as reference signatures and drops a value
-    binder, so the recorded `callable_conformance` is monomorphic.
-  - A parameter's callable bound goes through
-    `lower_anonymous_callable_type` instead and keeps its `def[...]`
-    binders; the conformance needs the same lowering, and the `__call__`
-    check against it must compare the binders.
-  - Probe: the shape above, with `invoke[F: def[n: Int](Int) -> Int](f:
-    F) -> Int: return f[2](40)`.
-  - Found while landing R1823 (2026-11-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1772 A bare `def(...)` run-time parameter type is a concrete
   function type, where the pin's is a closure trait**
 

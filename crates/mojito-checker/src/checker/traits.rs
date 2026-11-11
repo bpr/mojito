@@ -832,7 +832,7 @@ impl Checker {
         ) = resolved?;
         if callable_conformance
             .as_ref()
-            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Func(_)))
+            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
         {
             return Err(TypeError::Unsupported(
                 "callable conformance must be a def(...) function type".to_string(),
@@ -1022,10 +1022,21 @@ impl Checker {
             }
             field_tys.push((f.name.clone(), ty));
         }
+        // A contract with its own `def[...]` binders lowers as a parameter's
+        // callable bound does, keeping them, so its `__call__` must declare
+        // the same binders.
         let callable_conformance = declaration
             .callable_conformance
             .as_ref()
-            .map(|annotation| self.ty_from_anno(annotation))
+            .map(|annotation| match annotation {
+                SourceType::Func { type_params, .. } if !type_params.is_empty() => self
+                    .lower_anonymous_callable_type(
+                        &format!("$callable:{name}"),
+                        annotation,
+                        declaration.type_params,
+                    ),
+                _ => self.ty_from_anno(annotation),
+            })
             .transpose()?;
         Ok((
             field_tys,
@@ -1577,10 +1588,7 @@ impl Checker {
                             None | Some(mojito_ast::ast::ArgConvention::Imm)
                         )
                 })
-                .filter(|method| {
-                    let actual = method_callable_ty(method);
-                    coerces(&actual, &expected) && coerces(&expected, &actual)
-                })
+                .filter(|method| call_method_matches_contract(method, &expected))
                 .collect::<Vec<_>>();
             let [selected] = matching.as_slice() else {
                 return Err(TypeError::TraitMethodMismatch {
@@ -1606,7 +1614,13 @@ impl Checker {
                 .structs
                 .get_mut(name)
                 .expect("callable struct remains registered");
-            if let Some(requirement) = callable_contract_target(&expected) {
+            // A generic contract's requirement is spelled over its binders'
+            // signature slots, as its identity is.
+            let requirement = callable_contract_target(&expected).or_else(|| {
+                mojito_types::types::erase_generic_callable_binders(&expected)
+                    .and_then(|(_, erased)| callable_contract_target(&erased))
+            });
+            if let Some(requirement) = requirement {
                 info.witness_tables.push(WitnessTable {
                     trait_name: expected.to_string(),
                     witnesses: vec![Witness {
