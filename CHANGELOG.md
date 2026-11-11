@@ -290,6 +290,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- R2081 is narrowed rather than fixed. Rerun on the pin, the `nodebug`
+  callee the pin keeps when its caller reaches a cycle depends on plain
+  callees that the pin's first `InlineParametric` refuses for size. Mojito
+  prices those callees differently before cleanup, so the roadmap files that
+  calibration as R2100, which R2081 depends on. No behavior changed.
 - A struct applied to its own binders (`SIMD[dtype, size]` inside
   `SIMD`'s methods, upstream's parametric `Self`) has its declared fields,
   where `types::struct_field_types` answered none and
