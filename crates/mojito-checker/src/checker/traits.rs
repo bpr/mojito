@@ -1614,13 +1614,8 @@ impl Checker {
                 .structs
                 .get_mut(name)
                 .expect("callable struct remains registered");
-            // A generic contract's requirement is spelled over its binders'
-            // signature slots, as its identity is.
-            let requirement = callable_contract_target(&expected).or_else(|| {
-                mojito_types::types::erase_generic_callable_binders(&expected)
-                    .and_then(|(_, erased)| callable_contract_target(&erased))
-            });
-            if let Some(requirement) = requirement {
+            if let Some(requirement) = mojito_symbol::symbol::callable_requirement_target(&expected)
+            {
                 info.witness_tables.push(WitnessTable {
                     trait_name: expected.to_string(),
                     witnesses: vec![Witness {

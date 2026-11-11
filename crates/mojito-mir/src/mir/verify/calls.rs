@@ -121,7 +121,6 @@ pub(super) fn verify_call_instruction(
             instantiated_args,
             spread,
             recv_writes,
-            raises,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
@@ -133,35 +132,12 @@ pub(super) fn verify_call_instruction(
                     .reg_ty(*recv)
                     .and_then(mojito_types::types::callable_contract_ty)
             {
-                let expected = mojito_symbol::symbol::callable_contract_target(contract);
-                if expected.as_deref() != Some(callee.as_str()) {
-                    errors.push(format!(
-                        "{prefix}: bound call target '{callee}' does not match callable contract '{}'",
-                        expected.unwrap_or_default()
-                    ));
-                }
-                if *recv_writes || receiver_convention.is_some() {
-                    errors.push(format!(
-                        "{prefix}: a `def(...)` bound's `__call__` takes its receiver `read`"
-                    ));
-                }
-                if !param_decls.is_empty()
-                    || !param_arg_regs.is_empty()
-                    || !instantiated_args.is_empty()
-                {
-                    errors.push(format!(
-                        "{prefix}: a monomorphic `def(...)` bound's call carries compile-time parameter metadata"
-                    ));
-                }
-                verify_callable_contract_call(
-                    prefix,
-                    cx.function,
+                verify_bound_call(
+                    cx,
                     contract,
-                    raises.as_ref().map(|raises| &raises.ty),
-                    *dest,
-                    args,
-                    kwargs,
-                    arg_places,
+                    instruction,
+                    callee,
+                    *recv_writes || receiver_convention.is_some(),
                     errors,
                 );
             }
@@ -921,6 +897,105 @@ pub(super) fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &m
     }
 }
 
+/// Verify a `def(...)` bound's `__call__` requirement call: it names the
+/// bound's requirement, reads its receiver, and binds the bound's
+/// signature. A generic bound's call carries the bound's compile-time
+/// parameter declarations with the arguments it applies, and binds the
+/// signature they instantiate, else the symbolic one under the bound's
+/// binders; a monomorphic bound's call carries none.
+fn verify_bound_call(
+    cx: &InstrCx<'_>,
+    contract: &Ty,
+    instruction: &MirInstr,
+    callee: &str,
+    owned_receiver: bool,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    let MirInstr::MethodCall {
+        dest,
+        raises,
+        args,
+        kwargs,
+        arg_places,
+        param_arg_regs,
+        param_decls,
+        instantiated_args,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let expected = mojito_symbol::symbol::callable_requirement_target(contract);
+    if expected.as_deref() != Some(callee) {
+        errors.push(format!(
+            "{prefix}: bound call target '{callee}' does not match callable contract '{}'",
+            expected.unwrap_or_default()
+        ));
+    }
+    if owned_receiver {
+        errors.push(format!(
+            "{prefix}: a `def(...)` bound's `__call__` takes its receiver `read`"
+        ));
+    }
+    let mut instantiated = None;
+    match generic_callable_decls(contract) {
+        Some(decls) => {
+            if decls != param_decls.as_slice() {
+                errors.push(format!(
+                    "{prefix}: a generic `def[...]` bound's call does not carry the bound's compile-time parameters"
+                ));
+            }
+            verify_param_arguments(
+                prefix,
+                cx.function,
+                decls,
+                param_arg_regs,
+                instantiated_args,
+                None,
+                errors,
+            );
+            if instantiated_args.is_empty() {
+                if let Err(reason) = validate_dependent_bindings_in(
+                    contract,
+                    &enclosing_binders(cx.name, cx.declarations),
+                ) {
+                    errors.push(format!(
+                        "{prefix}: invalid symbolic generic callable contract: {reason}"
+                    ));
+                }
+            } else {
+                match instantiate_generic_callable_contract(contract, instantiated_args) {
+                    Ok(signature) => instantiated = Some(signature),
+                    Err(reason) => errors.push(format!(
+                        "{prefix}: invalid generic callable instantiation: {reason}"
+                    )),
+                }
+            }
+        }
+        None if !param_decls.is_empty()
+            || !param_arg_regs.is_empty()
+            || !instantiated_args.is_empty() =>
+        {
+            errors.push(format!(
+                "{prefix}: a monomorphic `def(...)` bound's call carries compile-time parameter metadata"
+            ));
+        }
+        None => {}
+    }
+    verify_callable_contract_call(
+        prefix,
+        cx.function,
+        instantiated.as_ref().unwrap_or(contract),
+        raises.as_ref().map(|raises| &raises.ty),
+        *dest,
+        args,
+        kwargs,
+        arg_places,
+        errors,
+    );
+}
+
 fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
     let MirInstr::CallIndirect {
@@ -952,7 +1027,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         callable_bound: Some(bound),
         ..
     }) = cx.reg_ty(*callee).map(Ty::kind)
-        && matches!(bound.kind(), TyKind::Func(_))
+        && matches!(bound.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
     {
         errors.push(format!(
             "{prefix}: a call through a `def(...)` bound is its `__call__` requirement call, not an indirect call"

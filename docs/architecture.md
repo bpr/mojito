@@ -4556,12 +4556,17 @@ the exact checker-selected `__call__` symbol. A `def(...)`-typed parameter
 retains the same signature as an abstract dispatch symbol; its value is a
 function or closure, never a struct, since the checker rejects a nominal
 callable where a `def(...)` value is expected, as the pin does. A call
-through a monomorphic `def(...)` bound (`F: def(Int) -> Int`, `f(x)`) is not
-a `CallIndirect`: upstream reads the bound as a trait whose one requirement is
+through a `def(...)` bound (`F: def(Int) -> Int`, `f(x)`) is not a
+`CallIndirect`: upstream reads the bound as a trait whose one requirement is
 `__call__`, so MIR lowers the call as that requirement's `MethodCall` on a
 read receiver, its `resolved` the bound's dispatch symbol
-(`mir::bound_call_contract`), and `mir::verify` rejects a `CallIndirect`
-through such a bound. Where the bound closes, the call folds as a witness
+(`symbol::callable_requirement_target`, `mir::bound_call_contract`), and
+`mir::verify` rejects a `CallIndirect` through such a bound. A generic
+bound's requirement is generic (`F: def[n: Int](Int) -> Int`, `f[2](40)`):
+the call carries the bound's compile-time parameter declarations and the
+arguments it applies, as a generic method's call does, and the verifier
+binds the signature its solved arguments instantiate, else the symbolic one
+under the bound's binders. Where the bound closes, the call folds as a witness
 lookup does, by one rule in `inline-parametric` and in the specializer: on a
 struct, closure storage included, to the member its `def(...)` conformance
 records (`MirDeclarations::callable_witness` when the bound spells its

@@ -3249,3 +3249,85 @@ fn verifier_checks_a_def_bound_requirement_call() {
             .any(|error| error.contains("is its `__call__` requirement call"))
     );
 }
+
+const GENERIC_DEF_BOUND_APPLY: &str = "
+def apply[F: def[n: Int](Int) -> Int](f: F, x: Int) -> Int:
+    return f[2](x)
+
+def add[n: Int](value: Int) -> Int:
+    return value + n
+
+def main():
+    print(apply(add, 40))
+";
+
+#[test]
+fn verifier_checks_a_generic_def_bound_requirement_call() {
+    let mut program = lower_linked_source(GENERIC_DEF_BOUND_APPLY);
+    let (resolved, param_decls) = match bound_call(&mut program) {
+        MirInstr::MethodCall {
+            resolved,
+            param_decls,
+            ..
+        } => (resolved.clone(), param_decls.len()),
+        _ => (None, 0),
+    };
+    assert_eq!(
+        resolved.as_deref(),
+        Some("__trait_dispatch.__call__$ov$Int")
+    );
+    assert_eq!(
+        param_decls, 1,
+        "a generic bound's requirement call carries the bound's binders"
+    );
+    assert_eq!(apply_findings(&program), Vec::<String>::new());
+
+    let mut unparameterized = program.clone();
+    if let MirInstr::MethodCall { param_decls, .. } = bound_call(&mut unparameterized) {
+        param_decls.clear();
+    }
+    assert!(
+        apply_findings(&unparameterized)
+            .iter()
+            .any(|error| error.contains("the bound's compile-time parameters")),
+        "{:?}",
+        apply_findings(&unparameterized)
+    );
+
+    let mut indirect = program;
+    let call = bound_call(&mut indirect);
+    if let MirInstr::MethodCall {
+        dest,
+        recv,
+        args,
+        arg_places,
+        recv_place,
+        param_arg_regs,
+        param_decls,
+        ..
+    } = call.clone()
+    {
+        *call = MirInstr::CallIndirect {
+            dest,
+            callee: recv,
+            resolved: None,
+            raises: None,
+            args,
+            kwargs: Vec::new(),
+            callee_place: recv_place,
+            arg_places,
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs,
+            param_decls,
+            instantiated_contract: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        };
+    }
+    assert!(
+        apply_findings(&indirect)
+            .iter()
+            .any(|error| error.contains("is its `__call__` requirement call"))
+    );
+}

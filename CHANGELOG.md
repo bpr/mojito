@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call through a generic `def[...]` bound (`f[2](40)` in `def
+  invoke[F: def[n: Int](Int) -> Int](f: F)`) lowers to the bound's generic
+  `__call__` requirement call, carrying the bound's compile-time
+  parameters and the arguments it applies, instead of an indirect call
+  with no dispatch symbol, as R1933 made the monomorphic bound's call; the
+  verifier rejects an indirect call through such a bound (R2005).
 - A call of a capture-list closure's value (`var g = add_k; g(5)`,
   `extend[0](4)`) is checked as its storage's `__call__` method call, as
   upstream's `CallNode` resolves it, instead of an indirect call on the

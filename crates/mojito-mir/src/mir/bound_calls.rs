@@ -1,21 +1,26 @@
 //! Calls through a `def(...)` bound: upstream reads the bound as a trait
 //! whose one requirement is `__call__`, so `f(x)` on a bound value is the
 //! requirement call `f.__call__(x)`, a [`MirInstr::MethodCall`] on a read
-//! receiver. Where the bound closes, the call folds as a witness lookup
-//! does: a struct's to the member its `def(...)` conformance records, and a
+//! receiver. A generic `def[...](...)` bound's requirement is itself
+//! generic: the call carries the bound's compile-time parameter
+//! declarations and the arguments it applies, as a generic method's call
+//! does. Where the bound closes, the call folds as a witness lookup does: a
+//! struct's to the member its `def(...)` conformance records, and a
 //! function value, which has no witness table, to its own
 //! [`MirInstr::CallIndirect`].
 
 use super::{MirInstr, generic_callable_param_decls};
-use mojito_symbol::symbol::{callable_contract_target, is_callable_contract_dispatch};
+use mojito_symbol::symbol::{
+    callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
+};
 use mojito_types::origin::RefTy;
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 /// The signature a call of `target` on a receiver of type `receiver`
-/// binds when it calls a monomorphic `def(...)` bound's `__call__`
-/// requirement; `None` for any other call.
+/// binds when it calls a `def(...)` bound's `__call__` requirement, over
+/// a generic bound's own binders; `None` for any other call.
 pub fn callable_bound_requirement<'t>(receiver: &'t Ty, target: &str) -> Option<&'t FuncTy> {
     if !is_callable_contract_dispatch(target) {
         return None;
@@ -26,6 +31,7 @@ pub fn callable_bound_requirement<'t>(receiver: &'t Ty, target: &str) -> Option<
             ..
         } => match bound.kind() {
             TyKind::Func(function) => Some(function),
+            TyKind::GenericFunc(generic) => Some(&generic.func),
             _ => None,
         },
         _ => None,
@@ -106,35 +112,53 @@ pub fn indirect_from_bound_call<S: BuildHasher>(
         capture_accesses: std::mem::take(capture_accesses),
         param_arg_regs: std::mem::take(param_arg_regs),
         param_decls: generic_callable_param_decls(receiver),
-        instantiated_contract: None,
+        // A generic value applied to solved arguments names the signature
+        // they instantiate, as the call of the value by its own type does.
+        instantiated_contract: (!instantiated_args.is_empty())
+            .then(|| {
+                super::verify::instantiate_generic_callable_contract(receiver, instantiated_args)
+                    .ok()
+            })
+            .flatten(),
         instantiated_args: std::mem::take(instantiated_args),
         spread: spread.take(),
     };
     true
 }
 
-/// The requirement call a lowered indirect call through a monomorphic
-/// `def(...)` bound is, `instruction` itself for any other call: the
-/// bound's `__call__` on its read receiver, `callee`, whose place is the
-/// callee's. `reference_result` is the call's checked reference result.
+/// The requirement call a lowered indirect call through a `def(...)`
+/// bound is, `instruction` itself for any other call: the bound's
+/// `__call__` on its read receiver, `callee`, whose place is the callee's,
+/// keeping a generic bound's compile-time parameters and the arguments the
+/// call applies. `reference_result` is the call's checked reference result.
 pub(super) fn bound_call_from_indirect(
     instruction: MirInstr,
     callee_ty: Option<&Ty>,
     reference_result: Option<RefTy>,
 ) -> MirInstr {
-    let through_bound = matches!(
-        &instruction,
-        MirInstr::CallIndirect {
-            resolved: Some(target),
-            instantiated_contract: None,
-            ..
-        } if callee_ty.and_then(|ty| callable_bound_requirement(ty, target)).is_some()
-    );
+    let requirement = callee_ty
+        .map(peel_refs)
+        .filter(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::Param {
+                    callable_bound: Some(_),
+                    ..
+                }
+            )
+        })
+        .and_then(callable_requirement_target)
+        .filter(|requirement| {
+            matches!(
+                &instruction,
+                MirInstr::CallIndirect { resolved, .. }
+                    if resolved.as_ref().is_none_or(|target| target == requirement)
+            )
+        });
     match instruction {
         MirInstr::CallIndirect {
             dest,
             callee,
-            resolved,
             raises,
             args,
             kwargs,
@@ -143,14 +167,15 @@ pub(super) fn bound_call_from_indirect(
             kwarg_places,
             capture_accesses,
             param_arg_regs,
+            param_decls,
             instantiated_args,
             spread,
             ..
-        } if through_bound => MirInstr::MethodCall {
+        } if requirement.is_some() => MirInstr::MethodCall {
             dest,
             recv: callee,
             method: "__call__".to_string(),
-            resolved,
+            resolved: requirement,
             raises,
             reference_result: reference_result.map(Box::new),
             result_adapter: None,
@@ -163,7 +188,7 @@ pub(super) fn bound_call_from_indirect(
             kwarg_places,
             capture_accesses,
             param_arg_regs,
-            param_decls: Vec::new(),
+            param_decls,
             instantiated_args,
             spread,
             refined_bound: None,

@@ -3691,28 +3691,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2005 A call through a generic `def[...]` bound is a `call.indirect`,
-  not the bound's `__call__` requirement call**
-
-  `f[2](40)` in `def invoke[F: def[n: Int](Int) -> Int](f: F)` lowers to a
-  `call.indirect` with no dispatch symbol, where upstream calls the
-  bound's generic `__call__` requirement, as R1933 made the monomorphic
-  bound's call.
-  - `MirInstr::MethodCall` has no `instantiated_contract` field, so the
-    requirement call carries the bound's `param_decls` and solved
-    `instantiated_args`, and the verifier recomputes the contract with
-    `instantiate_generic_callable_contract`.
-  - `bound_call_contract`, `indirect_from_bound_call`, and
-    `register_ends::Callee::Contract` (`mir/bound_calls.rs`,
-    `mir/register_ends.rs`) then admit a `GenericFunc` bound, and
-    `verify_indirect_call` rejects that bound too.
-  - Probe: `invoke(add)` over `def add[n: Int](value: Int) -> Int` prints
-    `42` on both backends, and `emit-mir` of `invoke` holds a
-    `call.method` of `__call__`.
-  - Found while landing R1933 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2101 A variadic or reference-returning closure's storage
   declares no `__call__`, so `v.__call__(1, 2)` is rejected**
 
@@ -3744,10 +3722,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Every call of a struct value should be its `__call__` method call, as
   upstream's `CallNode` resolves it, but the specializer still rewrites a
   `call.indirect` on a struct callee into one.
-  - The callees left are a call through a generic `def[...]` bound once
-    it closes on a struct (R2005), and a variadic or
-    reference-returning closure's storage, which declares no `__call__`
-    (R2101).
+  - The callee left is a variadic or reference-returning closure's
+    storage, which declares no `__call__` (R2101).
   - Then delete the specializer `CallIndirect` arm's struct
     devirtualization (`native/mono/specializer.rs`),
     `verify_indirect_call`'s nominal branch (`mir/verify/calls.rs`), and

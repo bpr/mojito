@@ -2656,6 +2656,21 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
 
+/// The `__call__` requirement symbol of the function-type trait `ty`
+/// names (a `def(...)` type, or a type parameter it bounds).
+///
+/// A generic `def[...](...)` type spells its requirement over its binders'
+/// signature slots, as its identity does, so the requirement a call
+/// through the bound names is the one a conforming struct's witness table
+/// records.
+pub fn callable_requirement_target(ty: &Ty) -> Option<String> {
+    let contract = mojito_types::types::callable_contract_ty(ty)?;
+    callable_contract_target(contract).or_else(|| {
+        mojito_types::types::erase_generic_callable_binders(contract)
+            .and_then(|(_, erased)| callable_contract_target(&erased))
+    })
+}
+
 /// Whether `symbol` dispatches a `__call__` requirement through a bound.
 ///
 /// A `def(...)` bound's one requirement spells it, as a declared trait's
