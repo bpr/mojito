@@ -331,7 +331,92 @@ impl DeclaredAttributes {
         }
         attributes
     }
+
+    /// The source-ordered `attributes` a compiler builtin's binder bound
+    /// `args` to, each keyed by the declaration of `params` its argument
+    /// binds by [`mojito_ast::call::match_parameter_slots`]' rule.
+    pub(super) fn of_builtin(
+        name: &str,
+        params: &[BuiltinParam],
+        args: &[mojito_ast::ast::ParamArg],
+        attributes: BracketAttributes,
+    ) -> Result<Self, TypeError> {
+        let keywords = mojito_ast::call::bracket_keywords(args);
+        let slots = mojito_ast::call::match_parameter_slots(params, &keywords)
+            .map_err(|error| error.into_type_error(name))?;
+        let mut declared = Self::new(params.len());
+        for (position, (index, attribute)) in slots.into_iter().zip(attributes).enumerate() {
+            declared.bind(index, position, attribute);
+        }
+        Ok(declared)
+    }
 }
+
+/// One compile-time parameter of a compiler builtin, as upstream's library
+/// declares it (`List[T: AnyType, /]`, `external_call[callee, return_type,
+/// *types, num_fixed_args=]`): the declaration the builtin's binder keys
+/// each bracket argument's attribute by ([`DeclaredAttributes::of_builtin`]).
+#[derive(Clone, Copy)]
+pub(super) struct BuiltinParam {
+    /// The declared name, a pack's with its `*`.
+    name: &'static str,
+    /// Whether the parameter is declared before `//`.
+    infer_only: bool,
+}
+
+impl BuiltinParam {
+    /// A parameter declared after any `//`.
+    const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            infer_only: false,
+        }
+    }
+
+    /// A parameter declared before `//`, bound by keyword or inferred.
+    const fn infer_only(name: &'static str) -> Self {
+        Self {
+            name,
+            infer_only: true,
+        }
+    }
+}
+
+impl mojito_ast::call::CompileTimeParam for BuiltinParam {
+    fn keyword(&self) -> &str {
+        self.name.trim_start_matches('*')
+    }
+
+    fn infer_only(&self) -> bool {
+        self.infer_only
+    }
+
+    fn variadic(&self) -> bool {
+        self.name.starts_with('*')
+    }
+}
+
+/// A one-type list: `reflect[T: AnyType]`, `Variant.isa[T: AnyType]`, a
+/// one-type-argument trait test (`IsTriviallyMovable[T: AnyType]`), and
+/// the compiler-private `__UninitStorage[T]`.
+pub(super) const T_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T")];
+/// A one-type list spelled `type`: `_unqualified_type_name[type:
+/// AnyType]`, `TypeList.contains[type: AnyType]`.
+pub(super) const TYPE_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("type")];
+/// `Variant.replace[Tin: Movable & Deinitable, Tout: Movable]` and
+/// `unsafe_replace`.
+pub(super) const VARIANT_REPLACE_PARAMS: &[BuiltinParam] =
+    &[BuiltinParam::new("Tin"), BuiltinParam::new("Tout")];
+/// `external_call[callee: StaticString, return_type: RegisterPassable,
+/// *types: AnyType, num_fixed_args: Optional[Int] = None]`.
+pub(super) const EXTERNAL_CALL_PARAMS: &[BuiltinParam] = &[
+    BuiltinParam::new("callee"),
+    BuiltinParam::new("return_type"),
+    BuiltinParam::new("*types"),
+    BuiltinParam::new("num_fixed_args"),
+];
+/// A value pack: the compiler-private `__param_list_address[*values]`.
+pub(super) const VALUE_PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*values")];
 
 /// An explicit callable specialization's bracket with its origin
 /// arguments taken out: where each argument the generic binder sees sits
@@ -707,13 +792,13 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let depth = self.annotation_depth.get();
         self.annotation_depth.set(depth + 1);
         let resolved = self
             .reflected_type_annotation(&SourceType::Named(name.to_string(), args.to_vec()))
             .and_then(|reflected| match reflected {
-                Some(ty) => Ok((ty, vec![None; args.len()])),
+                Some(ty) => Ok((ty, DeclaredAttributes::default())),
                 None => self.applied_type_at_depth(name, args),
             });
         self.annotation_depth.set(depth);
@@ -1430,7 +1515,7 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         if let Some(applied) = self.builtin_applied_type(name, args)? {
             return Ok(applied);
         }
@@ -1492,10 +1577,7 @@ impl Checker {
                 attributes,
                 ..
             } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-            return Ok((
-                Self::struct_instance_type(name, arguments),
-                attributes.source_order(),
-            ));
+            return Ok((Self::struct_instance_type(name, arguments), attributes));
         }
         if matches!(
             name,
@@ -1513,7 +1595,7 @@ impl Checker {
         if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
             return self
                 .ty_from_anno(&SourceType::SelfParam(name.to_string()))
-                .map(|ty| (ty, Vec::new()));
+                .map(|ty| (ty, DeclaredAttributes::default()));
         }
         // A `def`'s own `Ts[index]` while the pack is still a
         // parameter: the dependent element type.
@@ -1523,7 +1605,7 @@ impl Checker {
         {
             return self
                 .pack_element_type(&pack, index)
-                .map(|ty| (ty, vec![None]));
+                .map(|ty| (ty, DeclaredAttributes::default()));
         }
         Err(TypeError::UnknownType(name.to_string()))
     }
@@ -1799,7 +1881,7 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Option<(Ty, BracketAttributes)>, TypeError> {
+    ) -> Result<Option<(Ty, DeclaredAttributes)>, TypeError> {
         let existential_trait = args.first().and_then(|argument| match argument {
             mojito_ast::ast::ParamArg::Type(SourceType::Named(trait_name, trait_args))
                 if trait_args.is_empty() =>
@@ -1815,7 +1897,7 @@ impl Checker {
         if name == "__mlir_type" {
             return self
                 .mlir_applied_type(args)
-                .map(|ty| Some((ty, vec![None; args.len()])));
+                .map(|ty| Some((ty, DeclaredAttributes::default())));
         }
         if name == "Some"
             && args.len() == 1
@@ -1831,36 +1913,34 @@ impl Checker {
                     callable_bound: None,
                 }
                 .into(),
-                vec![None],
+                DeclaredAttributes::default(),
             )));
         }
         if name == "Never" && args.is_empty() {
-            return Ok(Some((Ty::never(), Vec::new())));
+            return Ok(Some((Ty::never(), DeclaredAttributes::default())));
         }
         if args.is_empty()
             && let Some(parameter) = self.lookup_tparam(name)
         {
-            return Ok(Some((parameter, Vec::new())));
+            return Ok(Some((parameter, DeclaredAttributes::default())));
         }
         // `Bool` is still the compiler's own spelling; `Int`, `UInt`, and
         // `Float64` resolve through `std.simd`'s comptime aliases.
         if args.is_empty() && name == "Bool" {
-            return Ok(Some((Ty::bool(), Vec::new())));
+            return Ok(Some((Ty::bool(), DeclaredAttributes::default())));
         }
         if name == "SIMD" && !self.simd_declared_application(args) {
             return self.simd_type(args).map(Some);
         }
         if name == "$pack" {
-            return self
-                .tuple_element_types(args)
-                .map(|(elements, attributes)| {
-                    Some((TyKind::RuntimePack(elements).into(), attributes))
-                });
+            let (elements, attributes) = self.tuple_element_types(args)?;
+            let attributes = DeclaredAttributes::of_builtin(name, PACK_PARAMS, args, attributes)?;
+            return Ok(Some((TyKind::RuntimePack(elements).into(), attributes)));
         }
         if name == "__RuntimeTuple" {
-            return self
-                .tuple_element_types(args)
-                .map(|(elements, attributes)| Some((TyKind::Tuple(elements).into(), attributes)));
+            let (elements, attributes) = self.tuple_element_types(args)?;
+            let attributes = DeclaredAttributes::of_builtin(name, PACK_PARAMS, args, attributes)?;
+            return Ok(Some((TyKind::Tuple(elements).into(), attributes)));
         }
         // Compiler-private tagged-union storage (the self-hosted
         // `Variant`'s field): the intrinsic union type, reachable only
@@ -1898,18 +1978,17 @@ impl Checker {
                     got: args.len(),
                 });
             }
-            let (mut elements, attributes) = self.tuple_element_types(args)?;
-            let element = elements.remove(0);
+            let (element, attributes) = self.uninit_storage_element(args)?;
             return Ok(Some((
                 TyKind::Struct(name.to_string(), vec![TyArg::Ty(element)]).into(),
                 attributes,
             )));
         }
         if name == "_" && args.is_empty() {
-            return Ok(Some((Ty::infer(), Vec::new())));
+            return Ok(Some((Ty::infer(), DeclaredAttributes::default())));
         }
         if name == "DType" && args.is_empty() && !self.structs.contains_key(name) {
-            return Ok(Some((Ty::dtype(), Vec::new())));
+            return Ok(Some((Ty::dtype(), DeclaredAttributes::default())));
         }
         Ok(None)
     }
@@ -2908,7 +2987,7 @@ impl Checker {
         name: &str,
         alias: &ComptimeAlias,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let template = match &alias.body {
             AliasBody::Type(template) => template,
             AliasBody::Predicate(_) => {
@@ -2964,7 +3043,7 @@ impl Checker {
         // discovery can materialize it.
         Ok((
             self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)),
-            attributes.source_order(),
+            attributes,
         ))
     }
 
@@ -3739,23 +3818,14 @@ impl Checker {
 
     /// Record the attributes a declared-parameter binder bound the
     /// application at `span`'s bracket arguments to, laid out by source
-    /// position as the checked node's arguments read them.
+    /// position, as the checked node's arguments read them: nothing when
+    /// every argument is a run-time value.
     pub(super) fn record_declared_attributes(
         &self,
         span: SourceSpan,
         attributes: &DeclaredAttributes,
     ) {
-        self.record_bracket_attributes(span, attributes.source_order());
-    }
-
-    /// Record what each bracket argument of the application at `span`
-    /// bound to, as its binder returned it: nothing when every argument is
-    /// a run-time value.
-    pub(super) fn record_bracket_attributes(
-        &self,
-        span: SourceSpan,
-        attributes: BracketAttributes,
-    ) {
+        let attributes = attributes.source_order();
         if attributes.iter().all(Option::is_none) {
             return;
         }
@@ -3799,9 +3869,9 @@ impl Checker {
     pub(super) fn list_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         if args.is_empty() {
-            return Ok((list_type(Ty::infer()), Vec::new()));
+            return Ok((list_type(Ty::infer()), DeclaredAttributes::default()));
         }
         if args.len() != 1 {
             return Err(TypeError::WrongTypeArgCount {
@@ -3823,6 +3893,7 @@ impl Checker {
                 reason: None,
             });
         }
+        let attributes = DeclaredAttributes::of_builtin("List", LIST_PARAMS, args, attributes)?;
         Ok((list_type(element[0].clone()), attributes))
     }
 
@@ -3864,7 +3935,7 @@ impl Checker {
     pub(super) fn set_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let types = match args {
             [] => Vec::new(),
             [element] => vec![self.collection_type_argument("Set", element)?],
@@ -3887,13 +3958,17 @@ impl Checker {
                 mojito_types::types::set_type_with(element.clone(), hasher.clone())
             }
         };
-        Ok((ty, types_attributes(args, &types)))
+        let attributes = types_attributes(args, &types);
+        Ok((
+            ty,
+            DeclaredAttributes::of_builtin("Set", SET_PARAMS, args, attributes)?,
+        ))
     }
 
     pub(super) fn dict_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let types = match args {
             [] => Vec::new(),
             [key, value] => vec![
@@ -3920,7 +3995,11 @@ impl Checker {
             }
             _ => self.nominal_dict(Ty::infer(), Ty::infer()),
         };
-        Ok((ty, types_attributes(args, &types)))
+        let attributes = types_attributes(args, &types);
+        Ok((
+            ty,
+            DeclaredAttributes::of_builtin("Dict", DICT_PARAMS, args, attributes)?,
+        ))
     }
 
     /// `Set[T]` with the hasher argument filled from the linked declaration's
@@ -3988,7 +4067,7 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         if !matches!(args.len(), 1 | 2) {
             return Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
@@ -4072,6 +4151,11 @@ impl Checker {
                     .and_then(|bound| bracket_attribute(argument, &TyArg::Origin(bound))),
             );
         }
+        let params = match name {
+            "MutPointer" | "ImmPointer" => FIXED_POINTER_PARAMS,
+            _ => POINTER_PARAMS,
+        };
+        let attributes = DeclaredAttributes::of_builtin(name, params, args, attributes)?;
         Ok((
             TyKind::Pointer {
                 element: elem,
@@ -4623,14 +4707,31 @@ impl Checker {
         }
     }
 
+    /// The element `__UninitStorage[T]`'s one bracket argument stores,
+    /// beside its attribute.
+    pub(super) fn uninit_storage_element(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
+        let (mut elements, attributes) = self.tuple_element_types(args)?;
+        let attributes = DeclaredAttributes::of_builtin(
+            mojito_types::types::UNINIT_STORAGE_TYPE_NAME,
+            T_PARAMS,
+            args,
+            attributes,
+        )?;
+        Ok((elements.remove(0), attributes))
+    }
+
     pub(super) fn tuple_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let (elements, attributes) = self.tuple_element_types(args)?;
         for element in &elements {
             reject_stored_callable_type(element, "the 'Tuple' element type")?;
         }
+        let attributes = DeclaredAttributes::of_builtin("Tuple", PACK_PARAMS, args, attributes)?;
         Ok((mojito_types::types::tuple_type(elements), attributes))
     }
 
@@ -4864,7 +4965,7 @@ impl Checker {
     pub(super) fn variant_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         if args.is_empty() {
             return Err(TypeError::WrongTypeArgCount {
                 name: "Variant".to_string(),
@@ -4883,6 +4984,7 @@ impl Checker {
         }
         Self::reject_mixed_spread("Variant", &alternatives)?;
         let attributes = types_attributes(args, &alternatives);
+        let attributes = DeclaredAttributes::of_builtin("Variant", PACK_PARAMS, args, attributes)?;
         Ok((TyKind::Variant(alternatives).into(), attributes))
     }
 
@@ -4892,12 +4994,17 @@ impl Checker {
     pub(super) fn enum_storage_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let alternatives = args
             .iter()
             .map(|arg| self.type_param_argument(arg, "enum case payload"))
             .collect::<Result<Vec<_>, _>>()?;
-        let attributes = types_attributes(args, &alternatives);
+        let attributes = DeclaredAttributes::of_builtin(
+            mojito_types::types::ENUM_STORAGE_TYPE_NAME,
+            PACK_PARAMS,
+            args,
+            types_attributes(args, &alternatives),
+        )?;
         Ok((TyKind::Variant(alternatives).into(), attributes))
     }
 
@@ -4973,7 +5080,7 @@ impl Checker {
     pub(super) fn simd_application(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         if !self.simd_declared_application(args) {
             return self.simd_type(args);
         }
@@ -4986,10 +5093,7 @@ impl Checker {
             attributes,
             ..
         } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-        Ok((
-            Self::struct_instance_type(name, arguments),
-            attributes.source_order(),
-        ))
+        Ok((Self::struct_instance_type(name, arguments), attributes))
     }
 
     /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` by the
@@ -4998,8 +5102,14 @@ impl Checker {
     fn simd_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, BracketAttributes), TypeError> {
+    ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let (dtype, width, attributes) = self.positional_simd_dims(args)?;
+        let attributes = DeclaredAttributes::of_builtin(
+            mojito_types::types::SIMD_TYPE_NAME,
+            SIMD_PARAMS,
+            args,
+            attributes,
+        )?;
         Ok((simd_of(dtype, width)?, attributes))
     }
 
@@ -5294,6 +5404,37 @@ impl Checker {
 /// The owner of every generator type's own binders
 /// ([`Checker::generator_type`]).
 const GENERATOR_TYPE_OWNER: &str = "$generator";
+
+/// `List[T: AnyType, /]`.
+const LIST_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T")];
+/// `Set[T: KeyElement, H: Hasher & … = default_hasher]`.
+const SET_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T"), BuiltinParam::new("H")];
+/// `Dict[K: KeyElement, V: Movable, H: Hasher & … = default_hasher]`.
+const DICT_PARAMS: &[BuiltinParam] = &[
+    BuiltinParam::new("K"),
+    BuiltinParam::new("V"),
+    BuiltinParam::new("H"),
+];
+/// A pack-only list: `Tuple[*Ts: AnyType]`, `Variant[*Ts: AnyType]`, and
+/// the compiler-private storages over one.
+const PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*Ts")];
+/// `SIMD[dtype: DType, length: SIMDLength]`.
+const SIMD_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("dtype"), BuiltinParam::new("length")];
+/// `Pointer[mut: Bool, //, T: AnyType, origin: Origin[mut=mut], *,
+/// address_space: AddressSpace = .GENERIC]`, which `UnsafePointer` aliases.
+const POINTER_PARAMS: &[BuiltinParam] = &[
+    BuiltinParam::infer_only("mut"),
+    BuiltinParam::new("T"),
+    BuiltinParam::new("origin"),
+    BuiltinParam::new("address_space"),
+];
+/// `MutPointer`/`ImmPointer[T: AnyType, origin: MutOrigin, *,
+/// address_space: AddressSpace = .GENERIC]`, the mutability-fixing aliases.
+const FIXED_POINTER_PARAMS: &[BuiltinParam] = &[
+    BuiltinParam::new("T"),
+    BuiltinParam::new("origin"),
+    BuiltinParam::new("address_space"),
+];
 
 fn computed_string_literal(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expression)

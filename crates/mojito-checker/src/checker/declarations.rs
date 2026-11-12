@@ -1401,7 +1401,7 @@ impl Checker {
             ExprKind::TypeValue(ty) => self.type_value(value, ty),
             _ if let Some((name, args)) = self.parameter_application(value) => {
                 let (ty, attributes) = self.applied_type(name, &args)?;
-                self.record_bracket_attributes(value.source_span(), attributes);
+                self.record_declared_attributes(value.source_span(), &attributes);
                 Ok(ty)
             }
             _ => Err(TypeError::TypeMismatch {

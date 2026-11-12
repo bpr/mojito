@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2129**.
+Next free ID: **R2131**.
 
 ## Ordered Work
 
@@ -10057,26 +10057,50 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2125 A bracket-taking builtin binds its arguments with no
-  declared parameter list, where upstream declares it in the library**
+- [ ] **R2129 A builtin type's bracket binder keys its arguments by a
+  checker table, where the bundled library declares the type**
 
-  The checker's builtin binders read their bracket arguments by fixed
-  position and record attributes with no declaration to name them by.
-  - Upstream declares each one as a library function or struct with an
-    ordinary parameter list (`external_call[callee, return_type, *types]`,
-    `reflect[T]`).
-  - Probe: `external_call` (`checker/ffi_calls.rs`).
-  - Probe: `reflect[T]` (`checker/reflection.rs`).
-  - Probe: `Variant`'s `isa[T]` and its storage constructions
-    (`checker/inference.rs`).
-  - Probe: `__mlir_attr` and the one-type-argument trait tests
+  `List`, `Set`, `Dict`, `Tuple`, `Variant`, `Pointer` and its aliases,
+  and `SIMD`'s positional reader key each bracket attribute by a
+  `BuiltinParam` table (`DeclaredAttributes::of_builtin`,
+  `checker/type_resolution.rs`), though each has a bundled declaration.
+  - Upstream binds an application of each through the declaration's own
+    parameter list, as any struct's.
+  - Probe: the `LIST_PARAMS`, `SET_PARAMS`, `DICT_PARAMS`, `PACK_PARAMS`,
+    `POINTER_PARAMS`, `FIXED_POINTER_PARAMS`, and `SIMD_PARAMS` tables.
+  - Probe: `Variant`'s `isa[T]`, `unsafe_get`, `set`, `unwrap`, and
+    `replace` key by `T_PARAMS`/`VARIANT_REPLACE_PARAMS`
+    (`checker/inference.rs`), not the bundled methods' lists.
+  - The lever: key by the linked struct's `ParamDecl`s, keeping a table
+    only for a seam program linked without the library.
+  - Done when no table names a type the bundled library declares.
+  - Found while landing R2125 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2130 A call-shaped builtin keys its bracket arguments by a
+  checker table, where upstream declares a library function or alias**
+
+  `external_call`, `_unqualified_type_name`, the `IsTrivially*` trait
+  tests, and `TypeList.contains` are typed by checker rules, which key
+  their bracket attributes by a `BuiltinParam` table spelling upstream's
+  list.
+  - Upstream declares `external_call[callee, return_type, *types,
+    num_fixed_args=]` and `_unqualified_type_name[type]` as library
+    `def`s and `IsTriviallyMovable[T]` as a `comptime` alias, bound by the
+    ordinary binder.
+  - Probe: `EXTERNAL_CALL_PARAMS` (`checker/ffi_calls.rs`).
+  - Probe: `TYPE_PARAMS` for `_unqualified_type_name`
+    (`checker/call_inference.rs`) and `TypeList.contains`
     (`checker/constraints.rs`).
-  - The lever: each binder reads the bundled declaration's `ParamDecl`s
-    and records R2124's per-declaration list.
-  - Done when every `record_bracket_attributes` caller passes a list keyed
-    by declaration.
-  - Found while attempting R2120 (2026-11-12).
-  - Depends on R2124.
+  - Probe: `T_PARAMS` for the `IsTrivially*` tests
+    (`checker/constraints.rs`).
+  - The lever: declare each in the bundled library and bind its
+    application through `resolve_use_params`, deleting its table.
+  - Done when only compiler-private names (`__param_list_address`, the
+    storages) key by a table.
+  - Found while landing R2125 (2026-11-12).
+  - Depends on R2129.
   - Model: Opus, Not Planned.
 
 - [ ] **R2120 A checked call's bracket arguments follow the source
@@ -11294,6 +11318,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `#kgen.get_type_name` and `#kgen.get_base_type_name` and construct the
     `StaticString` its methods do (`static_string_of`,
     `checker/reflection.rs`).
+  - Probe: `reflect[T]`'s bracket attribute is keyed by the checker's
+    `T_PARAMS` table (`reflection_subject`), not a bundled declaration.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -678,7 +678,7 @@ fn intrinsic_resolution(
         declared_return: None,
         declared_params: Vec::new(),
         nested_origins: NestedOrigins::AsDeclared,
-        bracket_attributes: Vec::new(),
+        bracket_attributes: DeclaredAttributes::default(),
         refined_bound: None,
     }
 }

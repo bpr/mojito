@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compiler builtin's binder keys each bracket argument's attribute by
+  the parameter upstream's library declares for it, as a declared
+  binder does: `external_call`, `reflect[T]`, the builtin collection,
+  pointer, `SIMD`, and storage types, the `Variant` storage methods, the
+  `IsTrivially*` tests, and `TypeList.contains` bind through a
+  `BuiltinParam` table (`DeclaredAttributes::of_builtin`), so every
+  recorded bracket list is keyed by declaration and
+  `record_bracket_attributes` is gone (R2125).
 - The checker's declared-parameter binders return each bracket
   argument's attribute keyed by the parameter it binds
   (`DeclaredAttributes`), as upstream's binder fills the op's parameter

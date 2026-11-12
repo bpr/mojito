@@ -728,7 +728,7 @@ impl Checker {
             _ if let Some((name, args)) = self.parameter_application(body) => self
                 .applied_type(name, &args)
                 .map(|(template, attributes)| {
-                    self.record_bracket_attributes(body.source_span(), attributes);
+                    self.record_declared_attributes(body.source_span(), &attributes);
                     template
                 }),
             // A function type with its own binders (`def[dtype: DType,
@@ -1830,15 +1830,18 @@ impl Checker {
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Option<(CtValue, BracketAttributes)>, TypeError> {
+    ) -> Result<Option<(CtValue, DeclaredAttributes)>, TypeError> {
         if args.is_empty() {
             // A type value names the nominal `String`, not the compile-time
             // literal type a `[text: String]` value parameter binds.
             if let Some(ty) = scalar_type_name(name).filter(|ty| !ty.is_string_literal()) {
-                return Ok(Some((CtValue::Type(ty), Vec::new())));
+                return Ok(Some((CtValue::Type(ty), DeclaredAttributes::default())));
             }
             if name == "None" {
-                return Ok(Some((CtValue::Type(Ty::none()), Vec::new())));
+                return Ok(Some((
+                    CtValue::Type(Ty::none()),
+                    DeclaredAttributes::default(),
+                )));
             }
         }
         match self.applied_type(name, args) {
@@ -1944,7 +1947,7 @@ impl Checker {
             {
                 let (ty, attributes) = applied?;
                 if record {
-                    self.record_bracket_attributes(expr.source_span(), attributes);
+                    self.record_declared_attributes(expr.source_span(), &attributes);
                 }
                 self.ct_param(ty)
             }
@@ -4345,7 +4348,9 @@ impl Checker {
                     )));
                 };
                 let (operand, attribute) = self.predicate_operand(argument)?;
-                self.record_bracket_attributes(expr.source_span(), vec![attribute]);
+                let attributes =
+                    DeclaredAttributes::of_builtin(name, T_PARAMS, &args, vec![attribute])?;
+                self.record_declared_attributes(expr.source_span(), &attributes);
                 GenericConstraint::Trivial(kind, operand)
             }
             ExprKind::Prefix(PrefixOp::Not, value) => {
@@ -4614,7 +4619,13 @@ impl Checker {
             }
             "contains" => {
                 let (element, attribute) = self.predicate_operand(single("contains")?)?;
-                self.record_bracket_attributes(expr.source_span(), vec![attribute]);
+                let attributes = DeclaredAttributes::of_builtin(
+                    "TypeList.contains",
+                    TYPE_PARAMS,
+                    param_args,
+                    vec![attribute],
+                )?;
+                self.record_declared_attributes(expr.source_span(), &attributes);
                 match receiver {
                     TypeListReceiver::Pack(param) => GenericConstraint::PackContains {
                         operand: ConstraintOperand::Param(param),

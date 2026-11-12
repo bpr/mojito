@@ -127,7 +127,13 @@ impl Checker {
                 });
             }
         }
-        self.record_bracket_attributes(span.clone(), attributes);
+        let attributes = DeclaredAttributes::of_builtin(
+            "external_call",
+            EXTERNAL_CALL_PARAMS,
+            param_args,
+            attributes,
+        )?;
+        self.record_declared_attributes(span.clone(), &attributes);
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: "external_call".to_string(),

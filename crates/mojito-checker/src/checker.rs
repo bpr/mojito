@@ -3371,7 +3371,7 @@ struct MethodCallResolution {
     /// See [`MethodSig::nested_origins`].
     nested_origins: NestedOrigins,
     /// What each of the call's bracket arguments bound to.
-    bracket_attributes: BracketAttributes,
+    bracket_attributes: DeclaredAttributes,
     /// See [`mojito_checked::checked::CheckedCallContract::refined_bound`].
     refined_bound: Option<Vec<String>>,
 }
@@ -3656,7 +3656,7 @@ type MethodInstantiation = (
     Option<Ty>,
     TySubst,
     Vec<TyArg>,
-    BracketAttributes,
+    DeclaredAttributes,
 );
 
 struct MethodCallScore {
@@ -3723,8 +3723,9 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    BoundParameters, BracketAttributes, CallableSpecialization, DeclaredAttributes,
-    DependentValues, ExplicitTypes, bracket_attribute, tyarg_is_symbolic, types_attributes,
+    BoundParameters, CallableSpecialization, DeclaredAttributes, DependentValues,
+    EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, VALUE_PACK_PARAMS,
+    VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;

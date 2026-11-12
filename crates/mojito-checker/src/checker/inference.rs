@@ -1060,8 +1060,8 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                self.record_declared_attributes(expr.source_span(), &attributes);
                 let attributes = attributes.source_order();
-                self.record_bracket_attributes(expr.source_span(), attributes.clone());
                 // Replay the effects the callable VALUE's type carries, and
                 // a callable struct's `Struct.__call__` entry with the
                 // callee expression as the receiver actual.
@@ -1699,13 +1699,24 @@ impl Checker {
                 });
             }
             let record = |types: &[Ty]| {
-                self.record_bracket_attributes(span.clone(), types_attributes(param_args, types));
+                let params = match field {
+                    "replace" | "unsafe_replace" => VARIANT_REPLACE_PARAMS,
+                    _ => T_PARAMS,
+                };
+                let attributes = DeclaredAttributes::of_builtin(
+                    &format!("Variant.{field}"),
+                    params,
+                    param_args,
+                    types_attributes(param_args, types),
+                )?;
+                self.record_declared_attributes(span.clone(), &attributes);
+                Ok::<_, TypeError>(())
             };
             match field {
                 "isa" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
-                    record(std::slice::from_ref(&alternative));
+                    record(std::slice::from_ref(&alternative))?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.isa".to_string(),
@@ -1727,7 +1738,7 @@ impl Checker {
                 "unsafe_get" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
-                    record(std::slice::from_ref(&alternative));
+                    record(std::slice::from_ref(&alternative))?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.unsafe_get".to_string(),
@@ -1749,7 +1760,7 @@ impl Checker {
                 "set" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
-                    record(std::slice::from_ref(&alternative));
+                    record(std::slice::from_ref(&alternative))?;
                     if args.len() != 1 {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.set".to_string(),
@@ -1780,7 +1791,7 @@ impl Checker {
                 "unwrap" | "unsafe_unwrap" => {
                     let (index, alternative) =
                         self.variant_alternative(alternatives, param_args)?;
-                    record(std::slice::from_ref(&alternative));
+                    record(std::slice::from_ref(&alternative))?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: format!("Variant.{field}"),
@@ -1821,7 +1832,7 @@ impl Checker {
                     }
                     let input = self.type_param_argument(&param_args[0], "Variant.replace")?;
                     let output = self.type_param_argument(&param_args[1], "Variant.replace")?;
-                    record(&[input.clone(), output.clone()]);
+                    record(&[input.clone(), output.clone()])?;
                     let input_index = self
                         .variant_index(alternatives, &input, |alternative| alternative == &input)
                         .ok_or_else(|| TypeError::TypeMismatch {
@@ -2849,9 +2860,8 @@ impl Checker {
                 got: param_args.len(),
             });
         }
-        let (mut elements, attributes) = self.tuple_element_types(param_args)?;
-        let element = elements.remove(0);
-        self.record_bracket_attributes(span.clone(), attributes);
+        let (element, attributes) = self.uninit_storage_element(param_args)?;
+        self.record_declared_attributes(span.clone(), &attributes);
         match args {
             [] => {}
             [initializer] => {
@@ -2893,7 +2903,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         if !param_args.is_empty() {
             let (collection, attributes) = self.list_type(param_args)?;
-            self.record_bracket_attributes(span.clone(), attributes);
+            self.record_declared_attributes(span.clone(), &attributes);
             let elem = list_element(&collection)
                 .expect("List type construction has one type argument")
                 .clone();
@@ -2940,7 +2950,7 @@ impl Checker {
                 .map(nominal_tuple_type);
         }
         let (tuple, attributes) = self.tuple_type(param_args)?;
-        self.record_bracket_attributes(span.clone(), attributes);
+        self.record_declared_attributes(span.clone(), &attributes);
         // `Tuple[T0, ...]()` is the default construction: the specialization's
         // own `Defaultable` initializer once the discovery pass has
         // materialized it, and the canonical type before, as the request.
@@ -3036,7 +3046,7 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         let (storage, attributes) = self.enum_storage_type(param_args)?;
-        self.record_bracket_attributes(span.clone(), attributes);
+        self.record_declared_attributes(span.clone(), &attributes);
         let TyKind::Variant(alternatives) = storage.kind() else {
             return Err(TypeError::InvariantViolation(
                 "enum storage construction did not produce a variant".to_string(),
@@ -3113,7 +3123,7 @@ impl Checker {
                 });
             }
             let (variant, attributes) = self.variant_type(param_args)?;
-            self.record_bracket_attributes(span.clone(), attributes);
+            self.record_declared_attributes(span.clone(), &attributes);
             let TyKind::Variant(alternatives) = variant.kind() else {
                 return Err(TypeError::InvariantViolation(
                     "Variant type construction did not produce a variant".to_string(),
@@ -3155,7 +3165,7 @@ impl Checker {
             });
         }
         let (variant, attributes) = self.variant_type(param_args)?;
-        self.record_bracket_attributes(span.clone(), attributes);
+        self.record_declared_attributes(span.clone(), &attributes);
         let TyKind::Variant(alternatives) = variant.kind() else {
             return Err(TypeError::InvariantViolation(
                 "Variant type construction did not produce a variant".to_string(),

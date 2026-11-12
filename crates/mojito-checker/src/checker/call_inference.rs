@@ -209,10 +209,13 @@ impl Checker {
                     });
                 }
                 let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
-                self.record_bracket_attributes(
-                    span.clone(),
+                let attributes = DeclaredAttributes::of_builtin(
+                    "_unqualified_type_name",
+                    TYPE_PARAMS,
+                    param_args,
                     types_attributes(param_args, std::slice::from_ref(&ty)),
-                );
+                )?;
+                self.record_declared_attributes(span.clone(), &attributes);
                 self.reflected_static_name(
                     span,
                     &ty,
@@ -278,7 +281,7 @@ impl Checker {
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {
                 let (collection, attributes) = self.set_type(param_args)?;
-                self.record_bracket_attributes(span, attributes);
+                self.record_declared_attributes(span, &attributes);
                 let element = set_element(&collection)
                     .expect("Set type helper returns a nominal Set")
                     .clone();
@@ -305,7 +308,7 @@ impl Checker {
                     });
                 }
                 let (dict, attributes) = self.dict_type(param_args)?;
-                self.record_bracket_attributes(span, attributes);
+                self.record_declared_attributes(span, &attributes);
                 Ok(dict)
             }
             "Tuple" => {
@@ -2494,13 +2497,16 @@ impl Checker {
                 "'{PARAM_LIST_ADDRESS}' takes one raw parameter list and no arguments"
             ))
         })?;
-        self.record_bracket_attributes(
-            span.clone(),
+        let attributes = DeclaredAttributes::of_builtin(
+            PARAM_LIST_ADDRESS,
+            VALUE_PACK_PARAMS,
+            param_args,
             vec![bracket_attribute(
                 argument,
                 &TyArg::Val(CtValue::Expr(values.clone())),
             )],
-        );
+        )?;
+        self.record_declared_attributes(span.clone(), &attributes);
         let element = match values.meta() {
             mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
             _ => None,

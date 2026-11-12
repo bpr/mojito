@@ -1245,11 +1245,15 @@ binder answers its attributes keyed by declaration (`DeclaredAttributes` on
 struct application placing each origin argument the partition kept back in
 its declared slot (`PartitionedStructArgs::declared`) and an explicit
 specialization appending its origin arguments after the declared slots
-(`CallableSpecialization::declared`); the builtin binders (`applied_type`,
-`simd_dims`, the builtin collection and pointer types) still answer
-`BracketAttributes` in source order; and the route holding the occurrence
-records it (`Checker::record_declared_attributes`, which lays the keyed list
-out by source position, or `Checker::record_bracket_attributes`). A type-shaped argument's
+(`CallableSpecialization::declared`); a compiler builtin's binder
+(`applied_type`'s collection, pointer, `SIMD`, and storage types,
+`external_call`, `reflect`, the `Variant` storage methods, the
+one-type-argument trait tests) keys its arguments the same way, by the
+upstream parameter list a `BuiltinParam` table spells
+(`DeclaredAttributes::of_builtin`, binding as `call.rs`'s
+`match_parameter_slots` does); and the route holding the occurrence records
+it through `Checker::record_declared_attributes`, which lays the keyed list
+out by source position. A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),

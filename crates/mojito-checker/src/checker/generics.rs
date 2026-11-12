@@ -1502,7 +1502,7 @@ impl Checker {
                 kw_variadic.cloned(),
                 HashMap::new(),
                 Vec::new(),
-                Vec::new(),
+                DeclaredAttributes::default(),
             ));
         }
         let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
@@ -1644,7 +1644,7 @@ impl Checker {
             kw_variadic.map(resolve).transpose()?,
             subst,
             tyargs,
-            attributes.source_order(),
+            attributes,
         ))
     }
 

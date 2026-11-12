@@ -718,10 +718,13 @@ impl Checker {
         } else {
             self.type_param_argument(argument, "reflect")?
         };
-        self.record_bracket_attributes(
-            application.source_span(),
+        let attributes = DeclaredAttributes::of_builtin(
+            "reflect",
+            T_PARAMS,
+            args,
             types_attributes(args, std::slice::from_ref(&subject)),
-        );
+        )?;
+        self.record_declared_attributes(application.source_span(), &attributes);
         Ok(subject)
     }
 
