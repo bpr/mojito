@@ -4186,7 +4186,7 @@ fn infers_generic_static_and_instance_method_parameters() {
 
 #[test]
 fn infers_parametric_struct_static_parameters() {
-    // Explicit TypeApply receiver and bare receiver (struct parameters
+    // Explicit bracket receiver and bare receiver (struct parameters
     // inferred from the argument types) both dispatch a parametric struct's
     // static; the receiver substitution resolves `Self` in the return type.
     ok_std(

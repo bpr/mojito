@@ -1187,8 +1187,8 @@ impl Checker {
     /// upstream's classification of a `SubscriptNode`'s base. A base with no
     /// value binding (a type, alias, trait, or builtin head) or a callable
     /// [`Self::bracket_callable`] binds is applied; a runtime value is
-    /// subscripted. A `TypeApply` the parser already classified is always
-    /// an application.
+    /// subscripted. A `TypeApply`, which only the checker and the
+    /// elaborator synthesize from a type spelling, is always an application.
     pub(super) fn parameter_application<'e>(
         &self,
         expr: &'e Expr,

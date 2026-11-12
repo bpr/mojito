@@ -873,9 +873,9 @@ pub struct KwArg {
 pub enum SubscriptArg {
     Index(Expr),
     /// `name=value` — a keyword subscript argument (`s[byte=i]`), dispatched
-    /// to a keyword-only `__getitem__`/`__setitem__` parameter. Only value
-    /// bases produce this form; named brackets over a type name remain
-    /// compile-time parameter application.
+    /// to a keyword-only `__getitem__`/`__setitem__` parameter, or a keyword
+    /// parameter argument (`Origin[mut=True]`) when the checker classifies
+    /// the bracket's base as a type or callable.
     Keyword {
         name: String,
         value: Expr,
@@ -2125,15 +2125,19 @@ pub enum ExprKind {
         args: Vec<Expr>,
         kwargs: Vec<KwArg>,
     },
-    /// A subscript `object[index]` — supported for lists, tuples, SIMD, unsafe
-    /// pointers, and user types implementing `__getitem__`.
+    /// A subscript `object[index]` with one positional operand, upstream's
+    /// `SubscriptNode`: the checker classifies it by its base as a parameter
+    /// application (`S[Int]`), a callable's binding (`f[4]`), or a
+    /// `__getitem__` call (`xs[0]`). A type operand is the [`ExprKind::TypeValue`]
+    /// it spells.
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
     },
-    /// A parameterized type in expression position — `Name[param_args]` — used as
-    /// the receiver of a static method call, e.g. `UnsafePointer[T].alloc(n)`.
-    /// Only meaningful there; a bare `TypeApply` is a type, not a runtime value.
+    /// A parameter application `Name[param_args]` that the checker or the
+    /// elaborator synthesizes from a type spelling, and a `Call` pattern's
+    /// head. The parser builds every bracket suffix as an [`ExprKind::Index`]
+    /// or [`ExprKind::MultiIndex`] instead.
     TypeApply {
         name: String,
         args: Vec<ParamArg>,

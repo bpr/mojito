@@ -1240,9 +1240,12 @@ fn an_applied_type_operand_mangles_as_the_type_it_spells() {
     let spelled = Type::Named("List".into(), vec![pair()]);
     let parsed = Type::Named(
         "List".into(),
-        vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
-            name: "Pair".into(),
-            args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
+        vec![ParamArg::Value(Expr::from(ExprKind::Index {
+            object: Box::new(Expr::from(ExprKind::Identifier("Pair".into()))),
+            index: Box::new(Expr::from(ExprKind::TypeValue(Type::Named(
+                "Int".into(),
+                vec![],
+            )))),
         }))],
     );
     assert_eq!(TypeKey::from_ast(&parsed), TypeKey::from_ast(&spelled));

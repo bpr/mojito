@@ -36,6 +36,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     step,
                 });
             } else {
+                let operand_start = self.peek_start();
                 let mut argument = self.parse_param_arg()?;
                 if matches!(self.peek_token()?, Some(Token::Assign)) {
                     let name = param_argument_name(&argument)?;
@@ -112,7 +113,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         }
                     }
                 } else {
-                    items.push(ParsedBracketItem::Param(argument));
+                    items.push(ParsedBracketItem::Param(
+                        argument,
+                        (operand_start, self.last_span.1),
+                    ));
                 }
             }
 
@@ -142,7 +146,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let param_args = items
                 .into_iter()
                 .map(|item| match item {
-                    ParsedBracketItem::Param(argument) => argument,
+                    ParsedBracketItem::Param(argument, _) => argument,
                     ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. } => {
                         unreachable!()
                     }
@@ -172,10 +176,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut arguments = Vec::with_capacity(items.len());
             for item in items {
                 arguments.push(match item {
-                    ParsedBracketItem::Param(mojito_ast::ast::ParamArg::Value(value)) => {
+                    ParsedBracketItem::Param(mojito_ast::ast::ParamArg::Value(value), _) => {
                         SubscriptArg::Index(value)
                     }
-                    ParsedBracketItem::Param(_) => {
+                    ParsedBracketItem::Param(..) => {
                         return Err(ParseError::UnexpectedToken(
                             Token::RBracket,
                             "a mixed subscript argument must be an expression".into(),
@@ -217,135 +221,46 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ));
         }
 
-        let param_args: Vec<_> = items
+        // Every other bracket is one subscript node, as upstream's
+        // `SubscriptNode`: sema classifies it by its base (a parameter
+        // application, a callable's binding, or `__getitem__`). A type
+        // operand is the type value it spells, and `None` is the `None`
+        // value.
+        let arguments = items
             .into_iter()
-            .map(|item| match item {
-                ParsedBracketItem::Param(argument) => argument,
-                ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. } => {
-                    unreachable!()
-                }
-            })
-            .collect();
-
-        // A bracketed attribute (`` __mlir_attr[`9 : index`] ``) is one
-        // application of its pieces, however many there are.
-        if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr") {
-            return self.parameter_application(object, param_args, start);
-        }
-
-        // A named bracket argument over a lowercase (value) base is a keyword
-        // subscript (`s[byte=i]`); over a capitalized type name
-        // (`Origin[mut=True]`) it stays compile-time parameter application
-        // via the TypeApply fallback below.
-        if param_args
-            .iter()
-            .any(|argument| matches!(argument, mojito_ast::ast::ParamArg::Named { .. }))
-            && param_args.iter().all(|argument| match argument {
-                mojito_ast::ast::ParamArg::Named { value, .. } => {
-                    matches!(value.as_ref(), mojito_ast::ast::ParamArg::Value(_))
-                }
-                mojito_ast::ast::ParamArg::Value(_) => true,
-                mojito_ast::ast::ParamArg::Type(_) => false,
-            })
-            && expression_name_starts_lowercase(&object)
-        {
-            let args = param_args
-                .into_iter()
-                .map(|argument| match argument {
-                    mojito_ast::ast::ParamArg::Named { name, value } => {
-                        let mojito_ast::ast::ParamArg::Value(value) = *value else {
-                            unreachable!("guard admits only value keyword arguments");
-                        };
-                        SubscriptArg::Keyword { name, value }
+            .map(|item| {
+                let ParsedBracketItem::Param(argument, span) = item else {
+                    unreachable!("slices were handled above")
+                };
+                let argument = match argument {
+                    mojito_ast::ast::ParamArg::Type(Type::None) => {
+                        mojito_ast::ast::ParamArg::Value(Expr::new(ExprKind::None, span))
                     }
-                    mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
-                    mojito_ast::ast::ParamArg::Type(_) => unreachable!(),
-                })
-                .collect();
-            return Ok(self.node(
-                ExprKind::MultiIndex {
-                    object: Box::new(object),
-                    args,
-                },
-                start,
-            ));
-        }
-        match <[_; 1]>::try_from(param_args) {
-            Ok([mojito_ast::ast::ParamArg::Value(index)]) => Ok(self.node(
-                ExprKind::Index {
-                    object: Box::new(object),
-                    index: Box::new(index),
-                },
-                start,
-            )),
-            // `None` parses as a type in a bracket, but over a lowercase
-            // (value) base it is the `None` value (`table[None]` on a
-            // `Dict[Optional[Int], _]`), not a parameter application.
-            Ok([mojito_ast::ast::ParamArg::Type(Type::None)])
-                if expression_name_starts_lowercase(&object) =>
-            {
-                let index = Expr::new(ExprKind::None, (start, self.last_span.1));
-                Ok(self.node(
-                    ExprKind::Index {
-                        object: Box::new(object),
-                        index: Box::new(index),
-                    },
-                    start,
-                ))
-            }
-            // A `Self.o`-rooted binder (possibly projected —
-            // `Self.o._get_owned_interior["element"]`) as the sole bracket
-            // argument of a member subscript
-            // (`Origin[mut=False].cast_from[...]`): the qualified struct
-            // binder parses as a type/assoc chain, but a member object has no
-            // parameterized-application form — re-materialize the chain as
-            // the index expression.
-            Ok([mojito_ast::ast::ParamArg::Type(binder_ty)])
-                if !matches!(object.kind, ExprKind::Identifier(_))
-                    && self_param_rooted_expression(&binder_ty).is_some() =>
-            {
-                let binder = self
-                    .rematerialize_self_param_chain(&binder_ty, start)
-                    .expect("guarded by self_param_rooted_expression");
-                Ok(self.node(
-                    ExprKind::Index {
-                        object: Box::new(object),
-                        index: Box::new(binder),
-                    },
-                    start,
-                ))
-            }
-            Ok([other]) => self.parameter_application(object, vec![other], start),
-            Err(param_args)
-                if param_args.iter().all(|argument| {
-                    matches!(
-                        argument,
-                        mojito_ast::ast::ParamArg::Value(_)
-                            | mojito_ast::ast::ParamArg::Type(Type::None)
+                    argument => argument,
+                };
+                mojito_ast::ast::subscript_arg(argument, span).ok_or_else(|| {
+                    ParseError::UnexpectedToken(
+                        Token::RBracket,
+                        "a keyword argument takes one compile-time value".to_string(),
                     )
-                }) && expression_name_starts_lowercase(&object) =>
-            {
-                let none_span = (start, self.last_span.1);
-                let args = param_args
-                    .into_iter()
-                    .map(|argument| match argument {
-                        mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
-                        mojito_ast::ast::ParamArg::Type(Type::None) => {
-                            SubscriptArg::Index(Expr::new(ExprKind::None, none_span))
-                        }
-                        _ => unreachable!(),
-                    })
-                    .collect();
-                Ok(self.node(
-                    ExprKind::MultiIndex {
-                        object: Box::new(object),
-                        args,
-                    },
-                    start,
-                ))
-            }
-            Err(param_args) => self.parameter_application(object, param_args, start),
-        }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let kind = match <[_; 1]>::try_from(arguments) {
+            Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
+                object: Box::new(object),
+                index: Box::new(index),
+            },
+            Ok(arguments) => ExprKind::MultiIndex {
+                object: Box::new(object),
+                args: arguments.into(),
+            },
+            Err(arguments) => ExprKind::MultiIndex {
+                object: Box::new(object),
+                args: arguments,
+            },
+        };
+        Ok(self.node(kind, start))
     }
 
     /// Parse the tail after the first `:` of one slice item. Comma ends the item
@@ -549,50 +464,5 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "Expected newline, ';', or EOF at the end of statement".into(),
             )),
         }
-    }
-
-    /// `object[args]` as a compile-time parameter application: a named
-    /// callee's `TypeApply`, or the subscript of a type's member
-    /// (`S[Int].Of[Bool]`, `P.plus[1, 2]`), which the checker reads as the
-    /// member's application, a type argument as the type value it spells.
-    fn parameter_application(
-        &self,
-        object: Expr,
-        args: Vec<mojito_ast::ast::ParamArg>,
-        start: usize,
-    ) -> Result<Expr, ParseError> {
-        let member_of_type = matches!(&object.kind, ExprKind::Member { object, .. }
-            if object.type_spelling().is_some());
-        if !member_of_type {
-            let name = call_name(object)?;
-            return Ok(self.node(ExprKind::TypeApply { name, args }, start));
-        }
-        let span = (start, self.last_span.1);
-        let indices = args
-            .into_iter()
-            .map(|argument| {
-                mojito_ast::ast::subscript_arg(argument, span).ok_or_else(|| {
-                    ParseError::UnexpectedToken(
-                        Token::RBracket,
-                        "a keyword argument takes one compile-time value".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let kind = match <[_; 1]>::try_from(indices) {
-            Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
-                object: Box::new(object),
-                index: Box::new(index),
-            },
-            Ok(indices) => ExprKind::MultiIndex {
-                object: Box::new(object),
-                args: indices.into(),
-            },
-            Err(indices) => ExprKind::MultiIndex {
-                object: Box::new(object),
-                args: indices,
-            },
-        };
-        Ok(self.node(kind, start))
     }
 }

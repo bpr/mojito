@@ -3755,8 +3755,8 @@ def main():
 fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
     // A loan-carrying temporary built inline as a parameterized-static
     // argument anchors in a hidden `$arg_loan_r` slot for BOTH
-    // static-receiver parses — the TypeApply spelling (`Pair[Int,
-    // String].sum(...)`) and the single-argument subscript spelling
+    // static-receiver parses — the multi-operand subscript (`Pair[Int,
+    // String].sum(...)`) and the single-operand subscript
     // (`Tally[Int].total(...)`) — and each post-call `KeepAlive` keeps
     // the view's source alive through its call.
     let source = include_str!("../assets/ok/span_temp_static_argument.mojo");
@@ -5653,7 +5653,7 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
             }
             _ => None,
         })
-        .expect("TypeApply makes the nested closure");
+        .expect("the bracket application makes the nested closure");
     assert!(
         specialized
             .as_func()

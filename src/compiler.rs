@@ -3,7 +3,7 @@
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::checker::{CheckContext, InstalledInterfaces};
-use crate::comptime::{ComptimeError, ImportedScope, elaborate_importing, prepare_importing};
+use crate::comptime::{ComptimeError, elaborate_prepared, prepare_importing};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::disassemble;
@@ -776,13 +776,7 @@ impl Compiler {
         // and finds the instances the entries reach.
         let own = {
             let _elaborate = timing::span("elaborate");
-            elaborate_importing(
-                &prepared,
-                ImportedScope {
-                    installed: package.as_ref().map(|(_, installed)| installed),
-                },
-            )
-            .map_err(CompilerError::Comptime)?
+            elaborate_prepared(&prepared).map_err(CompilerError::Comptime)?
         };
         if !self.allow_executable_module_scope {
             validate_module_scope(&own).map_err(CompilerError::Type)?;

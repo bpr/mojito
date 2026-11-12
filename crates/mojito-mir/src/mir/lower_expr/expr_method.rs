@@ -64,11 +64,11 @@ impl<'a> Flatten<'a> {
     }
 
     /// The struct a static call's receiver names, when the receiver's node
-    /// is a type rather than a value: a type application (`Dict[Int, Int]`),
-    /// a name the check bound to nothing (`Point`), the
-    /// single-argument application that parses as a value subscript over
-    /// such a name (`Box[String]`), or `type_of(operand)`, the instance
-    /// the checker recorded it denotes. The bracket content is a
+    /// is a type rather than a value: a bracket over a type name in either
+    /// subscript node (`Box[String]`, `Dict[Int, Int]`, `Origin[mut=True]`),
+    /// a synthesized type application, a name the check bound to nothing
+    /// (`Point`), or `type_of(operand)`, the instance the checker recorded
+    /// it denotes. The bracket content is a
     /// compile-time argument the checker already resolved into its symbol
     /// selection — never lowered.
     pub(in crate::mir) fn type_receiver_name(&self, object: Node<'a>) -> Option<String> {
@@ -80,7 +80,7 @@ impl<'a> Flatten<'a> {
                 .as_ref()
                 .and_then(mojito_types::types::nominal_parts)
                 .map(|(name, _)| name.to_string()),
-            CheckedOp::Index { object: base, .. } => {
+            CheckedOp::Index { object: base, .. } | CheckedOp::MultiIndex { object: base, .. } => {
                 self.type_name(self.checked.expression(*base)?)
             }
             _ => self.type_name(node),

@@ -5865,7 +5865,7 @@ impl<'a> ArenaBuilder<'a> {
     }
 
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-        use ExprKind::{Identifier, Index, Member, TypeApply, TypeValue};
+        use ExprKind::{Identifier, Index, Member, MultiIndex, TypeApply, TypeValue};
         if let Some(node) = self.spelled_construction(expression) {
             return node;
         }
@@ -5881,10 +5881,25 @@ impl<'a> ArenaBuilder<'a> {
         let place_ty = facts.place_ty.clone();
         let binding_ty = facts.binding_ty.clone();
         let binding = facts.binding;
+        // A bracket is classified by its base, as upstream's `SubscriptNode`
+        // is: a type's application denotes the type, recorded (when at all)
+        // as the base's own instance, a static receiver's type.
+        let type_application = binding.is_none()
+            && place_ty.is_none()
+            && expression.bracket_application().is_some_and(|(name, _)| {
+                ty.as_ref().is_none_or(|ty| {
+                    mojito_types::types::nominal_parts(ty).is_some_and(|(own, _)| own == name)
+                })
+            });
         let category = match expression.kind {
-            TypeApply { .. } if variant_projection => ValueCategory::Place,
-            TypeApply { .. } if resolved_callable_value => ValueCategory::Value,
+            TypeApply { .. } | Index { .. } | MultiIndex { .. } if variant_projection => {
+                ValueCategory::Place
+            }
+            TypeApply { .. } | Index { .. } | MultiIndex { .. } if resolved_callable_value => {
+                ValueCategory::Value
+            }
             TypeApply { .. } | TypeValue(_) => ValueCategory::Type,
+            Index { .. } | MultiIndex { .. } if type_application => ValueCategory::Type,
             // Expressions retained only inside constraints, reflection, and
             // other erased parameter metadata are deliberately absent from
             // the runtime type/place maps. They still cross the checked

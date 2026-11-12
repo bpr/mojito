@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2112**.
+Next free ID: **R2115**.
 
 ## Ordered Work
 
@@ -2674,6 +2674,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2113 `Origin` is only a binder bound, not a type**
+
+  `comptime O = Origin[mut=True]` prints `ok` at the pin, inside a function
+  and at module scope, where Mojito rejects both: `Origin` exists only as
+  a parameter's bound (`[o: Origin[mut=True]]`), and the bundled library
+  declares no `Origin` struct to apply.
+  - Inside a function it fails: "not a compile-time Int constant: not an
+    associated comptime expression".
+  - At module scope it fails: "Undefined variable 'Origin'".
+  - Upstream declares `struct Origin[mut: Bool, _mlir_origin: …, //]` in
+    `std/origin/__init__.mojo`, and `comptime MutOrigin =
+    Origin[mut=True]` aliases it.
+  - Found while landing R1514 (2026-11-11).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -4775,40 +4791,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1514 A capitalized, keyword, or type-operand bracket is parsed as a
-  parameter application**
+- [ ] **R2112 `ExprKind::TypeApply` is a second application node**
 
-  `parse_bracket_suffix` (`parser/suffix.rs`) still builds `TypeApply` for
-  a bracket with several operands or a keyword operand over a capitalized
-  base, or with an operand that parses as a type, where upstream builds one
-  `SubscriptNode` and sema classifies it by its base.
-  - The lever: the tail of `parse_bracket_suffix` becomes one conversion.
-    Positional operands are `SubscriptArg::Index`, keyword operands
-    `SubscriptArg::Keyword`, and a type operand `TypeValue(ty)`; the
-    result is `Index` for one positional operand, else `MultiIndex`.
-  - `Type::None` becomes `ExprKind::None`, which `subscript_param_arg` reads
-    back as `ParamArg::Type(Type::None)`. The `None` and `Self`-chain cases,
-    `parameter_application`, `call_name`, `expression_name_starts_lowercase`,
-    and `self_param_rooted_expression` go.
-  - Also: the value category of a type-denoting subscript
-    (`crates/mojito-checked/src/checked.rs`), the parser tests' `TypeApply`
-    assertions, and `docs/grammar.md`'s `subscript_arg` "value bases only"
-    note.
-  - `projection_to_subscript` (`comptime/rewrite.rs`) converts a
-    `TypeApply` over a runtime local into the `Index` the parser already
-    builds otherwise; after the flip it is dead and goes.
-  - Probe: `comptime U256 = SIMD[DType.uint64, 4]`
-    (`stdlib/std/hash/_ahash.mojo`) must stay a type alias; an
-    unconverted parser flip stops the bundled std packaging there.
-  - Pattern heads: `parser/patterns.rs` builds a `Call` pattern's head as
-    `TypeApply` itself, not through `parse_bracket_suffix`.
-  - MIR: `checked.rs` lowers `ExprKind::TypeApply` to
-    `CheckedOp::TypeApply`, which MIR reads in `lower_stmt.rs`,
-    `expr.rs`, `expr_method.rs`, `facts.rs`, and `mir.rs`. After the flip
-    a bracket the checker classified as an application or a Variant
-    projection must still lower to it, or MIR must read both.
-  - Found while landing R1371 (2026-10-27).
-  - Depends on R2109.
+  The checker and the elaborator still synthesize `ExprKind::TypeApply`
+  from a type spelling, and MIR reads it as `CheckedOp::TypeApply`, where
+  upstream has one `SubscriptNode` that sema classifies by its base.
+  - The parser builds every bracket suffix as `Index` or `MultiIndex`, so
+    a `TypeApply` now comes only from a synthesizer or a `Call` pattern's
+    head (`parser/patterns.rs`).
+  - Synthesizers: `Type::expression_spelling` (`ast.rs`),
+    `constraints.rs`, `inference.rs` (two sites),
+    `initializer_list.rs`, and `comptime/elab.rs`.
+  - Readers: `checked.rs`, HIR (`hir.rs`), MIR (`lower_stmt.rs`,
+    `expr.rs`, `expr_method.rs`, `facts.rs`, `mir.rs`),
+    `closure_uses.rs`, and `rewrite_types.rs`.
+  - The Variant-projection arms over `TypeApply` (`lower_stmt.rs`,
+    `expr.rs`, `mir.rs`, `hir.rs`, `indexing.rs`, `inference.rs`) look
+    unreachable now that no parsed `TypeApply` names a runtime local.
+    Prove it with an audit of the synthesizers before deleting them.
+  - The lever: the synthesizers and the pattern head build `Index` or
+    `MultiIndex` through `ast::subscript_arg`, then the node and
+    `CheckedOp::TypeApply` go.
+  - Found while landing R1514 (2026-11-11).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1511 A scalar type name in a bracket is a type by its spelling**
@@ -4848,6 +4853,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     'Self'"): about 20 `ParamArg::Type(SourceType::SelfParam(..))` arms in
     the checker and `mojito-comptime/src/comptime/rewrite.rs` read the
     type spelling.
+  - A bracket suffix in an expression already reads `None` as the value
+    (R1514), so `comptime A = List[None]` is rejected as at the pin. What
+    remains for `None` is the type grammar and the fused call.
+  - Probe: `var x: List[None] = []` and `show[None]()` over
+    `def show[T: AnyType]()` both run, where the pin rejects each: "'List'
+    parameter 'T' has 'AnyType' type, but value has type 'None'".
   - The end state is `ParamArg::Type` only for `def(...)`, `ref`, and
     `*Ts`, which only the type grammar spells.
   - Found while landing R1370 (2026-10-27).
@@ -9327,6 +9338,21 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2114 `CtValue::Marker` has no producer**
+
+  No compiler phase builds a `CtValue::Marker` since R1514 deleted the
+  comptime value rewrite, yet `CtMarker` still rides through `ct.rs`, about
+  ten `Marker(_)` match arms, and the MIR text format.
+  - Only the MIR text reader constructs one (`marker_local`,
+    `marker_type`, `$local`, `$type`, `$applied`, `$tuple-origin`).
+  - `docs/symbol-map.md` still says the elaborator keeps an applied
+    constant's name as `CtMarker::Applied`, which nothing does.
+  - Delete the variant end to end, with the MIR text and package format
+    bumps that removing a value form needs.
+  - Found while landing R1514 (2026-11-11).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -13127,7 +13153,7 @@ lines. The rest needs semantic extraction, not line moves.
     `checker/inference.rs` (2,520), `checker/statements.rs` (2,471),
     `ast.rs` (2,464), `mir.rs` (2,426), `checker/type_resolution.rs`
     (2,395), `runtime.rs` (2,235), `checker.rs` (2,232),
-    `comptime/rewrite.rs` (2,179), `checker/declarations.rs` (2,118),
+    `checker/declarations.rs` (2,118),
     `mir/text/write.rs` (2,116), `backend/vm/exec.rs` (2,085).
   - Depends on nothing. Split one of these only while touching it for
     another task.

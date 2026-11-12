@@ -1054,12 +1054,12 @@ tuple_or_group:
     | '(' expression ')'                            # grouping (e)
 
 subscript_arg:
-    | NAME '=' expression         # keyword subscript (`s[byte=i]`); value bases only
-                                  # (a lowercase name or a field chain rooted at one)
+    | NAME '=' expression         # keyword operand: a keyword subscript (`s[byte=i]`)
+                                  # or a keyword parameter (`Origin[mut=True]`), by base
     | NAME '=' [expression] ':' [expression] [':' [expression]]
                                   # keyword slice (`s[byte=a:b]`); read-only like
                                   # every nominal keyword subscript
-    | expression
+    | expression                  # also a type, kept as the type value it spells
     | [expression] ':' [expression] [':' [expression]]
 args: ','.arg+ [',']              # positional args/spread, then keyword args/forwarding
 arg: NAME '=' expression | forwarded_kwargs | spread_arg | expression
@@ -1142,22 +1142,19 @@ Notes:
   `borrow[origin_of(value)]` invoked later through its origin-specialized
   callable type); empty brackets bind none (`total[]()`). Over a name that
   denotes a type the bracket is a parameterized type value, and over any
-  other value it is a subscript. A bracket over a capitalized name holding
-  several operands or a keyword operand, and one holding an operand that
-  parses as a `type` (a scalar name, `Self`, `None`, `def(...)`), still
-  parse as the parameter application `TypeApply` (roadmap R1514).
-  Over a member of a type (`S[Int].Of[Bool]`, `P.plus[1, 2]`,
-  `P.plus[a=1]`), whose base is a capitalized name, `Self`, a parameter
-  application, or a member chain of one, the brackets are a subscript too,
-  any argument the bracket parses as a type kept as the type value it
-  spells: the checker reads the subscript as the member's application, as
-  at the pin.
-  A **named** bracket argument follows the same lowercase-name convention as
-  mixed runtime subscripts: over a lowercase (value) base, `s[byte=i]` is a
-  keyword subscript dispatching to a keyword-only `__getitem__`/`__setitem__`
-  overload; over a capitalized type name (`Origin[mut=True]`,
-  `SIMD[width=4]`), named brackets remain compile-time parameter
-  application. A named argument whose value is a slice (`s[byte=a:b]`,
+  other value it is a subscript. Every such bracket is one subscript node
+  whatever its base or operands: one positional operand is an `Index`,
+  anything else a `MultiIndex`. An operand that parses as a `type` (a
+  scalar name, `Self`, `def(...)`) is the type value it spells, and `None`
+  is the `None` value, so a type parameter rejects `List[None]` as the pin
+  does. Over a member of a type (`S[Int].Of[Bool]`, `P.plus[1, 2]`,
+  `P.plus[a=1]`) the checker reads the subscript as the member's
+  application, as at the pin.
+  A **named** bracket argument is a keyword operand over any base: over a
+  value, `s[byte=i]` is a keyword subscript dispatching to a keyword-only
+  `__getitem__`/`__setitem__` overload; over a type or a callable
+  (`Origin[mut=True]`, `SIMD[width=4]`, `pair[b=3, a=4]`) it binds the
+  parameter it names. A named argument whose value is a slice (`s[byte=a:b]`,
   `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice binds a
   keyword-only `__getitem__` parameter, read-only like every nominal keyword
   subscript. A slice literal is upstream's `T(lower, upper, stride,

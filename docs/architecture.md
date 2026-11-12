@@ -347,11 +347,9 @@ import (every compilation that links the bundled library):
   the own statements alone, reading the package's traits, which a
   conformer inherits defaults from, and its SIMD, `!kgen.type`, and `!kgen.string` aliases
   as its build's check resolved them (`InstalledInterfaces::type_alias`).
-  `comptime::elaborate_importing` elaborates them alone
-  (`comptime::ImportedScope`), reading no package declaration but its
-  struct names (`InstalledInterfaces::declares_struct`), which mark a
-  subscript-shaped projection, as upstream's emitters read a package
-  declaration resolved, never its syntax.
+  `comptime::elaborate_prepared` elaborates them alone, reading no package
+  declaration, as upstream's emitters read a package declaration resolved,
+  never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration records of the modules the link reached
   to its fresh `Checker` (`Checker::attach_interfaces`), copying nothing
@@ -1034,9 +1032,8 @@ Entry points:
 
 ```rust
 comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
-comptime::prepare_importing(own: Vec<Stmt>, traits: &[&Stmt], installed: Option<&InstalledInterfaces>) -> Result<Vec<Stmt>, ComptimeError>
+comptime::prepare_importing(own: Vec<Stmt>, installed: Option<&InstalledInterfaces>) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError>
-comptime::elaborate_importing(own: &[Stmt], imported: ImportedScope) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
 
@@ -1698,8 +1695,7 @@ other closed constant — a scalar, a string, a `DType`, a vector, a closed
 tuple or struct — is a folded attribute (`Checker.module_values`, or the
 integer tables symbol spelling reads), its read a `ParamKind::Constant` at
 the declared type, and a read of one applies nothing. The toplevel lowers no `comptime` declaration, and the elaborator
-spells no module constant into a body (`mark_struct_names` only marks
-struct names).
+spells no module constant into a body.
 
 Compile-time values are represented by:
 
@@ -3582,7 +3578,7 @@ those are current-Mojo rejections, not deferred concatenation features.
 
 A variadic **struct** template (`struct S[*Ts: Bound]`) is specialized the same
 way: compile-time elaboration keeps the template verbatim, resolves every
-explicit instantiation (calls, `TypeApply` expressions, and type annotations) to
+explicit instantiation (calls, bracket applications, and type annotations) to
 a mangled fully concrete struct, resolves pack-applied member annotations such
 as `Tuple[*Ts]` to the corresponding concrete nominal specialization, rewrites
 a pack-typed method

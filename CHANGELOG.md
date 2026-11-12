@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The parser builds every bracket not followed by a call as one subscript
+  node, `Index` or `MultiIndex`, whatever its base or operands, as
+  upstream's `SubscriptNode`. The checker classifies it by its base, and a
+  type operand is the type value it spells. `None` in such a bracket is
+  the `None` value, so `List[None]`, `Variant[Int, None]`, and
+  `H[None].f()` are now rejected as at the pin. The comptime value rewrite,
+  which only marked struct names after this change, is deleted (R1514).
 - The checker's main inference, constraint, and alias dispatch read a
   bracket after a name as one parameter application whether it parsed as
   `TypeApply`, `Index`, or `MultiIndex`. A lowercase struct's

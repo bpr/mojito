@@ -185,11 +185,12 @@ fn unary_plus_binds_tighter_than_product() {
 
 #[test]
 fn bracketed_mlir_attr_is_one_application_of_its_pieces() {
-    // One piece or several, `__mlir_attr[...]` is an application, never a
-    // subscript; a backtick piece is an identifier argument.
+    // One piece or several, `__mlir_attr[...]` is one bracket whose
+    // operands are its pieces, each backtick piece an identifier argument.
     for source in ["__mlir_attr[`9 : index`]", "__mlir_attr[`8`, ` : index`]"] {
-        let ExprKind::TypeApply { name, args } = parse_expr(source).kind else {
-            panic!("{source} is not an application");
+        let expression = parse_expr(source);
+        let Some((name, args)) = expression.bracket_application() else {
+            panic!("{source} is not a bracket application");
         };
         assert_eq!(name, "__mlir_attr");
         assert!(
@@ -209,8 +210,10 @@ fn bracketed_mlir_attr_is_one_application_of_its_pieces() {
 fn self_construction_is_a_bracket_value_operand() {
     // `HookFor[Self()]`: `Self(` opens a construction, a value argument, as
     // `Int(` does, never a type followed by a stray parenthesis.
-    let ExprKind::TypeApply { name, args } = parse_expr("H[Self(3), n=Self()]").kind else {
-        panic!("not an application");
+    let expression = parse_expr("H[Self(3), n=Self()]");
+    assert!(matches!(expression.kind, ExprKind::MultiIndex { .. }));
+    let Some((name, args)) = expression.bracket_application() else {
+        panic!("not a bracket application");
     };
     assert_eq!(name, "H");
     let constructs_self = |arg: &ParamArg| matches!(arg, ParamArg::Value(Expr { kind: ExprKind::Call { name, .. }, .. }) if name == "Self");
@@ -1125,9 +1128,9 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
         parse_expr("S[Int].Of[Bool]\n").kind,
         ExprKind::Index {
             object: member(
-                ExprKind::TypeApply {
-                    name: "S".into(),
-                    args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
+                ExprKind::Index {
+                    object: bx(ExprKind::Identifier("S".into())),
+                    index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
                 },
                 "Of",
             ),
@@ -1147,9 +1150,15 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
             ],
         }
     );
-    // A value-rooted member takes no type argument.
-    let mut parser = Parser::new(Lexer::new("x.f[Int]\n"));
-    assert!(parser.parse_program().is_err());
+    // A value-rooted member's bracket is the same subscript node: sema,
+    // not the parser, rejects a method's specialization as a value.
+    assert_eq!(
+        parse_expr("x.f[Int]\n").kind,
+        ExprKind::Index {
+            object: member(ExprKind::Identifier("x".into()), "f"),
+            index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
+        }
+    );
 }
 
 #[test]
@@ -2301,11 +2310,12 @@ fn parses_empty_subscript_as_pointer_dereference_marker() {
             if matches!(object.kind, ExprKind::Identifier(ref name) if name == "p")
                 && matches!(index.kind, ExprKind::None)
     ));
-    // Over a type name the same bracket stays compile-time parameter
-    // application.
+    // Over a type name the bracket is the same subscript node: the parser
+    // does not split by base, and the checker rejects the `None` value in a
+    // type slot, as the pin does.
     assert!(matches!(
         parse_expr("Wrapper[None]").kind,
-        ExprKind::TypeApply { .. }
+        ExprKind::Index { index, .. } if matches!(index.kind, ExprKind::None)
     ));
     // The marker composes as an ordinary suffix: deref of an offset call.
     assert!(matches!(
@@ -2377,9 +2387,9 @@ fn parses_nested_type_argument() {
                 *ty,
                 Type::Named(
                     "Box".into(),
-                    vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
-                        name: "Pair".into(),
-                        args: vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
+                    vec![ParamArg::Value(Expr::from(ExprKind::Index {
+                        object: bx(ExprKind::Identifier("Pair".into())),
+                        index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
                     }))],
                 )
             );
@@ -3512,9 +3522,12 @@ fn parses_a_self_rooted_chain_continued_by_an_operator_as_a_subscript() {
 fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
     // `Self.width()` and `Grid[n].cells()` start as type-shaped arguments;
     // the call makes each the value expression it is.
-    let arguments = |source: &str| match parse_expr(source).kind {
-        ExprKind::TypeApply { args, .. } => args,
-        other => panic!("expected a type application, got {other:?}"),
+    let arguments = |source: &str| {
+        let expression = parse_expr(source);
+        expression
+            .bracket_application()
+            .map(|(_, args)| args.into_owned())
+            .unwrap_or_else(|| panic!("expected a bracket application, got {expression:?}"))
     };
     let on_self = arguments("SIMD[DType.int32, Self.width()]");
     assert!(
@@ -4628,7 +4641,7 @@ fn expr_and_stmt_nodes_carry_real_source_spans() {
 }
 
 #[test]
-fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
+fn keyword_subscripts_parse_on_value_and_type_bases_alike() {
     // `s[byte=i]` over a lowercase (value) base is a keyword subscript; a
     // named bracket over a capitalized type name stays compile-time
     // parameter application.
@@ -4664,8 +4677,11 @@ fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
         panic!("assign");
     };
     assert!(
-        matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "Origin"),
-        "named bracket over a type name stays TypeApply: {:?}",
+        matches!(&value.kind, ExprKind::MultiIndex { object, args }
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Origin")
+                && matches!(args.as_slice(),
+                    [mojito::ast::SubscriptArg::Keyword { name, .. }] if name == "mut")),
+        "a named bracket over a type name is a keyword subscript: {:?}",
         value.kind
     );
 }

@@ -1401,10 +1401,9 @@ impl Checker {
                         .insert(object.source_span());
                 }
                 // A variant projection whose alternative is spelled with a
-                // struct name (`v[String]`): the name no longer parses as a
-                // type token, so it arrives as an ordinary index identifier;
-                // reinterpret it as the projection's type argument, mirroring
-                // the `TypeApply` arm below.
+                // struct name (`v[String]`) arrives as an ordinary index
+                // identifier; reinterpret it as the projection's type
+                // argument.
                 // `v[String]` on a struct declaring a type-keyed
                 // `__getitem_param__[T]` (the self-hosted `Variant`): the
                 // accessor call, whose reference result is the projected place.
@@ -1555,8 +1554,9 @@ impl Checker {
                 self.infer_multi_subscript(expr.source_span(), object, args)
             }
             ExprKind::TString { parts, .. } => self.infer_template_string(expr, parts),
-            // A function's specialization, a Variant projection, or a type
-            // read as a value.
+            // An application the checker or the elaborator synthesized from
+            // a type spelling: a function's specialization, a Variant
+            // projection, or a type read as a value.
             ExprKind::TypeApply { name, args } => {
                 if let Some(specialized) = self.infer_specialized_callable_value(
                     expr.source_span(),

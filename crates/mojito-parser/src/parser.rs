@@ -59,7 +59,8 @@ enum Precedence {
 }
 
 enum ParsedBracketItem {
-    Param(mojito_ast::ast::ParamArg),
+    /// One compile-time operand with its own source span.
+    Param(mojito_ast::ast::ParamArg, Span),
     Slice {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
@@ -124,18 +125,6 @@ fn assert_outside_function() -> ParseError {
     )
 }
 
-/// The callee name of a call: the callee must be a bare identifier (closures
-/// can't escape to become arbitrary callee expressions).
-fn call_name(callee: Expr) -> Result<String, ParseError> {
-    match callee.kind {
-        ExprKind::Identifier(name) => Ok(name),
-        other => Err(ParseError::UnexpectedToken(
-            Token::LParen,
-            format!("only named functions can be called, found {other:?}"),
-        )),
-    }
-}
-
 /// The parsed body of an `if`/`elif`/`else` chain: the `(condition, body)`
 /// branches plus the optional `else` body. Shared by `if` and `comptime if`.
 type IfChain = (Vec<(Condition, Vec<Stmt>)>, Option<Vec<Stmt>>);
@@ -178,28 +167,6 @@ fn param_argument_name(arg: &mojito_ast::ast::ParamArg) -> Result<String, ParseE
             Token::Assign,
             "a compile-time keyword argument requires a name".into(),
         )),
-    }
-}
-
-/// Whether an expression names a value rather than a type: a lowercase
-/// identifier, a field chain rooted at one (`self.p`, `w.s`), or a call or
-/// subscript result — the bases a keyword subscript (`s[byte=i]`,
-/// `self.p[unsafe_offset=i]`, `f(x)[unsafe_offset=0]`) accepts, as opposed
-/// to a capitalized type name taking a named parameter (`Origin[mut=True]`).
-fn expression_name_starts_lowercase(expression: &Expr) -> bool {
-    let starts_lowercase = |name: &str| name.chars().next().is_some_and(char::is_lowercase);
-    match &expression.kind {
-        ExprKind::Identifier(name) => starts_lowercase(name),
-        ExprKind::Member { object, field } => {
-            starts_lowercase(field) && expression_name_starts_lowercase(object)
-        }
-        ExprKind::Call { .. }
-        | ExprKind::MethodCall { .. }
-        | ExprKind::Invoke { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::MultiIndex { .. }
-        | ExprKind::Slice { .. } => true,
-        _ => false,
     }
 }
 
@@ -308,23 +275,4 @@ pub struct Parser<I: Iterator<Item = Result<(Token, Span), LexError>>> {
     /// only `...` can be told from one that says `pass`.
     placeholder_statements: std::collections::HashSet<usize>,
     docstring_statements: std::collections::HashSet<usize>,
-}
-
-/// Whether a type is the qualified struct binder (`Self.o`) or a projection
-/// chain rooted at it whose applications are single value arguments —
-/// re-materializable as an origin expression by
-/// `Parser::rematerialize_self_param_chain`.
-fn self_param_rooted_expression(ty: &Type) -> Option<()> {
-    match ty {
-        Type::SelfParam(_) => Some(()),
-        Type::Assoc { base, args, .. } => {
-            self_param_rooted_expression(base)?;
-            match args.as_slice() {
-                [] | [mojito_ast::ast::ParamArg::Value(_)] => Some(()),
-                _ => None,
-            }
-        }
-        Type::IndexedProjection { base, .. } => self_param_rooted_expression(base),
-        _ => None,
-    }
 }

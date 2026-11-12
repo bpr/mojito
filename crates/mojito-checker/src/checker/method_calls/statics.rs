@@ -85,7 +85,7 @@ impl Checker {
 
     /// Type a static method on a (possibly parametric) registered struct:
     /// `Dict[Int, Int].fromkeys(...)` (explicit `struct_targs` from a
-    /// `TypeApply` receiver) or `Dict.fromkeys(keys, 0)` (empty `struct_targs`;
+    /// bracket receiver) or `Dict.fromkeys(keys, 0)` (empty `struct_targs`;
     /// the struct's parameters are inferred from the call's argument types).
     /// Mirrors the instance-receiver arm of [`Self::infer_method_call`]: the
     /// struct substitution applies first, method-level generics instantiate on

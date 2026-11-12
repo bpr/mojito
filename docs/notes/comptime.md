@@ -125,7 +125,6 @@ This does not require adding type values yet. It is a consolidation phase.
 - `src/comptime.rs`
   - `CtValue`
   - `lit`
-  - `mark_struct_names` (formerly `materialize_block`)
 - `src/checker.rs`
   - former `CtVal`
   - `eval_ct`

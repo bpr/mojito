@@ -12,13 +12,12 @@
 //!   parameters its arguments' struct types leave unbound, and folds SIMD
 //!   alias bounds and `!kgen.type` parameters. It selects no arm
 //!   and unrolls no loop.
-//! - **Elaboration** ([`elaborate_importing`]) — every `comptime`
+//! - **Elaboration** ([`elaborate_prepared`]) — every `comptime`
 //!   declaration, `comptime if`, `comptime for`, and `comptime match` is
 //!   kept as written. A body's alias of an element of its own type pack
 //!   (`comptime T = Ts[i]`) is spelled as that element in the statements
-//!   after it, a leading-dot `comptime` initializer is spelled at its
-//!   annotated type, and declared struct names are marked for the check's
-//!   projection reading. At module scope the parser rejects a `comptime if`
+//!   after it, and a leading-dot `comptime` initializer is spelled at its
+//!   annotated type. At module scope the parser rejects a `comptime if`
 //!   or `comptime match`, and `compiler::validate_module_scope` a `comptime
 //!   for`.
 
@@ -31,7 +30,7 @@ use mojito_types::types::TyKind;
 
 use mojito_checker::checker::InstalledInterfaces;
 use mojito_common::token::Span;
-use mojito_types::ct::{CtMarker, CtValue};
+use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use std::collections::{HashMap, HashSet};
@@ -67,15 +66,6 @@ impl std::fmt::Display for ComptimeError {
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let prepared = prepare(program)?;
     elaborate_prepared(&prepared)
-}
-
-/// What an importing program's front end reads of the package it imports,
-/// beside its own statements. The default is a program that imports none.
-#[derive(Clone, Copy, Default)]
-pub struct ImportedScope<'a> {
-    /// The declaration interfaces of the modules the link reached, whose
-    /// struct names a subscript-shaped projection is told apart by.
-    pub installed: Option<&'a InstalledInterfaces>,
 }
 
 /// Prepare a linked program for source validation and elaboration.
@@ -118,43 +108,19 @@ pub fn prepare_importing(
 
 /// Elaborate a [`prepare`]d program.
 ///
-/// Ordinary callers use [`elaborate`]; the compiler, which prepares once,
-/// enters here.
-pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_importing(program, ImportedScope::default())
-}
-
-/// Elaborate a program's own [`prepare_importing`]d statements, `own`,
-/// beside the package `imported` holds.
-///
 /// Every `comptime` declaration, `comptime if`, `comptime for`, and
 /// `comptime match` is kept as written: the check binds each parameter
 /// expression, and `native::mono` evaluates it, as upstream evaluates
-/// parameter expressions only in its elaborator, after sema. Only `own` is
-/// elaborated and returned, as upstream's importer takes a package
-/// declaration already resolved.
+/// parameter expressions only in its elaborator, after sema. An importing
+/// program elaborates only its own statements, as upstream's importer takes
+/// a package declaration already resolved. Ordinary callers use
+/// [`elaborate`]; the compiler, which prepares once, enters here.
 ///
 /// # Errors
 ///
 /// None today; the signature keeps the stage's seam.
-pub fn elaborate_importing(
-    own: &[Stmt],
-    imported: ImportedScope<'_>,
-) -> Result<Vec<Stmt>, ComptimeError> {
-    let elaborated = elab::block(own, None);
-    let own_structs: HashSet<&str> = own
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    let mut result = mark_struct_names(elaborated, &|name| {
-        own_structs.contains(name)
-            || imported
-                .installed
-                .is_some_and(|installed| installed.declares_struct(name))
-    });
+pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> {
+    let mut result = elab::block(program, None);
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);

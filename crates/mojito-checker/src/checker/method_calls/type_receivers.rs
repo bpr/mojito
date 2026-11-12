@@ -459,7 +459,7 @@ impl Checker {
         // A parametric struct's static needs the struct's own parameters
         // solved (here, inferred from the call's argument types or filled
         // from their defaults — the explicit spelling arrives as a
-        // `TypeApply` receiver above); the dedicated path owns that. The
+        // bracket receiver above); the dedicated path owns that. The
         // bare name then denotes the instance it was solved at (`T` in
         // `T.answer()` is `T[3]`), which lowering hands the elaborator.
         // Non-parametric statics keep the established path below.
