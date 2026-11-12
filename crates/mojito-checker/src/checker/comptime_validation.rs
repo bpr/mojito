@@ -4902,11 +4902,13 @@ impl Checker {
     /// binders denotes wherever the body reads it at compile time: its
     /// parameter expression, or the application of the function lifted for
     /// an `Int` or a `Bool` that compiles to none (`comptime e = h(n)`).
-    /// `None` for a constant, a value that denotes nothing, or a display,
-    /// which is bound by the function lifted for it at its annotation
-    /// ([`Self::requested_binding`]).
+    /// A tuple display denotes its literal constructor's application, as
+    /// upstream's alias is its value, so every spelling of an element read
+    /// is one expression. `None` for a constant, a value that denotes
+    /// nothing, or a list display, which is bound by the function lifted
+    /// for it at its annotation ([`Self::requested_binding`]).
     fn comptime_value_expression(&self, value: &Expr) -> Option<ParamExpr> {
-        if matches!(value.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_)) {
+        if matches!(value.kind, ExprKind::ListLit(_)) {
             return None;
         }
         let _lifting = self.lifting_position();

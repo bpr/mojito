@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1176
+# swept-count	1177
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -400,6 +400,7 @@ assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error:
 assets/type_error/comptime_struct_type_instance_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' type as a value to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/type_error/comptime_struct_type_value_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'AnyStruct[Int]' value to 'String'
 assets/type_error/comptime_template_binding_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
+assets/type_error/comptime_tuple_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(n)]' value to 'SIMD[.int32, h((load_from_mem Tuple(n, Int((mul n, 2))).__getitem_param__[Int(0)]()))]'
 assets/type_error/comptime_tuple_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Tuple(Int(2), Int(1)).__getitem_param__[Int(0)]())]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_type_binder_value_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'Writable & Copyable' value to 'Int'
 assets/type_error/comptime_type_ordering_rejected.mojo	compile-reject	agree	error: 'Movable' does not implement the '__lt__' method

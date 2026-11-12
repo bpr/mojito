@@ -275,6 +275,7 @@ assets/ok/comptime_struct_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_subscript_application_in_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_template_body_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_tuple_binding_identity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_value_bracket_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_value_materialized_without_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_value_subscript_annotation.mojo	-	ineligible	no-scalar-entry-shape

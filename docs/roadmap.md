@@ -5202,13 +5202,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin identifies the two reads by structure. It still tells `L[0]`
     from `n`, which `assets/type_error/comptime_display_element_identity.mojo`
     pins for `L[0] * 2` against `L[1]`.
-  - The lever: bind each local display binding as its literal
+  - The lever: bind each local list display binding as its literal
     constructor's application (`Checker::display_application`), which
-    identifies by structure.
-  - Probe: `comptime x = (3, 4)` then `g[x]()` over `def g[t: Tuple[Int,
-    Int]]()` in `main` fails with "not a compile-time Int constant: x",
-    where the pin prints `7` for `t[0] + t[1]`. A bracket display
-    (`g[(3, 4)]()`) already binds as the application.
+    identifies by structure, as `comptime_value_expression` already does
+    for a tuple display.
+  - Probe: `comptime vals = [n, n * 2]` and `comptime other = [n, n *
+    2]`, then `var a: SIMD[DType.int32, h(vals[0])] = SIMD[DType.int32,
+    h(other[0])](1)`, is rejected the same way through a lifted
+    application (`$comptime$f$c0(n)[0]` against `$comptime$f$c1(n)[0]`).
   - Probe: `comptime L = [1, 2, 3]` then `f[L]()` in `main`, over `def
     f[c: Span[Int, _]]()` whose body is `comptime for i in range(len(c)):
     print(c[i])`, fails with "not a compile-time Int constant: L", where
@@ -5224,28 +5225,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     argument (2026-10-06).
   - Depends on R1529.
   - Model: Opus, Not Planned.
-
-- [ ] **R390 Two spellings of an application are one value only when
-  their names resolve to the same bindings**
-
-  Problem: `comptime vals = [n, n * 2]` and `comptime other = [n, n * 2]`,
-  then `var a: SIMD[DType.int32, h(vals[0])] = SIMD[DType.int32,
-  h(other[0])](1)`, in `def f[n: Int]()` is rejected with "type mismatch for
-  variable 'a'", where the pin runs it.
-  - The check gives one lifted function to two occurrences of an expression
-    when their syntax is equal and each name resolves to the same binding
-    (`Checker::lifted_application`, `checker/comptime_validation.rs`).
-  - The pin identifies the two by the structure of what they compute.
-  - A tuple binding is the second case: `comptime t = (n, n * 2)` then
-    `h(t[0])` outside a `comptime for` and inside it are two functions,
-    since the binders a value that denotes no parameter expression reads
-    are not known (`Checker::binders_read`).
-  - The check still tells `h(n)` from `n * 2`, which
-    `assets/type_error/comptime_application_identity.mojo` pins.
-  - Found while landing an application in a type or a parameter argument
-    (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1970 A local `comptime` value of a literal-typed call is lifted at
   `Int`, while its function returns the literal unconverted**

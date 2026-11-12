@@ -1207,8 +1207,10 @@ which the check records on the expression when it applies a function
 constant (`Flatten::display_read`); MIR lifts no function of its own. Each
 lifted function begins with the statements of the
 local `comptime` bindings its expression reads that denote no parameter
-expression — the displays, and a value such as `comptime t = (L[0], L[1])`
-(`ComptimeThunks::bind_evaluated`, `thunk_prologue`) — and `native::mono` demands an
+expression — a list display, and a value with no compile-time construction
+(`ComptimeThunks::bind_evaluated`, `thunk_prologue`); a tuple display denotes
+its literal constructor's application (`Checker::display_application`), as
+upstream's alias is its value, so it needs none — and `native::mono` demands an
 application wherever it evaluates one — a condition, a loop header, a
 parameter constant, a bracket argument's expression
 (`Specializer::applied`). `materialize[L]()`, and a value

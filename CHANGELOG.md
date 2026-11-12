@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` tuple display binding is its literal constructor's
+  application, as the pin's alias is its value, so `h(t[0])` is one type
+  through two bindings of the same tuple, an alias, the inline display,
+  and inside a `comptime for`, and `comptime x = (3, 4)` then `g[x]()`
+  binds a tuple parameter, as at the pin (R390).
 - `Self`, `Self.T`, and `None` in a bracket parse as expressions like any
   other operand, as upstream's `parseSubscriptSuffix` does: the checker
   classifies `Self` and its members as the types or values they denote,

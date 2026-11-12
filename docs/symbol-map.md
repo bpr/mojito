@@ -2228,7 +2228,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`positioned_application`) inside a `Checker::lifting_position`
   (`checker/scopes.rs`), which a value parameter argument, a SIMD width
   (`simd_width`), and a local `comptime` value
-  (`comptime_value_expression`) open: it names the function, applies it to
+  (`comptime_value_expression`, which compiles a tuple display as its
+  literal constructor's application through `display_application` and
+  leaves only a list display to `record_display_binding`) open: it names the function, applies it to
   the binders the expression reads (`binders_read`; every binder in scope
   for a call of a nested `def` that captures nothing, which
   `Checker::compile_time_callee` finds among `Checker::nested_function_owners`,
