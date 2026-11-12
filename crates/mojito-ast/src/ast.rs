@@ -2019,6 +2019,18 @@ impl Expr {
         }
     }
 
+    /// The member of the enclosing struct this expression names (`o` for
+    /// `Self.o`), a bracket operand's spelling of a struct parameter or
+    /// member.
+    pub fn self_member(&self) -> Option<&str> {
+        match &self.kind {
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+                Some(field)
+            }
+            _ => None,
+        }
+    }
+
     /// The type a type-shaped expression spells: a capitalized name, `Self`,
     /// a parameter application (`S[Int]`, or the one-operand subscript
     /// `S[1]`), or a member chain rooted at one (`M.Inner`, `Self.T`). `None`

@@ -92,6 +92,7 @@ assets/ok/bracket_capitalized_display_element.mojo	main	exe-differential	sanitiz
 assets/ok/bracket_capitalized_module_constant.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_subscript_operator.mojo	main	exe-differential	sanitized
 assets/ok/bracket_function_application.mojo	main	exe-differential	sanitized
+assets/ok/bracket_self_operands_are_expressions.mojo	main	exe-differential	sanitized
 assets/ok/bracketed_call_defaulted_struct_binder.mojo	main	exe-differential	sanitized
 assets/ok/builtin_init_auto_parameterized_argument.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized

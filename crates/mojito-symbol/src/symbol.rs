@@ -2304,14 +2304,11 @@ fn simd_binder_slot<'a>(
             kind: ExprKind::Identifier(name),
             ..
         })
-        | ParamArg::Type(Type::SelfParam(name)) => name,
-        ParamArg::Value(Expr {
-            kind: ExprKind::Member { object, field },
-            ..
-        }) if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => field,
+        | ParamArg::Type(Type::SelfParam(name)) => name.as_str(),
+        ParamArg::Value(expr) => expr.self_member()?,
         _ => return None,
     };
-    type_bounds.contains_key(name).then_some(name.as_str())
+    type_bounds.contains_key(name).then_some(name)
 }
 
 /// A declared compile-time parameter as its annotation spells in an overload
@@ -2408,10 +2405,14 @@ fn syntactic_origin_argument(
     };
     let value = match arg {
         ParamArg::Value(value) => value,
-        // A struct's own origin binder, spelled `Self.origin`.
+        // A struct's own origin binder, as the checker spells `Self.origin`.
         ParamArg::Type(Type::SelfParam(name)) => return is_origin_binder(name),
         _ => return false,
     };
+    // A struct's own origin binder, spelled `Self.origin`.
+    if let Some(name) = value.self_member() {
+        return is_origin_binder(name);
+    }
     match &value.kind {
         ExprKind::Identifier(name) => {
             matches!(

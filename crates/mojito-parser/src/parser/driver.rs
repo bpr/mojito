@@ -58,56 +58,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Build a spanned expression: `kind` spanning from `start` (its first token's
     /// start offset) to the end of the most recently consumed token.
-    /// Rebuild a `Self.o`-rooted binder/projection chain the type parser
-    /// consumed (`Self.o`, `Self.o._get_owned_interior["element"]`) as the
-    /// origin expression it spells in an origin slot.
-    pub(super) fn rematerialize_self_param_chain(&self, ty: &Type, start: usize) -> Option<Expr> {
-        match ty {
-            Type::SelfParam(param) => {
-                let object = self.node(ExprKind::Identifier("Self".to_string()), start);
-                Some(self.node(
-                    ExprKind::Member {
-                        object: Box::new(object),
-                        field: param.clone(),
-                    },
-                    start,
-                ))
-            }
-            Type::Assoc { base, name, args } => {
-                let base = self.rematerialize_self_param_chain(base, start)?;
-                let member = self.node(
-                    ExprKind::Member {
-                        object: Box::new(base),
-                        field: name.clone(),
-                    },
-                    start,
-                );
-                match args.as_slice() {
-                    [] => Some(member),
-                    [mojito_ast::ast::ParamArg::Value(index)] => Some(self.node(
-                        ExprKind::Index {
-                            object: Box::new(member),
-                            index: Box::new(index.clone()),
-                        },
-                        start,
-                    )),
-                    _ => None,
-                }
-            }
-            Type::IndexedProjection { base, index } => {
-                let base = self.rematerialize_self_param_chain(base, start)?;
-                Some(self.node(
-                    ExprKind::Index {
-                        object: Box::new(base),
-                        index: index.clone(),
-                    },
-                    start,
-                ))
-            }
-            _ => None,
-        }
-    }
-
     pub(super) fn node(&self, kind: ExprKind, start: usize) -> Expr {
         Expr {
             kind,

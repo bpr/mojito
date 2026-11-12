@@ -5327,3 +5327,43 @@ fn struct_parameter_redefinition_is_rejected_in_its_scopes() {
         "{header}    comptime e = 1\n\n    def f[e: Int](self):\n        if True:\n            var d = 2\n        for d in range(2):\n            pass\n        def g[d: Int]():\n            pass\n"
     ));
 }
+
+#[test]
+fn self_and_none_in_a_bracket_are_expressions() {
+    // Upstream parses every bracket operand as an expression: `Self` is a
+    // name, `Self.T` a member access on it, and `None` the `None` value.
+    let self_member = || {
+        ParamArg::Value(Expr::from(ExprKind::Member {
+            object: bx(ExprKind::Identifier("Self".into())),
+            field: "T".into(),
+        }))
+    };
+    let parsed = parse(
+        "struct S[T: AnyType]:\n    var xs: List[Self.T]\n\n    def f(self, ys: List[None]):\n        pass\n",
+    );
+    let StmtKind::Struct {
+        fields, methods, ..
+    } = &parsed[0].kind
+    else {
+        panic!("expected struct declaration")
+    };
+    assert_eq!(
+        fields[0].ty,
+        Type::Named("List".into(), vec![self_member()])
+    );
+    assert_eq!(
+        methods[0].params[0].ty,
+        Type::Named(
+            "List".into(),
+            vec![ParamArg::Value(Expr::from(ExprKind::None))]
+        )
+    );
+    let call = parse_expr("pick[Self]()\n");
+    assert!(
+        matches!(&call.kind, ExprKind::Call { name, param_args, .. }
+            if name == "pick"
+                && param_args.as_slice()
+                    == [ParamArg::Value(Expr::from(ExprKind::Identifier("Self".into())))]),
+        "{call:?}"
+    );
+}

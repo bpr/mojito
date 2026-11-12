@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2116**.
+Next free ID: **R2120**.
 
 ## Ordered Work
 
@@ -4816,27 +4816,72 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1512 `Self`, `Self.T`, and `None` in a bracket are types by their
+- [ ] **R2117 The checker re-spells a `Self` operand as type syntax**
+
+  `index_argument` (`checker/type_resolution.rs`) and
+  `self_instance_spelling` (`checker/initializer_list.rs`) build
+  `ParamArg::Type(SourceType::SelfParam(..))` from a `Self.<member>`
+  operand, where upstream keeps the operand an expression and classifies
+  it where it binds.
+  - The parser no longer builds that form (R1512), so these synthesizers
+    are what keep its reader arms alive (R2118).
+  - Probe: `index_argument` as the identity on a `Self.<member>` index
+    fails the std package at `TypeList`'s `_mlir_type =
+    _MLIR.KGENParamListType[Self.Trait]`, because `trait_type_arg`
+    reads `Self.Trait` only through its type arm.
+  - Probe: `self_instance_spelling` building `Self.<param>` expressions
+    fails the std package with "'Self.mut' is not a type parameter of the
+    enclosing struct": `type_runtime_param_args` infers the synthesized
+    `Self.mut`, and `infer_member` finds no `mut` in a `Span` scope whose
+    `self_decls` hold only `T`.
+  - The synthesized expressions carry `DUMMY_SPAN`, and node facts are
+    keyed by span, so each needs a real span before it can be inferred.
+  - Found while landing R1512 (2026-11-11).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2118 The checker reads a bracket operand's `Self.<member>` type
   spelling**
 
-  `peek_starts_type` (`parser/types.rs`) parses `Self`, a `Self` member,
-  and `None` in a bracket as a type, where upstream parses each as an
-  expression.
-  - As expressions the bundled std does not package ("unknown type
-    'Self'"): about 20 `ParamArg::Type(SourceType::SelfParam(..))` arms in
-    the checker and `mojito-comptime/src/comptime/rewrite.rs` read the
-    type spelling.
-  - A bracket suffix in an expression already reads `None` as the value
-    (R1514), so `comptime A = List[None]` is rejected as at the pin. What
-    remains for `None` is the type grammar and the fused call.
-  - Probe: `var x: List[None] = []` and `show[None]()` over
-    `def show[T: AnyType]()` both run, where the pin rejects each: "'List'
-    parameter 'T' has 'AnyType' type, but value has type 'None'".
-  - The end state is `ParamArg::Type` only for `def(...)`, `ref`, and
-    `*Ts`, which only the type grammar spells.
-  - Found while landing R1370 (2026-10-27).
-  - Depends on R1511.
-  - Model: Fable, Not Planned.
+  About twenty checker arms match `ParamArg::Type(SourceType::SelfParam(..))`
+  beside the `Value(Self.<member>)` arm that reads the same operand,
+  where upstream has the expression alone.
+  - Arms: `trait_type_arg`, `resolve_param_arg`, `slot_value`,
+    `resolve_trait_param_arg`, `pointer_origin_arg`, `syntactic_origin_argument`, and
+    `check_origin_mutability_argument` (`type_resolution.rs`), with
+    `type_spelled_member_read` and `self_field_read`.
+  - More arms: `resolve_origin_param_arg` and
+    `collect_field_origin_binders` (`origins/binders.rs`),
+    `param_arg_value_ty` (`declarations.rs`), `bracket_operand`
+    (`constraints.rs`), `raw_list_argument` (`comptime_validation.rs`),
+    the `Self.dt` dtype arm (`annotations.rs`), and `simd_binder_slot`
+    and `syntactic_origin_argument` (`mojito-symbol/src/symbol.rs`).
+  - Each deletion moves its body to the `Value` arm (`Expr::self_member`)
+    where that arm does not already read the operand.
+  - Done when `rg 'ParamArg::Type\((SourceType|Type)::SelfParam' crates`
+    finds only the `*` pack arms.
+  - Found while landing R1512 (2026-11-11).
+  - Depends on R2117.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2116 A value bound to a type parameter reports Mojito's own
+  wording**
+
+  `var x: List[None] = []`, `show[None]()` over `def show[T: AnyType]()`,
+  and `comptime A = List[None]` are rejected with "type mismatch for …
+  type argument: expected a type, found a value", where the pin says
+  "'List' parameter 'T' has 'AnyType' type, but value has type 'None'"
+  (with "invalid call to 'show': " before it for a call).
+  - The lever: report a value bound to a type parameter through
+    `TypeError::ParamValueType`, with the value's type as `found`, as
+    R1511 does for a type bound to a value slot.
+  - The fixtures to update are
+    `assets/type_error/bracket_none_operand_is_a_value.mojo`,
+    `bracket_none_type_annotation_is_a_value.mojo`, and
+    `bracket_none_fused_call_is_a_value.mojo`.
+  - Found while landing R1512 (2026-11-11).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1244 A compile-time arm does not assume that the earlier
   conditions failed**
@@ -11973,6 +12018,23 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R1365 (2026-10-27).
   - Depends on R1495.
   - Model: Fable, Not Planned.
+
+- [ ] **R2119 An annotation is parsed by a separate type grammar**
+
+  `parse_type` (`parser/types.rs`) parses an annotation (`x: Self.T`,
+  `-> None`, `-> Self`) with its own grammar into `SourceType`, where
+  upstream parses an annotation as an expression and converts the `None`
+  value to `NoneType` in a type context.
+  - Bracket operands already parse as expressions (R1511, R1512, R1514).
+    What remains is the annotation position itself.
+  - No program behaves differently today: the cost is a second grammar
+    and the `SourceType` arms that mirror expression forms.
+  - The session plans the migration in slices and lands the first, the
+    atoms `None`, `Self`, and `Self.<member>` parsed as expressions and
+    converted through `Expr::type_spelling`.
+  - Found while landing R1512 (2026-11-11).
+  - Depends on R2118.
+  - Model: Fable, Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

@@ -2815,12 +2815,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   with one bracket argument binds it against its declared parameters
   (`type_resolution.rs:declared_type_member`), and
   `type_member_value`'s `TyKind::SelfType` arm reads a trait's own value
-  requirement in its scope. A member spelled as a type in a value slot
-  (`Box[Self.n]`, `Self.T.K`) is the read
-  `type_resolution.rs:type_spelled_member_read` respells, the value-slot
-  entry of `resolve_param_arg`, `param_arg_value_ty`, `simd_width`, and
-  `lower_assoc_application_arg`; a type member or type parameter there
-  stays a type. A requirement's signature reads its `Self` members at the
+  requirement in its scope. A bracket operand `Self.n` or `Self.T.K` reaches
+  the value-slot entries of `resolve_param_arg`, `param_arg_value_ty`,
+  `simd_width`, and `lower_assoc_application_arg` as the expression it is;
+  a type spelling the checker itself synthesizes in a value slot
+  (`self_instance_spelling`, `index_argument`) is the read
+  `type_resolution.rs:type_spelled_member_read` respells, and a type member
+  or type parameter there stays a type. A requirement's signature reads its `Self` members at the
   conformer it is matched against (`requirement_at`) and at a bound
   receiver (`method_calls/resolution.rs`) through
   `Checker::substitute_self_members`. After a binder substitution,

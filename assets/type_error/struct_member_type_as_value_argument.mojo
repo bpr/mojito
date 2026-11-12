@@ -1,4 +1,4 @@
-# expect: type mismatch for value parameter 'n'
+# expect: 'Box' parameter 'n' has 'Int' type, but value has type 'AnyStruct[Int]'
 # A struct's type member is no value: passed where `Box` takes its `Int`
 # parameter, it is rejected, while a value member passes.
 struct Box[n: Int]:

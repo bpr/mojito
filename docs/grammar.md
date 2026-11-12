@@ -548,10 +548,9 @@ parses it, whatever the capitalization of the name it starts with:
 the checker decides whether each denotes a type or a value. An operand is a
 `type` only where the type grammar alone spells it: a function type
 `def(...)`, a `ref` type, and a `*` pack. The scalar names are expressions
-like any other name (`List[Int]`, `materialize[Int8.MAX]()`). `Self` and its
-members, and `None`, still parse as a `type` there, a divergence (roadmap
-R1512); followed by `(`, `Self` opens the construction expression it starts
-(`HookFor[Self()]`), a value operand. A member's one bracket operand in a
+like any other name (`List[Int]`, `materialize[Int8.MAX]()`), and so are
+`Self` (a name), `Self.T` (a member access on it), and `None` (the `None`
+value, which a type parameter rejects). A member's one bracket operand in a
 type (`M.Of[Int]`, `M.Buf[3]`) is the subscript the checker classifies, and
 the member's application when a call follows (`M.Of[Int]()[0]`).
 

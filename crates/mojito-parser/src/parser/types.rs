@@ -120,27 +120,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 continue;
             }
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                let bracket = self.last_span.0;
                 let arguments = self.parse_param_args()?;
-                // A qualified struct binder (`Self.o`) in the index position
-                // parses as a type; it is the same compile-time value the bare
-                // `o` spelling produces.
-                let rematerialized = match arguments.as_slice() {
-                    [mojito_ast::ast::ParamArg::Type(inner @ Type::SelfParam(_))] => {
-                        self.rematerialize_self_param_chain(inner, bracket)
-                    }
-                    _ => None,
-                };
                 // A member's bracket list a call follows is its application
                 // (`M.Of[Int]()`), whatever its one operand parsed as.
                 let applied = matches!(self.peek_token()?, Some(Token::LParen))
                     && matches!(&ty, Type::Assoc { args, .. } if args.is_empty());
-                let index = match (&rematerialized, arguments.as_slice(), &mut ty) {
-                    (Some(expression), ..) => expression,
-                    (None, [mojito_ast::ast::ParamArg::Value(index)], _) if !applied => index,
+                let index = match (arguments.as_slice(), &mut ty) {
+                    ([mojito_ast::ast::ParamArg::Value(index)], _) if !applied => index,
                     // A parameterized member applied to its bracket list
                     // (`S[Int].Of[Bool]`, `M.Pair[1, 2]`).
-                    (None, _, Type::Assoc { args, .. }) if args.is_empty() => {
+                    (_, Type::Assoc { args, .. }) if args.is_empty() => {
                         *args = arguments;
                         continue;
                     }
@@ -458,10 +447,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Parses a single parameter argument. An operand only the type grammar
-    /// spells (a function type, `ref`, a `*` pack) is a `Type`, as are, for
-    /// now, `None` and `Self`. Every other operand is one expression (`Int`,
-    /// `Foo[Int]`, `L[0] * 2`), which the checker classifies as a type or a
-    /// value by what it denotes.
+    /// spells (a function type, `ref`, a `*` pack) is a `Type`. Every other
+    /// operand is one expression (`Int`, `Foo[Int]`, `L[0] * 2`, `Self.T`,
+    /// and `None`, which is the `None` value), which the checker classifies
+    /// as a type or a value by what it denotes.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
         // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
@@ -486,7 +475,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             });
         }
         if self.peek_starts_type()? {
-            let start = self.peek_start();
             let ty = self.parse_type()?;
             // Upstream reads `ref[o]` here as an expression followed by a stray
             // type: an origin-bearing reference is never a type argument.
@@ -501,121 +489,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     "expected ']' in call argument list".to_string(),
                 ));
             }
-            if let Type::Value(value) = ty {
-                return Ok(ParamArg::Value(
-                    self.parse_expression_from(*value, Precedence::Lowest)?,
-                ));
-            }
-            if matches!(ty, Type::SelfType) && matches!(self.peek_token()?, Some(Token::LParen)) {
-                let atom = Expr::new(
-                    ExprKind::Identifier("Self".to_string()),
-                    (start, self.last_span.1),
-                );
-                return Ok(ParamArg::Value(
-                    self.parse_expression_from(atom, Precedence::Lowest)?,
-                ));
-            }
-            // A `Self`-rooted chain an operator continues (`Self.Ts.length -
-            // 1 - i`) is the first atom of a value expression.
-            if !matches!(
-                self.peek_token()?,
-                Some(Token::Comma | Token::RBracket | Token::Dot | Token::LParen) | None
-            ) && let Some(atom) = self.rematerialize_self_param_chain(&ty, start)
-            {
-                return Ok(ParamArg::Value(
-                    self.parse_expression_from(atom, Precedence::Lowest)?,
-                ));
-            }
-            // `Self.Ts.values` is the struct pack's element list, a value
-            // like a `def`'s own `Ts.values`, not an associated type.
-            if let Type::Assoc { base, name, args } = &ty
-                && let Type::SelfParam(pack) = &**base
-                && name == "values"
-                && args.is_empty()
-            {
-                let span = (start, self.last_span.1);
-                let member = |object: Expr, field: &str| {
-                    Expr::new(
-                        ExprKind::Member {
-                            object: Box::new(object),
-                            field: field.to_string(),
-                        },
-                        span,
-                    )
-                };
-                let owner = Expr::new(ExprKind::Identifier("Self".to_string()), span);
-                return Ok(ParamArg::Value(member(member(owner, pack), "values")));
-            }
-            // A projection chained off the qualified struct binder
-            // (`Self.o._get_owned_interior[...]` in an origin slot) is a value
-            // expression: the type parse stops at `Self.o`, so a following
-            // `.` re-parses the binder as an expression atom and continues.
-            if let Type::SelfParam(param) = &ty
-                && matches!(self.peek_token()?, Some(Token::Dot))
-            {
-                let atom = Expr::new(
-                    ExprKind::Member {
-                        object: Box::new(Expr::new(
-                            ExprKind::Identifier("Self".to_string()),
-                            (start, self.last_span.1),
-                        )),
-                        field: param.clone(),
-                    },
-                    (start, self.last_span.1),
-                );
-                return Ok(ParamArg::Value(
-                    self.parse_expression_from(atom, Precedence::Lowest)?,
-                ));
-            }
-            // `Self.width()` calls a static method of the enclosing struct,
-            // and a call ending a `Self`-rooted member chain
-            // (`Self.l.doubled()`) a method of the chain's last member.
-            let receiver = match &ty {
-                Type::SelfParam(method) => Some((
-                    Expr::new(
-                        ExprKind::Identifier("Self".to_string()),
-                        (start, self.last_span.1),
-                    ),
-                    method,
-                )),
-                Type::Assoc { base, name, args } if args.is_empty() => self
-                    .rematerialize_self_param_chain(base, start)
-                    .map(|object| (object, name)),
-                _ => None,
-            };
-            if let Some((object, method)) = receiver
-                && matches!(self.peek_token()?, Some(Token::LParen))
-            {
-                self.next_token()?;
-                let (args, kwargs) = self.parse_call_args()?;
-                self.expect(&Token::RParen, "Expected ')' after arguments")?;
-                let call = Expr::new(
-                    ExprKind::MethodCall {
-                        object: Box::new(object),
-                        method: method.clone(),
-                        args,
-                        kwargs,
-                    },
-                    (start, self.last_span.1),
-                );
-                return Ok(ParamArg::Value(
-                    self.parse_expression_from(call, Precedence::Lowest)?,
-                ));
-            }
             return Ok(ParamArg::Type(ty));
         }
         Ok(ParamArg::Value(self.parse_expression(Precedence::Lowest)?))
     }
 
-    /// Whether the next token begins an operand the type grammar parses
-    /// (`None`, `Self`, a function type, `ref`, or a `*` pack) — used to
-    /// classify a parameter argument.
+    /// Whether the next token begins an operand only the type grammar
+    /// parses (a function type, `ref`, or a `*` pack) — used to classify a
+    /// parameter argument.
     pub(super) fn peek_starts_type(&mut self) -> Result<bool, ParseError> {
         Ok(match self.peek_token()? {
-            Some(Token::None | Token::Def | Token::Star) => true,
-            Some(Token::Identifier(id)) => {
-                matches!(id.as_str(), "Self" | "ref")
-            }
+            Some(Token::Def | Token::Star) => true,
+            Some(Token::Identifier(id)) => id == "ref",
             _ => false,
         })
     }

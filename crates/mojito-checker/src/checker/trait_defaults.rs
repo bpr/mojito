@@ -1106,7 +1106,7 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
     };
     let mut param_args = Vec::new();
     if shape.explicit_self {
-        param_args.push(ParamArg::Type(Type::SelfType));
+        param_args.push(ParamArg::Value(name("Self")));
     }
     param_args.extend(shape.forwarded.iter().map(|param| ParamArg::Named {
         name: param.clone(),

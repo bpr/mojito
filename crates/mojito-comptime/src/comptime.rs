@@ -587,12 +587,14 @@ fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::
     match argument {
         ParamArg::Type(ty) => substitute_source_type_bindings(ty, subs),
         ParamArg::Named { value, .. } => substitute_source_param_arg_bindings(value, subs),
-        // The parser encodes a bare identifier argument (`Tuple[T, T]`) as a
-        // value expression; once the binding is concrete it is a type argument.
+        // A bracket operand is an expression (`Tuple[T, T]`, `List[Self.T]`);
+        // once a binder it names is concrete it is a type argument.
         ParamArg::Value(expr) => {
-            if let ExprKind::Identifier(name) = &expr.kind
-                && let Some(replacement) = subs(name)
-            {
+            let binder = match &expr.kind {
+                ExprKind::Identifier(name) => Some(name.as_str()),
+                _ => expr.self_member(),
+            };
+            if let Some(replacement) = binder.and_then(subs) {
                 *argument = ParamArg::Type(replacement);
             }
         }

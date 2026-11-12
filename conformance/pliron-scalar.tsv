@@ -92,6 +92,7 @@ assets/ok/bracket_capitalized_display_element.mojo	-	ineligible	no-scalar-entry-
 assets/ok/bracket_capitalized_module_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracket_capitalized_subscript_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracket_function_application.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bracket_self_operands_are_expressions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracketed_call_defaulted_struct_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtin_init_auto_parameterized_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape

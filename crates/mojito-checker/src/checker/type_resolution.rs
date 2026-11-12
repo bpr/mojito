@@ -1570,6 +1570,9 @@ impl Checker {
             }) if matches!(&object.kind, ExprKind::Identifier(base) if base == "__mlir_type") => {
                 mojito_types::types::mlir_type_named(field).ok_or_else(unsupported_mlir_type)
             }
+            ParamArg::Value(expr) if expr.self_member().is_some() => {
+                self.ty_from_anno(&expr.type_spelling().ok_or_else(unsupported_mlir_type)?)
+            }
             _ => Err(unsupported_mlir_type()),
         }
     }
@@ -3418,20 +3421,23 @@ impl Checker {
                         )));
                     }
                     // A type bound to a value slot is its metatype there, which
-                    // converts to no value type, as at the pin.
+                    // converts to no value type, as at the pin: even the slot's
+                    // own type (`Box[Int]` over `n: Int`) is `AnyStruct[Int]`.
                     if let CtValue::Type(bound) = &value
                         && let Some(error) = self.type_value_mismatch(bound.clone(), ty)
                     {
-                        return Err(match error {
-                            TypeError::MetatypeConversion { found, expected } => {
-                                TypeError::ParamValueType {
-                                    callee: decl.id().owner.to_string(),
-                                    param: name.clone(),
-                                    expected,
-                                    found,
-                                }
+                        let (expected, found) = match error {
+                            TypeError::MetatypeConversion { found, expected } => (expected, found),
+                            TypeError::TypeAsInstance(ty) => {
+                                (ty.clone(), format!("AnyStruct[{ty}]"))
                             }
-                            error => error,
+                            error => return Err(error),
+                        };
+                        return Err(TypeError::ParamValueType {
+                            callee: decl.id().owner.to_string(),
+                            param: name.clone(),
+                            expected,
+                            found,
                         });
                     }
                     let actual = self

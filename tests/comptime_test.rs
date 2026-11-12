@@ -1656,7 +1656,9 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     assert_eq!(name, "T.d");
     assert_eq!(
         param_args.as_slice(),
-        [mojito::ast::ParamArg::Type(mojito::ast::Type::SelfType)]
+        [mojito::ast::ParamArg::Value(mojito::ast::Expr::from(
+            mojito::ast::ExprKind::Identifier("Self".to_string())
+        ))]
     );
     assert_eq!(args.len(), 2);
     let [member] = compiled.checked().trait_members() else {

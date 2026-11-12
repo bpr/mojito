@@ -502,7 +502,10 @@ impl Checker {
                     continue;
                 }
             };
+            // A struct's own origin binder (`Self.origin`) names no place of
+            // the callee, so it is no view slot.
             if matches!(&expression.kind, ExprKind::Identifier(name) if name == "_" || name == "...")
+                || expression.self_member().is_some()
             {
                 continue;
             }

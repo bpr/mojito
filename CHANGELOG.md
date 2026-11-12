@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Self`, `Self.T`, and `None` in a bracket parse as expressions like any
+  other operand, as upstream's `parseSubscriptSuffix` does: the checker
+  classifies `Self` and its members as the types or values they denote,
+  and `None` is the `None` value, so `var x: List[None] = []` and
+  `show[None]()` over a type parameter are now rejected as at the pin. A
+  type bound to a value slot of its own type (`Box[Self.B]` with `B = Int`
+  over `n: Int`) reports the pin's `AnyStruct[Int]` mismatch (R1512).
 - A scalar type name in a bracket (`Int`, `Bool`, `StringLiteral`,
   `UInt8`) parses as one expression like any other operand, as upstream's
   `parseSubscriptSuffix` does, and the checker classifies it.
