@@ -6474,6 +6474,16 @@ pub fn trait_set<I: IntoIterator<Item = String>>(names: I) -> Vec<String> {
     traits
 }
 
+/// Whether `ty` is a metatype, the type of a type or a trait read as a
+/// value: a trait's `AnyTrait`, a type binder's trait type, or
+/// `!kgen.type`. It is compile-time only; no run-time value holds one.
+pub fn is_metatype(ty: &Ty) -> bool {
+    matches!(
+        ty.kind(),
+        TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
+    )
+}
+
 /// The traits every type of the trait type `ty` conforms to.
 ///
 /// That is the set a [`TyKind::Trait`] is, or the bound of the trait-valued

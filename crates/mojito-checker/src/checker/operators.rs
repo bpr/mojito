@@ -166,6 +166,15 @@ impl Checker {
         let rt = self.opaque_element(&rt).unwrap_or(rt);
         let rt = self.simd_length_operand(right, &lt, rt)?;
         let rt = self.literal_beside_simd_length(right, op, &lt, rt)?;
+        // A trait or a type binder read as a value calls the operator's
+        // method on its metatype, which implements none.
+        if mojito_types::types::is_metatype(&lt)
+            && let Some(dunder) = op.dunder()
+        {
+            return Err(TypeError::MatchPattern(format!(
+                "'{lt}' does not implement the '{dunder}' method"
+            )));
+        }
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {

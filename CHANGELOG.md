@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type binder, a trait, a trait-valued binder, or a `&` composition read
+  as an expression is a value of its metatype, as at the pin: `_ = T` and
+  `_ = Tr` run, `var y = T` is "dynamic type values not permitted yet", and
+  `var x: Int = T` and `Tr == Copyable` report the pin's conversion and
+  missing-method errors where Mojito said "Undefined variable" (R1173).
 - A trait or a `&` composition binds a `comptime` constant of the trait
   metatype, at module or local scope, annotated (`comptime U:
   type_of(AnyType) = Movable`) or not: a trait-valued parameter, a default,

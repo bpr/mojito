@@ -4310,10 +4310,16 @@ impl Checker {
     /// The metatype of a type binder bounded by `bounds`, as upstream
     /// spells it: the canonical trait composition, or `AnyType`.
     pub(super) fn binder_metatype(&self, bounds: &[String]) -> String {
+        self.binder_metatype_traits(bounds).join(" & ")
+    }
+
+    /// The trait set of the metatype of a type binder bounded by `bounds`:
+    /// the canonical set, or `AnyType` alone.
+    pub(super) fn binder_metatype_traits(&self, bounds: &[String]) -> Vec<String> {
         if bounds.is_empty() {
-            return "AnyType".to_string();
+            return vec!["AnyType".to_string()];
         }
-        self.canonical_trait_set(bounds).join(" & ")
+        self.canonical_trait_set(bounds)
     }
 
     pub(super) fn bind_template_comptime(

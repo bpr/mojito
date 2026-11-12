@@ -1581,6 +1581,7 @@ assets/ok/tuple_template_served.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
+assets/ok/type_and_trait_read_as_value.mojo	main	exe-differential	sanitized
 assets/ok/type_comparison_values.mojo	main	exe-differential	sanitized
 assets/ok/type_member_string_materialized.mojo	main	exe-differential	sanitized
 assets/ok/type_member_struct_value_reads.mojo	main	exe-differential	sanitized

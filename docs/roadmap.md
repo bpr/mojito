@@ -5690,6 +5690,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
     no conformance join over the known traits.
   - Probe: `comptime T = type_of(Int)` runs at the pin (`AnyStruct[Int]`).
+  - Probe: a struct read as a run-time expression, `_ = Int`, `_ = List[Int]`,
+    or `_ = type_of(1)`, runs at the pin and stops with "Undefined variable
+    'Int'" (or "a parameterized type is not a value"): identifier inference
+    (`Checker::type_name_metatype`) gives a type binder and a trait their
+    metatypes, but a struct's has no `Ty`.
   - Probe: `count[MkList]()` over `def count[G: __generator_type[T:
     Copyable] Defaultable]()` and `comptime MkList[T: Copyable] = List[T]`
     binds at the pin, which types `MkList` read unapplied as
@@ -5825,27 +5830,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `trait Show`, `comptime S = Show & Copyable`, `struct P(S)`
     implementing `show`, then `k(P(7))` over `k[T: S]` prints `7`.
   - Found while landing R1171 (2026-11-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1173 A type or trait read as a run-time expression is rejected**
-
-  Problem: `_ = Tr` over `Tr: type_of(AnyType)`, and `_ = T` over a type
-  parameter, run at the pin, while Mojito stops with "unsupported runtime
-  value parameter `Copyable`" and "Undefined variable 'T'".
-  - A type value (upstream's `!kgen.type`) has no run-time form in Mojito:
-    identifier inference (`Checker::infer_impl`) resolves a trait-valued
-    binder to its metatype but lowers the read as a value-parameter
-    register, and resolves a type name to nothing.
-  - `Tr == Copyable` is rejected with "Undefined variable 'Copyable'"
-    where the pin reports "'AnyTrait[AnyType]' does not implement the
-    '__eq__' method": a trait name in expression position has no value
-    either.
-  - Probe: `var x: Int = T` over `T: Copyable` stops with "Undefined
-    variable 'T'", where the pin reports "cannot implicitly convert
-    'Copyable' value to 'Int'", the conversion a `comptime x: Int = T`
-    declaration already reports.
-  - Found while landing R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

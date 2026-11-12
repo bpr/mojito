@@ -994,6 +994,11 @@ impl Lower {
                     declared: Some(runtime),
                 }));
             }
+            // A type or trait read as a value has no run-time form: its
+            // discard, or its statement, lowers to nothing.
+            CheckedStmtOp::Assign { name, value }
+                if name == "_" && is_metatype_value(&checked, *value) => {}
+            CheckedStmtOp::Expr(value) if is_metatype_value(&checked, *value) => {}
             // `_` discards: each statement binds a fresh unnamed slot.
             CheckedStmtOp::Assign { name, value } if name == "_" => {
                 let value = self.expr(*value);
@@ -2116,4 +2121,12 @@ fn named_operands(op: &CheckedOp) -> Vec<CheckedNodeId> {
         CheckedOp::TString { .. } | CheckedOp::Lambda { .. } => Vec::new(),
         _ => op.operands(),
     }
+}
+
+/// Whether the expression `id` is a type or a trait read as a value.
+fn is_metatype_value(checked: &CheckedTables, id: CheckedNodeId) -> bool {
+    checked
+        .expression(id)
+        .and_then(|node| node.ty.as_ref())
+        .is_some_and(mojito_types::types::is_metatype)
 }

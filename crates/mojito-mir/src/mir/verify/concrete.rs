@@ -223,12 +223,7 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
     // a trivial register type whose value holds nothing. Nor is an
     // attribute or a KGEN string: elaborated MIR may hold one, and LLVM
     // translation decides.
-    if mojito_types::types::mentions(ty, &|ty| {
-        matches!(
-            ty.kind(),
-            TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
-        )
-    }) {
+    if mojito_types::types::mentions(ty, &mojito_types::types::is_metatype) {
         errors.push(format!(
             "{head} {role} holds the compile-time-only metatype `{ty}`"
         ));

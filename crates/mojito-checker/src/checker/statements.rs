@@ -1577,14 +1577,6 @@ impl Checker {
                 {
                     return Err(TypeError::DynamicTypeValue(name.clone()));
                 }
-                // Nor has a trait (`var x = Tr` over `Tr: type_of(AnyType)`).
-                if let ExprKind::Identifier(source) = &value.kind
-                    && self
-                        .lookup(source)
-                        .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_)))
-                {
-                    return Err(TypeError::DynamicTypeValue(name.clone()));
-                }
                 self.register_named_bindings(value)?;
                 let (contextual, origin_demands) = match ty.as_ref() {
                     Some(annotation) => {
@@ -1600,6 +1592,18 @@ impl Checker {
                     Some(expected) => self.infer_in_context(value, expected, true)?,
                     None => self.infer(value)?,
                 };
+                // Nor has a trait or a type binder (`var x = Tr` over
+                // `Tr: type_of(AnyType)`, `var x = T`): its metatype converts
+                // to no storage type.
+                if mojito_types::types::is_metatype(&found) {
+                    return Err(match contextual {
+                        Some(expected) => TypeError::MetatypeConversion {
+                            found: found.to_string(),
+                            expected: expected.to_string(),
+                        },
+                        None => TypeError::DynamicTypeValue(name.clone()),
+                    });
+                }
                 // A borrowing view conversion (`var s: Span[Int, _] = xs`)
                 // consumes the conversion temporary, not the source place.
                 let conversion_borrows_source =

@@ -1260,6 +1260,7 @@ impl Checker {
                             )),
                             None => self
                                 .infer_type_list_binding_read(expr, name)
+                                .or_else(|| self.type_name_metatype(expr, name))
                                 .unwrap_or_else(|| {
                                     // The enclosing struct's own parameter is
                                     // spelled `Self.<name>` inside the body.
@@ -1281,6 +1282,10 @@ impl Checker {
                 let ty = self.infer_prefix(expr.source_span(), *op, operand)?;
                 self.record_folded_simd_prefix(expr, *op, operand);
                 Ok(ty)
+            }
+            // A `&` composition of traits is a trait read as a value.
+            ExprKind::Infix(InfixOp::BitAnd, ..) if let Some(value) = self.trait_value(expr) => {
+                value.map(|value| TyKind::AnyTrait(value.ty).into())
             }
             ExprKind::Infix(op, left, right) => {
                 let ty = self.infer_infix(Some(expr.source_span()), *op, left, right)?;
@@ -3281,6 +3286,25 @@ impl Checker {
     /// check demands `ImplicitlyCopyable`, and a context that keeps the
     /// handle (`ref r = f(x)`, a forwarded `return`) still finds it through
     /// `infer_reference_value`. Any other expression keeps `found`.
+    /// The metatype of a type binder or a trait named as an expression, as
+    /// upstream types the reference: a binder `T: Copyable` reads as a
+    /// `Copyable` value, and a trait, a trait constant, or a `&`
+    /// composition of them as its `AnyTrait` metatype. Neither has a
+    /// run-time form: a discard of one lowers to nothing, and any other use
+    /// is the metatype's conversion or method diagnostic. `None` when
+    /// `name` is neither.
+    fn type_name_metatype(&self, expr: &Expr, name: &str) -> Option<Result<Ty, TypeError>> {
+        if let Some(value) = self.trait_value(expr) {
+            return Some(value.map(|value| TyKind::AnyTrait(value.ty).into()));
+        }
+        match self.lookup_tparam(name)?.kind() {
+            TyKind::Param { bounds, .. } => {
+                Some(Ok(TyKind::Trait(self.binder_metatype_traits(bounds)).into()))
+            }
+            _ => None,
+        }
+    }
+
     fn read_through_call_reference(&self, value: &Expr, found: Ty) -> Ty {
         let TyKind::Ref(reference) = found.kind() else {
             return found;

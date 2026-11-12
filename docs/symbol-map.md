@@ -3168,6 +3168,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   set `types::trait_set` builds. `CtValue::is_trait_valued` answers a trait
   or a parameter expression over a trait-valued binder, which
   `is_parameter_attribute` counts as having no run-time form.
+- A type binder or a trait read as an expression is typed by its metatype
+  (`Checker::type_name_metatype`, `checker/inference.rs`; a `&` composition
+  in `infer_impl`'s `Infix` arm): `TyKind::Trait` over the binder's bound
+  (`binder_metatype_traits`), or `TyKind::AnyTrait`. `types::is_metatype`
+  answers such a type; HIR lowers a discard or statement of one to nothing
+  (`is_metatype_value`, `mojito-hir`), the `VarDecl` check rejects binding
+  one, `infer_infix` reports its missing operator method, and the concrete
+  MIR verifier rejects a register of one.
 - The parser reads `type_of(...)` as `Type::TypeOf` (`parse_type`, and
   `parse_type_params` for a parameter's value type). The checker's
   `resolve_ty_from_anno_at_depth` (`type_resolution.rs`) maps a trait
