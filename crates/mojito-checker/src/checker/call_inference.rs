@@ -20,7 +20,7 @@ type InferredCall = (
     Option<Ty>,
     HashMap<usize, bool>,
     usize,
-    BracketAttributes,
+    DeclaredAttributes,
 );
 
 impl Checker {
@@ -1132,15 +1132,15 @@ impl Checker {
                             args,
                             kwargs,
                         )?;
-                        self.record_bracket_attributes(
+                        self.record_declared_attributes(
                             span.clone(),
-                            forwarded.scatter(attributes.clone()),
+                            &forwarded.declared(attributes.clone()),
                         );
                         self.record_call_environment_effects(
                             span.clone(),
                             &prepared,
                             &ordinary_param_args,
-                            &attributes,
+                            &attributes.source_order(),
                             args,
                             kwargs,
                         )?;
@@ -1292,7 +1292,7 @@ impl Checker {
         }
         let (ret, _, error, bool_bindings, _, attributes) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
-        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes.clone()));
+        self.record_declared_attributes(span.clone(), &forwarded.declared(attributes.clone()));
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
@@ -1339,7 +1339,7 @@ impl Checker {
             span.clone(),
             &ty,
             &ordinary_param_args,
-            &attributes,
+            &attributes.source_order(),
             args,
             kwargs,
         )?;
@@ -1857,7 +1857,7 @@ impl Checker {
             error,
             bool_bindings,
             0,
-            Vec::new(),
+            DeclaredAttributes::default(),
         ))
     }
 
@@ -2144,10 +2144,7 @@ impl Checker {
         // retain the resolved application for instantiation discovery.
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        merge_bracket_attributes(
-            &mut attributes,
-            folded_parameter_attributes(decls, param_args, &tyargs),
-        );
+        attributes.merge(folded_parameter_attributes(decls, param_args, &tyargs));
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
         {
@@ -2640,57 +2637,44 @@ impl Checker {
 
 /// The attributes of the bracket arguments `param_args` supplies to a
 /// non-variadic value parameter of `decls` solved to a closed value
-/// ([`CtValue::is_parameter_attribute`]), each that value, `None` for every
-/// other argument. Mojo's call carries such an argument as a parameter
+/// ([`CtValue::is_parameter_attribute`]), each that value keyed by its
+/// declaration. Mojo's call carries such an argument as a parameter
 /// attribute alone, so it has no run-time form at the call site.
 pub(super) fn folded_parameter_attributes(
     decls: &[ParamDecl],
     param_args: &[mojito_ast::ast::ParamArg],
     arguments: &[TyArg],
-) -> BracketAttributes {
-    param_args
+) -> DeclaredAttributes {
+    let mut folded = DeclaredAttributes::new(decls.len());
+    for (position, (argument, index)) in param_args
         .iter()
         .zip(bracket_argument_slots(decls, param_args))
-        .map(|(argument, index)| {
-            let index = index?;
-            let ParamDecl::Value {
-                variadic: false, ..
-            } = decls.get(index)?
-            else {
-                return None;
-            };
-            let value @ TyArg::Val(closed) = arguments.get(index)? else {
-                return None;
-            };
-            let is_value = match argument {
-                mojito_ast::ast::ParamArg::Value(_) => true,
-                mojito_ast::ast::ParamArg::Named { value, .. } => {
-                    matches!(&**value, mojito_ast::ast::ParamArg::Value(_))
-                }
-                mojito_ast::ast::ParamArg::Type(_) => false,
-            };
-            (is_value && closed.is_parameter_attribute()).then(|| value.clone())
-        })
-        .collect()
-}
-
-/// Set each attribute `folded` carries in `attributes`, the two lists over
-/// one bracket, keeping every attribute `folded` leaves `None`.
-pub(super) fn merge_bracket_attributes(
-    attributes: &mut BracketAttributes,
-    folded: BracketAttributes,
-) {
-    if folded.iter().all(Option::is_none) {
-        return;
-    }
-    if attributes.len() < folded.len() {
-        attributes.resize(folded.len(), None);
-    }
-    for (slot, attribute) in attributes.iter_mut().zip(folded) {
-        if attribute.is_some() {
-            *slot = attribute;
+        .enumerate()
+    {
+        let Some(index) = index else {
+            continue;
+        };
+        let Some(ParamDecl::Value {
+            variadic: false, ..
+        }) = decls.get(index)
+        else {
+            continue;
+        };
+        let Some(value @ TyArg::Val(closed)) = arguments.get(index) else {
+            continue;
+        };
+        let is_value = match argument {
+            mojito_ast::ast::ParamArg::Value(_) => true,
+            mojito_ast::ast::ParamArg::Named { value, .. } => {
+                matches!(&**value, mojito_ast::ast::ParamArg::Value(_))
+            }
+            mojito_ast::ast::ParamArg::Type(_) => false,
+        };
+        if is_value && closed.is_parameter_attribute() {
+            folded.bind(index, position, Some(value.clone()));
         }
     }
+    folded
 }
 
 /// A call's origin-bound parameters, their declared spellings for the

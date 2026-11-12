@@ -1239,14 +1239,17 @@ operand of an op is never the annotation as written: as upstream's call op
 carries each bracket argument as the parameter attribute its check produced,
 the check records the `TyArg` of each bracket argument that is not a
 run-time value at the occurrence (`NodeFacts::parameter_attributes`) as the
-binder that resolved the bracket list returns it, once: each binder answers
-its list's `BracketAttributes` in source order beside what it bound
-(`resolve_use_params`'s `BoundParameters`, `applied_type` for a type
-application, `simd_dims`, the builtin collection and pointer types), a
-partition that keeps origins back scatters the binder's answer into source
-positions (`ForwardedBrackets::scatter`, for the struct origin partition and
-an explicit specialization's), and the route holding the occurrence records
-it (`Checker::record_bracket_attributes`). A type-shaped argument's
+binder that resolved the bracket list returns it, once: a declared-parameter
+binder answers its attributes keyed by declaration (`DeclaredAttributes` on
+`resolve_use_params`'s `BoundParameters`, each at its source position), a
+struct application placing each origin argument the partition kept back in
+its declared slot (`PartitionedStructArgs::declared`) and an explicit
+specialization appending its origin arguments after the declared slots
+(`CallableSpecialization::declared`); the builtin binders (`applied_type`,
+`simd_dims`, the builtin collection and pointer types) still answer
+`BracketAttributes` in source order; and the route holding the occurrence
+records it (`Checker::record_declared_attributes`, which lays the keyed list
+out by source position, or `Checker::record_bracket_attributes`). A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),

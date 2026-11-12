@@ -3685,7 +3685,7 @@ struct ValueAdjustmentSnapshot {
 
 type SplitCallableSpecialization = (
     Vec<mojito_ast::ast::ParamArg>,
-    ForwardedBrackets,
+    CallableSpecialization,
     Vec<(Vec<usize>, mojito_types::origin::Origin)>,
     HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 );
@@ -3723,8 +3723,8 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    BoundParameters, BracketAttributes, DependentValues, ExplicitTypes, ForwardedBrackets,
-    bracket_attribute, tyarg_is_symbolic, types_attributes,
+    BoundParameters, BracketAttributes, CallableSpecialization, DeclaredAttributes,
+    DependentValues, ExplicitTypes, bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;

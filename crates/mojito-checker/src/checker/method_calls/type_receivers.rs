@@ -631,7 +631,7 @@ impl Checker {
                     });
                 self.record_folded_bracket_attributes(
                     span,
-                    folded_parameter_attributes(&selected.param_decls, param_args, arguments),
+                    &folded_parameter_attributes(&selected.param_decls, param_args, arguments),
                 );
             }
             return self

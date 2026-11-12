@@ -6,12 +6,12 @@ use crate::checker::call_inference::folded_parameter_attributes;
 use mojito_types::types::TyKind;
 
 /// What a static call bound its struct application to: the instance's
-/// arguments and each spelled receiver bracket argument's attribute, in
-/// source order, as upstream's op carries the receiver's one binding.
+/// arguments and its bracket arguments' attributes, keyed by the struct's
+/// declared parameters, as upstream's op carries the receiver's one binding.
 #[derive(Default)]
 pub(super) struct StaticReceiver {
     pub(super) arguments: Vec<TyArg>,
-    pub(super) attributes: BracketAttributes,
+    pub(super) attributes: DeclaredAttributes,
 }
 
 impl Checker {
@@ -154,9 +154,9 @@ impl Checker {
                 .ok()
                 .map(|bound| {
                     if let Some(application) = application {
-                        self.record_bracket_attributes(
+                        self.record_declared_attributes(
                             application,
-                            partitioned.brackets.scatter(bound.attributes),
+                            &partitioned.declared(bound.attributes),
                         );
                     }
                     Self::struct_instance_type(sname, bound.arguments)
@@ -229,7 +229,7 @@ impl Checker {
         sname: &str,
         receiver: &StaticReceiver,
     ) {
-        self.record_bracket_attributes(object.source_span(), receiver.attributes.clone());
+        self.record_declared_attributes(object.source_span(), &receiver.attributes);
         if !receiver.arguments.is_empty() {
             self.record_at(object.source_span()).ty =
                 Some(TyKind::Struct(sname.to_string(), receiver.arguments.clone()).into());
@@ -258,7 +258,7 @@ impl Checker {
         } = self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])?;
         let receiver = StaticReceiver {
             arguments,
-            attributes: partitioned.brackets.scatter(attributes),
+            attributes: partitioned.declared(attributes),
         };
         if record {
             self.record_static_receiver(object, sname, &receiver);
@@ -504,7 +504,7 @@ impl Checker {
             .map(|index| candidate_struct_args.swap_remove(index))
             .map_or_else(StaticReceiver::default, |bound| StaticReceiver {
                 arguments: bound.arguments,
-                attributes: partitioned.brackets.scatter(bound.attributes),
+                attributes: partitioned.declared(bound.attributes),
             });
         self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
         self.type_runtime_param_args(param_args, &selected.bracket_attributes)?;
@@ -543,7 +543,7 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 &span,
-                folded_parameter_attributes(&selected.param_decls, param_args, arguments),
+                &folded_parameter_attributes(&selected.param_decls, param_args, arguments),
             );
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)

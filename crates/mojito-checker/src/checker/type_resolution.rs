@@ -31,11 +31,13 @@ pub(super) type BracketAttributes = Vec<Option<TyArg>>;
 
 /// What [`Checker::resolve_use_params`] bound a use site's parameters to:
 /// the type substitution, the full argument list in declaration order (the
-/// identity), and each source bracket argument's attribute.
+/// identity), and the attributes its bracket arguments bound to, keyed by
+/// declaration: a struct application's over the struct's whole declared
+/// list, each origin argument in its declared slot.
 pub(super) struct BoundParameters {
     pub(super) subst: TySubst,
     pub(super) arguments: Vec<TyArg>,
-    pub(super) attributes: BracketAttributes,
+    pub(super) attributes: DeclaredAttributes,
 }
 
 /// The explicit type arguments of a call's bracket, resolved once before
@@ -249,73 +251,131 @@ pub(super) fn dtype_attribute(
     )
 }
 
-/// Where the arguments a partition forwards to a binder sit in the source
-/// bracket list, beside the attribute each argument it kept back (an
-/// origin) bound to: the binder's attributes, over the forwarded list,
-/// scatter back into source order.
-#[derive(Clone)]
-pub(super) struct ForwardedBrackets {
-    positions: Vec<usize>,
-    kept: BracketAttributes,
+/// A bracket argument's attribute at its position in the source bracket
+/// ([`BracketAttributes`]).
+#[derive(Clone, Debug)]
+pub(super) struct BoundAttribute {
+    pub(super) position: usize,
+    pub(super) attribute: Option<TyArg>,
 }
 
-impl ForwardedBrackets {
-    /// Every argument of a `len`-long bracket list forwarded as it stands.
+/// What a declared-parameter binder bound each bracket argument to, keyed
+/// by declaration as upstream's binder fills the op's parameter list: per
+/// declared parameter, in declaration order, the attributes of the bracket
+/// arguments bound to it (none for an omitted or inferred one, one per
+/// element for a pack), each at its source position, which the checked
+/// node's source-ordered fact still reads ([`Self::source_order`]).
+#[derive(Clone, Debug, Default)]
+pub(super) struct DeclaredAttributes(Vec<Vec<BoundAttribute>>);
+
+impl DeclaredAttributes {
+    /// No attribute yet for any of `len` declared parameters.
+    pub(super) fn new(len: usize) -> Self {
+        Self(vec![Vec::new(); len])
+    }
+
+    /// Bind the argument at source `position` of the parameter declared at
+    /// `index` to `attribute`, replacing what it was bound to.
+    pub(super) fn bind(&mut self, index: usize, position: usize, attribute: Option<TyArg>) {
+        if self.0.len() <= index {
+            self.0.resize(index + 1, Vec::new());
+        }
+        let slot = &mut self.0[index];
+        match slot.iter_mut().find(|bound| bound.position == position) {
+            Some(bound) => bound.attribute = attribute,
+            None => slot.push(BoundAttribute {
+                position,
+                attribute,
+            }),
+        }
+    }
+
+    /// Set each attribute `folded` carries, keeping every one it leaves
+    /// `None`.
+    pub(super) fn merge(&mut self, folded: Self) {
+        for (index, slot) in folded.0.into_iter().enumerate() {
+            for bound in slot {
+                if bound.attribute.is_some() {
+                    self.bind(index, bound.position, bound.attribute);
+                }
+            }
+        }
+    }
+
+    /// These attributes, bound over a sub-list of the bracket whose `i`th
+    /// argument sits at source position `positions[i]`, at the bracket's
+    /// positions.
+    pub(super) fn relocated(mut self, positions: &[usize]) -> Self {
+        for bound in self.0.iter_mut().flatten() {
+            if let Some(&position) = positions.get(bound.position) {
+                bound.position = position;
+            }
+        }
+        self
+    }
+
+    /// The attributes laid out by source position, as
+    /// [`mojito_checked::checked::NodeFacts::parameter_attributes`] records
+    /// them.
+    pub(super) fn source_order(&self) -> BracketAttributes {
+        let len = self
+            .0
+            .iter()
+            .flatten()
+            .map(|bound| bound.position + 1)
+            .max()
+            .unwrap_or(0);
+        let mut attributes = vec![None; len];
+        for bound in self.0.iter().flatten() {
+            attributes[bound.position].clone_from(&bound.attribute);
+        }
+        attributes
+    }
+}
+
+/// An explicit callable specialization's bracket with its origin
+/// arguments taken out: where each argument the generic binder sees sits
+/// in the source bracket, and each origin argument's attribute.
+#[derive(Clone, Default)]
+pub(super) struct CallableSpecialization {
+    /// The source position of each argument the binder sees.
+    positions: Vec<usize>,
+    /// The origin arguments, each at its source position.
+    origins: Vec<BoundAttribute>,
+}
+
+impl CallableSpecialization {
+    /// Every argument of a `len`-long bracket bound by the generic binder.
     pub(super) fn all(len: usize) -> Self {
         Self {
             positions: (0..len).collect(),
-            kept: vec![None; len],
+            origins: Vec::new(),
         }
     }
 
-    /// A partition of a `len`-long bracket list that has forwarded or kept
-    /// nothing yet.
-    pub(super) fn empty(len: usize) -> Self {
-        Self {
-            positions: Vec::new(),
-            kept: vec![None; len],
-        }
-    }
-
-    /// Forward the argument at source `position`.
-    pub(super) fn forward(&mut self, position: usize) {
+    /// The argument at source `position` goes to the generic binder.
+    pub(super) fn bind(&mut self, position: usize) {
         self.positions.push(position);
     }
 
-    /// Keep back the argument at source `position`, bound to `attribute`.
-    pub(super) fn keep(&mut self, position: usize, attribute: Option<TyArg>) {
-        self.kept[position] = attribute;
+    /// The argument at source `position` is an origin, bound to
+    /// `attribute`.
+    pub(super) fn bind_origin(&mut self, position: usize, attribute: Option<TyArg>) {
+        self.origins.push(BoundAttribute {
+            position,
+            attribute,
+        });
     }
 
-    /// This partition of a sub-list as one of the `len`-long source list
-    /// the sub-list's arguments sit at `positions` of, beside the `kept`
-    /// arguments the sub-list left out.
-    pub(super) fn embed(
-        self,
-        positions: &[usize],
-        len: usize,
-        kept: Vec<(usize, Option<TyArg>)>,
-    ) -> Self {
-        let mut embedded = Self {
-            positions: self.positions.iter().map(|&at| positions[at]).collect(),
-            kept: vec![None; len],
-        };
-        for (at, attribute) in self.kept.into_iter().enumerate() {
-            embedded.kept[positions[at]] = attribute;
-        }
-        for (position, attribute) in kept {
-            embedded.kept[position] = attribute;
-        }
-        embedded
-    }
-
-    /// The source list's attributes, given the binder's `forwarded` ones.
-    pub(super) fn scatter(&self, forwarded: BracketAttributes) -> BracketAttributes {
-        let mut attributes = self.kept.clone();
-        for (position, attribute) in self.positions.iter().zip(forwarded) {
-            attributes[*position] = attribute;
-        }
-        attributes
+    /// The specialization's attributes: `bound`, the generic binder's,
+    /// then one slot per origin argument after the declared ones, since a
+    /// function's list declares no origin binder to key it by.
+    pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
+        let mut declared = bound.relocated(&self.positions);
+        declared
+            .0
+            .extend(self.origins.iter().map(|origin| vec![origin.clone()]));
+        declared
     }
 }
 
@@ -339,17 +399,39 @@ pub(in crate::checker) struct ExplicitStructOrigin {
 /// the application left the slot to inference.
 pub(super) struct PartitionedStructArgs {
     pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
-    /// Where `forwarded` sits in the source list, beside each origin
-    /// argument's attribute.
-    pub(super) brackets: ForwardedBrackets,
     pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
     pub(super) tail: Vec<mojito_types::origin::Origin>,
+    /// The source position of each `forwarded` argument.
+    positions: Vec<usize>,
+    /// The arguments kept back from the binder, each bound in its declared
+    /// slot of the struct's whole list: an origin argument to its
+    /// attribute, an origin's `mut=` binder to none.
+    kept: DeclaredAttributes,
+    /// The declared slot of each binder the origin-erased binder binds
+    /// ([`ParamDecl::argument_binders`]), in order.
+    binders: Vec<usize>,
 }
 
 impl PartitionedStructArgs {
     /// The tail as struct type arguments, to append after the binder prefix.
     pub(super) fn tail_arguments(&self) -> impl Iterator<Item = TyArg> + '_ {
         self.tail.iter().cloned().map(TyArg::Origin)
+    }
+
+    /// The application's attributes over the struct's whole declared list:
+    /// `bound`, the origin-erased binder's over `forwarded`, each in its
+    /// binder's declared slot, beside the kept-back origin arguments in
+    /// theirs.
+    pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
+        let mut declared = self.kept.clone();
+        let bound = bound.relocated(&self.positions);
+        for (index, slot) in bound.0.into_iter().enumerate() {
+            let index = self.binders.get(index).copied().unwrap_or(index);
+            for attribute in slot {
+                declared.bind(index, attribute.position, attribute.attribute);
+            }
+        }
+        declared
     }
 }
 
@@ -1410,7 +1492,10 @@ impl Checker {
                 attributes,
                 ..
             } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-            return Ok((Self::struct_instance_type(name, arguments), attributes));
+            return Ok((
+                Self::struct_instance_type(name, arguments),
+                attributes.source_order(),
+            ));
         }
         if matches!(
             name,
@@ -1856,7 +1941,7 @@ impl Checker {
         Ok(BoundParameters {
             subst,
             arguments,
-            attributes: partitioned.brackets.scatter(attributes),
+            attributes: partitioned.declared(attributes),
         })
     }
 
@@ -1915,7 +2000,7 @@ impl Checker {
         if !args.iter().any(|argument| erased_param(argument).is_some()) {
             return self.partition_carried_struct_args(name, source_params, args);
         }
-        let mut kept = Vec::new();
+        let mut kept = DeclaredAttributes::default();
         let mut binders = Vec::new();
         let mut carried = Vec::new();
         let mut carried_positions = Vec::new();
@@ -1942,10 +2027,10 @@ impl Checker {
                 };
                 let attribute =
                     self.accept_origin_argument(name, param, argument, origin, mutability)?;
-                kept.push((position, attribute));
+                kept.bind(declared_slot(source_params, param), position, attribute);
             } else {
                 binders.push((param, argument));
-                kept.push((position, None));
+                kept.bind(declared_slot(source_params, param), position, None);
             }
         }
         let mut partitioned = self.partition_carried_struct_args(name, source_params, &carried)?;
@@ -1958,9 +2043,13 @@ impl Checker {
                 &partitioned.explicit_origins,
             )?;
         }
-        partitioned.brackets = partitioned
-            .brackets
-            .embed(&carried_positions, args.len(), kept);
+        partitioned.positions = partitioned
+            .positions
+            .iter()
+            .map(|&at| carried_positions[at])
+            .collect();
+        kept.merge(std::mem::take(&mut partitioned.kept).relocated(&carried_positions));
+        partitioned.kept = kept;
         Ok(partitioned)
     }
 
@@ -1976,13 +2065,9 @@ impl Checker {
         use mojito_types::origin::Origin;
         let is_origin = super::is_origin_type_param;
         let slot_id = |param: &mojito_ast::ast::TypeParam| {
-            mojito_types::origin::OriginParamId(
-                source_params
-                    .iter()
-                    .position(|candidate| candidate.name == param.name)
-                    .expect("explicit parameter comes from the source list") as u32,
-            )
+            mojito_types::origin::OriginParamId(declared_slot(source_params, param) as u32)
         };
+        let binders = argument_binder_slots(source_params);
         let explicit: Vec<&mojito_ast::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
@@ -2002,7 +2087,9 @@ impl Checker {
         };
         let forward_all = || PartitionedStructArgs {
             forwarded: args.to_vec(),
-            brackets: ForwardedBrackets::all(args.len()),
+            positions: (0..args.len()).collect(),
+            kept: DeclaredAttributes::default(),
+            binders: binders.clone(),
             explicit_origins: Vec::new(),
             tail: vec![Origin::Unbound; origin_slots],
         };
@@ -2055,10 +2142,10 @@ impl Checker {
             // an ordinary over-application (e.g. an infer-only binder spelled
             // explicitly), which the erased-decl binder diagnoses.
             let mut resolved = Vec::with_capacity(origin_slots);
-            let mut brackets = ForwardedBrackets::empty(args.len());
+            let (mut positions, mut kept) = (Vec::new(), DeclaredAttributes::default());
             for (position, (param, argument)) in explicit.iter().zip(args).enumerate() {
                 if !is_origin(param) {
-                    brackets.forward(position);
+                    positions.push(position);
                     continue;
                 }
                 // Upstream's placeholder spellings (`_`, `...`) mark the slot
@@ -2077,7 +2164,7 @@ impl Checker {
                         mojito_types::origin::Origin::Unbound,
                         None,
                     )?;
-                    brackets.keep(position, attribute);
+                    kept.bind(declared_slot(source_params, param), position, attribute);
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
@@ -2096,7 +2183,7 @@ impl Checker {
                                 mojito_types::origin::Origin::Unbound,
                                 None,
                             )?;
-                            brackets.keep(position, attribute);
+                            kept.bind(declared_slot(source_params, param), position, attribute);
                             continue;
                         }
                         // An origin-shaped argument that does not resolve is
@@ -2113,7 +2200,7 @@ impl Checker {
             for (position, param, argument, (origin, mutability)) in resolved {
                 let attribute =
                     self.accept_origin_argument(name, param, argument, origin.clone(), mutability)?;
-                brackets.keep(position, attribute);
+                kept.bind(declared_slot(source_params, param), position, attribute);
                 explicit_origins.push(ExplicitStructOrigin {
                     id: slot_id(param),
                     origin,
@@ -2129,15 +2216,17 @@ impl Checker {
             let tail = tail_of(&explicit_origins);
             return Ok(PartitionedStructArgs {
                 forwarded,
-                brackets,
                 explicit_origins,
                 tail,
+                positions,
+                kept,
+                binders,
             });
         }
         // Keyword spellings: extract named origin arguments wherever they
         // appear; everything else forwards to the erased-decl binder.
         let mut forwarded = Vec::with_capacity(args.len());
-        let mut brackets = ForwardedBrackets::empty(args.len());
+        let (mut positions, mut kept) = (Vec::new(), DeclaredAttributes::default());
         let mut explicit_origins = Vec::new();
         let mut supplied_origins: Vec<&str> = Vec::new();
         for (position, argument) in args.iter().enumerate() {
@@ -2155,7 +2244,7 @@ impl Checker {
                         mojito_types::origin::Origin::Unbound,
                         None,
                     )?;
-                    brackets.keep(position, attribute);
+                    kept.bind(declared_slot(source_params, param), position, attribute);
                     supplied_origins.push(&param.name);
                     continue;
                 }
@@ -2168,7 +2257,7 @@ impl Checker {
                             origin.clone(),
                             mutability,
                         )?;
-                        brackets.keep(position, attribute);
+                        kept.bind(declared_slot(source_params, param), position, attribute);
                         supplied_origins.push(&param.name);
                         explicit_origins.push(ExplicitStructOrigin {
                             id: slot_id(param),
@@ -2180,7 +2269,7 @@ impl Checker {
                     Err(error) => return Err(error),
                 }
             }
-            brackets.forward(position);
+            positions.push(position);
             forwarded.push(argument.clone());
         }
         if strict != super::StorageStrictness::Off
@@ -2196,9 +2285,11 @@ impl Checker {
         let tail = tail_of(&explicit_origins);
         Ok(PartitionedStructArgs {
             forwarded,
-            brackets,
             explicit_origins,
             tail,
+            positions,
+            kept,
+            binders,
         })
     }
 
@@ -2873,7 +2964,7 @@ impl Checker {
         // discovery can materialize it.
         Ok((
             self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)),
-            attributes,
+            attributes.source_order(),
         ))
     }
 
@@ -3646,6 +3737,17 @@ impl Checker {
         }
     }
 
+    /// Record the attributes a declared-parameter binder bound the
+    /// application at `span`'s bracket arguments to, laid out by source
+    /// position as the checked node's arguments read them.
+    pub(super) fn record_declared_attributes(
+        &self,
+        span: SourceSpan,
+        attributes: &DeclaredAttributes,
+    ) {
+        self.record_bracket_attributes(span, attributes.source_order());
+    }
+
     /// Record what each bracket argument of the application at `span`
     /// bound to, as its binder returned it: nothing when every argument is
     /// a run-time value.
@@ -3667,13 +3769,21 @@ impl Checker {
     pub(super) fn record_folded_bracket_attributes(
         &self,
         span: &SourceSpan,
-        folded: BracketAttributes,
+        folded: &DeclaredAttributes,
     ) {
+        let folded = folded.source_order();
         if folded.iter().all(Option::is_none) {
             return;
         }
         let mut attributes = self.recorded_bracket_attributes(span);
-        super::call_inference::merge_bracket_attributes(&mut attributes, folded);
+        if attributes.len() < folded.len() {
+            attributes.resize(folded.len(), None);
+        }
+        for (slot, attribute) in attributes.iter_mut().zip(folded) {
+            if attribute.is_some() {
+                *slot = attribute;
+            }
+        }
         self.record_at(span.clone()).parameter_attributes = Some(attributes);
     }
 
@@ -4876,7 +4986,10 @@ impl Checker {
             attributes,
             ..
         } = self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-        Ok((Self::struct_instance_type(name, arguments), attributes))
+        Ok((
+            Self::struct_instance_type(name, arguments),
+            attributes.source_order(),
+        ))
     }
 
     /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` by the
@@ -5463,6 +5576,32 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
+}
+
+/// The declared slot of `param` in `source_params`, the struct's whole
+/// list (the `OriginParamId` domain of its own binders).
+fn declared_slot(
+    source_params: &[mojito_ast::ast::TypeParam],
+    param: &mojito_ast::ast::TypeParam,
+) -> usize {
+    source_params
+        .iter()
+        .position(|candidate| candidate.name == param.name)
+        .expect("a partitioned parameter comes from the source list")
+}
+
+/// The declared slots of the binders a struct application binds
+/// positionally — neither an origin nor an origin's `mut=` binder — in
+/// order, as [`ParamDecl::argument_binders`] reads the checked list.
+fn argument_binder_slots(source_params: &[mojito_ast::ast::TypeParam]) -> Vec<usize> {
+    source_params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| {
+            !super::is_origin_type_param(param) && !param.is_origin_mutability_binder(source_params)
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Check a keyword argument binding the `mut` binder of an origin slot:

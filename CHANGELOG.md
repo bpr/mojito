@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The checker's declared-parameter binders return each bracket
+  argument's attribute keyed by the parameter it binds
+  (`DeclaredAttributes`), as upstream's binder fills the op's parameter
+  list: a struct application places each origin argument and `mut=`
+  binder in its declared slot, and the attributes are laid out by source
+  position only where the checked node records them, so
+  `ForwardedBrackets` and its scatter are gone (R2124).
 - A struct's checked parameter list declares its origin parameters in
   place, as upstream's does: `ParamDecl::Origin` names each `Origin` or
   `OriginSet` parameter, its `mut=` binder is an ordinary infer-only

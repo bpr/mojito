@@ -975,7 +975,7 @@ impl Checker {
         if signature.origins.is_empty() {
             return Ok((
                 arguments.to_vec(),
-                ForwardedBrackets::all(arguments.len()),
+                CallableSpecialization::all(arguments.len()),
                 Vec::new(),
                 HashMap::new(),
             ));
@@ -987,7 +987,7 @@ impl Checker {
         .map_err(|error| error.into_type_error(name))?;
         let mut origins = vec![None; signature.origins.len()];
         let mut ordinary = Vec::new();
-        let mut forwarded = ForwardedBrackets::empty(arguments.len());
+        let mut forwarded = CallableSpecialization::default();
         for (position, (argument, index)) in arguments.iter().zip(slots).enumerate() {
             let (is_named, value) = match argument {
                 ParamArg::Named { value, .. } => (true, (**value).clone()),
@@ -996,13 +996,13 @@ impl Checker {
             let parameter = &signature.source[index];
             if let Some(origin_index) = parameter.origin {
                 let origin = self.explicit_origin_argument(&value)?;
-                forwarded.keep(
+                forwarded.bind_origin(
                     position,
                     bracket_attribute(&value, &TyArg::Origin(origin.clone())),
                 );
                 origins[origin_index] = Some(origin);
             } else if parameter.ordinary {
-                forwarded.forward(position);
+                forwarded.bind(position);
                 ordinary.push(if is_named {
                     ParamArg::Named {
                         name: parameter.name.trim_start_matches('*').to_string(),
@@ -1082,12 +1082,12 @@ impl Checker {
         arguments: &[mojito_ast::ast::ParamArg],
         callable: Ty,
         signature: Option<&CallableOriginSignature>,
-    ) -> Result<(Ty, Vec<mojito_ast::ast::ParamArg>, ForwardedBrackets), TypeError> {
+    ) -> Result<(Ty, Vec<mojito_ast::ast::ParamArg>, CallableSpecialization), TypeError> {
         let Some(signature) = signature else {
             return Ok((
                 callable,
                 arguments.to_vec(),
-                ForwardedBrackets::all(arguments.len()),
+                CallableSpecialization::all(arguments.len()),
             ));
         };
         let (ordinary, forwarded, bindings, tails) =
@@ -1644,7 +1644,7 @@ impl Checker {
             kw_variadic.map(resolve).transpose()?,
             subst,
             tyargs,
-            attributes,
+            attributes.source_order(),
         ))
     }
 

@@ -1060,6 +1060,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                let attributes = attributes.source_order();
                 self.record_bracket_attributes(expr.source_span(), attributes.clone());
                 // Replay the effects the callable VALUE's type carries, and
                 // a callable struct's `Struct.__call__` entry with the

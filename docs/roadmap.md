@@ -10057,23 +10057,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2124 The checker's declared-parameter binders return each
-  bracket argument's attribute by source position, where upstream binds
-  one per declared parameter**
-
-  `bind_bracket_params` (`checker/declarations.rs`) returns
-  `BoundParameters::attributes` in bracket order, and the struct
-  application and callable specialization sites scatter it back through
-  `ForwardedBrackets` around the origin arguments they partitioned out.
-  - Upstream's binder fills the op's parameter list in declaration order,
-    an origin argument in its declared slot.
-  - The lever: `BoundParameters::attributes` aligns with `arguments`, one
-    slot per declaration, and `record_bracket_attributes` takes that list.
-  - Done when `ForwardedBrackets` and its `scatter` are gone.
-  - Found while attempting R2120 (2026-11-12).
-  - Depends on R761.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2125 A bracket-taking builtin binds its arguments with no
   declared parameter list, where upstream declares it in the library**
 
@@ -10102,8 +10085,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `NodeFacts::parameter_attributes` and `CheckedOp::Call`/`Invoke`'s
   `param_args` list the bracket arguments as written, and the checker's
-  binders return `BracketAttributes` in source order, scattered back
-  through `ForwardedBrackets`.
+  binders' `DeclaredAttributes` are laid out in source order where they
+  are recorded.
   - Upstream's call op carries the bound parameter list in declaration
     order, with defaults filled in.
   - The lever: `resolve_use_params` returns each attribute per declared
@@ -10226,6 +10209,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Watch for: `resolve_explicit_use_params` already reads the view, but
     about seventy checker functions take a `decls` beside its arguments.
   - Keep the MIR handoff on the view (R2127).
+  - Probe: an explicit specialization's origin arguments
+    (`borrow[Int, origin_of(x)]`) have no declared slot, so
+    `CallableSpecialization::declared` (`checker/type_resolution.rs`)
+    appends their attributes after the declared ones.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

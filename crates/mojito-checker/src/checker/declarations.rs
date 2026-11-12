@@ -2795,14 +2795,14 @@ impl Checker {
     /// own, in the layout the constructor's declaration restates them
     /// (`Counter[4](1)` calls `Counter[4].__init__`). A bracket argument
     /// solved to a closed value is the construction's parameter attribute,
-    /// so the call lowers no run-time form for it; `brackets` places the
-    /// forwarded `param_args` in the source bracket.
+    /// so the call lowers no run-time form for it; `partitioned` places the
+    /// forwarded `param_args` in the struct's declared list.
     fn record_construction_instantiation(
         &self,
         span: &SourceSpan,
         name: &str,
         bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
-        brackets: &super::type_resolution::ForwardedBrackets,
+        partitioned: &super::type_resolution::PartitionedStructArgs,
         parameter_names: &[String],
         arguments: Vec<TyArg>,
     ) {
@@ -2812,7 +2812,7 @@ impl Checker {
         let (decls, param_args) = bracket;
         self.record_folded_bracket_attributes(
             span,
-            brackets.scatter(crate::checker::call_inference::folded_parameter_attributes(
+            &partitioned.declared(crate::checker::call_inference::folded_parameter_attributes(
                 decls, param_args, &arguments,
             )),
         );
@@ -3219,15 +3219,15 @@ impl Checker {
                 }
                 // The own list is no bracket of the construction: its
                 // arguments reach MIR in the recorded instantiation alone.
-                self.record_bracket_attributes(
+                self.record_declared_attributes(
                     span.clone(),
-                    partitioned.brackets.scatter(Vec::new()),
+                    &partitioned.declared(DeclaredAttributes::default()),
                 );
                 self.record_construction_instantiation(
                     span,
                     name,
                     (&selected.param_decls, param_args),
-                    &partitioned.brackets,
+                    &partitioned,
                     &selected.parameter_names,
                     selected.instantiation.clone().unwrap_or_default(),
                 );
@@ -3333,10 +3333,7 @@ impl Checker {
                     &instance_patterns,
                     &instance_actuals,
                 )?;
-                self.record_bracket_attributes(
-                    span.clone(),
-                    partitioned.brackets.scatter(attributes),
-                );
+                self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
                 {
@@ -3396,7 +3393,7 @@ impl Checker {
                     span,
                     name,
                     (&decls, param_args),
-                    &partitioned.brackets,
+                    &partitioned,
                     &sig.names,
                     tyargs
                         .iter()
@@ -3634,9 +3631,9 @@ impl Checker {
                     attributes,
                 }) = resolved_use
                 {
-                    self.record_bracket_attributes(
+                    self.record_declared_attributes(
                         span.clone(),
-                        partitioned.brackets.scatter(attributes),
+                        &partitioned.declared(attributes),
                     );
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
@@ -3906,7 +3903,7 @@ impl Checker {
                     span,
                     name,
                     (&decls, param_args),
-                    &partitioned.brackets,
+                    &partitioned,
                     &sig.names,
                     tyargs.iter().cloned().chain(own_arguments).collect(),
                 );
@@ -4044,7 +4041,7 @@ impl Checker {
             &instance_patterns,
             &instance_actuals,
         )?;
-        self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
+        self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
         if let Some(specialized) =
             self.finish_variadic_construction(span, name, param_args, &tyargs, args, &[])
         {
@@ -4060,7 +4057,7 @@ impl Checker {
             span,
             name,
             (&decls, param_args),
-            &partitioned.brackets,
+            &partitioned,
             &field_names,
             tyargs.clone(),
         );
@@ -4218,7 +4215,7 @@ impl Checker {
             return Ok(BoundParameters {
                 subst,
                 arguments: Vec::new(),
-                attributes: Vec::new(),
+                attributes: DeclaredAttributes::default(),
             });
         }
         if !param_args.is_empty() {
@@ -4453,7 +4450,7 @@ impl Checker {
         Ok(BoundParameters {
             subst,
             arguments: tyargs,
-            attributes: Vec::new(),
+            attributes: DeclaredAttributes::default(),
         })
     }
 
@@ -4875,9 +4872,9 @@ impl Checker {
             if let Some(instance) = instance {
                 if constructed.is_none() && !param_args.is_empty() {
                     let attributes = resolve()?.attributes;
-                    self.record_bracket_attributes(
+                    self.record_declared_attributes(
                         span.clone(),
-                        partitioned.brackets.scatter(attributes),
+                        &partitioned.declared(attributes),
                     );
                 }
                 let found = self.copy_argument(name, &instance, &kwargs[0])?;
@@ -4921,7 +4918,7 @@ impl Checker {
             &params,
             std::slice::from_ref(&arg_ty),
         )?;
-        self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
+        self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
         let expected = if let Some(parameter) = params.first() {
             substitute_assoc(
                 parameter,
@@ -4960,7 +4957,7 @@ impl Checker {
             span,
             name,
             (&decls, param_args),
-            &partitioned.brackets,
+            partitioned,
             &sig.names,
             tyargs.iter().cloned().chain(own.arguments).collect(),
         );
@@ -5792,7 +5789,7 @@ impl Checker {
             unbound.map_or((None, false), |(slots, solve)| (Some(slots), solve));
         let bound = bracket_bindings(name, decls, param_args, unbound)?;
         let open = |index: usize| unbound.is_some_and(|slots| slots.open[index].is_some());
-        let mut attributes: BracketAttributes = vec![None; param_args.len()];
+        let mut attributes = DeclaredAttributes::new(decls.len());
         // Infer parameters hidden before `//` even when later parameters
         // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
         // `value` while binding the explicit hasher argument). A pack
@@ -5898,10 +5895,14 @@ impl Checker {
                     let value = TyArg::Val(list?);
                     // The spread construction is compile-time only: the
                     // list it binds is its attribute.
-                    attributes[*position] = match argument {
-                        mojito_ast::ast::ParamArg::Value(_) => Some(value.clone()),
-                        _ => bracket_attribute(argument, &value),
-                    };
+                    attributes.bind(
+                        index,
+                        *position,
+                        match argument {
+                            mojito_ast::ast::ParamArg::Value(_) => Some(value.clone()),
+                            _ => bracket_attribute(argument, &value),
+                        },
+                    );
                     bind_pack(
                         decls,
                         &decls[index],
@@ -5937,7 +5938,7 @@ impl Checker {
                         continue;
                     }
                     let resolved = self.resolve_param_arg(element, argument)?;
-                    attributes[position] = resolved.bracket_attribute(argument);
+                    attributes.bind(index, position, resolved.bracket_attribute(argument));
                     values.push(resolved.value.ct_value().ok_or_else(|| {
                         TypeError::Unsupported(
                             "an origin argument cannot bind a type or value parameter".to_string(),
@@ -5983,7 +5984,7 @@ impl Checker {
                 let resolved = explicit
                     .resolved(index, *position)
                     .map_or_else(|| self.resolve_param_arg(decl, argument), Ok)?;
-                attributes[*position] = resolved.bracket_attribute(argument);
+                attributes.bind(index, *position, resolved.bracket_attribute(argument));
                 resolved.value
             } else if let Some(solved) = trait_solutions.get(decl.id()) {
                 TyArg::Val(solved.clone())
@@ -6047,7 +6048,7 @@ impl Checker {
                 .map_err(|error| error.into_type_error(name))?;
             for (position, index) in matched.into_iter().enumerate() {
                 if !slots.kept.contains(&position) {
-                    attributes[position] = tyargs.get(index).cloned();
+                    attributes.bind(index, position, tyargs.get(index).cloned());
                 }
             }
         }

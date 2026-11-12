@@ -148,7 +148,7 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 span,
-                folded_parameter_attributes(&resolved.param_decls, param_args, arguments),
+                &folded_parameter_attributes(&resolved.param_decls, param_args, arguments),
             );
         }
         if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct()
