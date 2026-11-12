@@ -91,8 +91,11 @@ impl<'a> Flatten<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let getter_call =
-            self.mir_subscript_call_contract(plan.getter.clone(), &args, target.location());
+        let getter_call = self.mir_subscript_call_contract(
+            plan.getter.clone(),
+            &evaluated_indices(&indices, &args),
+            target.location(),
+        );
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
@@ -211,8 +214,11 @@ impl<'a> Flatten<'a> {
             CheckedCallArgumentSource::Keyword(0),
             CValue::Slot(slot),
         );
-        let setter_call =
-            self.mir_subscript_call_contract(setter.clone(), &args, target.location());
+        let setter_call = self.mir_subscript_call_contract(
+            setter.clone(),
+            &evaluated_indices(&indices, &args),
+            target.location(),
+        );
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
@@ -225,4 +231,17 @@ impl<'a> Flatten<'a> {
             call: Box::new(setter_call),
         });
     }
+}
+
+/// The adjusted index `operands` of a write-back, each paired with the
+/// source its `indices` entry evaluated.
+fn evaluated_indices(
+    indices: &[WriteBackIndex<'_>],
+    operands: &[MirSubscriptArg],
+) -> Vec<super::facts::SubscriptOperand> {
+    indices
+        .iter()
+        .zip(operands)
+        .map(|(index, operand)| (Some(index.node.location()), operand.clone()))
+        .collect()
 }

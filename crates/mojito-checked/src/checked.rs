@@ -82,16 +82,30 @@ pub enum CheckedCallArgumentSource {
     Default,
 }
 
-/// One source-ordered compile-time method argument.
+/// One declared compile-time parameter of a selected call.
 ///
-/// Type arguments occupy a declaration slot with no runtime value; a value
-/// argument names, by position, the call's explicit compile-time operand
-/// whose already-evaluated register lowering reuses. A subscript accessor's
-/// operands are its bracket's positional operands.
+/// As [`CheckedParameter`] is to a checked call's op, and upstream's call
+/// op holds one attribute per declared parameter: the bracket arguments the
+/// call's binder bound to it, none for an omitted or inferred parameter and
+/// one per element for a pack. A contract's list is in its callee's
+/// declaration order; a bracket argument bound to no declaration follows
+/// the declared parameters.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedCallParameter {
+    pub arguments: Vec<CheckedCallParameterArgument>,
+}
+
+/// One bracket argument a selected call binds to a declared parameter.
+///
+/// An argument the call carries as an attribute (a type, or a value the
+/// check closed) has no run-time operand. Any other value argument names
+/// its operand by the source occurrence lowering already evaluated, whose
+/// register the call reuses, as [`CheckedCallArgumentBoundary::value_source`]
+/// names a run-time argument's.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameterArgument {
     pub name: Option<String>,
-    pub operand: Option<usize>,
+    pub operand: Option<SourceSpan>,
 }
 
 /// One checker-selected adaptation of an already-evaluated call argument.
@@ -189,7 +203,9 @@ pub struct CheckedCallContract {
     pub arguments: Vec<CheckedCallArgument>,
     pub captures: Vec<mojito_types::origin::CaptureOrigin>,
     pub reference_result: Option<mojito_types::origin::RefTy>,
-    pub parameter_arguments: Vec<CheckedCallParameterArgument>,
+    /// The call's compile-time parameters, one per declaration of
+    /// `param_decls` ([`CheckedCallParameter`]).
+    pub parameter_arguments: Vec<CheckedCallParameter>,
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
     pub boundary: CheckedCallBoundary,
     /// The bound a call through an archetype receiver was selected by when

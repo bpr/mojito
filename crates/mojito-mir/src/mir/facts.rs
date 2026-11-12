@@ -8,6 +8,11 @@ use super::*;
 use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
+/// One lowered subscript operand, with the source occurrence it was
+/// evaluated from when a checked expression is that source (a slice
+/// literal built from bounds is none).
+pub(super) type SubscriptOperand = (Option<SourceSpan>, MirSubscriptArg);
+
 impl<'a> Node<'a> {
     /// Whether this is a name node.
     pub(super) const fn is_name(self) -> bool {
@@ -1118,7 +1123,7 @@ impl<'a> Flatten<'a> {
     pub(super) fn subscript_call_contract(
         &mut self,
         node: Node<'a>,
-        operands: &[MirSubscriptArg],
+        operands: &[SubscriptOperand],
     ) -> Option<MirSubscriptCall> {
         let contract = node.call_contract()?;
         let mut call = self.mir_subscript_call_contract(contract, operands, node.location());
@@ -1170,11 +1175,13 @@ impl<'a> Flatten<'a> {
     }
 
     /// The subscript call of `contract` over `operands`, its raise edge's
-    /// registers fresh at `span`.
+    /// registers fresh at `span`. A compile-time parameter's run-time
+    /// operand is the register of the operand evaluated from the source the
+    /// contract names.
     pub(super) fn mir_subscript_call_contract(
         &mut self,
         contract: mojito_checked::checked::CheckedCallContract,
-        operands: &[MirSubscriptArg],
+        operands: &[SubscriptOperand],
         span: SourceSpan,
     ) -> MirSubscriptCall {
         let capture_accesses = contract
@@ -1197,14 +1204,15 @@ impl<'a> Flatten<'a> {
         let param_arg_regs = contract
             .parameter_arguments
             .iter()
+            .flat_map(|parameter| &parameter.arguments)
             .map(|argument| MirParamArg {
                 name: argument.name.clone(),
-                value: argument
-                    .operand
-                    .and_then(|position| match operands.get(position) {
-                        Some(MirSubscriptArg::Index(register)) => Some(*register),
-                        _ => None,
-                    }),
+                value: argument.operand.as_ref().and_then(|source| {
+                    operands
+                        .iter()
+                        .find(|(evaluated, _)| evaluated.as_ref() == Some(source))
+                        .map(|(_, MirSubscriptArg::Index(register))| *register)
+                }),
                 expr: None,
             })
             .collect::<Vec<_>>();

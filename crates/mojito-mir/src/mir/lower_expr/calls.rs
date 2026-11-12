@@ -182,9 +182,10 @@ impl<'a> Flatten<'a> {
         }
         self.emit_interior_invalidations(call, None);
         let reference_result = plan.getter.reference_result.clone();
-        let operands = index_regs
+        let operands = indices
             .iter()
-            .map(|register| MirSubscriptArg::Index(*register))
+            .zip(&index_regs)
+            .map(|(index, register)| (Some(index.location()), MirSubscriptArg::Index(*register)))
             .collect::<Vec<_>>();
         let getter =
             Some(self.mir_subscript_call_contract(plan.getter, &operands, call.location()));

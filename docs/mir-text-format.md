@@ -1170,6 +1170,12 @@ holds its bracket arguments per declared parameter, in declaration order
 (`CheckedParameter`), as upstream's call op holds one attribute per
 declared parameter (R2120). The MIR text is unchanged.
 
+The package format moves to `mojito-package 214` when a selected call's
+contract holds its compile-time arguments per declared parameter
+(`CheckedCallParameter`), a run-time operand named by its source
+occurrence rather than its bracket position (R2121). The MIR text is
+unchanged.
+
 Schema 1.186 adds the parameter declaration `origin_binder`, upstream's
 origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) declared in place in
 its list (R761). The check's struct parameter list holds one per origin

@@ -384,7 +384,8 @@ impl<'a> Flatten<'a> {
         } else {
             idx = self.materialize_register(idx, &Ty::int(), index.location());
         }
-        let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
+        let call = self
+            .subscript_call_contract(e, &[(Some(index.location()), MirSubscriptArg::Index(idx))]);
         let intrinsic = call
             .is_none()
             .then(|| object.intrinsic_index_dispatch())
@@ -431,7 +432,7 @@ impl<'a> Flatten<'a> {
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
-        let call = self.subscript_call_contract(e, std::slice::from_ref(&argument));
+        let call = self.subscript_call_contract(e, &[(None, argument.clone())]);
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(e, None);
         self.emit_slice_read(d, obj, (argument, argument_place), object_place, call);
@@ -547,6 +548,7 @@ impl<'a> Flatten<'a> {
         let mut arg_places = Vec::with_capacity(args.len());
         let mut kwargs = Vec::new();
         let mut kwarg_places = Vec::new();
+        let mut evaluated = Vec::new();
         let lowered_args: Vec<_> = args
             .iter()
             .zip(descriptors.iter().cloned())
@@ -555,6 +557,10 @@ impl<'a> Flatten<'a> {
                     debug_assert!(descriptor.is_none());
                     let (register, place) = self.lower_call_argument(operand(*value));
                     kwarg_places.push(place);
+                    evaluated.push((
+                        Some(operand(*value).location()),
+                        MirSubscriptArg::Index(register),
+                    ));
                     kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
                     None
                 }
@@ -579,6 +585,10 @@ impl<'a> Flatten<'a> {
                     debug_assert!(descriptor.is_none());
                     let (register, place) = self.lower_call_argument(operand(*value));
                     arg_places.push(place);
+                    evaluated.push((
+                        Some(operand(*value).location()),
+                        MirSubscriptArg::Index(register),
+                    ));
                     Some(MirSubscriptArg::Index(register))
                 }
                 CheckedSubscriptArg::Slice {
@@ -597,7 +607,7 @@ impl<'a> Flatten<'a> {
         if has_call {
             self.close_call_setup(None);
         }
-        let call = self.subscript_call_contract(e, &lowered_args);
+        let call = self.subscript_call_contract(e, &evaluated);
         let dest = self.fresh(e.location(), None);
         for argument in args {
             if let CheckedSubscriptArg::Index(value) = argument {

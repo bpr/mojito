@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A selected call's contract holds its compile-time arguments per
+  declared parameter, in declaration order (`CheckedCallParameter`), as
+  the checked call does, and names a run-time operand (`b[n - 1]` on a
+  `__getitem_param__[i: Int]` accessor) by the source occurrence MIR
+  evaluated rather than by its position in the bracket; a subscript's MIR
+  lowering finds the operand's register by that source (R2121).
 - A checked call holds its bracket arguments per declared parameter, in
   the callee's declaration order, as upstream's call op holds one
   attribute per declared parameter (`CheckedParameter`): a keyword

@@ -736,7 +736,7 @@ impl<'a> Flatten<'a> {
         );
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
-            &[MirSubscriptArg::Index(getter_index)],
+            &[(Some(index.location()), MirSubscriptArg::Index(getter_index))],
             target.location(),
         );
         self.convert_raised(
@@ -864,7 +864,7 @@ impl<'a> Flatten<'a> {
             );
             let mut getter_call = self.mir_subscript_call_contract(
                 plan.getter.clone(),
-                &[MirSubscriptArg::Index(getter_index)],
+                &[(Some(index.location()), MirSubscriptArg::Index(getter_index))],
                 target.location(),
             );
             self.convert_raised(
@@ -905,7 +905,7 @@ impl<'a> Flatten<'a> {
         );
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
-            &[MirSubscriptArg::Index(getter_index)],
+            &[(Some(index.location()), MirSubscriptArg::Index(getter_index))],
             target.location(),
         );
         self.convert_raised(
@@ -956,7 +956,7 @@ impl<'a> Flatten<'a> {
             self.augmented_setter_value(target, setter, value_argument, result);
         let mut setter_call = self.mir_subscript_call_contract(
             setter.clone(),
-            &[MirSubscriptArg::Index(setter_index)],
+            &[(Some(index.location()), MirSubscriptArg::Index(setter_index))],
             target.location(),
         );
         self.convert_raised(
@@ -1155,8 +1155,11 @@ impl<'a> Flatten<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let getter_call =
-            self.mir_subscript_call_contract(plan.getter.clone(), &getter_args, target.location());
+        let getter_call = self.mir_subscript_call_contract(
+            plan.getter.clone(),
+            &spanned_operands(&source_spans, &getter_args),
+            target.location(),
+        );
         self.convert_raised(
             getter_call.raises.as_ref(),
             target.raise_conversion(),
@@ -1243,8 +1246,11 @@ impl<'a> Flatten<'a> {
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
-        let setter_call =
-            self.mir_subscript_call_contract(setter.clone(), &setter_args, target.location());
+        let setter_call = self.mir_subscript_call_contract(
+            setter.clone(),
+            &spanned_operands(&source_spans, &setter_args),
+            target.location(),
+        );
         self.convert_raised(
             setter_call.raises.as_ref(),
             target.raise_conversion(),
@@ -1790,11 +1796,13 @@ impl<'a> Flatten<'a> {
             self.lower_setup_receiver_with(target, object, |this| this.lower_call_receiver(object));
         let mut indices = Vec::new();
         let mut arg_places = Vec::with_capacity(descriptors.len());
+        let mut evaluated = Vec::new();
         let args = match source_arguments {
             SetArguments::Index(index) => {
                 let (register, place) = self.lower_call_argument(index);
                 arg_places.push(place);
                 indices.push(index);
+                evaluated.push((Some(index.location()), MirSubscriptArg::Index(register)));
                 vec![MirSubscriptArg::Index(register)]
             }
             SetArguments::Multi(arguments) => arguments
@@ -1807,6 +1815,7 @@ impl<'a> Flatten<'a> {
                         let (register, place) = self.lower_call_argument(index);
                         arg_places.push(place);
                         indices.push(index);
+                        evaluated.push((Some(index.location()), MirSubscriptArg::Index(register)));
                         MirSubscriptArg::Index(register)
                     }
                     mojito_checked::checked::CheckedSubscriptArg::Slice {
@@ -1836,7 +1845,7 @@ impl<'a> Flatten<'a> {
         let between = between(self);
         self.close_call_setup(None);
         let call = self
-            .subscript_call_contract(target, &args)
+            .subscript_call_contract(target, &evaluated)
             .expect("checked nominal subscript setter has a call contract");
         Some((
             SubscriptSetter {
@@ -4050,5 +4059,18 @@ fn reference_binding_loans(loans: &[MirLoan]) -> Vec<MirLoan> {
             setup: true,
             ..loan
         })
+        .collect()
+}
+
+/// Subscript `operands` paired with the sources they were evaluated from,
+/// `sources` aligned with them.
+fn spanned_operands(
+    sources: &[Option<SourceSpan>],
+    operands: &[MirSubscriptArg],
+) -> Vec<super::facts::SubscriptOperand> {
+    sources
+        .iter()
+        .cloned()
+        .zip(operands.iter().cloned())
         .collect()
 }

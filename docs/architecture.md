@@ -1272,7 +1272,9 @@ value list), which `resolve_param_arg` answers beside the value it bound
 (`BoundArgument`). The call carries the attribute once, as upstream's op
 does: the checker's own readers (`runtime_param_arg_expressions`, which
 types the bracket arguments still evaluated at run time, and the method call
-contract's `checked_parameter_arguments`) read the call's attributes, never
+contract's `checked_parameter_arguments`, which lists them per declared
+parameter as the checked call does and names a run-time operand by its
+source occurrence) read the call's attributes, never
 a fact at the argument; a type in value position records its
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`

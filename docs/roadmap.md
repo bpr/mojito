@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2132**.
+Next free ID: **R2133**.
 
 ## Ordered Work
 
@@ -10130,22 +10130,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2121 A subscript call contract names its bracket operands by
-  source position**
-
-  `CheckedCallParameterArgument::operand` is an operand's position among
-  the subscript's bracket, which MIR's `mir_subscript_call_contract`
-  indexes into the lowered operands.
-  - Upstream's accessor call carries its parameters as the op's
-    attributes, one per declaration.
-  - The lever: the contract carries R2120's per-declaration list, an
-    operand named by its declaration.
-  - Done when `CheckedCallContract::parameter_arguments` holds no source
-    position.
-  - Found while landing R757 (2026-11-12).
-  - Depends on R2120.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2122 MIR's compile-time argument list names no declaration, so
   each consumer re-aligns it**
 
@@ -10159,9 +10143,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     consumer re-binds.
   - The lever: lower R2120's per-declaration list into `MirParamArg`s
     named by their declarations, and retire the positional matcher.
+  - Probe: a subscript's `Flatten::mir_subscript_call_contract`
+    (`mir/facts.rs`) flattens its contract's per-declaration
+    `CheckedCallParameter`s the same way (R2121).
   - Done when no MIR consumer aligns a compile-time argument by position.
   - Found while landing R757 (2026-11-12).
   - Depends on R2120.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2132 A parameter subscript's key rides its `Index` instruction
+  as a run-time operand**
+
+  `b[j]` on a `__getitem_param__[i: Int](self)` accessor lowers to
+  `MirInstr::Index` with the key's register as its `index`, and the
+  elaborator binds that register as one positional run-time argument
+  (`SubscriptOperands { positional: 1 }`, `mono/specializer.rs`), though
+  the accessor declares none.
+  - Upstream's `b.__getitem_param__[j]()` has no run-time operand: the
+    key is the op's parameter attribute alone.
+  - Probe: over `struct Box[*Ts: AnyType]` whose `__getitem_param__[i:
+    Int](self) -> Int` returns `i * 10`, reading no `self`, `comptime for
+    j in range(3): print(b[j])` fails "binding subscript call to
+    `Box.__getitem_param__` during argument removal: TooManyPositional {
+    expected: 0, got: 1 }" (`mono/infer.rs`); an accessor that reads a
+    field runs.
+  - The lever: lower a parameter subscript's key into `param_arg_regs`
+    alone, with no run-time `index` operand.
+  - Found while landing R2121 (2026-11-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R758 A trait method op holds no checked signature, where
