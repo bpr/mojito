@@ -404,6 +404,9 @@ pub enum TypeError {
     /// The enclosing struct's own parameter spelled bare (`T`, `n`) inside
     /// its body, where Mojo requires `Self.T` / `Self.n`.
     UnqualifiedStructParam(String),
+    /// An overloaded function named bare where a value is formed
+    /// (`comptime h = f`): no reference selects one declaration.
+    OverloadedReference(String),
     /// `Self.field` in a compile-time position (a bracket slot, an alias),
     /// where only a parameter or an associated member is in scope.
     InstanceFieldWithoutInstance {
@@ -1026,6 +1029,10 @@ impl fmt::Display for TypeError {
                     "'Self.{name}' is not a type parameter of the enclosing struct"
                 )
             }
+            Self::OverloadedReference(name) => write!(
+                f,
+                "cannot form a reference to overloaded declaration of '{name}'"
+            ),
             Self::UnqualifiedStructParam(name) => write!(
                 f,
                 "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"

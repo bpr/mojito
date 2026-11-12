@@ -2852,6 +2852,32 @@ fn enforces_raises_effect_at_struct_operators() {
 }
 
 #[test]
+fn binds_a_function_named_bare_as_a_compile_time_value() {
+    // A module, local, or struct `comptime` naming a function binds its
+    // symbol at its signature, which a call of the binding calls and
+    // `OptionalReg`'s `@implicit` initializer converts.
+    ok_std(
+        "from std.collections import OptionalReg\n\
+        def sq(x: Int) -> Int:\n    return x * x\n\n\
+        comptime h: def(Int) thin -> Int = sq\n\
+        comptime g: OptionalReg[def(Int) thin -> Int] = sq\n\
+        struct D:\n    comptime f = OptionalReg[def(Int) thin -> Int](sq)\n\n\
+        def main():\n    comptime u = sq\n    var a: Int = h(2) + u(3)\n\
+        \x20   comptime if g:\n        _ = D.f\n",
+    );
+    // An overload set named bare selects no declaration.
+    let overloaded = err_std(
+        "def f(x: Int) -> Int:\n    return x\n\n\
+        def f(x: String) -> Int:\n    return 1\n\n\
+        comptime h = f\n",
+    );
+    assert!(
+        matches!(&overloaded, TypeError::OverloadedReference(name) if name == "f"),
+        "got {overloaded:?}"
+    );
+}
+
+#[test]
 fn reads_a_static_method_through_its_struct_as_a_function_value() {
     ok_std(
         "struct S:\n    @staticmethod\n    def st(x: Int) -> Int:\n        return x + 1\n\n\

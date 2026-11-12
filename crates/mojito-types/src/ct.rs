@@ -883,6 +883,77 @@ impl GeneratorValue {
 }
 
 impl CtValue {
+    /// Visit every function symbol this closed value holds: itself, or a
+    /// leaf of an aggregate, a variant's payload, or frozen memory.
+    pub fn visit_func_symbols_mut<E>(
+        &mut self,
+        visit: &mut impl FnMut(&mut FuncSymbolRef) -> Result<(), E>,
+    ) -> Result<(), E> {
+        match self {
+            Self::FuncSymbol(function) => visit(function),
+            Self::Struct { fields, .. } => fields
+                .iter_mut()
+                .try_for_each(|(_, field)| field.visit_func_symbols_mut(visit)),
+            Self::Tuple(elements) | Self::List(elements) | Self::PopArray { elements, .. } => {
+                elements
+                    .iter_mut()
+                    .try_for_each(|element| element.visit_func_symbols_mut(visit))
+            }
+            Self::Variant {
+                payload: Some(payload),
+                ..
+            } => payload.visit_func_symbols_mut(visit),
+            Self::Pointer {
+                memory: Some(memory),
+                ..
+            } => memory
+                .iter_mut()
+                .flatten()
+                .try_for_each(|slot| slot.visit_func_symbols_mut(visit)),
+            Self::StoreToMem(referent) => referent.visit_func_symbols_mut(visit),
+            _ => Ok(()),
+        }
+    }
+
+    /// The function symbols this closed value holds, in the order
+    /// [`Self::visit_func_symbols_mut`] visits them.
+    pub fn func_symbols(&self) -> Vec<&FuncSymbolRef> {
+        fn collect<'a>(value: &'a CtValue, symbols: &mut Vec<&'a FuncSymbolRef>) {
+            match value {
+                CtValue::FuncSymbol(function) => symbols.push(function),
+                CtValue::Struct { fields, .. } => {
+                    for (_, field) in fields {
+                        collect(field, symbols);
+                    }
+                }
+                CtValue::Tuple(elements)
+                | CtValue::List(elements)
+                | CtValue::PopArray { elements, .. } => {
+                    for element in elements {
+                        collect(element, symbols);
+                    }
+                }
+                CtValue::Variant {
+                    payload: Some(payload),
+                    ..
+                } => collect(payload, symbols),
+                CtValue::Pointer {
+                    memory: Some(memory),
+                    ..
+                } => {
+                    for slot in memory.iter().flatten() {
+                        collect(slot, symbols);
+                    }
+                }
+                CtValue::StoreToMem(referent) => collect(referent, symbols),
+                _ => {}
+            }
+        }
+        let mut symbols = Vec::new();
+        collect(self, &mut symbols);
+        symbols
+    }
+
     /// The `value` parameter of the literal this compile-time value is, as
     /// upstream's `StringLiteral`, `IntLiteral`, and `FloatLiteral` read it:
     /// the literal's `!kgen.string`, `!pop.int_literal`, or
@@ -1075,7 +1146,7 @@ impl CtValue {
 
     /// Whether this value is one a backend materializes as a parameter
     /// constant: a vector, or a struct or tuple whose leaves are scalars,
-    /// vectors, such aggregates, or frozen pointer memory.
+    /// vectors, function symbols, such aggregates, or frozen pointer memory.
     pub fn is_closed_parameter_value(&self) -> bool {
         match self {
             Self::Simd { .. } => true,
@@ -1747,7 +1818,7 @@ impl CtValue {
     }
 
     /// A field or element of a closed aggregate parameter value: a scalar,
-    /// the `None` a `NoneType` holds, itself a closed aggregate, or frozen memory whose present slots are
+    /// the `None` a `NoneType` holds, a bare function symbol, itself a closed aggregate, or frozen memory whose present slots are
     /// closed leaves or strings (a string inside memory is the backend's to
     /// write, since no constructor builds an arbitrary pointer-owning
     /// struct).
@@ -1762,6 +1833,9 @@ impl CtValue {
             | Self::Bool(_)
             | Self::None
             | Self::Dtype(_) => true,
+            // A function's symbol: a specialization is named by the
+            // elaborator, so a concrete constant holds only bare symbols.
+            Self::FuncSymbol(function) => function.is_bare(),
             // A frozen enum case: its payload, if any, is a closed leaf.
             Self::Variant { payload, .. } => payload.as_deref().is_none_or(Self::is_closed_leaf),
             Self::Pointer { memory, .. } => memory

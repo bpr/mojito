@@ -28,12 +28,14 @@ impl Checker {
         // A trait constant binds before the constants fold, which leave it
         // alone, and binds again once the traits it names register.
         self.bind_module_trait_constants(stmts, false)?;
-        // A module integer constant folds once, ahead of every declaration
-        // whose symbol spells it.
-        self.fold_module_constants(stmts);
         // An importer's own statements add to its own sets, which a name
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
+        // A function a constant names is typed before the constant folds.
+        self.declare_functions_comptime_reads(stmts);
+        // A module integer constant folds once, ahead of every declaration
+        // whose symbol spells it.
+        self.fold_module_constants(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
         let applicable = super::comptime_validation::applicable_functions(
             stmts,
@@ -983,6 +985,7 @@ impl Checker {
                             || self.structs.contains_key(base))));
         if type_params.is_empty()
             && (self.names_module_value_constant(value)
+                || self.names_function_value(value)
                 || super::reflection::spells_reflection_handle(value)
                 || self.builds_generator(value))
         {
@@ -2294,6 +2297,7 @@ impl Checker {
                 let value_alias = self.names_value_binder(value)
                     || (type_params.is_empty()
                         && (self.names_module_value_constant(value)
+                            || self.names_function_value(value)
                             || self.applies_value_alias(value)
                             || matches!(&value.kind, ExprKind::Identifier(source)
                                 if self.lookup_tparam(source).is_none()
@@ -3070,6 +3074,55 @@ impl Checker {
         result
     }
 
+    /// Declare, ahead of the module's function pass, each module `def` of
+    /// `stmts` that a compile-time initializer names, module or struct
+    /// member (`comptime h: def(Int) thin -> Int = sq`), so the constant
+    /// folds to the function's symbol at its signature, as the pin resolves
+    /// the declaration on demand. A name declared more than once is an
+    /// overload set, which no bare reference selects; a signature that does
+    /// not resolve yet waits for a later round or the function pass.
+    fn declare_functions_comptime_reads(&mut self, stmts: &[Stmt]) {
+        let mut read = HashSet::new();
+        for stmt in stmts {
+            match &stmt.kind {
+                StmtKind::Comptime { value, .. } => read.extend(names_read(value)),
+                StmtKind::Struct { associated, .. } => {
+                    for member in associated {
+                        read.extend(names_read(&member.value));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut definitions: HashMap<&str, Vec<&Stmt>> = HashMap::new();
+        for stmt in stmts {
+            if let StmtKind::Def { name, .. } = &stmt.kind
+                && read.contains(name)
+            {
+                definitions.entry(name.as_str()).or_default().push(stmt);
+            }
+        }
+        for stmt in definitions
+            .into_values()
+            .filter_map(|overloads| <[&Stmt; 1]>::try_from(overloads).ok())
+            .map(|[stmt]| stmt)
+        {
+            if self.predeclared_functions.contains(&stmt.source_span()) {
+                continue;
+            }
+            let declared = self
+                .in_def_context(stmt, |this| this.def_signature(stmt, false))
+                .and_then(|signature| {
+                    self.bind_def(stmt, false, &signature)?;
+                    self.publish_def_constraints(stmt, &signature.decls, signature.clauses);
+                    Ok(())
+                });
+            if declared.is_ok() {
+                self.predeclared_functions.insert(stmt.source_span());
+            }
+        }
+    }
+
     /// Declare every module-level `def` of `stmts` before any body is
     /// checked, as the pin resolves file-scope declarations in any order: a
     /// body calls a function declared below it, and two call each other. A
@@ -3082,7 +3135,7 @@ impl Checker {
             let StmtKind::Def { name, .. } = &stmt.kind else {
                 continue;
             };
-            if deferred.contains(name) {
+            if deferred.contains(name) || self.predeclared_functions.contains(&stmt.source_span()) {
                 continue;
             }
             let declared = self

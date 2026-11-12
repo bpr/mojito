@@ -1092,6 +1092,17 @@ impl Checker {
         let Some(ty) = self.lookup(name).cloned() else {
             return self.infer_unbound_call(span, name, param_args, args, kwargs);
         };
+        // A call through a compile-time function value (`comptime h = sq`,
+        // `h(7)`) is the call of the function it folds to, `sq(7)`, never
+        // of the binding.
+        if let Some(function) = self
+            .folded_function_callee(name)
+            .filter(|function| function != name && self.binding_scope(function) == Some(0))
+        {
+            let called = self.infer_call(span.clone(), &function, param_args, args, kwargs)?;
+            self.record_at(span).overload_target.get_or_insert(function);
+            return Ok(called);
+        }
         self.record_permitted_call_capture(name);
         if let Some(owner) = self.lookup_owner(name) {
             self.record_at(span.clone()).binding = Some(owner);

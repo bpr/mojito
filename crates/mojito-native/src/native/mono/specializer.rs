@@ -3410,6 +3410,26 @@ impl<'a> Specializer<'a> {
                         }
                     }
                 }
+                // A closed constant's function symbols (an `OptionalReg`
+                // of a function, frozen) are function values the instance
+                // reaches, each named at its instance.
+                MirInstr::Const {
+                    k: Const::Value(value),
+                    ..
+                } => value.visit_func_symbols_mut(&mut |target| {
+                    if target.is_bare() {
+                        self.enqueue_function_value(&mut target.symbol)
+                    } else {
+                        let instance = self.function_value_instance(
+                            owner,
+                            &target.symbol,
+                            &target.arguments,
+                            None,
+                        )?;
+                        *target = FuncSymbolRef::bare(instance);
+                        Ok(())
+                    }
+                })?,
                 // A value-parameter read (`Self.length`) resolves to
                 // the bound constant carried by the receiver instance's
                 // type arguments — the VM's `get_field` value-parameter

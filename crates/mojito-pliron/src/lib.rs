@@ -1066,6 +1066,16 @@ impl<'p> CallEdges<'p, '_> {
             } => {
                 self.push_named(function);
             }
+            // A closed constant holding a function (a frozen `OptionalReg`
+            // of one) stores its thunk.
+            MirInstr::Const {
+                k: mojito_mir::mir::Const::Value(value),
+                ..
+            } => {
+                for function in value.func_symbols() {
+                    self.push_named(&function.symbol);
+                }
+            }
             // A static list of callables holds each function's thunk.
             MirInstr::ParamListAddress {
                 dest,

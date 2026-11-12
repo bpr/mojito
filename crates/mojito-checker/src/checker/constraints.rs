@@ -1533,6 +1533,22 @@ impl Checker {
     /// The table entry the module constant `name` reads from, unless a
     /// nearer binding shadows it: its application, its folded `Int`, its
     /// folded attribute, or its literal initializer, in that order.
+    /// The function the compile-time constant `name`, module or local,
+    /// folds to, when it is a function's symbol (`comptime h = sq`): a
+    /// call of `name` calls it.
+    pub(super) fn folded_function_callee(&self, name: &str) -> Option<String> {
+        let expression = self.module_constant_value(name).or_else(|| {
+            self.local_comptime_parameters
+                .get(self.binding_scope(name)?)?
+                .get(name)
+                .map(|(_, expression)| expression.clone())
+        })?;
+        match expression.as_constant()? {
+            CtValue::FuncSymbol(function) if function.is_bare() => Some(function.symbol.clone()),
+            _ => None,
+        }
+    }
+
     fn module_constant_entry(&self, name: &str) -> Option<ModuleConstant<'_>> {
         if self.module_constant_shadowed(name) {
             return None;
@@ -2917,6 +2933,9 @@ impl Checker {
         {
             return self.ct_param(CtValue::Type(self_ty.clone()));
         }
+        if let Some(function) = self.function_symbol_value(name) {
+            return function;
+        }
         // A module alias declared but not yet registered is an unknown type
         // for now, which the declaration passes wait out.
         self.ty_value_from_name(name, &[])?
@@ -2929,6 +2948,44 @@ impl Checker {
                 }
             })
             .and_then(|ty| self.ct_param(ty))
+    }
+
+    /// Whether `value` names a module function, a value of its function
+    /// type rather than a type alias (`comptime h = sq`): one typed already,
+    /// or an overload set not declared yet, which its statement rejects.
+    pub(super) fn names_function_value(&self, value: &Expr) -> bool {
+        matches!(&value.kind, ExprKind::Identifier(name)
+            if self.function_symbol_value(name).is_some()
+                || (self.lookup(name).is_none()
+                    && self.overload_sets.is_function(name)
+                    && self.local_comptime_value(name).is_none()))
+    }
+
+    /// The module function `name` read as a compile-time value: its symbol,
+    /// `#kgen.func.symbol<@sq>`, typed by its signature, or the pin's
+    /// rejection of an overload set, which no bare reference selects. `None`
+    /// when `name` names no function a nearer binding leaves visible, or a
+    /// generic one, whose bare reference binds no parameters.
+    pub(super) fn function_symbol_value(&self, name: &str) -> Option<Result<ParamExpr, TypeError>> {
+        if !self.overload_sets.is_function(name)
+            || self.is_local_binding(name)
+            || self.local_comptime_value(name).is_some()
+        {
+            return None;
+        }
+        let ty = self.lookup(name)?;
+        match ty.kind() {
+            TyKind::Func(_) => Some(
+                self.param_context
+                    .constant_as(
+                        CtValue::FuncSymbol(mojito_types::ct::FuncSymbolRef::bare(name)),
+                        ty,
+                    )
+                    .map_err(param_error),
+            ),
+            TyKind::Overload(_) => Some(Err(TypeError::OverloadedReference(name.to_string()))),
+            _ => None,
+        }
     }
 
     /// The rejection of an application or subscript headed by `name` that

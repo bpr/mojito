@@ -3,14 +3,14 @@
 //! A compile-time evaluation hands the VM its arguments as runtime values and
 //! takes the result back as a compile-time value. Both directions admit the
 //! same closed set: scalars and literals, `Bool`, `Str`, tuples,
-//! compile-time lists, fieldwise structs, SIMD values, `DType`, and an
-//! untyped attribute, which the VM holds opaquely. A nominal
+//! compile-time lists, fieldwise structs, SIMD values, `DType`, a
+//! function's symbol, and an untyped attribute, which the VM holds opaquely. A nominal
 //! `String` lives in the VM's heap and is frozen by the VM that owns it
 //! (`VmBackend::freeze`). The fuel every compile-time evaluation shares is
 //! declared here too.
 
 use crate::runtime::{RuntimeError, SimdLanes, Value};
-use mojito_types::ct::{CtLane, CtValue};
+use mojito_types::ct::{CtLane, CtValue, FuncSymbolRef};
 
 /// The quota of compile-time execution steps per compilation: elaboration
 /// entries, instructions executed, frames entered. A hard bound, so
@@ -189,6 +189,7 @@ pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
         Value::Dtype(dtype) => Ok(CtValue::Dtype(dtype)),
         Value::Attribute(value) => Ok(value),
         Value::None => Ok(CtValue::None),
+        Value::Function(symbol) => Ok(CtValue::FuncSymbol(FuncSymbolRef::bare(symbol))),
         other => Err(RuntimeError::Unsupported(format!(
             "VM CTFE returned unsupported runtime value {other}"
         ))),

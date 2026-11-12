@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1185
+# swept-count	1186
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -397,6 +397,7 @@ assets/type_error/comptime_module_constant_annotation_mismatch.mojo	compile-reje
 assets/type_error/comptime_module_display_subscript_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_module_struct_constant_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Q' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_not_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Flag[(n <= Int(9))]' value to 'Flag[not (n > Int(9)).__bool__()]'
+assets/type_error/comptime_overloaded_function_reference.mojo	compile-reject	agree	error: cannot form a reference to overloaded declaration of 'f'
 assets/type_error/comptime_pack_element_value_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'Copyable' value to 'Int'
 assets/type_error/comptime_slice_element_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'c' cannot be converted from 'Span[Float64, origin_of(ComptimeOrigin["element"])]' to 'Span[Int, c.origin]'
 assets/type_error/comptime_struct_field_crossing.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'G[Int]' to runtime because it is not 'ImplicitlyCopyable'

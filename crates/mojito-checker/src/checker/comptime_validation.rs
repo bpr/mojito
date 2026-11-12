@@ -3953,6 +3953,11 @@ impl Checker {
         let value = self.string_parameter_value(value, ty);
         let argument = match &value {
             CtValue::Expr(argument) => Some(argument.clone()),
+            // A function's symbol carries no signature: it is a value of
+            // the function type it materializes at.
+            closed @ CtValue::FuncSymbol(_) => {
+                self.param_context.constant_as(closed.clone(), ty).ok()
+            }
             closed => closed
                 .clone()
                 .materialize_as(ty)
@@ -4419,6 +4424,21 @@ impl Checker {
                 })?
                 .insert(name.to_string(), (level, generator));
             return Ok(true);
+        }
+        // A function named bare is its symbol (`comptime h = sq`), which a
+        // call of the binding calls; the statement types the binding. A
+        // module constant's symbol was folded before any declaration.
+        if let ExprKind::Identifier(function) = &value.kind
+            && let Some(symbol) = self.function_symbol_value(function)
+        {
+            let symbol = symbol?;
+            if !self.function_bases.is_empty() {
+                let level = self.param_depth().saturating_sub(1);
+                if let Some(scope) = self.local_comptime_parameters.last_mut() {
+                    scope.insert(name.to_string(), (level, symbol));
+                }
+            }
+            return Ok(false);
         }
         let Some(level) = self.param_depth().checked_sub(1) else {
             if self.bind_compile_time_only_value(name, annotation, value)? {
@@ -6755,8 +6775,9 @@ impl SlotType {
 
 /// Whether `ty` is a value a [`SlotType::Declared`] parameter takes, the
 /// types a parameter expression holds: a scalar, a numeric literal, a
-/// `StringLiteral`, a `DType`, a struct, or a SIMD vector. A reference, a
-/// pointer, an origin, or a function is no such value.
+/// `StringLiteral`, a `DType`, a struct, a SIMD vector, or a thin function,
+/// whose value is its symbol (`#kgen.func.symbol`). A reference, a pointer,
+/// or an origin is no such value.
 fn parameter_value_type(ty: &Ty) -> bool {
     ty.is_simd()
         || matches!(
@@ -6768,6 +6789,7 @@ fn parameter_value_type(ty: &Ty) -> bool {
                 | TyKind::KgenDtype
                 | TyKind::KgenSimd { .. }
                 | TyKind::Struct(..)
+                | TyKind::Func(_)
         )
 }
 

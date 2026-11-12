@@ -475,6 +475,28 @@ impl FnLowering<'_> {
                 self.store_string_fields(ctx, address, data, length, length, dest);
                 return Ok(());
             }
+            // A function's symbol is the two-word callable a bare function
+            // value is: its thunk, then a null environment.
+            (CtValue::FuncSymbol(function), TyKind::Func(_)) if function.is_bare() => {
+                let Some(target) = self.signatures.get(function.symbol.as_str()) else {
+                    return Err(self.unsupported_reg(
+                        format!("a function value of uncompiled `{function}`"),
+                        dest,
+                    ));
+                };
+                let thunk = self.shared.ensure_thunk(ctx, target, 0);
+                let invoke = AddressOfOp::new(ctx, thunk, 0);
+                self.append(ctx, invoke.get_operation(), Some(dest));
+                let store_invoke = StoreOp::new(ctx, invoke.get_result(ctx), address);
+                self.append(ctx, store_invoke.get_operation(), Some(dest));
+                let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                let null = ZeroOp::new(ctx, ptr_ty);
+                self.append(ctx, null.get_operation(), Some(dest));
+                let env_address = self.gep_byte(ctx, address, 8, dest);
+                let store_env = StoreOp::new(ctx, null.get_result(ctx), env_address);
+                self.append(ctx, store_env.get_operation(), Some(dest));
+                return Ok(());
+            }
             // A frozen enum case: its tag, then its payload, if any, at the
             // variant's payload offset.
             (CtValue::Variant { index, payload, .. }, TyKind::Variant(alternatives)) => {

@@ -214,6 +214,7 @@ assets/ok/comptime_for_value_pack_iterator.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_parameter_member.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_struct_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
+assets/ok/comptime_function_symbol_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_headers_and_local_aliases.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized

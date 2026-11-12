@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function named where a compile-time value is read is a value of its
+  function type, its symbol, as at the pin: a module, local, or struct
+  `comptime` binds it bare (`comptime h = sq`) or through `OptionalReg`'s
+  `@implicit` initializer (`comptime f: OptionalReg[def(Int) thin -> Int]
+  = sq`, `OptionalReg[...](sq)`), a compile-time call returning one freezes
+  it, and `h(5)`, `comptime r = h(5)`, and `(D.f.value())(5)` call the
+  function on the VM and natively, where Mojito reported "not a
+  compile-time Int constant: sq". An overload set named bare is the pin's
+  "cannot form a reference to overloaded declaration" (R1707).
 - A function type with its own `def[...]` list spelled inline, as a type
   argument or annotation (`OptionalReg[def[d: DType, w: SIMDLength,
   //](SIMD[d, w]) thin -> SIMD[d, w]]`), resolves its signature and `where`

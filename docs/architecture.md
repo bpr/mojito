@@ -4872,7 +4872,19 @@ binder, a callable pack's list, and a callable default to it. A closure naming
 either binder is its storage's method, the storage taking the binder as a
 parameter. A capture-free nested `def`, a lambda, a static method, and a
 generic function argument keep the slot `CtValue::Deferred`, bound from the
-argument's register (R2087, R2088). `CtValue` has no closure variant: this residualization is not
+argument's register (R2087, R2088). A function named where a compile-time
+value is read (`comptime h = sq`, `comptime f: OptionalReg[F] = sq`) is the
+same constant, typed by the function's signature
+(`Checker::function_symbol_value`, `checker/constraints.rs`): the check types
+the signature of a module `def` a constant names before the constants fold
+(`declare_functions_comptime_reads`, `checker/statements.rs`), the counterpart
+of upstream's on-demand declaration resolution, and a call through such a
+constant is the call of the function it folds to (`folded_function_callee`,
+`infer_call`). VM compile-time execution freezes a function value back to its
+symbol (`crossing::vm_to_ct`), a closed constant may hold one as a leaf
+(`CtValue::is_closed_leaf`), and the elaborator and the native reachable set
+treat each such leaf as a function value the instance reaches
+(`CtValue::func_symbols`). `CtValue` has no closure variant: this residualization is not
 arbitrary callable CTFE, and it does not make closures escaping. A closure's storage does not
 convert to a run-time `def(...)` value or bind a compile-time callable value
 (matching current Mojo), while a closure-trait binder `F: def(...)` takes it

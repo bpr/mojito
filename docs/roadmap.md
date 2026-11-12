@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2147**.
+Next free ID: **R2152**.
 
 ## Ordered Work
 
@@ -2916,6 +2916,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `SIMD.__mul__`: expected `SIMD[dtype, length]`, found `SIMDLength`";
     the pin prints `8`.
   - Found while landing R1687 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2150 A struct field of a thin function type is rejected**
+
+  `var f: def(Int) thin -> Int` in a `@fieldwise_init` struct reports "a
+  'def(...)' type names a trait in the type of struct field 'f'", where
+  the pin stores the function and prints `9` for `W(sq).f(3)`.
+  - `reject_stored_callable_type` (`checker/type_resolution.rs`) rejects
+    every `def(...)` field type; only a non-`thin` one names a trait.
+  - Found while planning R1707 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2151 A `def` returning a thin function is rejected as a closure
+  escape**
+
+  `def pick() -> def(Int) thin -> Int: return sq` reports "closures cannot
+  escape their defining scope (downward funargs only)", where the pin
+  returns the function and prints `25` for `pick()(5)`.
+  - A module function's value captures nothing, so returning it escapes
+    nothing. R83 covers only a parametric function's message.
+  - Found while planning R1707 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5854,18 +5877,61 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1707 A function is no compile-time value of a function type**
+- [ ] **R2147 A `comptime` binding forms a function's symbol from its bare
+  name alone**
 
-  A struct's `comptime f: OptionalReg[def(Int) thin -> Int] = sq`, read as
-  `comptime (D.f.value())(5)`, stops with "not a compile-time Int constant:
-  sq", where the pin prints `25`.
-  - Probe: the same member spelled `= OptionalReg[def(Int) thin ->
-    Int](sq)`, read in `comptime if D.f:`, stops with "not an associated
-    comptime expression", where the pin prints the then arm.
-  - `CtValue` has no value for a function symbol, so neither the member
-    nor its `OptionalReg` construction is a parameter expression.
-  - A plugin that sets a `PluginHooks` math hook (`unary_math_fn`) needs
-    this. The default hooks are `None` and already read.
+  `comptime h = g[2]` over `def g[n: Int](x: Int) -> Int`, then `h(3)`,
+  stops with "vm backend does not support the built-in or callee 'h'",
+  where the pin prints `5`.
+  - The binding reads a function only through `function_symbol_value`
+    (`checker/constraints.rs`), which takes a bare name and no declared
+    type.
+  - `callable_value_symbol` (`checker/declarations.rs`) already forms the
+    symbol from an expression and an expected type, a bracket's
+    specialization and a contextual overload included. A parameter
+    argument (`run[g[2]]`) goes through it.
+  - Probe: `comptime r = h(4)` after the above prints `6` at the pin.
+  - Probe: `var f = h` stops in MIR with "untyped variable slot".
+  - Probe: a local `comptime k = g[3]` then `k(5)` stops with "not a
+    compile-time Int constant: g".
+  - Probe: `comptime k: def(Int) thin -> Int = f` over two `f` overloads
+    reports "cannot form a reference to overloaded declaration of 'f'".
+    The pin's verdict is not verified; check it first.
+  - A call through a folded specialization must name its instance
+    (`folded_function_callee` reads bare symbols only).
+  - Found while landing R1707 (2026-11-12).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2148 A generic function is no compile-time value of a parametric
+  function type**
+
+  `comptime u = g` over `def g[n: Int](x: Int) -> Int` reports "unknown
+  type 'g'", where the pin accepts it.
+  - `function_symbol_value` (`checker/constraints.rs`) answers only a
+    `TyKind::Func`; a `GenericFunc` falls to the alias path.
+  - A plugin that sets a `PluginHooks` math hook (`unary_math_fn =
+    my_exp`, typed `def[dtype: DType, width: SIMDLength, //](...)`) needs
+    this, and a native layout for the hook's `OptionalReg` (R1706).
+  - Found while landing R1707 (2026-11-12).
+  - Depends on R1706, R2147.
+  - Model: Fable, Planned.
+
+- [ ] **R2149 A compile-time call through a callable binder is not
+  applied**
+
+  `comptime r = f(5)` inside `def run[f: def(Int) thin -> Int]()`, called
+  as `run[sq]()`, stops in MIR validation with "parameter constant names
+  parameter `f` of `run` that no enclosing declaration binds", where the
+  pin prints `25`.
+  - The lifted thunk reads the binder, which it does not bind.
+  - Upstream's interpreter calls the function the instance binds.
+  - Probe: `comptime k = Self.f(6)` in `struct S[f: def(Int) thin -> Int]`,
+    read as `S[sq].k`, reports "not an associated comptime expression",
+    where the pin prints `36`.
+  - A call through a `comptime` constant is now the call of the function it
+    folds to (R1707); a binder folds only per instance.
+  - Found while planning R1707 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Planned.
 

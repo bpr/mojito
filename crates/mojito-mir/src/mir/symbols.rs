@@ -110,10 +110,11 @@ impl<'t> SymbolTable<'t> {
         uses
     }
 
-    /// The functions the static lists of `block`, their regions included,
-    /// hold: a list of a function type (a pack of callables' values) holds
-    /// each function's symbol, upstream's `#kgen.symbol.constant` element,
-    /// which a closed compile-time value spells as its name.
+    /// The functions the static lists and closed constants of `block`, its
+    /// regions included, hold: a list of a function type (a pack of
+    /// callables' values) holds each function's symbol, upstream's
+    /// `#kgen.symbol.constant` element, which a closed compile-time value
+    /// spells as its name, and so does a constant aggregate's leaf.
     fn function_list_uses(
         &self,
         block: &MirBlock,
@@ -134,6 +135,20 @@ impl<'t> SymbolTable<'t> {
                     CtValue::FuncSymbol(function) => self.lookup(&function.symbol),
                     _ => None,
                 }));
+            }
+            // A closed constant holding a function (a frozen
+            // `OptionalReg` of one) names it as its symbol constant.
+            if let MirInstr::Const {
+                k: Const::Value(value),
+                ..
+            } = instruction
+            {
+                uses.extend(
+                    value
+                        .func_symbols()
+                        .into_iter()
+                        .filter_map(|function| self.lookup(&function.symbol)),
+                );
             }
             for region in crate::mir::instruction_regions(instruction) {
                 self.function_list_uses(region, reg_types, uses);
