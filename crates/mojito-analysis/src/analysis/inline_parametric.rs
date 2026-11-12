@@ -4793,7 +4793,12 @@ impl<'d> Instantiation<'d> {
                 CallableArgument::Function(function) => {
                     let value = self
                         .context
-                        .constant_as(CtValue::FuncSymbol(function.clone()), ty)
+                        .constant_as(
+                            CtValue::FuncSymbol(mojito_types::ct::FuncSymbolRef::bare(
+                                function.clone(),
+                            )),
+                            ty,
+                        )
                         .ok()?;
                     self.bindings.bind(id.clone(), value);
                     Some(Bound::Callable)

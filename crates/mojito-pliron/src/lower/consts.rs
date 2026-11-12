@@ -163,7 +163,11 @@ impl FnLowering<'_> {
             let mut thunks = Vec::with_capacity(elements.len());
             for value in elements {
                 let target = match value {
-                    CtValue::FuncSymbol(function) => self.signatures.get(function.as_str()),
+                    // Concrete MIR's list holds instances by their bare
+                    // symbol; the elaborator names every specialization.
+                    CtValue::FuncSymbol(function) if function.is_bare() => {
+                        self.signatures.get(function.symbol.as_str())
+                    }
                     _ => None,
                 };
                 let Some(target) = target else {

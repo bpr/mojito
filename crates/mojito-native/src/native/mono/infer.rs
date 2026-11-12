@@ -425,8 +425,9 @@ impl Specializer<'_> {
                     bindings
                         .callables
                         .insert(declaration.param_names[index].clone(), callable.clone());
-                    callable_arguments
-                        .push(InstanceArg::Value(CtValue::FuncSymbol(callable.clone())));
+                    callable_arguments.push(InstanceArg::Value(CtValue::FuncSymbol(
+                        mojito_types::ct::FuncSymbolRef::bare(callable.clone()),
+                    )));
                 }
             }
         }

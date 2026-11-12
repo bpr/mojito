@@ -5,6 +5,7 @@ use super::patterns::StmtReach;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
+use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 use mojito_types::types::{TyKind, nominal_parts};
 
@@ -1499,22 +1500,32 @@ impl Checker {
     /// The type and symbol of the function `expression` names as a value at
     /// the callable type `expected` — upstream's `#kgen.func.symbol` of a
     /// callable parameter's argument or default: a function, an overload
-    /// resolved against `expected`, or an explicit specialization (`f[Int]`).
-    /// `None` when it names no function: a local, a binder, or any other
-    /// expression.
+    /// resolved against `expected`, or an explicit specialization (`f[Int]`,
+    /// `twice[4]`) with the arguments its bracket bound. `None` when it
+    /// names no function: a local, a binder, or any other expression.
     pub(super) fn callable_value_symbol(
         &self,
         expression: &Expr,
         expected: &Ty,
-    ) -> Result<Option<(Ty, String)>, TypeError> {
+    ) -> Result<Option<(Ty, FuncSymbolRef)>, TypeError> {
         let (name, arguments) = match &expression.kind {
             ExprKind::Identifier(name) => (name.as_str(), std::borrow::Cow::Borrowed(&[][..])),
             ExprKind::Member { object, field } => {
-                return self.static_value_symbol(expression, object, field, expected);
+                return self.static_value_symbol(expression, (object, field), &[], expected);
             }
             _ => match self.parameter_application(expression) {
                 Some(application) => application,
-                None => return Ok(None),
+                None => {
+                    return match self.static_method_bracket(expression) {
+                        Some(bracket) => self.static_value_symbol(
+                            expression,
+                            (bracket.receiver, bracket.method),
+                            &bracket.arguments,
+                            expected,
+                        ),
+                        None => Ok(None),
+                    };
+                }
             },
         };
         if self.is_local_binding(name) {
@@ -1535,7 +1546,21 @@ impl Checker {
                 facts.overload_target.as_ref()
             })
             .unwrap_or_else(|| name.to_string());
-        Ok(Some((actual, symbol)))
+        Ok(Some((actual, self.specialization_ref(expression, symbol))))
+    }
+
+    /// The function `symbol` at the arguments the bracket `expression`
+    /// bound, its recorded `GenericInstantiation`; none when it bound none.
+    fn specialization_ref(&self, expression: &Expr, symbol: String) -> FuncSymbolRef {
+        let arguments = self
+            .fact(&expression.source_span(), |facts| {
+                facts
+                    .generic_instantiation
+                    .as_ref()
+                    .map(|instantiation| &instantiation.arguments)
+            })
+            .unwrap_or_default();
+        FuncSymbolRef { symbol, arguments }
     }
 
     /// Method `m`'s `where` clauses that read none of its arguments, or
@@ -2342,15 +2367,16 @@ impl Checker {
 
     /// The type and symbol of a static read through a non-parametric
     /// struct (`S.inc`, an enum case `Token.integer`) as a value at
-    /// `expected`. `None` for any other member, and for a parametric
-    /// struct's static, whose symbol names the struct's instance.
+    /// `expected`, at the arguments a bracket over it binds (`S.gst[3]`).
+    /// `None` for any other member, and for a parametric struct's static,
+    /// whose symbol names the struct's instance.
     fn static_value_symbol(
         &self,
         expression: &Expr,
-        object: &Expr,
-        field: &str,
+        (object, field): (&Expr, &str),
+        arguments: &[mojito_ast::ast::ParamArg],
         expected: &Ty,
-    ) -> Result<Option<(Ty, String)>, TypeError> {
+    ) -> Result<Option<(Ty, FuncSymbolRef)>, TypeError> {
         if !matches!(self.static_method_owner(object, field), Some((_, false))) {
             return Ok(None);
         }
@@ -2358,7 +2384,7 @@ impl Checker {
         let Some(actual) = self.infer_static_method_value(
             span.clone(),
             (object, field),
-            &[],
+            arguments,
             Some(expected),
             true,
         )?
@@ -2367,7 +2393,7 @@ impl Checker {
         };
         Ok(self
             .fact(&span, |facts| facts.overload_target.as_ref())
-            .map(|symbol| (actual, symbol)))
+            .map(|symbol| (actual, self.specialization_ref(expression, symbol))))
     }
 
     /// Declare method `m`'s receiver, if it has one: a refined
@@ -5766,7 +5792,12 @@ fn omitted_callable_value(decl: &ParamDecl, environment: &HashMap<String, CtValu
             callable_default: Some(default),
             ..
         } => match default {
-            CallableDefault::Symbol(symbol) => Some(CtValue::FuncSymbol(symbol.clone())),
+            // A specialization over an earlier binder (`twice[k]`) closes
+            // only under the instance, so the elaborator's defaults bind it.
+            CallableDefault::Symbol(symbol) => {
+                let value = CtValue::FuncSymbol(symbol.clone());
+                (!mojito_types::types::ct_value_is_symbolic(&value)).then_some(value)
+            }
             CallableDefault::Parameter(earlier) => environment
                 .get(&*earlier.name)
                 .filter(|value| match value {

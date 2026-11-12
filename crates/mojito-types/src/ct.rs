@@ -624,9 +624,9 @@ pub enum CtValue {
     Generator(Box<GeneratorValue>),
     /// A thin function's symbol — upstream's `#kgen.func.symbol<@sym>`, the
     /// value of a callable-typed parameter bound to a named function
-    /// (`S[seven]`). It is a closed constant that joins generic identity,
-    /// and it displays as the symbol.
-    FuncSymbol(#[serde(serialize_with = "crate::symbol_ref::serialize")] String),
+    /// (`S[seven]`) or to a specialization of one (`S[twice[4]]`). It joins
+    /// generic identity, and it displays as the source spells it.
+    FuncSymbol(FuncSymbolRef),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -646,6 +646,51 @@ pub enum CtValue {
     /// argument, so it agrees with every instance of its template that
     /// matches the kept arguments. It never reaches a runtime value.
     RemovedArg,
+}
+
+/// A function symbol with the arguments its bracket bound, upstream's
+/// symbol reference to a specialization (`twice[4]`).
+///
+/// The arguments are in the function's declaration order; empty ones name
+/// the function itself. The elaborator resolves a reference with arguments
+/// to the instance it names.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct FuncSymbolRef {
+    #[serde(serialize_with = "crate::symbol_ref::serialize")]
+    pub symbol: String,
+    pub arguments: Vec<TyArg>,
+}
+
+impl FuncSymbolRef {
+    /// The function `symbol` itself, no parameter applied.
+    pub fn bare(symbol: impl Into<String>) -> Self {
+        Self {
+            symbol: symbol.into(),
+            arguments: Vec::new(),
+        }
+    }
+
+    /// Whether the reference applies no parameter.
+    pub const fn is_bare(&self) -> bool {
+        self.arguments.is_empty()
+    }
+}
+
+impl fmt::Display for FuncSymbolRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.symbol)?;
+        if self.arguments.is_empty() {
+            return Ok(());
+        }
+        f.write_str("[")?;
+        for (index, argument) in self.arguments.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{argument}")?;
+        }
+        f.write_str("]")
+    }
 }
 
 /// The stdlib plugin a target that names none selects, upstream's
@@ -1948,7 +1993,7 @@ impl fmt::Display for CtValue {
                 write!(f, " {}", generator.body)
             }
             Self::Expr(expr) => write!(f, "{expr}"),
-            Self::FuncSymbol(symbol) => f.write_str(symbol),
+            Self::FuncSymbol(symbol) => write!(f, "{symbol}"),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::RemovedArg => f.write_str("_REMOVED_ARG"),
             Self::Dict { entries, .. } => {

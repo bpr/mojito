@@ -10304,7 +10304,9 @@ fn struct_callable_parameter_instance_carries_function_symbol() {
     // `S[#kgen.func.symbol<@seven>]`, so it is not `S[eight]`.
     let source = format!("{CALLABLE_STRUCT}def main():\n    var s = S[seven](1)\n");
     let checked = checked_with_std(&source).expect("check");
-    let symbol = mojito::types::TyArg::Val(mojito::ct::CtValue::FuncSymbol("seven".into()));
+    let symbol = mojito::types::TyArg::Val(mojito::ct::CtValue::FuncSymbol(
+        mojito::ct::FuncSymbolRef::bare("seven"),
+    ));
     assert!(own_expressions(&checked).any(|expression| {
         expression.ty.as_ref().is_some_and(|ty| {
             matches!(ty.kind(), mojito::types::TyKind::Struct(name, arguments)

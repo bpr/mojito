@@ -405,7 +405,9 @@ fn register_constant(
                 Const::Float(value) => Some(CtValue::Float(value.to_bits())),
                 Const::Bool(value) => Some(CtValue::Bool(*value)),
                 Const::Dtype(value) => Some(CtValue::Dtype(*value)),
-                Const::Function(function) => Some(CtValue::FuncSymbol(function.clone())),
+                Const::Function(function) => Some(CtValue::FuncSymbol(
+                    mojito_types::ct::FuncSymbolRef::bare(function.clone()),
+                )),
                 // A reified type argument names its struct as a string.
                 Const::Str(text) => Some(CtValue::Str(text.clone())),
                 Const::Value(value) if k.is_folded_scalar() => Some(value.clone()),

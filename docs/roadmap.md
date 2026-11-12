@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2141**.
+Next free ID: **R2142**.
 
 ## Ordered Work
 
@@ -3952,23 +3952,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2110 A function value a bracket specialized has no symbol in a
+- [ ] **R2141 A static of a parametric struct has no symbol in a
   compile-time callable slot**
 
-  `CtValue::FuncSymbol` and `CallableDefault::Symbol` hold a bare symbol,
-  so a callable argument or default that binds a generic function's
-  parameters (`twice[4]`) keeps only `twice`, and the elaborator stops
-  with "monomorphization cannot resolve parameter `n`". Upstream's
-  `#kgen.func.symbol` names the specialization, its parameters applied.
-  - The check already records the bound arguments as the bracket's
-    `GenericInstantiation` fact (`infer_specialized_callable_value`);
-    the symbol slot must carry them, or name the instance.
-  - Probe: `def run[f: def() thin -> Int = twice[4]]()` over `def
-    twice[n: Int]() -> Int: return n * 2`, then `print(run())`; the pin
-    prints `8`. The keyword form `twice[n=4]` is the same.
-  - Probe: `run[twice[4]]()` over `def run[f: def() thin -> Int]()`
-    fails the same way; the pin prints `8`.
-  - Found while landing R1513 (2026-11-11).
+  `run[P[4].st]()`, over `struct P[n: Int]` with a static `st` reading
+  `Self.n`, stops elaboration with "value parameter `f` is not
+  compile-time constant", where the pin prints `5`. Upstream's symbol
+  reference names the struct's specialization and the static's together.
+  - `Checker::static_value_symbol` (`checker/declarations.rs`) answers
+    `None` for a parametric owner, so the slot falls back to
+    `CtValue::Deferred` and the elaborator has nothing to bind.
+  - `ct::FuncSymbolRef` has no receiver: it needs one, as
+    `Const::FunctionInstance` holds (`static_value_receiver`), mapped
+    through `Const::of_parameter_value`, the specialization encoding's
+    `C` code, the MIR text records, and `substitute_func_ref`.
+  - Probe: the program above, with `def run[f: def() thin -> Int]() ->
+    Int: return f()`; the pin prints `5`.
+  - Probe: the same static as a callable default (`f: def() thin -> Int
+    = P[4].st`) and as a struct's callable argument (`S[P[4].st]`).
+  - Found while landing R2110 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

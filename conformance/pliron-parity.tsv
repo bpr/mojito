@@ -114,6 +114,7 @@ assets/ok/callable_bound_overload_pair.mojo	main	exe-differential	sanitized
 assets/ok/callable_contract_names_other_parameters.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_pack_cases.mojo	main	exe-differential	sanitized
+assets/ok/callable_param_specialized_function.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_generic_contract.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized

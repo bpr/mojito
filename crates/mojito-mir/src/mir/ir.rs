@@ -1584,7 +1584,14 @@ impl Const {
             CtValue::Bool(value) => Some(Self::Bool(*value)),
             CtValue::None => Some(Self::None),
             CtValue::Dtype(value) => Some(Self::Dtype(*value)),
-            CtValue::FuncSymbol(symbol) => Some(Self::Function(symbol.clone())),
+            CtValue::FuncSymbol(function) if function.is_bare() => {
+                Some(Self::Function(function.symbol.clone()))
+            }
+            CtValue::FuncSymbol(function) => Some(Self::FunctionInstance {
+                function: function.symbol.clone(),
+                arguments: function.arguments.clone(),
+                receiver: None,
+            }),
             CtValue::Str(_) if slot_ty.is_some_and(mojito_types::types::is_nominal_string) => {
                 Some(Self::Value(value.clone()))
             }

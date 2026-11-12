@@ -779,6 +779,15 @@ impl TypeVisitor for ConcreteCx<'_> {
                     "{head} keeps the unelaborated instance of `{function}` in elaborated MIR"
                 ));
             }
+            (_, Const::Value(CtValue::Tuple(items)))
+                if items.iter().any(
+                    |item| matches!(item, CtValue::FuncSymbol(function) if !function.is_bare()),
+                ) =>
+            {
+                self.errors.push(format!(
+                    "{head} keeps an unelaborated specialization in a callable pack in elaborated MIR"
+                ));
+            }
             (Family::ArrayIndex, Const::Param(index)) => self.errors.push(format!(
                 "{head} keeps the parameter array index `{index}` in elaborated MIR"
             )),

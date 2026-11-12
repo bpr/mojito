@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.187
+# Mojito Textual MIR Format, Version 1.188
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.187 is implemented end to end for inspection and loading: canonical
+Version 1.188 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.187
+mojito-mir 1.188
 ```
 
-The writer emits 1.187. The reader accepts 1.0 through 1.187; *Schema 1.0*
+The writer emits 1.188. The reader accepts 1.0 through 1.188; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1176,6 +1176,15 @@ contract holds its compile-time arguments per declared parameter
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
 
+Schema 1.188 lets a function symbol carry the compile-time arguments a
+bracket bound, upstream's symbol reference to a specialization
+(`run[twice[4]]`, a default `= twice[4]`, `S[twice[3]]`, a callable pack's
+element): `ct_func_symbol { function, arguments }` and
+`default_symbol { function, arguments }` beside the positional forms, which
+still name a function itself (R2110). The elaborator names the instance, so
+concrete MIR holds only the positional form. The package format moves to
+`mojito-package 216`.
+
 Schema 1.187 names every compile-time argument by the declaration it
 binds: a `param_arg`'s `name` is the declared parameter's (each element of
 a pack names the pack), written positionally or by keyword alike, and the
@@ -1817,7 +1826,9 @@ attribute of type `!pop.array<len, element>` (schema 1.137),
 a parameterized `comptime` declaration read unapplied, its body naming its
 own parameters and nothing else (schema 1.112),
 `ct_func_symbol("symbol")` for a thin function's symbol, upstream's
-`#kgen.func.symbol` (schema 1.184),
+`#kgen.func.symbol` (schema 1.184), and
+`ct_func_symbol { function, arguments }` for a specialization of one, its
+bracket's arguments in declaration order (schema 1.188),
 `ct_expr(param-expr)` for a residual
 parameter expression,
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value
@@ -2102,7 +2113,9 @@ an origin parameter whose `origin` is the source index an
 `Bool` binder its `mut=` names), or `origin_set`.
 A variadic `value_param`'s `type` is the raw list `param_list(T)` the pack
 binds (schema 1.113), and each value it binds has the element type `T`.
-Callable defaults use `default_symbol`, `default_parameter`, or
+Callable defaults use `default_symbol` (positional, or the record
+`default_symbol { function, arguments }` for a specialization, schema
+1.188), `default_parameter`, or
 `default_if { condition, then_value, else_value }`. A type parameter's
 `trait_param` (schema 1.78; `absent` when an older record omits it) is
 `present(binder { owner, slot, name })` when a trait-valued sibling bounds it

@@ -720,6 +720,11 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
                     .collect::<Result<Vec<_>, _>>()?,
             ))
         }
+        // A specialization's arguments close under the instance too
+        // (`twice[k]`).
+        TyArg::Val(CtValue::FuncSymbol(function)) => TyArg::Val(CtValue::FuncSymbol(
+            substitute_func_ref(function, bindings)?,
+        )),
         TyArg::Val(value) => TyArg::Val(value.clone()),
         // A template's origin is its own binder or a place its body owns:
         // upstream keeps an instance's origin parameters unspecialized, and
@@ -727,6 +732,23 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
         TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
     })
 }
+
+/// A function reference with its applied arguments under `bindings`: a
+/// specialization over a binder (`twice[k]`) closes under the instance.
+pub(super) fn substitute_func_ref(
+    function: &mojito_types::ct::FuncSymbolRef,
+    bindings: &Bindings,
+) -> Result<mojito_types::ct::FuncSymbolRef, MonoError> {
+    Ok(mojito_types::ct::FuncSymbolRef {
+        symbol: function.symbol.clone(),
+        arguments: function
+            .arguments
+            .iter()
+            .map(|argument| substitute_arg(argument, bindings))
+            .collect::<Result<_, _>>()?,
+    })
+}
+
 /// A struct field's type under `bindings`. A pointer field whose pointee
 /// names a parameter the instance removed, or erases an argument
 /// (`Optional[Entry[_REMOVED_ARG]]`), points to `None`, as `LowerLIT`

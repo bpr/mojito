@@ -3,6 +3,7 @@ use super::*;
 use crate::mir::text::write;
 use crate::mir::{MirResultAdapter, Raises, TryLabel};
 use mojito_symbol::symbol::OV_SEP;
+use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
@@ -373,7 +374,17 @@ fn generic_func_ty() -> TyKind {
                 ),
                 callable_default: Some(CallableDefault::If {
                     condition: constant(CtValue::Bool(true)),
-                    then_value: Box::new(CallableDefault::Symbol("default_fn".into())),
+                    then_value: Box::new(CallableDefault::If {
+                        condition: constant(CtValue::Bool(false)),
+                        then_value: Box::new(CallableDefault::Symbol(FuncSymbolRef::bare(
+                            "default_fn",
+                        ))),
+                        // Schema 1.188's record form, a specialization.
+                        else_value: Box::new(CallableDefault::Symbol(FuncSymbolRef {
+                            symbol: "default_fn".into(),
+                            arguments: vec![TyArg::Val(CtValue::Int(2))],
+                        })),
+                    }),
                     else_value: Box::new(CallableDefault::Parameter(test_binder("F"))),
                 }),
                 infer_only: false,
@@ -3573,7 +3584,9 @@ fn withdrawn_elaborator_markers_do_not_load() {
 fn function_symbol_struct_arguments_round_trip() {
     let applied: Ty = TyKind::Struct(
         "S".into(),
-        vec![TyArg::Val(CtValue::FuncSymbol("seven".into()))],
+        vec![TyArg::Val(CtValue::FuncSymbol(FuncSymbolRef::bare(
+            "seven",
+        )))],
     )
     .into();
     let program = program_with(vec![(
@@ -3583,6 +3596,27 @@ fn function_symbol_struct_arguments_round_trip() {
     assert_reprints(&program);
     let text = write::program(&program);
     assert!(text.contains("ct_func_symbol(\"seven\")"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], applied);
+}
+
+/// Schema 1.188 carries a specialization bound to a callable-typed struct
+/// parameter (`S[twice[4]]`) as the record form of `ct_func_symbol`.
+#[test]
+fn specialized_function_symbols_round_trip() {
+    let twice = FuncSymbolRef {
+        symbol: "twice".into(),
+        arguments: vec![TyArg::Val(CtValue::Int(4))],
+    };
+    let applied: Ty =
+        TyKind::Struct("S".into(), vec![TyArg::Val(CtValue::FuncSymbol(twice))]).into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![applied.clone()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("ct_func_symbol {"), "{text}");
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     assert_eq!(parsed.program.functions[0].1.reg_types[&0], applied);
 }

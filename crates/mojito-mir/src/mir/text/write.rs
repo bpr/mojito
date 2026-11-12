@@ -2631,7 +2631,16 @@ const fn lifecycle(value: TrivialLifecycle) -> &'static str {
 
 fn callable_default_value(value: &CallableDefault) -> String {
     match value {
-        CallableDefault::Symbol(v) => positional("default_symbol", &symbol(v)),
+        CallableDefault::Symbol(v) if v.is_bare() => {
+            positional("default_symbol", &symbol(&v.symbol))
+        }
+        CallableDefault::Symbol(v) => record(
+            "default_symbol",
+            &[
+                ("function", symbol(&v.symbol)),
+                ("arguments", list(v.arguments.iter().map(ty_arg))),
+            ],
+        ),
         CallableDefault::Parameter(v) => positional("default_parameter", &binder_ref(v)),
         CallableDefault::If {
             condition,
@@ -2969,7 +2978,14 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::FloatLiteral(v) => positional("ct_float_literal", &v.to_string()),
         CtValue::Bool(v) => positional("ct_bool", &v.to_string()),
         CtValue::Str(v) => positional("ct_string", &quote(v)),
-        CtValue::FuncSymbol(v) => positional("ct_func_symbol", &quote(v)),
+        CtValue::FuncSymbol(v) if v.is_bare() => positional("ct_func_symbol", &quote(&v.symbol)),
+        CtValue::FuncSymbol(v) => record(
+            "ct_func_symbol",
+            &[
+                ("function", quote(&v.symbol)),
+                ("arguments", list(v.arguments.iter().map(ty_arg))),
+            ],
+        ),
         CtValue::Tuple(v) => positional("ct_tuple", &list(v.iter().map(ct_value))),
         CtValue::List(v) => positional("ct_list", &list(v.iter().map(ct_value))),
         CtValue::Dtype(v) => positional("ct_dtype", v.name()),

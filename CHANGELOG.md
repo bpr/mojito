@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function a bracket specialized binds a compile-time callable slot as
+  upstream's symbol reference to that specialization: `run[twice[4]]()`, a
+  callable default `= twice[4]` (or `twice[n=4]`, or `twice[k]` over an
+  earlier binder), `S[twice[3]]`, a callable pack's element, and
+  `run[T.gst[3]]` now run instead of stopping in elaboration, and two
+  specializations are two instances. `CtValue::FuncSymbol` and
+  `CallableDefault::Symbol` hold a `FuncSymbolRef` carrying the bracket's
+  arguments; MIR text 1.188 adds the record forms of `ct_func_symbol` and
+  `default_symbol`, and the package format moves to 216 (R2110).
 - `Origin` is a library struct in `std.origin`, exported by the prelude,
   and `ImmOrigin`/`MutOrigin` are its `comptime` aliases, as upstream
   declares them, so `comptime O = Origin[mut=True]` checks at module and

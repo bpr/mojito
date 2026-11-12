@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::FuncSymbolRef;
 use mojito_types::param_expr::ParamOp;
 use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
@@ -1112,11 +1113,13 @@ impl<'a> Specializer<'a> {
         self.constant_values = function_constant_values(&function);
         self.callable_targets = callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
-        self.constant_values.extend(
-            self.callable_targets
-                .iter()
-                .map(|(reg, (target, _))| (*reg, CtValue::FuncSymbol(target.clone()))),
-        );
+        self.constant_values
+            .extend(self.callable_targets.iter().map(|(reg, (target, _))| {
+                (
+                    *reg,
+                    CtValue::FuncSymbol(FuncSymbolRef::bare(target.clone())),
+                )
+            }));
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.body);
@@ -3391,8 +3394,19 @@ impl<'a> Specializer<'a> {
                 }) =>
                 {
                     for item in items {
-                        if let CtValue::FuncSymbol(target) = item {
-                            self.enqueue_function_value(target)?;
+                        let CtValue::FuncSymbol(target) = item else {
+                            continue;
+                        };
+                        if target.is_bare() {
+                            self.enqueue_function_value(&mut target.symbol)?;
+                        } else {
+                            let instance = self.function_value_instance(
+                                owner,
+                                &target.symbol,
+                                &target.arguments,
+                                None,
+                            )?;
+                            *target = FuncSymbolRef::bare(instance);
                         }
                     }
                 }

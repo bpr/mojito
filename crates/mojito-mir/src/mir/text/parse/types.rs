@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, OriginMutability};
 
@@ -715,7 +716,9 @@ impl Decoder {
     pub(super) fn callable_default(&mut self, value: &Value) -> Option<CallableDefault> {
         match &value.kind {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
-                "default_symbol" => self.symbol(inner).map(CallableDefault::Symbol),
+                "default_symbol" => self
+                    .symbol(inner)
+                    .map(|symbol| CallableDefault::Symbol(FuncSymbolRef::bare(symbol))),
                 "default_parameter" => self
                     .constraint_binder(inner)
                     .map(CallableDefault::Parameter),
@@ -724,6 +727,15 @@ impl Decoder {
                     None
                 }
             },
+            ValueKind::Record(tag, fields) if tag == "default_symbol" => {
+                let function = self.req(value, fields, "function", Self::symbol);
+                let arguments = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)));
+                self.unknown(fields, &["function", "arguments"]);
+                Some(CallableDefault::Symbol(FuncSymbolRef {
+                    symbol: function?,
+                    arguments: arguments?,
+                }))
+            }
             ValueKind::Record(tag, fields) if tag == "default_if" => {
                 let condition = self.req(value, fields, "condition", Self::param_expr)?;
                 let then_value =
@@ -1377,7 +1389,9 @@ impl Decoder {
                 "ct_float_literal" => self.float_literal(inner).map(CtValue::FloatLiteral),
                 "ct_bool" => self.boolean(inner).map(CtValue::Bool),
                 "ct_string" => self.string(inner).map(CtValue::Str),
-                "ct_func_symbol" => self.string(inner).map(CtValue::FuncSymbol),
+                "ct_func_symbol" => self
+                    .string(inner)
+                    .map(|symbol| CtValue::FuncSymbol(FuncSymbolRef::bare(symbol))),
                 "ct_tuple" => Some(CtValue::Tuple(self.ct_values(inner))),
                 "ct_list" => Some(CtValue::List(self.ct_values(inner))),
                 "ct_store_to_mem" => self
@@ -1429,6 +1443,15 @@ impl Decoder {
                 Some(CtValue::Generator(Box::new(
                     mojito_types::ct::GeneratorValue { params, body },
                 )))
+            }
+            ValueKind::Record(tag, fields) if tag == "ct_func_symbol" => {
+                let function = self.req(value, fields, "function", Self::string);
+                let arguments = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)));
+                self.unknown(fields, &["function", "arguments"]);
+                Some(CtValue::FuncSymbol(FuncSymbolRef {
+                    symbol: function?,
+                    arguments: arguments?,
+                }))
             }
             ValueKind::Record(tag, fields) if tag == "ct_simd" => {
                 let dtype_value = self.required(value, fields, "dtype")?;

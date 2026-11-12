@@ -1350,7 +1350,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         CtValue::Bool(value) => Value::Bool(value),
         CtValue::None => Value::None,
         CtValue::Str(value) => Value::Str(value),
-        CtValue::FuncSymbol(symbol) => Value::Function(symbol),
+        // A specialization is named by the elaborator; concrete MIR holds
+        // only its instance's bare symbol.
+        CtValue::FuncSymbol(function) if function.is_bare() => Value::Function(function.symbol),
         CtValue::Tuple(values) | CtValue::PopArray {
             elements: values, ..
         } => Value::Tuple(
@@ -1406,7 +1408,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Trait(_)
-        // No unresolved expression or deferred slot becomes a runtime value.
+        // No unresolved expression, deferred slot, or unnamed
+        // specialization becomes a runtime value.
+        | CtValue::FuncSymbol(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_) | CtValue::RemovedArg => return None,
     })

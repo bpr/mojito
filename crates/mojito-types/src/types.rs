@@ -2851,7 +2851,8 @@ impl fmt::Display for OriginMutability {
 /// stores a closure payload.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CallableDefault {
-    Symbol(#[serde(serialize_with = "crate::symbol_ref::serialize")] String),
+    /// A function, or a specialization of one (`twice[4]`).
+    Symbol(crate::ct::FuncSymbolRef),
     /// An earlier callable parameter of the same declaration.
     Parameter(ParamRef),
     If {
@@ -6058,10 +6059,10 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
-        | CtValue::FuncSymbol(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
         | CtValue::RemovedArg => value.clone(),
+        CtValue::FuncSymbol(function) => CtValue::FuncSymbol(rewrite_func_ref(function, rewrite)?),
     })
 }
 
@@ -6492,11 +6493,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Dependent(_)
         | TyKind::SelfType => true,
         TyKind::Struct(..) if ty.is_closed() => false,
-        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            TyArg::Ty(ty) => is_symbolic(ty),
-            TyArg::Val(value) => ct_value_is_symbolic(value),
-            TyArg::Origin(_) => false,
-        }),
+        TyKind::Struct(_, arguments) => arguments.iter().any(ty_arg_is_symbolic),
         TyKind::Func(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(is_symbolic)),
@@ -6658,8 +6655,17 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
-        | CtValue::FuncSymbol(_)
         | CtValue::RemovedArg => false,
+        CtValue::FuncSymbol(function) => function.arguments.iter().any(ty_arg_is_symbolic),
+    }
+}
+
+/// [`is_symbolic`] over one parameter argument; an origin never is.
+fn ty_arg_is_symbolic(argument: &TyArg) -> bool {
+    match argument {
+        TyArg::Ty(ty) => is_symbolic(ty),
+        TyArg::Val(value) => ct_value_is_symbolic(value),
+        TyArg::Origin(_) => false,
     }
 }
 
@@ -7096,7 +7102,10 @@ fn rewrite_callable_default(
     rewrite: &mut dyn TyRewrite,
 ) -> Result<CallableDefault, ParamError> {
     Ok(match default {
-        CallableDefault::Symbol(_) | CallableDefault::Parameter(_) => default.clone(),
+        CallableDefault::Symbol(function) => {
+            CallableDefault::Symbol(rewrite_func_ref(function, rewrite)?)
+        }
+        CallableDefault::Parameter(_) => default.clone(),
         CallableDefault::If {
             condition,
             then_value,
@@ -7106,6 +7115,17 @@ fn rewrite_callable_default(
             then_value: Box::new(rewrite_callable_default(then_value, rewrite)?),
             else_value: Box::new(rewrite_callable_default(else_value, rewrite)?),
         },
+    })
+}
+
+/// [`rewrite_tyargs`] over a function reference's applied arguments.
+fn rewrite_func_ref(
+    function: &crate::ct::FuncSymbolRef,
+    rewrite: &mut dyn TyRewrite,
+) -> Result<crate::ct::FuncSymbolRef, ParamError> {
+    Ok(crate::ct::FuncSymbolRef {
+        symbol: function.symbol.clone(),
+        arguments: rewrite_tyargs(&function.arguments, rewrite)?,
     })
 }
 

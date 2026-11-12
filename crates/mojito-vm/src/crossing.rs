@@ -74,7 +74,12 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Bool(b) => Ok(Value::Bool(*b)),
         CtValue::None => Ok(Value::None),
         CtValue::Str(s) => Ok(Value::Str(s.clone())),
-        CtValue::FuncSymbol(symbol) => Ok(Value::Function(symbol.clone())),
+        CtValue::FuncSymbol(function) if function.is_bare() => {
+            Ok(Value::Function(function.symbol.clone()))
+        }
+        CtValue::FuncSymbol(function) => Err(RuntimeError::Unsupported(format!(
+            "the specialization `{function}` reached the VM unnamed by the elaborator"
+        ))),
         CtValue::Tuple(items)
         | CtValue::PopArray {
             elements: items, ..

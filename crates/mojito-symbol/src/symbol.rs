@@ -2999,14 +2999,17 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
         // string or a literal spelling reads back exactly; a type or a
         // reflected type renders a `Ty`, so the walk reports where the value
         // ends and leaves rebuilding to a phase that can parse one.
-        b'y' | b'r' | b'I' | b'F' | b'J' | b'G' | b's' | b'c' | b'k' | b'a' | b'K' | b'A' => {
+        b'y' | b'r' | b'I' | b'F' | b'J' | b'G' | b's' | b'c' | b'C' | b'k' | b'a' | b'K'
+        | b'A' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
             let spelling = text.get(after..end)?;
             let value = match code {
                 b's' => Some(CtValue::Str(spelling.to_string())),
-                b'c' => Some(CtValue::FuncSymbol(spelling.to_string())),
+                b'c' => Some(CtValue::FuncSymbol(mojito_types::ct::FuncSymbolRef::bare(
+                    spelling,
+                ))),
                 b'k' => Some(CtValue::KgenString(spelling.to_string())),
                 b'a' => Some(CtValue::MlirAttr(spelling.to_string())),
                 b'K' => spelling
@@ -3263,8 +3266,12 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::MlirAttr(_)
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
-        | CtValue::FuncSymbol(_)
         | CtValue::RemovedArg => true,
+        CtValue::FuncSymbol(function) => function.arguments.iter().all(|argument| match argument {
+            TyArg::Ty(ty) => specialization_value_is_closed(&CtValue::Type(ty.clone())),
+            TyArg::Val(value) => specialization_value_is_closed(value),
+            TyArg::Origin(_) => true,
+        }),
     }
 }
 
@@ -3347,7 +3354,26 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
         CtValue::None => out.push_str("n;"),
         CtValue::Str(value) => out.push_str(&format!("s{}:{value}", value.len())),
-        CtValue::FuncSymbol(symbol) => out.push_str(&format!("c{}:{symbol}", symbol.len())),
+        CtValue::FuncSymbol(function) if function.is_bare() => {
+            out.push_str(&format!("c{}:{}", function.symbol.len(), function.symbol));
+        }
+        // A specialization: the symbol, then each applied argument encoded
+        // as an instance key encodes it. Its arguments make it opaque to
+        // the decoder, which reads it as well formed and unrebuilt.
+        CtValue::FuncSymbol(function) => {
+            let mut rendered = format!("{}[", function.symbol);
+            for argument in &function.arguments {
+                match argument {
+                    TyArg::Ty(ty) => {
+                        encode_specialization_value(&CtValue::Type(ty.clone()), &mut rendered);
+                    }
+                    TyArg::Val(value) => encode_specialization_value(value, &mut rendered),
+                    TyArg::Origin(_) => rendered.push('O'),
+                }
+            }
+            rendered.push(']');
+            out.push_str(&format!("C{}:{rendered}", rendered.len()));
+        }
         CtValue::KgenString(value) => out.push_str(&format!("k{}:{value}", value.len())),
         CtValue::MlirAttr(value) => out.push_str(&format!("a{}:{value}", value.len())),
         CtValue::KgenTarget(target) => {

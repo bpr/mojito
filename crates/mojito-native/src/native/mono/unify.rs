@@ -984,7 +984,11 @@ fn resolve_callable_default(
     bindings: &Bindings,
 ) -> Result<Option<CtValue>, MonoError> {
     match default {
-        CallableDefault::Symbol(symbol) => Ok(Some(CtValue::FuncSymbol(symbol.clone()))),
+        // A specialization's arguments may read an earlier binder
+        // (`twice[k]`), which closes under the instance's bindings.
+        CallableDefault::Symbol(symbol) => Ok(Some(CtValue::FuncSymbol(substitute_func_ref(
+            symbol, bindings,
+        )?))),
         CallableDefault::Parameter(parameter) => Ok(bindings.values.get(parameter).cloned()),
         CallableDefault::If {
             condition,
