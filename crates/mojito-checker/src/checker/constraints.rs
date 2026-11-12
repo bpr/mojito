@@ -861,7 +861,9 @@ impl Checker {
 
     /// The application of a generator value `object` names to `args`
     /// (`g[4]` over `comptime g = T.get`, `G[3]` over a parameter `G:
-    /// __generator_type[Idx: Int] Int`), upstream's `#kgen.bind_params`:
+    /// __generator_type[Idx: Int] Int`, `f[4]` over a generic callable
+    /// parameter `f: def[n: Int]() thin -> Int`), upstream's
+    /// `#kgen.bind_params`:
     /// the bracket list is bound against the generator type's parameters
     /// as an alias application's is. `None` when `object` denotes no
     /// generator.
@@ -879,10 +881,7 @@ impl Checker {
             ExprKind::Member { object, field } => self.type_member_value(object, field)?.ok()?,
             _ => return None,
         };
-        let TyKind::Generator(ty) = generator.meta().as_value()?.kind() else {
-            return None;
-        };
-        let params = ty.params.clone();
+        let params = generator.meta().as_value()?.generator_params()?.to_vec();
         let label = generator.to_string();
         Some((|| {
             let (arguments, unbound) = self.resolve_partial_use_params(&label, &params, args)?;

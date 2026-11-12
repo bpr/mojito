@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket over a generic callable parameter (`f[4]` inside `run[f:
+  def[n: Int]() thin -> Int]`) is upstream's `#kgen.bind_params` over the
+  binder: `var g = f[4]`, an annotated binding, a run-time or compile-time
+  argument, and a local `comptime` now run instead of stopping in
+  elaboration, as `ParamContext::bind_params` reads a generic function's
+  type as a generator and folds a bound function's symbol to its
+  specialization (R2111).
 - A function a bracket specialized binds a compile-time callable slot as
   upstream's symbol reference to that specialization: `run[twice[4]]()`, a
   callable default `= twice[4]` (or `twice[n=4]`, or `twice[k]` over an

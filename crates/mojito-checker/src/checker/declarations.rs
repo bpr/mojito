@@ -1528,7 +1528,7 @@ impl Checker {
                 }
             },
         };
-        if self.is_local_binding(name) {
+        if self.is_local_binding(name) || self.value_parameter_in_scope(name).is_some() {
             return Ok(None);
         }
         let Some(actual) = self.infer_specialized_callable_value(

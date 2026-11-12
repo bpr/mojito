@@ -2069,6 +2069,7 @@ impl Checker {
                 ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
             )
             && let Some((name, args)) = self.bracket_callable(expression)
+            && self.value_parameter_in_scope(&name).is_none()
         {
             return self.bind_bracket_callable(expression, &name, &args, Some(expected), record);
         }

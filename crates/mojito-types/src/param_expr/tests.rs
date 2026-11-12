@@ -1484,6 +1484,79 @@ fn bind_params_folds_a_constant_generator_and_binds_one_partially() {
     assert_eq!(applied.as_i64(), Some(7));
 }
 
+/// The type of `def twice[n: Int]() -> Int`: a generator over `n` whose
+/// result is the function at the bound signature.
+fn twice_ty() -> Ty {
+    let TyKind::Func(func) = callable(TransferSet::default()).kind().clone() else {
+        unreachable!("`callable` builds a function type");
+    };
+    TyKind::GenericFunc(Box::new(crate::types::GenericFuncTy {
+        decls: vec![int_decl("twice", 0, "n")],
+        func: *func,
+    }))
+    .into()
+}
+
+#[test]
+fn bind_params_folds_a_function_symbol_to_its_specialization() {
+    let context = ParamContext::new();
+    let twice = context
+        .constant_as(
+            CtValue::FuncSymbol(crate::ct::FuncSymbolRef::bare("twice")),
+            &twice_ty(),
+        )
+        .expect("a function's symbol is a constant");
+    let four = context.constant(CtValue::Int(4)).expect("a constant");
+    let applied = context
+        .bind_params(&twice, &[Some(four)])
+        .expect("every slot binds");
+    assert_eq!(
+        applied.as_constant(),
+        Some(&CtValue::FuncSymbol(crate::ct::FuncSymbolRef {
+            symbol: "twice".to_string(),
+            arguments: vec![TyArg::Val(CtValue::Int(4))],
+        }))
+    );
+    assert!(
+        context.bind_params(&twice, &[None]).is_err(),
+        "a function binds every slot"
+    );
+}
+
+#[test]
+fn bind_params_keeps_a_generic_callable_binder_symbolic() {
+    let context = ParamContext::new();
+    let binder = context.decl_ref(ParamId::new("run", 0), "f", MetaTy::value(twice_ty()));
+    let four = context.constant(CtValue::Int(4)).expect("a constant");
+    let applied = context
+        .bind_params(&binder, &[Some(four)])
+        .expect("every slot binds");
+    assert!(matches!(applied.kind(), ParamKind::BindParams { .. }));
+    assert!(matches!(
+        applied.meta().as_value().map(Ty::kind),
+        Some(TyKind::Func(_))
+    ));
+    let twice = context
+        .constant_as(
+            CtValue::FuncSymbol(crate::ct::FuncSymbolRef::bare("twice")),
+            &twice_ty(),
+        )
+        .expect("a function's symbol is a constant");
+    let mut bindings = ParamBindings::new();
+    bindings.bind(ParamId::new("run", 0), twice);
+    let folded = context
+        .replace(&applied, &bindings)
+        .and_then(|expr| context.fold(&expr))
+        .expect("the binder's binding folds");
+    assert_eq!(
+        folded.as_constant(),
+        Some(&CtValue::FuncSymbol(crate::ct::FuncSymbolRef {
+            symbol: "twice".to_string(),
+            arguments: vec![TyArg::Val(CtValue::Int(4))],
+        }))
+    );
+}
+
 #[test]
 fn bind_params_substitutes_a_filled_slot_into_a_bound_one_reading_it() {
     let context = ParamContext::new();

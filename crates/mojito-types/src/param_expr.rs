@@ -29,6 +29,7 @@ use crate::types::{PackPredicateRef, TrivialLifecycle, Ty};
 use mojito_ast::ast::{Dtype, InfixOp, PrefixOp};
 use mojito_common::literal::IntLiteral;
 use mojito_common::token::SourceSpan;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -1082,8 +1083,11 @@ impl ParamContext {
     /// `#kgen.bind_params`. Binding every slot of a constant generator is
     /// its body at the arguments, and binding some is the generator over
     /// the rest; binding every slot of a type's member read unapplied
-    /// (`T.get`) is the member's application (`T.get[4]`); a partial
-    /// binding of a partial binding binds the first's open slots. Any other
+    /// (`T.get`) is the member's application (`T.get[4]`); binding every
+    /// slot of a generic function's symbol is its specialization
+    /// (`twice[4]`), a generic function's type being upstream's generator
+    /// over its parameters; a partial binding of a partial binding binds
+    /// the first's open slots. Any other
     /// generator — a parameter still unbound — stays a node, typed as the
     /// application's result or the generator over the open slots.
     pub fn bind_params(
@@ -1092,7 +1096,7 @@ impl ParamContext {
         args: &[Option<ParamExpr>],
     ) -> Result<ParamExpr, ParamError> {
         let generator = self.intern(generator);
-        let Some(TyKind::Generator(ty)) = generator.meta().as_value().map(Ty::kind) else {
+        let Some((ty, function)) = generator.meta().as_value().and_then(generator_shape) else {
             return Err(ParamError::TypeMismatch {
                 operation: "parameter binding".to_string(),
                 expected: "a generator".to_string(),
@@ -1111,8 +1115,35 @@ impl ParamContext {
             .map(|arg| arg.as_ref().map(|arg| self.intern(arg)))
             .collect();
         let complete = args.iter().all(Option::is_some);
+        if function && !complete {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter binding".to_string(),
+                expected: format!("{} argument(s)", ty.params.len()),
+                found: "a partial binding of a function".to_string(),
+            });
+        }
         let bindings = generator_bindings(&ty.params, &args);
         match generator.kind() {
+            ParamKind::Constant(CtValue::FuncSymbol(symbol))
+                if function
+                    && symbol.is_bare()
+                    && args.iter().flatten().all(ParamExpr::is_closed) =>
+            {
+                let arguments = args
+                    .iter()
+                    .flatten()
+                    .map(|arg| match arg.meta() {
+                        MetaTy::Type => crate::types::TyArg::Ty(
+                            crate::types::DependentType::resolve(arg.clone()),
+                        ),
+                        _ => crate::types::TyArg::Val(arg.clone().into_value()),
+                    })
+                    .collect();
+                return self.constant(CtValue::FuncSymbol(crate::ct::FuncSymbolRef {
+                    symbol: symbol.symbol.clone(),
+                    arguments,
+                }));
+            }
             ParamKind::Constant(CtValue::Generator(value)) => {
                 if complete {
                     return self.fold(&self.replace(&value.body, &bindings)?);
@@ -1148,11 +1179,9 @@ impl ParamContext {
                     .iter()
                     .map(|slot| slot.is_none().then(|| open.next().flatten()).flatten())
                     .collect();
-                let fresh = match inner.meta().as_value().map(Ty::kind) {
-                    Some(TyKind::Generator(inner_ty)) => {
-                        generator_bindings(&inner_ty.params, &filled)
-                    }
-                    _ => ParamBindings::new(),
+                let fresh = match inner.meta().as_value().and_then(generator_shape) {
+                    Some((inner_ty, _)) => generator_bindings(&inner_ty.params, &filled),
+                    None => ParamBindings::new(),
                 };
                 let merged = inner_args
                     .iter()
@@ -6618,6 +6647,23 @@ fn bool_of_storage(expr: &ParamExpr) -> Option<&ParamExpr> {
 
 /// The bindings a generator's application installs: each bound slot's
 /// argument for its declaration, a type slot's as its type too.
+/// The generator `ty` is, if any, and whether it is a generic function's
+/// type: upstream gives a generic function a generator type over its own
+/// parameters, whose result is the function at the bound signature.
+fn generator_shape(ty: &Ty) -> Option<(Cow<'_, crate::types::GeneratorTy>, bool)> {
+    match ty.kind() {
+        TyKind::Generator(generator) => Some((Cow::Borrowed(generator.as_ref()), false)),
+        TyKind::GenericFunc(generic) => Some((
+            Cow::Owned(crate::types::GeneratorTy {
+                params: generic.decls.clone(),
+                result: Ty::new(TyKind::Func(Box::new(generic.func.clone()))),
+            }),
+            true,
+        )),
+        _ => None,
+    }
+}
+
 fn generator_bindings(
     params: &[crate::types::ParamDecl],
     args: &[Option<ParamExpr>],

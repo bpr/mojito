@@ -114,6 +114,7 @@ assets/ok/callable_bound_overload_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_contract_names_other_parameters.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_pack_cases.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/callable_param_binder_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_param_specialized_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_generic_contract.mojo	-	ineligible	no-scalar-entry-shape

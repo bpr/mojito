@@ -570,7 +570,7 @@ impl Checker {
     /// `name` and typed `ty`, part of the instance's identity for a struct
     /// and a `def` alike: a function is its symbol, as the pin's
     /// `S[#kgen.func.symbol<@f>]`, and an enclosing callable binder (`f`,
-    /// `Self.f`) its reference, which the elaborator substitutes per
+    /// `Self.f`) or its application (`f[4]`) its reference, which the elaborator substitutes per
     /// instance. A run-time local is the pin's dynamic-value rejection. A
     /// capture-free nested `def`, a lambda, a member, and any argument at
     /// a generic callable slot keep the deferred marker, which the
@@ -586,10 +586,12 @@ impl Checker {
         // caller's concrete types open (`def(var List[Int].IteratorType[o]
         // .Element)`); the argument matches the type they close to.
         let ty = &self.resolve_assoc_ty(ty);
-        // An enclosing callable binder is a compile-time reference, in a
-        // signature as in a body, where no run-time binding names it.
+        // An enclosing callable binder, or a bracket applying one (`f[4]`,
+        // upstream's `#kgen.bind_params`), is a compile-time reference, in
+        // a signature as in a body, where no run-time binding names it.
         if let Ok(CtValue::Expr(binder)) = self.eval_associated_ct(expr)
-            && binder.as_decl_ref().is_some()
+            && (binder.as_decl_ref().is_some()
+                || matches!(binder.kind(), ParamKind::BindParams { .. }))
             && let Some(actual) = binder.meta().as_value()
         {
             if !self.value_coerces(actual, ty) {

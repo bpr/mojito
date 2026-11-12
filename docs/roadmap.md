@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2142**.
+Next free ID: **R2145**.
 
 ## Ordered Work
 
@@ -3974,19 +3974,41 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2111 A bracket over a generic callable parameter read as a value
-  has no declaration facts**
+- [ ] **R2142 A callable default cannot apply an earlier generic callable
+  parameter**
 
-  Inside `def run[f: def[n: Int]() thin -> Int]()`, `var g = f[4]` stops
-  elaboration with "unsupported function value `f` lacks declaration
-  facts", where the pin prints `8` for `run[twice]()`; the call `f[4]()`
-  already runs.
-  - The value read names the parameter `f`, which has no declaration of
-    its own; the elaborator must specialize the callable bound to `f`,
-    as a call through it does.
+  `def run[f: def[n: Int]() thin -> Int, g: def() thin -> Int = f[9]]()`
+  is rejected with "'f' has type undefined and is not callable", where the
+  pin prints `18` for `run[twice]()`.
+  - `CallableDefault` (`mojito-types/src/types.rs`) holds a function's
+    symbol, an earlier parameter, or a conditional of those. It has no
+    form for an application of an earlier binder.
+  - `compile_callable_default` (`checker/declarations.rs`) reads `f[9]`
+    as a function's specialization, and `callable_value_symbol` answers
+    `None` for a binder.
+  - Lever: the default holds the `#kgen.bind_params` `ParamExpr` the
+    check already builds for `f[9]` in a body, and the elaborator's
+    `apply_defaults` (`native/mono/unify.rs`) folds it per instance.
   - Probe: the program above over `def twice[n: Int]() -> Int: return n
     * 2`.
-  - Found while landing R1513 (2026-11-11).
+  - Found while landing R2111 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2143 A struct's generic callable parameter applied in its methods
+  is not constant at elaboration**
+
+  `var g = Self.f[3]` in a static method of `struct S[f: def[n: Int]()
+  thin -> Int]` stops elaboration with "unsupported monomorphizing
+  receiver for `S.get`: solution for `f` is not constant", where the pin
+  prints `6` for `S[twice].get()`.
+  - The check binds the bracket as a `#kgen.bind_params` over the
+    struct's binder, as `f[4]` over a function's binder.
+  - The static's instance does not carry the struct instance's callable
+    binding, so the elaborator cannot fold the application.
+  - Probe: the program above over `def twice[n: Int]() -> Int: return n
+    * 2`.
+  - Found while landing R2111 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11078,6 +11100,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1763 (2026-10-31).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2144 A generic function's type is apart from the generator type,
+  where upstream has one**
+
+  Upstream types a generic function as a `!kgen.generator` over its own
+  parameters. Mojito keeps `TyKind::GenericFunc` beside
+  `TyKind::Generator`, so each consumer reads both.
+  - `Ty::generator_params` and `ParamContext::bind_params`'s
+    `generator_shape` (`mojito-types/src/param_expr.rs`) view a
+    `GenericFunc` as a generator for `#kgen.bind_params`.
+  - Conversions (`generator_converts`), the MIR text, and the native
+    layout (R1706) each have their own `GenericFunc` arm.
+  - Folding the two is a contract change across types, checker, and MIR
+    text. Split it on planning if it outgrows one session.
+  - Found while landing R2111 (2026-11-12).
+  - Depends on R1768 (the contract's binders move to slot form first).
+  - Model: Fable, Planned.
 
 - [ ] **R2052 A builtin body folds in one pass after signatures check,
   where upstream folds an inline-builtin call on demand**

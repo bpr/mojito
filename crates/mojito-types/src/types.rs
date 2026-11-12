@@ -1161,6 +1161,17 @@ impl Ty {
         self.kind().callable()
     }
 
+    /// The parameters a `#kgen.bind_params` binds, when this is a
+    /// generator type: a `__generator_type`'s, or a generic function's,
+    /// which upstream types as a generator over its own parameters.
+    pub fn generator_params(&self) -> Option<&[ParamDecl]> {
+        match self.kind() {
+            TyKind::Generator(generator) => Some(&generator.params),
+            TyKind::GenericFunc(generic) => Some(&generic.decls),
+            _ => None,
+        }
+    }
+
     /// The signature of a non-generic function type.
     pub fn as_func(&self) -> Option<&FuncTy> {
         self.kind().as_func()

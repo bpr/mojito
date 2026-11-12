@@ -1250,7 +1250,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   clauses `validate_member_availability` checks, else to
   `generator_application_of`, which binds the brackets against a generator
   value's type (`g[4]` over `comptime g = T.get`, `G[3]` over a
-  `__generator_type` parameter) into `ParamContext::bind_params`. A
+  `__generator_type` parameter, `f[4]` over a generic callable parameter
+  `f: def[n: Int]() thin -> Int`, whose type `Ty::generator_params` reads
+  as a generator over its own parameters) into `ParamContext::bind_params`,
+  which folds a bound function's symbol to its specialization's
+  `FuncSymbolRef` once the instance binds the parameter. A
   parameterized declaration read unapplied is the generator it declares:
   `alias_generator` (a value or predicate alias, the latter's `Bool` body
   `ComptimeAlias::predicate_value`), `struct_generator_member` (a struct's
@@ -1349,7 +1353,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value, which `infer`'s
   `Index`/`MultiIndex` arms and `infer_with_expected` bind in place
   (`bind_bracket_callable`, recording the specialization at the bracket
-  itself, as upstream binds a `SubscriptNode` over an overload set) and
+  itself, as upstream binds a `SubscriptNode` over an overload set;
+  `infer_with_expected` and `callable_value_symbol` leave a compile-time
+  binder's bracket to `generator_application_of`) and
   its `Invoke` arm spells as the `Call` it checks, all through
   `infer_specialized_callable_value`, over a `CallableValueSource`: a
   binding, or a method read through its struct (an initializer's value
