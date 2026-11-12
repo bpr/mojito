@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2124**.
+Next free ID: **R2126**.
 
 ## Ordered Work
 
@@ -10057,6 +10057,45 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2124 The checker's declared-parameter binders return each
+  bracket argument's attribute by source position, where upstream binds
+  one per declared parameter**
+
+  `bind_bracket_params` (`checker/declarations.rs`) returns
+  `BoundParameters::attributes` in bracket order, and the struct
+  application and callable specialization sites scatter it back through
+  `ForwardedBrackets` around the origin arguments they partitioned out.
+  - Upstream's binder fills the op's parameter list in declaration order,
+    an origin argument in its declared slot.
+  - The lever: `BoundParameters::attributes` aligns with `arguments`, one
+    slot per declaration, and `record_bracket_attributes` takes that list.
+  - Done when `ForwardedBrackets` and its `scatter` are gone.
+  - Found while attempting R2120 (2026-11-12).
+  - Depends on R761.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2125 A bracket-taking builtin binds its arguments with no
+  declared parameter list, where upstream declares it in the library**
+
+  The checker's builtin binders read their bracket arguments by fixed
+  position and record attributes with no declaration to name them by.
+  - Upstream declares each one as a library function or struct with an
+    ordinary parameter list (`external_call[callee, return_type, *types]`,
+    `reflect[T]`).
+  - Probe: `external_call` (`checker/ffi_calls.rs`).
+  - Probe: `reflect[T]` (`checker/reflection.rs`).
+  - Probe: `Variant`'s `isa[T]` and its storage constructions
+    (`checker/inference.rs`).
+  - Probe: `__mlir_attr` and the one-type-argument trait tests
+    (`checker/constraints.rs`).
+  - The lever: each binder reads the bundled declaration's `ParamDecl`s
+    and records R2124's per-declaration list.
+  - Done when every `record_bracket_attributes` caller passes a list keyed
+    by declaration.
+  - Found while attempting R2120 (2026-11-12).
+  - Depends on R2124.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2120 A checked call's bracket arguments follow the source
   bracket, where upstream's op carries one attribute per declared
   parameter**
@@ -10075,7 +10114,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when `CheckedOp::Call` and `Invoke` name no bracket argument by
     its source position.
   - Found while landing R659 (2026-10-13).
-  - Depends on R756.
+  - Not landable alone (attempted 2026-11-12): about thirty binders
+    record source-ordered attributes, origin arguments have no
+    declaration to be named by (R761), and builtins declare no parameter
+    list (R2125).
+  - Depends on R756, R761, R2124, R2125.
   - Model: Opus, Not Planned.
 
 - [ ] **R2121 A subscript call contract names its bracket operands by
