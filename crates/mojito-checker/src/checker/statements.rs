@@ -15,6 +15,19 @@ use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
+        // Trait names predeclare before anything reads a spelling: a struct
+        // parameter's bound may name a user trait declared anywhere in the
+        // module (`struct Wrap[T: Show]`), and so may a trait constant
+        // (`comptime S = Show & Copyable`); the trait's requirements
+        // register in the trait pass below, before any body needs them.
+        for statement in stmts {
+            if let StmtKind::Trait { name, .. } = &statement.kind {
+                self.predeclared_traits.insert(name.clone());
+            }
+        }
+        // A trait constant binds before the constants fold, which leave it
+        // alone, and binds again once the traits it names register.
+        self.bind_module_trait_constants(stmts, false)?;
         // A module integer constant folds once, ahead of every declaration
         // whose symbol spells it.
         self.fold_module_constants(stmts);
@@ -51,7 +64,9 @@ impl Checker {
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Comptime {
                     name, type_params, ..
-                } if type_params.is_empty() => Some(name.clone()),
+                } if type_params.is_empty() && !self.module_trait_constants.contains(name) => {
+                    Some(name.clone())
+                }
                 _ => None,
             }));
         self.nested_origins_read_only_functions
@@ -69,6 +84,7 @@ impl Checker {
                 ..
             } = &statement.kind
                 && type_params.is_empty()
+                && !self.module_trait_constants.contains(name)
                 && (super::lifts_comptime_value(value, self)
                     || names_read(value)
                         .iter()
@@ -86,15 +102,6 @@ impl Checker {
         // the source-order walk below checks conformance and bodies. A struct field or method
         // signature may therefore reference a struct declared later in its
         // module (an iterator holding `ref[o] List[T]` above `List` itself).
-        // Trait names predeclare before the shells: a struct parameter's
-        // bound may name a user trait declared anywhere in the module
-        // (`struct Wrap[T: Show]`); the trait's requirements register in
-        // the trait pass below, before any body needs them.
-        for statement in stmts {
-            if let StmtKind::Trait { name, .. } = &statement.kind {
-                self.predeclared_traits.insert(name.clone());
-            }
-        }
         // A shell whose parameter is typed by another struct's member
         // (`values: _MLIR.KGENParamListType[type]`) waits for that struct's
         // member types, and registers as soon as they resolve.
@@ -226,6 +233,9 @@ impl Checker {
         }
         // A trait naming a later one (`HookFor[...]: PluginHooks` above it).
         self.settle_deferred_traits(stmts, &mut deferred_traits);
+        // A trait constant's set canonicalizes over the registered
+        // refinements.
+        self.bind_module_trait_constants(stmts, true)?;
         // A shell typed by a projection through one of those traits.
         self.settle_deferred_shells(stmts, &mut deferred_shells);
         // A struct header's condition naming a trait this module declares
@@ -910,6 +920,39 @@ impl Checker {
         Ok(())
     }
 
+    /// Bind each parameter-free module `comptime` whose value is a trait
+    /// value as a constant of the trait metatype, in dependency order, so
+    /// `comptime B = A & Hashable` reads `A`'s binding. The first pass, ahead
+    /// of the traits' registration, reports nothing: a binding it cannot
+    /// make waits for the second, which reports it.
+    fn bind_module_trait_constants(
+        &mut self,
+        stmts: &[Stmt],
+        report: bool,
+    ) -> Result<(), TypeError> {
+        for index in alias_dependency_order(stmts) {
+            let StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                value,
+                ..
+            } = &stmts[index].kind
+            else {
+                continue;
+            };
+            if !type_params.is_empty() || self.trait_value(value).is_none() {
+                continue;
+            }
+            self.module_trait_constants.insert(name.clone());
+            match self.bind_trait_constant(name, ty.as_ref(), value, 0) {
+                Err(error) if report => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
         let StmtKind::Comptime {
             name,
@@ -921,7 +964,7 @@ impl Checker {
         else {
             return Ok(());
         };
-        if self.comptime_aliases.contains_key(name) {
+        if self.comptime_aliases.contains_key(name) || self.module_trait_constants.contains(name) {
             return Ok(());
         }
         // A single-argument type application parses as a subscript
@@ -2193,6 +2236,24 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
+                // A trait constant is compile-time data with no run-time
+                // form: a module one was bound by the declaration pass, and
+                // a local one binds here.
+                let at_module = self.function_bases.is_empty() && self.scopes.len() == 1;
+                if at_module && self.module_trait_constants.contains(name) {
+                    return Ok(());
+                }
+                if !at_module
+                    && type_params.is_empty()
+                    && self.bind_trait_constant(
+                        name,
+                        ty.as_ref(),
+                        value,
+                        self.tparams.len().saturating_sub(1),
+                    )?
+                {
+                    return Ok(());
+                }
                 if !self.reads_compile_time_alone(value) {
                     return Err(self.dynamic_value_error(value, "comptime initializer"));
                 }
@@ -2303,7 +2364,6 @@ impl Checker {
                     .filter(|expected| !(expected.is_int() || expected.kind().is_int_literal()));
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.
-                let at_module = self.function_bases.is_empty() && self.scopes.len() == 1;
                 let folded = if at_module {
                     self.program_constants.own(name).cloned().ok_or(())
                 } else {

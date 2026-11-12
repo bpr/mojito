@@ -1327,16 +1327,14 @@ impl Checker {
                         .comptime_type_operand(&args[0])?
                         .filter(|operand| !matches!(operand.kind(), TyKind::Param { .. })) =>
             {
-                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
+                let Some(trait_names) = self.conformance_traits(&args[1]) else {
                     return Err(TypeError::Unsupported(
                         "conforms_to takes a trait name, or a '&' conjunction of trait names, \
                          as its second argument"
                             .to_string(),
                     ));
                 };
-                trait_names
-                    .iter()
-                    .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
+                let trait_names = trait_names?;
                 // A closed type's conformance is a fact decided here. An
                 // open one's (a symbolic struct, a reflected field type at a
                 // loop index) is, where unknown, the conjunction of its
@@ -1345,7 +1343,7 @@ impl Checker {
                 let mut refuted = mojito_types::conformance::reflects_no_conformance(&operand);
                 let mut propositions = Vec::new();
                 let mut values = Vec::new();
-                for trait_name in trait_names {
+                for trait_name in &trait_names {
                     let unknown = match self.conformance(&operand, trait_name) {
                         Conformance::Proven => continue,
                         Conformance::Refuted => None,
@@ -1591,7 +1589,7 @@ impl Checker {
                 self.collect_arm_assumptions(right, proved)
             }
             ExprKind::Call { name, args, .. } if name == "conforms_to" && args.len() == 2 => {
-                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
+                let Some(Ok(trait_names)) = self.conformance_traits(&args[1]) else {
                     return Ok(());
                 };
                 let Some(operand) = self.comptime_type_operand(&args[0])? else {
@@ -1602,7 +1600,7 @@ impl Checker {
                     TyKind::Dependent(dependent) => dependent.expr().clone(),
                     _ => return Ok(()),
                 };
-                for trait_name in trait_names {
+                for trait_name in &trait_names {
                     proved.push(
                         self.param_context
                             .conforms(&subject, trait_name)

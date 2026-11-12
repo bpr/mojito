@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1179
+# swept-count	1182
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -1093,7 +1093,10 @@ assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	err
 assets/type_error/trait_bound_body_assumes_bound.mojo	compile-reject	agree	error: 'T' value has no attribute 'copy'
 assets/type_error/trait_bound_pack_element.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Ts' has 'Copyable' type, but value has type 'AnyStruct[NC]'
 assets/type_error/trait_bound_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'T' has 'Copyable' type, but value has type 'AnyStruct[NC]'
+assets/type_error/trait_comptime_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'AnyTrait[Movable]' value to 'AnyTrait[Copyable]' in comptime initializer
+assets/type_error/trait_comptime_annotation_widens.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
+assets/type_error/trait_comptime_non_trait_operand.mojo	compile-reject	agree	error: 'AnyTrait[Copyable]' does not implement the '__and__' method
 assets/type_error/trait_default_checked_without_conformer.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/trait_default_conflicting_implementations.mojo	compile-reject	agree	error: trait method requirement 'name' has conflicting default implementations in 'Left' and 'Right'; you must implement it manually
 assets/type_error/trait_default_parameter_conflicts_struct_parameter.mojo	compile-reject	agree	error: name conflict between parameter 'x' in the default trait method and a parameter in the struct

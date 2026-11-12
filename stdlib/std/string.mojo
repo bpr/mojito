@@ -654,8 +654,9 @@ trait PathLike:
         ...
 
 
-# Upstream also declares `KeyElement`, a composition alias the bundled
-# library cannot spell (R1171); `Comparable` and `Hashable` answer its parts.
+# Upstream also declares `KeyElement`, a composition alias the bundle does
+# not list, since a trait constant is no conformance-list entry (R2145);
+# `Comparable` and `Hashable` answer its parts.
 # `String` iterates through `__iter__` but is not `Iterable`, as upstream.
 struct String(
     Boolable,

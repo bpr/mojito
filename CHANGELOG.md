@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait or a `&` composition binds a `comptime` constant of the trait
+  metatype, at module or local scope, annotated (`comptime U:
+  type_of(AnyType) = Movable`) or not: a trait-valued parameter, a default,
+  `type_of`, a bound (`T: MyTr`), and `conforms_to` read it, and the
+  bundled `StaticTuple` bounds by upstream's `_StaticTupleTraits`. A
+  constant in a conformance list is R2145 (R1171).
 - A bracket over a generic callable parameter (`f[4]` inside `run[f:
   def[n: Int]() thin -> Int]`) is upstream's `#kgen.bind_params` over the
   binder: `var g = f[4]`, an annotated binding, a run-time or compile-time

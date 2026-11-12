@@ -1896,8 +1896,8 @@ impl Checker {
             }
             ParamArg::Type(_) => return None,
         };
-        if let Some(traits) = self.trait_value(expr) {
-            return Some(traits.map(|traits| TyKind::Trait(traits).into()));
+        if let Some(value) = self.trait_value(expr) {
+            return Some(value.map(|value| TyKind::Trait(value.traits).into()));
         }
         if let ExprKind::Identifier(name) = &expr.kind {
             return trait_binder(name);
@@ -4617,7 +4617,14 @@ impl Checker {
                 return self.resolve_trait_param_arg(decl, bound, value);
             }
             ParamArg::Value(expr) => match self.trait_value(expr) {
-                Some(traits) => CtValue::Trait(traits?),
+                Some(value) => {
+                    let value = value?;
+                    return if self.traits_satisfy(&value.ty, bound) {
+                        Ok(TyArg::Val(CtValue::Trait(value.traits)))
+                    } else {
+                        Err(mismatch(TyKind::AnyTrait(value.ty).to_string()))
+                    };
+                }
                 None => match self.compile_dependent_ct_expr(expr) {
                     Ok(value) => value.into_value(),
                     Err(error) => {

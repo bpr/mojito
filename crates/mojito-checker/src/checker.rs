@@ -548,6 +548,11 @@ pub struct Checker {
     /// program, collected before any registers: a shell default naming one
     /// still unregistered waits for it ([`Self::deferred_defaults`]).
     declared_aliases: HashSet<String>,
+    /// The parameter-free module `comptime` declarations bound to a trait
+    /// value (`comptime MyTr = Copyable & Movable`), constants of the trait
+    /// metatype the alias and constant passes leave alone
+    /// ([`Self::bind_module_trait_constants`]).
+    module_trait_constants: HashSet<String>,
     /// The module constants the declaration pass bound ahead of their
     /// statements, which a body before the statement reads; the statement's
     /// own binding replaces the pre-bound one.
@@ -1093,6 +1098,7 @@ impl Checker {
             predeclared_structs: HashSet::new(),
             shells_awaiting_defaults: Vec::new(),
             declared_aliases: HashSet::new(),
+            module_trait_constants: HashSet::new(),
             predeclared_constants: HashSet::new(),
             predeclared_functions: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),

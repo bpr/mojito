@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2145**.
+Next free ID: **R2146**.
 
 ## Ordered Work
 
@@ -5804,35 +5804,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1171 A trait is not a `comptime` binding**
+- [ ] **R2145 A `comptime` trait constant is not a conformance-list entry**
 
-  Problem: `comptime T = Copyable`, `comptime MyTr = Copyable & Movable`,
-  and `comptime U: type_of(AnyType) = Movable` stop with "'Copyable' is not
-  a compile-time type", where the pin binds each and passes it to a
-  trait-valued parameter (`g[MyTr]()` over `g[Tr: type_of(Movable)]`).
-  - Every form reaches the check, module or local: it reads `Copyable &
-    Movable` as a value expression ("Undefined variable 'Copyable'") and a
-    module `comptime T = Copyable` as an unknown type ("unknown type
-    'Copyable'").
-  - The lever: a trait-valued alias in `Checker::comptime_aliases` (an
-    `AliasBody::Trait`, or a `CtValue::Trait` value), module or local, read
-    by `Checker::trait_value` wherever a trait is spelled.
-  - Using such an alias as a bound (`T: MyTr`) is R1167's bound form, not
-    this entry's.
-  - Probe: `comptime MyTr = Copyable & Movable`, then `print(g[MyTr]())`,
-    prints `1` at the pin.
-  - Probe: upstream's `std.collections.dict` declares `comptime KeyElement
-    = Movable & Hashable & Equatable`, which `String`, `StringSpan`, and
-    `Path` list as a conformance and `Dict` and `Set` take as a bound. The
-    bundle spells the composition out and omits it from the lists, so a
-    program naming `KeyElement` finds no declaration.
-  - Probe: upstream's `std/utils/static_tuple.mojo` declares `comptime
-    _StaticTupleTraits = ImplicitlyCopyable & Deinitable &
-    RegisterPassable` and bounds `StaticTuple` and its construction check
-    with it; the bundle spells the composition out per bound.
-  - Found while landing R1166 (2026-10-20).
+  Problem: `struct S(MyTr)` over `comptime MyTr = Copyable & Movable` stops
+  with "unknown trait 'MyTr' in a type-parameter bound", where the pin
+  conforms `S` to every trait the constant binds.
+  - The check stores a struct's conformance list as the names it spells
+    (`StructInfo.conforms`, from `declaration.conforms` in
+    `Checker::check_struct_shell`), and the conformance checks
+    (`check_struct_conformances`, `copyable_witness_table`, the
+    `Deinitable` test), `CheckedProgram`'s declaration metadata, and the
+    package interface each read those names.
+  - Upstream evaluates each list entry to its trait value, so a constant
+    contributes its traits.
+  - The lever: expand a trait constant (`Checker::trait_constant`) where the
+    shell records the list, and read the expanded list everywhere the AST's
+    list is read today, the conditional-conformance list beside it included.
+  - Probe: `comptime MyTr = Copyable & Movable`, `struct S(MyTr)` with an
+    `Int` field, then `print(conforms_to(S, MyTr))` prints `True` at the pin.
+  - Probe: `trait Show`, `comptime S = Show & Copyable`, `struct P(S)`
+    implementing `show`, then `k(P(7))` over `k[T: S]` prints `7`.
+  - Found while landing R1171 (2026-11-12).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1173 A type or trait read as a run-time expression is rejected**
 
@@ -8134,7 +8128,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `Writable` (a `write_to`): `Layout`, `Allocation`, `ThinAllocation`,
     `OwnedPointer where T: Writable`, and `StringDict where V: Writable`.
   - `IterableOwned` on `Dict`: an owning `__iter__(var self)` and its
-    iterator. Upstream's clause reads `KeyElement` (R1171); `K: Deinitable`
+    iterator. Upstream's clause reads `KeyElement` (R237); `K: Deinitable`
     spells it meanwhile.
   - `Defaultable` and `Hashable where T: Hashable` on `Span`: an empty
     constructor and a `__hash__`.
@@ -12780,11 +12774,17 @@ residue found inside a task moves to the task that owns its fix.
 - [ ] **R237 `KeyElement` is missing**
 
   Problem: upstream's `KeyElement` is not ported.
-  - A small port.
+  - A small port: upstream's `std.collections.dict` declares `comptime
+    KeyElement = Movable & Hashable & Equatable`, which `String`,
+    `StringSpan`, `Path`, and `DType` list as a conformance and `Dict` and
+    `Set` take as a bound; the bundle spells the composition out and omits
+    it from the lists.
   - Probe: the bundled `struct DType` omits `KeyElement` from its
     conformance list (`stdlib/std/builtin/dtype.mojo`), which "unknown trait
     'KeyElement' in a type-parameter bound" rejects; restore it there.
-  - Depends on nothing.
+  - Probe: `from std.collections.dict import KeyElement`, then `def
+    f[K: KeyElement](k: K)` over `f("a")`, runs at the pin.
+  - Depends on R2145.
   - Model: Opus, Not Planned.
 
 - [ ] **R238 `_get_random_name` reads `/dev/urandom` instead of using

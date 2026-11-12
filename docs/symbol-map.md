@@ -3184,6 +3184,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the metatype (`verify/concrete.rs`).
 - The elaborator classifies the binder by `any_trait_source_type`
   (`mojito-comptime`, `comptime.rs`).
+- A trait constant (`comptime MyTr = Copyable & Movable`) is a
+  binderless `comptime` value in `Checker::local_comptime_parameters`: a
+  `ParamExpr` constant `CtValue::Trait` typed `AnyTrait[declared]`, its
+  annotation's metatype. `Checker::bind_trait_constant` (`traits.rs`)
+  checks the annotation and binds it; `check_program`'s
+  `bind_module_trait_constants` (`statements.rs`) binds module ones ahead
+  of the constant fold and again once the traits register, recording them
+  in `Checker::module_trait_constants`, which the alias and constant
+  passes skip; the `Comptime` arm of `check_stmt` binds a local one. It
+  crosses a package through the interface's `comptime_parameters`.
+  `trait_value` returns a `TraitValue` (the traits, and its metatype's
+  bound), expanding each constant through `Checker::trait_constant`; a
+  bound expands one in `classify_params_in_scope` (`declarations.rs`), and
+  `conforms_to`'s readers go through `Checker::conformance_traits`.
 - An origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) is a
   `ParamDecl::Origin` (`mojito-types`, `types.rs`) declared in place, its
   `mut=` binder an infer-only `ParamDecl::Value`.

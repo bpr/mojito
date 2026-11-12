@@ -999,9 +999,17 @@ impl Checker {
                 {
                     continue;
                 }
-                self.check_trait_name(bound)?;
-                if !trait_bounds.contains(bound) {
-                    trait_bounds.push(bound.clone());
+                // A trait constant (`T: MyTr` over `comptime MyTr =
+                // Copyable & Movable`) bounds by the traits it binds, as
+                // upstream evaluates a bound to its trait value.
+                let traits = self.trait_constant(bound).map_or_else(
+                    || self.check_trait_name(bound).map(|()| vec![bound.clone()]),
+                    |constant| Ok(constant.traits),
+                )?;
+                for bound in traits {
+                    if !trait_bounds.contains(&bound) {
+                        trait_bounds.push(bound);
+                    }
                 }
             }
             if let Some((binder, _)) = &trait_param {
@@ -1292,16 +1300,16 @@ impl Checker {
             expected: expected.to_string(),
             found,
         };
-        let Some(traits) = self.trait_value(expr) else {
+        let Some(value) = self.trait_value(expr) else {
             let value = self.compile_dependent_ct_expr(expr)?;
             return Err(mismatch(value.meta().to_string()));
         };
-        let traits = traits?;
-        if !self.traits_satisfy(&traits, bound) {
-            return Err(mismatch(TyKind::AnyTrait(traits).to_string()));
+        let value = value?;
+        if !self.traits_satisfy(&value.ty, bound) {
+            return Err(mismatch(TyKind::AnyTrait(value.ty).to_string()));
         }
         self.param_context
-            .constant_as(CtValue::Trait(traits), &expected.into())
+            .constant_as(CtValue::Trait(value.traits), &expected.into())
             .map_err(param_error)
     }
 

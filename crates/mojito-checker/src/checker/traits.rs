@@ -26,6 +26,17 @@ pub(super) enum ConsumeKind {
     Forward,
 }
 
+/// A trait value: its canonical trait set, and the bound of the `AnyTrait`
+/// metatype it has. The two are equal for a spelled trait; a `comptime`
+/// constant's annotation may widen the metatype (`comptime Q:
+/// type_of(Movable) = Copyable` has the value `Copyable` and the type
+/// `AnyTrait[Movable]`), as upstream types a constant by its annotation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TraitValue {
+    pub(super) traits: Vec<String>,
+    pub(super) ty: Vec<String>,
+}
+
 /// Whether a type conforms to `RegisterPassable`, as a result origin asks
 /// it: a register-passed value has no memory a result could borrow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,26 +108,106 @@ impl Checker {
         }
     }
 
-    /// The canonical trait set `expr` denotes when it is a trait, or a `&`
-    /// composition of traits, used as a value (`Copyable & Hashable`): each
-    /// trait another one implies is dropped, as upstream folds a redundant
-    /// composition. `None` when it names no trait.
-    pub(super) fn trait_value(&self, expr: &Expr) -> Option<Result<Vec<String>, TypeError>> {
+    /// The trait value `expr` denotes when it is a trait, a `comptime`
+    /// trait constant, or a `&` composition of them (`Copyable & Hashable`,
+    /// `MyTr & Hashable`), as upstream evaluates the expression to an
+    /// `AnyTrait` value: each trait another one implies is dropped, as
+    /// upstream folds a redundant composition. `None` when it names no
+    /// trait.
+    pub(super) fn trait_value(&self, expr: &Expr) -> Option<Result<TraitValue, TypeError>> {
         let names = mojito_ast::ast::trait_conjunction_names(expr)?;
         let names_trait = |name: &str| {
             self.check_trait_name(name).is_ok()
                 && self.lookup(name).is_none()
                 && self.value_parameter_in_scope(name).is_none()
         };
-        if !names.iter().any(|name| names_trait(name)) {
+        if !names
+            .iter()
+            .any(|name| names_trait(name) || self.trait_constant(name).is_some())
+        {
             return None;
         }
-        Some(
-            names
-                .iter()
-                .try_for_each(|name| self.check_trait_name(name))
-                .map(|()| self.canonical_trait_set(&names)),
-        )
+        Some(self.trait_conjuncts(&names).map(|value| TraitValue {
+            traits: self.canonical_trait_set(&value.traits),
+            ty: self.canonical_trait_set(&value.ty),
+        }))
+    }
+
+    /// The traits `conforms_to`'s second argument names (`Copyable`,
+    /// `Hashable & MyTr`), each trait constant expanded to the traits it
+    /// binds: the conjunction the query decides. `None` when the argument
+    /// is no trait name or `&` conjunction of them.
+    pub(super) fn conformance_traits(&self, expr: &Expr) -> Option<Result<Vec<String>, TypeError>> {
+        let names = mojito_ast::ast::trait_conjunction_names(expr)?;
+        Some(self.trait_conjuncts(&names).map(|value| value.traits))
+    }
+
+    /// The trait value a `comptime` trait constant in scope binds
+    /// (`comptime MyTr = Copyable & Movable`): its traits, beside the bound
+    /// of its declared `AnyTrait` metatype. `None` for any other name,
+    /// including a symbolic trait-valued binder.
+    pub(super) fn trait_constant(&self, name: &str) -> Option<TraitValue> {
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        let reference = self.value_parameter_in_scope(name)?;
+        let TyKind::AnyTrait(ty) = reference.meta().as_value()?.kind().clone() else {
+            return None;
+        };
+        let CtValue::Trait(traits) = reference.as_constant()? else {
+            return None;
+        };
+        Some(TraitValue {
+            traits: traits.clone(),
+            ty,
+        })
+    }
+
+    /// Bind `comptime name: annotation = value` at `level` of the innermost
+    /// compile-time scope when `value` is a trait value: a constant of the
+    /// trait metatype `AnyTrait[...]`, typed by its annotation, which may
+    /// widen the value's own (`comptime Q: type_of(Movable) = Copyable`),
+    /// as upstream types a `comptime` value. It has no run-time form.
+    /// `false` when `value` names no trait.
+    pub(super) fn bind_trait_constant(
+        &mut self,
+        name: &str,
+        annotation: Option<&SourceType>,
+        value: &Expr,
+        level: usize,
+    ) -> Result<bool, TypeError> {
+        let Some(found) = self.trait_value(value) else {
+            return Ok(false);
+        };
+        let found = found?;
+        let declared = match annotation {
+            None => found.ty,
+            Some(annotation) => match self.ty_from_anno(annotation)?.kind() {
+                TyKind::AnyTrait(declared) if self.traits_satisfy(&found.ty, declared) => {
+                    declared.clone()
+                }
+                expected => {
+                    return Err(TypeError::MetatypeConversion {
+                        found: TyKind::AnyTrait(found.ty).to_string(),
+                        expected: expected.to_string(),
+                    });
+                }
+            },
+        };
+        let constant = self
+            .param_context
+            .constant_as(
+                CtValue::Trait(found.traits),
+                &TyKind::AnyTrait(declared).into(),
+            )
+            .map_err(super::annotations::param_error)?;
+        self.local_comptime_parameters
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), (level, constant));
+        Ok(true)
     }
 
     /// The canonical trait set of a composition of `names`: each trait
@@ -135,6 +226,42 @@ impl Checker {
                 })
                 .map(str::to_string),
         )
+    }
+
+    /// The conjuncts of a `&` composition of `names`, uncanonicalized: a
+    /// trait constant contributes the traits it binds and its metatype's
+    /// bound, any other name the trait it must name. A value after a trait
+    /// (`Copyable & x`) is the trait metatype's missing `__and__`, as
+    /// upstream evaluates the composition.
+    fn trait_conjuncts(&self, names: &[&str]) -> Result<TraitValue, TypeError> {
+        let mut value = TraitValue {
+            traits: Vec::new(),
+            ty: Vec::new(),
+        };
+        for name in names {
+            match self.trait_constant(name) {
+                Some(constant) => {
+                    value.traits.extend(constant.traits);
+                    value.ty.extend(constant.ty);
+                }
+                None if !value.ty.is_empty()
+                    && self.check_trait_name(name).is_err()
+                    && (self.lookup(name).is_some()
+                        || self.value_parameter_in_scope(name).is_some()) =>
+                {
+                    return Err(TypeError::MatchPattern(format!(
+                        "'{}' does not implement the '__and__' method",
+                        TyKind::AnyTrait(self.canonical_trait_set(&value.ty))
+                    )));
+                }
+                None => {
+                    self.check_trait_name(name)?;
+                    value.traits.push((*name).to_string());
+                    value.ty.push((*name).to_string());
+                }
+            }
+        }
+        Ok(value)
     }
 
     /// Whether the trait set `traits` converts to a trait metatype over

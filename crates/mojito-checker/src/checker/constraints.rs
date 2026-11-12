@@ -112,7 +112,7 @@ impl Checker {
             else {
                 continue;
             };
-            if !type_params.is_empty() {
+            if !type_params.is_empty() || self.module_trait_constants.contains(name) {
                 continue;
             }
             // A `SIMD` annotation converts a scalar initializer to its
@@ -1174,8 +1174,8 @@ impl Checker {
     /// metatype has no `Ty` upstream, so it is rejected. In a signature the operand reads the parameters
     /// declared before it ([`Self::in_signature_scope`]).
     pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
-        if let Some(traits) = self.trait_value(operand) {
-            return Ok(TyKind::AnyTrait(traits?).into());
+        if let Some(value) = self.trait_value(operand) {
+            return Ok(TyKind::AnyTrait(value?.ty).into());
         }
         if self.denotes_type_value(operand) {
             return Err(TypeError::Unsupported(
@@ -3296,16 +3296,13 @@ impl Checker {
         subject: &Expr,
         traits: &Expr,
     ) -> Result<ParamExpr, TypeError> {
-        let trait_names = mojito_ast::ast::trait_conjunction_names(traits).ok_or_else(|| {
+        let trait_names = self.conformance_traits(traits).ok_or_else(|| {
             TypeError::Unsupported(
                 "conforms_to takes a trait name, or a '&' conjunction of trait names, as its \
                  second argument"
                     .to_string(),
             )
-        })?;
-        trait_names
-            .iter()
-            .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
+        })??;
         let operand = self.comptime_type_operand(subject)?.ok_or_else(|| {
             TypeError::NotComptime("conforms_to takes a type as its first argument".to_string())
         })?;
@@ -4442,15 +4439,14 @@ impl Checker {
                 };
                 // A composition (`Deinitable & Movable`) is the conjunction
                 // of its traits' conformances.
-                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
+                let Some(trait_names) = self.conformance_traits(&args[1]) else {
                     return Err(TypeError::Unsupported(
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
-                let conjuncts = trait_names
-                    .into_iter()
+                let conjuncts = trait_names?
+                    .iter()
                     .map(|trait_name| {
-                        self.check_trait_name(trait_name)?;
                         let param = match &subject {
                             Ok(param) => param,
                             Err(ty) => {
@@ -4464,7 +4460,7 @@ impl Checker {
                             }
                         };
                         let operand = ConstraintOperand::Param(param.clone());
-                        let trait_name = trait_name.to_string();
+                        let trait_name = trait_name.clone();
                         Ok(if pack {
                             GenericConstraint::ConformsPack {
                                 operand,

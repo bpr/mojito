@@ -1,8 +1,5 @@
 # Upstream's `std/utils/static_tuple.mojo`, in its order, with these
 # departures:
-# - `comptime _StaticTupleTraits` is omitted and each bound spells its
-#   composition out, since a trait composition is no `comptime` binding
-#   (R1171).
 # - The `DevicePassable` conformance, `_DeviceElementType`, `device_type`,
 #   `_to_device_type`, and `get_type_name` are omitted with their
 #   `std.builtin.device_passable` and `std.builtin.rebind` imports: a static
@@ -32,10 +29,11 @@ from std.traits import (
 # StaticTuple
 # ===-----------------------------------------------------------------------===#
 
+comptime _StaticTupleTraits = ImplicitlyCopyable & Deinitable & RegisterPassable
+"""The required trait conformances for a StaticTuple's element type."""
 
-def _static_tuple_construction_checks[
-    T: ImplicitlyCopyable & Deinitable & RegisterPassable, size: Int
-]():
+
+def _static_tuple_construction_checks[T: _StaticTupleTraits, size: Int]():
     """Checks if the properties in `StaticTuple` are valid.
 
     Validity right now is just ensuring the number of elements is > 0.
@@ -60,9 +58,9 @@ def _static_tuple_construction_checks[
     ), "number of elements in `StaticTuple` must be >= 0"
 
 
-struct StaticTuple[
-    element_type: ImplicitlyCopyable & Deinitable & RegisterPassable, size: Int
-](Defaultable, Sized, TrivialRegisterPassable):
+struct StaticTuple[element_type: _StaticTupleTraits, size: Int](
+    Defaultable, Sized, TrivialRegisterPassable
+):
     """A statically sized tuple type which contains elements of homogeneous types.
 
     Parameters:
