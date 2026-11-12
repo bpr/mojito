@@ -572,20 +572,11 @@ pub struct Checker {
     predeclared_traits: HashSet<String>,
     /// Defined traits, by name (their method requirements).
     traits: declaration_table::DeclarationTable<TraitInfo>,
-    /// Stack of a generic `def`'s checked type parameters, innermost last. A
-    /// bare `T` annotation resolves to the complete `TyKind::Param`, including any
-    /// anonymous callable-trait contract.
-    /// (A `def`'s *value* parameters are ordinary `Int` locals, not here.)
-    tparams: Vec<HashMap<String, Ty>>,
-    /// Value parameters in scope by bare name, innermost last: the typed
-    /// references a dependent parameter expression resolves its names to.
-    vparams: Vec<HashMap<String, ParamExpr>>,
-    /// Variadic packs in scope by bare name, type packs (`*Ts`) and value
-    /// packs (`*values: T`) alike, level for level beside `tparams`: the
-    /// parameter-list references a pack element indexes. A value pack is
-    /// here and a raw parameter list (`values: KGENParamList[T]`), whose
-    /// references share its meta-type, is not.
-    pack_params: Vec<HashMap<String, ParamExpr>>,
+    /// The parameter scopes of the enclosing declarations, innermost last;
+    /// interior so that resolving a type that spells its own parameter list
+    /// (`def[d: DType](Scalar[d]) thin -> Scalar[d]`) opens that list in
+    /// place, as every annotation is resolved through `&self`.
+    param_scopes: RefCell<ParamScopes>,
     /// The dependent pack element each bounded view of one stands for, by the
     /// view's parameter name (see `opaque_element`).
     pack_element_views: RefCell<HashMap<String, Ty>>,
@@ -825,7 +816,7 @@ pub struct Checker {
     /// with that sibling: as upstream decides nothing of a `ParamType` over
     /// the trait metatype, a value of one is destroyed by the generic
     /// default, and a pack's `Ts.values` is a list of `Tr`.
-    trait_bounded_binders: HashMap<mojito_types::param_expr::ParamId, ParamRef>,
+    trait_bounded_binders: RefCell<HashMap<mojito_types::param_expr::ParamId, ParamRef>>,
     /// The types a generic `def` call solved for the callee's binders, held
     /// from the call's typing until its transfer replay takes them.
     call_bindings: RefCell<FactMap<SourceSpan, TySubst>>,
@@ -874,6 +865,10 @@ pub struct Checker {
     /// outermost application, more inside its type arguments, where a struct
     /// must bind its origin slots whatever the annotation position allows.
     annotation_depth: std::cell::Cell<u32>,
+    /// How many parametric function types spelled inline are being lowered
+    /// around the annotation being resolved: the owner of an inline
+    /// spelling's own binders ([`Self::inline_callable_type`]).
+    inline_callable_depth: std::cell::Cell<u32>,
     /// Whether the annotation being resolved belongs to a compiler-generated
     /// (`$`-mangled) declaration, whose spellings rebind already-checked types
     /// and so keep their position's leniency at every nesting depth.
@@ -1105,9 +1100,7 @@ impl Checker {
             projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
             traits: declaration_table::DeclarationTable::default(),
-            tparams: Vec::new(),
-            vparams: Vec::new(),
-            pack_params: Vec::new(),
+            param_scopes: RefCell::new(ParamScopes::default()),
             pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
@@ -1161,7 +1154,7 @@ impl Checker {
             enum_declaration: false,
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
-            trait_bounded_binders: HashMap::new(),
+            trait_bounded_binders: RefCell::new(HashMap::new()),
             call_bindings: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
             transfer_frames: RefCell::new(Vec::new()),
@@ -1175,6 +1168,7 @@ impl Checker {
             raise_observation_frames: RefCell::new(Vec::new()),
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
             annotation_depth: std::cell::Cell::new(0),
+            inline_callable_depth: std::cell::Cell::new(0),
             generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
             comprehension_iterables: RefCell::new(FactMap::default()),
@@ -2557,6 +2551,26 @@ impl Default for Checker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The binders in scope, one level per enclosing declaration, innermost
+/// last. The three stacks move together: opening a level truncates the value
+/// and pack stacks to the type stack's depth, so a level past it is dead.
+#[derive(Default)]
+struct ParamScopes {
+    /// A declaration's checked type parameters. A bare `T` annotation
+    /// resolves to the complete `TyKind::Param`, including any anonymous
+    /// callable-trait contract. (A `def`'s *value* parameters are ordinary
+    /// `Int` locals, not here.)
+    types: Vec<HashMap<String, Ty>>,
+    /// Value parameters by bare name: the typed references a dependent
+    /// parameter expression resolves its names to.
+    values: Vec<HashMap<String, ParamExpr>>,
+    /// Variadic packs by bare name, type packs (`*Ts`) and value packs
+    /// (`*values: T`) alike: the parameter-list references a pack element
+    /// indexes. A value pack is here and a raw parameter list (`values:
+    /// KGENParamList[T]`), whose references share its meta-type, is not.
+    packs: Vec<HashMap<String, ParamExpr>>,
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]

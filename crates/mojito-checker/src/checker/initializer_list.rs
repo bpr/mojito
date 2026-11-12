@@ -377,7 +377,12 @@ impl Checker {
     /// type parameter does not shadow.
     pub(super) fn generic_type_alias(&self, name: &str) -> bool {
         self.lookup(name).is_none()
-            && !self.tparams.iter().any(|scope| scope.contains_key(name))
+            && !self
+                .param_scopes
+                .borrow()
+                .types
+                .iter()
+                .any(|scope| scope.contains_key(name))
             && !self
                 .local_type_aliases
                 .iter()
@@ -913,7 +918,13 @@ impl Checker {
         if self.lookup(name).is_some() {
             return None;
         }
-        if !self.tparams.iter().any(|scope| scope.contains_key(name)) {
+        if !self
+            .param_scopes
+            .borrow()
+            .types
+            .iter()
+            .any(|scope| scope.contains_key(name))
+        {
             let owner = if name == "Self" {
                 mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?.0
             } else {
@@ -1123,7 +1134,9 @@ impl Checker {
         {
             return SourceType::SelfParam(name).expression_spelling(at);
         }
-        self.tparams
+        self.param_scopes
+            .borrow()
+            .types
             .iter()
             .rev()
             .find_map(|scope| {

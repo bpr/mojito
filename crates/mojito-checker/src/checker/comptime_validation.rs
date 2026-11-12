@@ -2721,7 +2721,7 @@ impl Checker {
             Some(refined) => self.ty_from_anno(refined).ok().map(Some),
             None => Some(None),
         };
-        self.tparams.pop();
+        self.pop_param_scope();
         Some((
             AppliedSignature {
                 decls,
@@ -2777,7 +2777,7 @@ impl Checker {
                 })
                 .ok()
                 .flatten();
-            checker.tparams.pop();
+            checker.pop_param_scope();
             result
         })
         .flatten()
@@ -4220,12 +4220,17 @@ impl Checker {
     }
 
     /// The value-parameter scope beside the innermost open type-parameter
-    /// scope. A level past it is dead: `tparams.pop()` closes both.
-    pub(super) fn innermost_value_scope(&mut self) -> Option<&mut HashMap<String, ParamExpr>> {
-        self.tparams
-            .len()
-            .checked_sub(1)
-            .and_then(|level| self.vparams.get_mut(level))
+    /// scope, edited by `edit`. A level past it is dead: `pop_param_scope`
+    /// closes both.
+    pub(super) fn edit_innermost_value_scope(
+        &self,
+        edit: impl FnOnce(&mut HashMap<String, ParamExpr>),
+    ) {
+        let mut scopes = self.param_scopes.borrow_mut();
+        let level = scopes.types.len().checked_sub(1);
+        level
+            .and_then(|level| scopes.values.get_mut(level))
+            .map(edit);
     }
 
     /// What a `comptime NAME = value` with no binders in scope denotes
@@ -4336,7 +4341,7 @@ impl Checker {
             && let Some(annotation) = annotation
             && let Some(converted) = self.annotated_comptime_conversion(annotation, value)
         {
-            let level = self.tparams.len().saturating_sub(1);
+            let level = self.param_depth().saturating_sub(1);
             self.local_comptime_parameters
                 .last_mut()
                 .ok_or_else(|| {
@@ -4406,7 +4411,7 @@ impl Checker {
                     });
                 }
             }
-            let level = self.tparams.len().saturating_sub(1);
+            let level = self.param_depth().saturating_sub(1);
             self.local_comptime_parameters
                 .last_mut()
                 .ok_or_else(|| {
@@ -4415,7 +4420,7 @@ impl Checker {
                 .insert(name.to_string(), (level, generator));
             return Ok(true);
         }
-        let Some(level) = self.tparams.len().checked_sub(1) else {
+        let Some(level) = self.param_depth().checked_sub(1) else {
             if self.bind_compile_time_only_value(name, annotation, value)? {
                 return Ok(true);
             }
@@ -5105,8 +5110,9 @@ impl Checker {
                 ParamDecl::Value { .. } | ParamDecl::Origin { .. } => None,
             })
             .collect();
-        for (level, types) in self.tparams.iter().enumerate() {
-            let packs = self.pack_params.get(level);
+        let scopes = self.param_scopes.borrow();
+        for (level, types) in scopes.types.iter().enumerate() {
+            let packs = scopes.packs.get(level);
             let mut types: Vec<ParamExpr> = types
                 .values()
                 .filter_map(|ty| match ty.kind() {
@@ -5137,8 +5143,8 @@ impl Checker {
                 .collect();
             lists.sort();
             binders.extend(lists);
-            let mut values: Vec<ParamExpr> = self
-                .vparams
+            let mut values: Vec<ParamExpr> = scopes
+                .values
                 .get(level)
                 .into_iter()
                 .flat_map(HashMap::values)
@@ -6361,9 +6367,11 @@ impl Checker {
                     && matches!(arguments.as_slice(), [_, TyArg::Val(CtValue::Expr(named))]
                         if named.as_decl_ref().is_some_and(|named| named.id == list.id)))
         };
-        self.vparams
+        self.param_scopes
+            .borrow()
+            .values
             .iter()
-            .take(self.tparams.len())
+            .take(self.param_depth())
             .rev()
             .flat_map(HashMap::values)
             .filter(|visible| visible.as_decl_ref().is_some())

@@ -458,6 +458,7 @@ assets/ok/function_value_array_element_binding.mojo	main	exe-differential	saniti
 assets/ok/generator_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_construction.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
+assets/ok/generator_type_result_binders.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_result_composition.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_valued.mojo	main	exe-differential	sanitized
 assets/ok/generator_unbound_application.mojo	main	exe-differential	sanitized
@@ -911,6 +912,7 @@ assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member.mojo	main	exe-differential	sanitized
+assets/ok/parametric_function_type_inline.mojo	main	exe-differential	sanitized
 assets/ok/parametric_setitem_store.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_method_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized

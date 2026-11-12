@@ -835,7 +835,7 @@ impl Checker {
     /// binders until its calls bind them in declared order. Each binder keeps
     /// the slot of its declared position ([`Self::classify_param_list`]).
     pub(super) fn classify_params(
-        &mut self,
+        &self,
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
@@ -848,13 +848,13 @@ impl Checker {
     /// binding one's `mut=` an infer-only value binder, as upstream declares
     /// them. A `where` clause names only the argument binders.
     pub(super) fn classify_param_list(
-        &mut self,
+        &self,
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
         self.push_param_scope(&[]);
         let classified = self.classify_params_in_scope(owner, tps);
-        self.tparams.pop();
+        self.pop_param_scope();
         classified.map(|decls| {
             let arguments = ParamDecl::argument_decls(&decls);
             decls
@@ -868,7 +868,7 @@ impl Checker {
     }
 
     fn classify_params_in_scope(
-        &mut self,
+        &self,
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
@@ -879,14 +879,17 @@ impl Checker {
         let binder_owner = binder_owner(owner);
         let binder_id = |slot: usize| ParamId::new(&binder_owner, slot);
         for (index, tp) in tps.iter().enumerate() {
-            if let Some(scope) = self.vparams.last_mut() {
-                *scope = value_scope(&decls);
-            }
-            if let Some(scope) = self.pack_params.last_mut() {
-                *scope = pack_scope(&decls);
-            }
-            if let Some(scope) = self.tparams.last_mut() {
-                *scope = type_scope(&decls);
+            {
+                let mut scopes = self.param_scopes.borrow_mut();
+                if let Some(scope) = scopes.values.last_mut() {
+                    *scope = value_scope(&decls);
+                }
+                if let Some(scope) = scopes.packs.last_mut() {
+                    *scope = pack_scope(&decls);
+                }
+                if let Some(scope) = scopes.types.last_mut() {
+                    *scope = type_scope(&decls);
+                }
             }
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
@@ -1014,6 +1017,7 @@ impl Checker {
             }
             if let Some((binder, _)) = &trait_param {
                 self.trait_bounded_binders
+                    .borrow_mut()
                     .insert(binder_id(decls.len()), binder.clone());
             }
             // A type pack's `TypeList` lists the trait-valued binder
@@ -1146,7 +1150,7 @@ impl Checker {
             }
             Ok(decls)
         })();
-        self.tparams.pop();
+        self.pop_param_scope();
         result
     }
 
@@ -1241,7 +1245,7 @@ impl Checker {
     /// Declare the value binder `decl` after `decls`: a pack (`*vs: T`) as
     /// its implicit list binder and its visible `ParameterList` binder
     /// ([`ParamDecl::push_value_pack`]).
-    fn push_value_param(&mut self, decls: &mut Vec<ParamDecl>, decl: ParamDecl) {
+    fn push_value_param(&self, decls: &mut Vec<ParamDecl>, decl: ParamDecl) {
         let unbounded = CtValue::Trait(Vec::new());
         self.push_param(decls, decl, &unbounded);
     }
@@ -1252,7 +1256,7 @@ impl Checker {
     /// implicit list binder and its visible `TypeList` binder over
     /// `trait_value` ([`ParamDecl::push_type_pack`]), each binder it moves
     /// up a slot moved in the trait-bounded binders too.
-    fn push_param(&mut self, decls: &mut Vec<ParamDecl>, decl: ParamDecl, trait_value: &CtValue) {
+    fn push_param(&self, decls: &mut Vec<ParamDecl>, decl: ParamDecl, trait_value: &CtValue) {
         let moved = match decl {
             ParamDecl::Value { variadic: true, .. } => ParamDecl::push_value_pack(decls, decl),
             ParamDecl::Type { variadic: true, .. } => {
@@ -1268,12 +1272,13 @@ impl Checker {
 
     /// Move each binder a pack declaration moved up a slot (`moved`, old
     /// identity with new) in the trait-bounded binders too.
-    fn move_trait_bounded_binders(&mut self, moved: Vec<(ParamId, ParamId)>) {
+    fn move_trait_bounded_binders(&self, moved: Vec<(ParamId, ParamId)>) {
         let moved: HashMap<ParamId, ParamId> = moved.into_iter().collect();
         if moved.is_empty() {
             return;
         }
-        self.trait_bounded_binders = std::mem::take(&mut self.trait_bounded_binders)
+        let mut binders = self.trait_bounded_binders.borrow_mut();
+        *binders = std::mem::take(&mut *binders)
             .into_iter()
             .map(|(binder, mut bound)| {
                 if let Some(id) = moved.get(&bound.id) {
@@ -1321,7 +1326,7 @@ impl Checker {
     /// context used by reference/capture lowering, but are erased from the
     /// ordinary `GenericFuncTy::decls` just like named defs.
     pub(super) fn lower_anonymous_callable_type(
-        &mut self,
+        &self,
         owner: &str,
         callable: &SourceType,
         outer_type_params: &[mojito_ast::ast::TypeParam],
@@ -1345,32 +1350,22 @@ impl Checker {
             ));
         }
         self.push_param_scope(&decls);
-
-        let mut contextual_callable = callable.clone();
-        let SourceType::Func {
-            type_params: callable_context,
-            where_clauses: contextual_clauses,
-            ..
-        } = &mut contextual_callable
-        else {
-            unreachable!("callable source was matched above")
-        };
-        // The clauses are compiled onto the parameter declarations below;
-        // strip them so `ty_from_anno`'s plain-annotation rejection does not
-        // fire on the contract path.
-        let clauses = std::mem::take(contextual_clauses);
-        // Own declarations remain first so any own Origin/OriginSet indexes
+        // Own declarations come first so any own Origin/OriginSet indexes
         // have the same source-relative positions they do on a named generic
         // def. The appended outer declarations are only a lookup context.
-        callable_context.extend_from_slice(outer_type_params);
-        let checked = self.ty_from_anno(&contextual_callable);
+        let context: Vec<_> = type_params
+            .iter()
+            .chain(outer_type_params)
+            .cloned()
+            .collect();
+        let checked = self.function_signature_type(callable, &context);
         // Compile the clauses inside the pushed scope so the contract's own
         // binders resolve, exactly like a named def's trailing clauses.
-        let compiled: Result<Vec<_>, TypeError> = clauses
+        let compiled: Result<Vec<_>, TypeError> = where_clauses
             .iter()
             .map(|condition| self.compile_where_clause(condition))
             .collect();
-        self.tparams.pop();
+        self.pop_param_scope();
         let checked = checked?;
         for constraint in compiled? {
             ParamDecl::clause_constraints(&mut decls)
@@ -1743,7 +1738,7 @@ impl Checker {
         self.pop_assumptions();
         self.enclosing_type_params = saved;
         self.enclosing_struct_type_params.set(saved_struct_count);
-        self.tparams.pop();
+        self.pop_param_scope();
         self.method_site = saved_site;
         let propagated = self
             .parametric_write_frames

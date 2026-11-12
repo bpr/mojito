@@ -1195,7 +1195,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamExpr` through the compilation's `ParamContext`
   (`Checker::param_context`, the compilation's `CheckContext::param_context`),
   and `value_parameter_in_scope`/`push_param_scope` resolve a bare value
-  parameter to its owned reference (`annotations.rs`: `binder_owner`,
+  parameter to its owned reference (the open scopes are the interior
+  `Checker::param_scopes`, a `ParamScopes` of type, value, and pack levels
+  that `push_param_scope`/`pop_param_scope` move together, so an annotation
+  resolved through `&self` opens a list it spells) (`annotations.rs`: `binder_owner`,
   `Checker::method_binder_owner`, which reads the symbol the check
   recorded for an overloaded method,
   `value_parameter`, `params_as_args` over `ParamDecl::own_argument`).
@@ -1262,7 +1265,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   typed by `Ty::generator`); `bind_template_comptime` binds a local or
   module `comptime` of one as a compile-time-only value. A
   `__generator_type` annotation resolves in `type_resolution.rs:
-  generator_type` (`TyKind::Generator`, `mojito-types`), a parameter
+  generator_type` (`TyKind::Generator`, `mojito-types`), its list
+  classified by `classify_param_list` and opened over its result; a
+  function type with its own `def[...]` list spelled inline resolves in
+  `inline_callable_type`, which opens the list through
+  `declarations.rs: lower_anonymous_callable_type` under an owner keyed by
+  `Checker::inline_callable_depth`, and every signature lowers through
+  `function_signature_type`; a parameter
   typed by one (or by an alias of one, `declarations.rs:
   generator_type_alias`) takes its argument through
   `resolve_generator_param_arg`, which checks `types::generator_converts`

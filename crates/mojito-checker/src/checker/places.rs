@@ -401,7 +401,7 @@ impl Checker {
     /// parameters. The same `TyKind::Param` at a concrete call site is the
     /// erased-dispatch spelling of a solved argument instead.
     pub(super) fn is_own_parameter(&self, binder: &mojito_types::param_expr::ParamRef) -> bool {
-        self.tparams.iter().any(|scope| {
+        self.param_scopes.borrow().types.iter().any(|scope| {
             scope
                 .values()
                 .any(|declared| matches!(declared.kind(), TyKind::Param { binder: own, .. } if own == binder))

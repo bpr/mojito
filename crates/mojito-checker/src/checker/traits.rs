@@ -474,7 +474,7 @@ impl Checker {
                     }
                     Ok((defaults, all_types, ret, error))
                 });
-                self.tparams.pop();
+                self.pop_param_scope();
                 let (defaults, all_types, ret, error) = signature?;
                 self.check_result_origins(
                     m.ret.as_ref(),
@@ -1582,7 +1582,7 @@ impl Checker {
             };
         self.enclosing_type_params = saved_method_type_params;
         self.enclosing_struct_type_params.set(saved_struct_count);
-        self.tparams.pop();
+        self.pop_param_scope();
         signature
     }
 
@@ -4221,7 +4221,8 @@ impl Checker {
                 "AnyType" => true,
                 "Movable" => callable_bound.is_some(),
                 "Deinitable" => {
-                    callable_bound.is_some() || self.trait_bounded_binders.contains_key(&binder.id)
+                    callable_bound.is_some()
+                        || self.trait_bounded_binders.borrow().contains_key(&binder.id)
                 }
                 _ => false,
             };
@@ -4309,7 +4310,7 @@ impl Checker {
     /// `result`. Origin parameters are rejected, as on a struct's
     /// parameterized value member.
     fn generator_requirement(
-        &mut self,
+        &self,
         trait_name: &str,
         member: &TraitComptime,
         result: Ty,

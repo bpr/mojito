@@ -1055,7 +1055,9 @@ impl Checker {
         }
         if param_args.is_empty() {
             let type_parameter = self
-                .tparams
+                .param_scopes
+                .borrow()
+                .types
                 .iter()
                 .rev()
                 .find_map(|scope| scope.get(name).cloned())

@@ -2253,7 +2253,7 @@ impl Checker {
                         name,
                         ty.as_ref(),
                         value,
-                        self.tparams.len().saturating_sub(1),
+                        self.param_depth().saturating_sub(1),
                     )?
                 {
                     return Ok(());
@@ -3161,7 +3161,7 @@ impl Checker {
         self.push_param_scope(&decls);
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
-                self.tparams.pop();
+                self.pop_param_scope();
                 return Err(TypeError::Unsupported(
                     "unified capture lists are valid only on nested functions".to_string(),
                 ));
@@ -3173,15 +3173,15 @@ impl Checker {
             if let Some(captures) = captures {
                 for capture in &captures.entries {
                     if let Err(error) = self.check_capture_access(&capture.name, false) {
-                        self.tparams.pop();
+                        self.pop_param_scope();
                         return Err(error);
                     }
                     let Some(scope) = self.binding_scope(&capture.name) else {
-                        self.tparams.pop();
+                        self.pop_param_scope();
                         return Err(TypeError::UndefinedVariable(capture.name.clone()));
                     };
                     if scope == 0 {
-                        self.tparams.pop();
+                        self.pop_param_scope();
                         return Err(TypeError::Unsupported(format!(
                             "module binding '{}' is not a closure capture",
                             capture.name
@@ -3190,11 +3190,11 @@ impl Checker {
                     if capture.kind == mojito_ast::ast::CaptureKind::Mut
                         && !self.is_binding_mutable(&capture.name)
                     {
-                        self.tparams.pop();
+                        self.pop_param_scope();
                         return Err(TypeError::ImmutableBinding(capture.name.clone()));
                     }
                     if let Err(error) = self.check_capture_capability(&capture.name, capture.kind) {
-                        self.tparams.pop();
+                        self.pop_param_scope();
                         return Err(error);
                     }
                     let binding = self.lookup_owner(&capture.name).ok_or_else(|| {
@@ -3641,7 +3641,7 @@ impl Checker {
         }
         self.raising_context.pop();
         self.pop_assumptions();
-        self.tparams.pop();
+        self.pop_param_scope();
         result
     }
 
@@ -3901,7 +3901,7 @@ impl Checker {
         self.push_param_scope(&decls);
         let signature =
             self.def_signature_in_scope(stmt, shape, owner, decls, unavailable, required);
-        self.tparams.pop();
+        self.pop_param_scope();
         signature
     }
 
@@ -3973,7 +3973,7 @@ impl Checker {
             // mutability binder (`m: Bool, //, o: Origin[mut=m]`) occupies no
             // slot, so a clause reads it by name and a call binds it to the
             // mutability inferred for its origin.
-            if let Some(scope) = this.vparams.last_mut() {
+            if let Some(scope) = this.param_scopes.borrow_mut().values.last_mut() {
                 for parameter in type_params
                     .iter()
                     .filter(|parameter| parameter.is_origin_mutability_binder(type_params))

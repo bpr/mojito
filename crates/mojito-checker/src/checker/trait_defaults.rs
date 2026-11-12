@@ -784,7 +784,7 @@ impl Checker {
         let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
         self.pop_assumptions();
         self.enclosing_struct_type_params.set(saved_struct_count);
-        self.tparams.pop();
+        self.pop_param_scope();
         self.method_site = saved_site;
         self.parametric_write_frames.borrow_mut().pop();
         result

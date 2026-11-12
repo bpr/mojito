@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2146**.
+Next free ID: **R2147**.
 
 ## Ordered Work
 
@@ -5834,23 +5834,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1704 A parametric function type spelled inline in a type does
-  not resolve**
+- [ ] **R2146 A compile-time application through a generator binder that
+  yields a struct value is not materialized**
 
-  `var o: OptionalReg[def[d: DType, w: SIMDLength, //](SIMD[d, w]) thin
-  -> SIMD[d, w]] = None` reports "'d' does not name a DType in scope",
-  where the pin prints `False` for `Bool(o)`.
-  - The same type as a `comptime` alias body (`comptime _B = def[…](…)
-    thin -> …`) or a callable parameter's bound resolves, through
-    `Checker::lower_anonymous_callable_type`.
-  - Lever: `Checker::ty_from_anno` takes `&self` and opens no scope for
-    the function type's own `def[...]` binders. `push_param_scope` and
-    `classify_params` need `&mut self`.
-  - `Checker::generator_type` has the same gap for a generator type's own
-    list: it resolves a result naming only one binder bare (`T`).
-  - Probe: `def f[G: __generator_type[T: AnyType] List[T]]()` reports
-    "not a compile-time Int constant: T", where the result is `List[T]`
-    over the generator type's own binder.
+  `len(materialize[G[Int]]())` inside `def f[G: __generator_type[T:
+  Copyable] List[T]]()`, called as `f[MkList]()` over `comptime MkList[T:
+  Copyable] = List[T]()`, stops in elaboration with "keeps the parameter
+  constant `G[Int]`", where the pin prints `0`.
+  - The same application folds where a compile-time consumer reads it:
+    `comptime n = len(G[Int])` runs, and so does a scalar result
+    (`materialize[G[Int]]()` over a generator of `Int`).
+  - A known alias's application (`materialize[MkList[Int]]()`) is lifted
+    by the check to a thunk the instance calls; through a binder the check
+    lifts nothing, and `Specializer`'s parameter-constant folding
+    (`mono/specializer.rs`) has no constant for a struct value.
+  - Upstream's elaborator runs the generator's body in the interpreter and
+    materializes the struct value it yields.
+  - Found while landing R1704 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -6443,6 +6443,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin rejects `apply(as_int, 3)` with an `invalid call to 'apply'`
     naming the conversion. Mojito's "cannot be converted from the generic
     function …; specialize it explicitly" already says as much.
+  - Probe: `var o: OptionalReg[def[d: DType, w: SIMDLength, //](SIMD[d,
+    w]) thin -> SIMD[d, w]] = twice`, over a parametric `twice`, reports
+    "type mismatch for variable 'o'", where the pin says "cannot use
+    parametric function as a runtime closure". The direct `var o: _B =
+    twice` already gives the pin's message; the `@implicit` constructor's
+    argument does not.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11033,6 +11039,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inference over `GenericFunc` (`call_inference.rs`), MIR lowering of
     callable-binder calls, and `native::mono` substitution; split the entry
     on planning if they outgrow one session.
+  - Probe: two aliases with identical bodies, `comptime _B = def[d: DType,
+    w: SIMDLength, //](SIMD[d, w]) thin -> SIMD[d, w]` and `_C` spelled
+    the same, are different types: assigning an `OptionalReg[_B]` to an
+    `OptionalReg[_C]` reports "type mismatch", where the pin prints
+    `False`. Each contract's binders are owned by its alias (an inline
+    spelling's by its nesting level), so identity follows the owner, not
+    the spelling. A renamed binder (`e, v`) stays a different type, as at
+    the pin.
   - Found while landing R1763 (2026-10-31).
   - Depends on nothing.
   - Model: Fable, Not Planned.

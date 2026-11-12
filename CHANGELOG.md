@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function type with its own `def[...]` list spelled inline, as a type
+  argument or annotation (`OptionalReg[def[d: DType, w: SIMDLength,
+  //](SIMD[d, w]) thin -> SIMD[d, w]]`), resolves its signature and `where`
+  clauses in the scope of that list, as at the pin, where Mojito reported
+  "Undefined variable 'd'"; two identical inline spellings are one type. A
+  generator type's own list likewise scopes its result and later binders
+  (`__generator_type[T: Copyable] List[T]`, `[T: Copyable, x: T]`) (R1704).
 - A module `comptime` over an unapplied parametric struct (`comptime Q =
   P` over `struct P[n: Int]`) names the struct's generator, as at the
   pin, so `Q[2]`, `Q[_]`, and the bundled `StringSlice[_]` and

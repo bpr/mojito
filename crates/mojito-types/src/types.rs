@@ -4244,8 +4244,11 @@ pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt
 ///
 /// Position by position, the same kind, declared type or bounds, infer-only
 /// and variadic markers, as upstream compares generator types. Names are
-/// the declarations' own and do not take part.
+/// the declarations' own and do not take part: a value binder typed by an
+/// earlier type binder (`x: T` in `[T: Copyable, x: T]`) is compared with
+/// `left`'s binders renamed to `right`'s.
 pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool {
+    let renamed = generator_binder_renaming(left, right);
     left.len() == right.len()
         && left.iter().zip(right).all(|pair| match pair {
             (
@@ -4280,7 +4283,11 @@ pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool
                     variadic: more_variadic,
                     ..
                 },
-            ) => ty == more_ty && infer_only == more_infer_only && variadic == more_variadic,
+            ) => {
+                substitute(ty, &renamed) == *more_ty
+                    && infer_only == more_infer_only
+                    && variadic == more_variadic
+            }
             _ => false,
         })
 }
@@ -4299,34 +4306,7 @@ pub fn generator_converts(actual: &Ty, expected: &Ty) -> bool {
     if !same_generator_signature(&actual.params, &expected.params) {
         return false;
     }
-    let renamed: TySubst = actual
-        .params
-        .iter()
-        .zip(&expected.params)
-        .filter_map(|pair| match pair {
-            (
-                ParamDecl::Type { id, .. },
-                ParamDecl::Type {
-                    id: target,
-                    name,
-                    bounds,
-                    ..
-                },
-            ) => Some((
-                id.clone(),
-                TyKind::Param {
-                    binder: ParamRef {
-                        id: target.clone(),
-                        name: std::sync::Arc::from(name.as_str()),
-                    },
-                    bounds: bounds.clone(),
-                    callable_bound: None,
-                }
-                .into(),
-            )),
-            _ => None,
-        })
-        .collect();
+    let renamed = generator_binder_renaming(&actual.params, &expected.params);
     let result = substitute(&actual.result, &renamed);
     result == expected.result || coerces(&result, &expected.result)
 }
@@ -7929,6 +7909,37 @@ fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
                 }
                 _ => false,
             })
+}
+
+/// Each type binder of `from` renamed to the binder at its position in
+/// `to`, as two generator signatures are compared names aside.
+fn generator_binder_renaming(from: &[ParamDecl], to: &[ParamDecl]) -> TySubst {
+    from.iter()
+        .zip(to)
+        .filter_map(|pair| match pair {
+            (
+                ParamDecl::Type { id, .. },
+                ParamDecl::Type {
+                    id: target,
+                    name,
+                    bounds,
+                    ..
+                },
+            ) => Some((
+                id.clone(),
+                TyKind::Param {
+                    binder: ParamRef {
+                        id: target.clone(),
+                        name: std::sync::Arc::from(name.as_str()),
+                    },
+                    bounds: bounds.clone(),
+                    callable_bound: None,
+                }
+                .into(),
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]

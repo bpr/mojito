@@ -426,9 +426,11 @@ impl Checker {
     pub(super) fn shadows_module_binding(&self, name: &str) -> bool {
         self.lookup_tparam(name).is_some()
             || self
-                .vparams
+                .param_scopes
+                .borrow()
+                .values
                 .iter()
-                .take(self.tparams.len())
+                .take(self.param_depth())
                 .any(|scope| scope.contains_key(name))
     }
 

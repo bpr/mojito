@@ -363,11 +363,11 @@ impl Checker {
                 .function
                 .argument_slots(checker.self_ty.as_ref())?;
             checker.push_param_scope(&slots);
-            let level = checker.tparams.len() - 1;
+            let level = checker.param_depth() - 1;
             checker.local_comptime_parameters.push(HashMap::new());
             let result = f(checker, level);
             checker.local_comptime_parameters.pop();
-            checker.tparams.pop();
+            checker.pop_param_scope();
             Some(result)
         })
         .flatten()

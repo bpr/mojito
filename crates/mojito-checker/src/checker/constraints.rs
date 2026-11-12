@@ -743,7 +743,7 @@ impl Checker {
             self.record_at(body.source_span()).type_operand = Some(template.clone());
         }
         self.enclosing_type_params.truncate(saved);
-        self.tparams.pop();
+        self.pop_param_scope();
         template
     }
 
@@ -753,7 +753,7 @@ impl Checker {
     /// substitution. A declared type converts the body as an alias
     /// initializer is converted.
     pub(super) fn lower_parametric_value(
-        &mut self,
+        &self,
         decls: &[ParamDecl],
         body: &Expr,
         declared: Option<&Ty>,
@@ -767,7 +767,7 @@ impl Checker {
                 (compiled, converted)
             })
         };
-        self.tparams.pop();
+        self.pop_param_scope();
         let (compiled, converted) = compiled?;
         let Some(ty) = declared else {
             return Ok(compiled);
@@ -1628,12 +1628,14 @@ impl Checker {
     /// of an enclosing declaration, innermost first.
     pub(super) fn value_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
         let parameter = self
-            .vparams
+            .param_scopes
+            .borrow()
+            .values
             .iter()
-            .take(self.tparams.len())
+            .take(self.param_depth())
             .enumerate()
             .rev()
-            .find_map(|(level, scope)| scope.get(name).map(|reference| (level, reference)));
+            .find_map(|(level, scope)| scope.get(name).map(|reference| (level, reference.clone())));
         // A local `comptime` binding shadows a parameter of its own body or
         // an enclosing one, not one of a `def` nested below it. A type
         // parameter or local type alias in scope shadows a module one.
@@ -1649,11 +1651,15 @@ impl Checker {
                     .then(|| self.installed_comptime_parameter(name))
                     .flatten()
             })
-            .filter(|(level, _)| parameter.is_none_or(|(declared, _)| *level >= declared));
+            .filter(|(level, _)| {
+                parameter
+                    .as_ref()
+                    .is_none_or(|(declared, _)| *level >= *declared)
+            });
         local
-            .map(|(_, expression)| expression)
+            .map(|(_, expression)| expression.clone())
             .or_else(|| parameter.map(|(_, reference)| reference))
-            .map(|expression| self.param_context.intern(expression))
+            .map(|expression| self.param_context.intern(&expression))
     }
 
     /// Whether `value` is a bare name of a compile-time value in scope — a
@@ -1665,36 +1671,48 @@ impl Checker {
     }
 
     /// Open the scope of a declaration's own binders: its type parameters and,
-    /// level for level beside them, its value parameters. `tparams.pop()`
-    /// closes both, since a value scope deeper than the type scopes is dead.
-    pub(super) fn push_param_scope(&mut self, decls: &[ParamDecl]) {
+    /// level for level beside them, its value parameters.
+    /// [`Self::pop_param_scope`] closes both, since a value scope deeper than
+    /// the type scopes is dead.
+    pub(super) fn push_param_scope(&self, decls: &[ParamDecl]) {
         self.push_param_scope_as(decls, type_scope(decls));
+    }
+
+    /// How many declaration scopes are open.
+    pub(super) fn param_depth(&self) -> usize {
+        self.param_scopes.borrow().types.len()
+    }
+
+    /// Close the innermost scope [`Self::push_param_scope`] opened.
+    pub(super) fn pop_param_scope(&self) {
+        self.param_scopes.borrow_mut().types.pop();
     }
 
     /// `compile` run with the binders of `decls` open, as a declaration's
     /// own conditions are compiled with its parameters in scope.
     pub(super) fn in_param_scope<R>(
-        &mut self,
+        &self,
         decls: &[ParamDecl],
         compile: impl FnOnce(&Self) -> R,
     ) -> R {
         self.push_param_scope(decls);
         let compiled = compile(self);
-        self.tparams.pop();
+        self.pop_param_scope();
         compiled
     }
 
     /// [`Self::push_param_scope`] with the type binders `scope` spells,
     /// as a `comptime` member's own binders are keyed by member.
-    pub(super) fn push_param_scope_as(&mut self, decls: &[ParamDecl], scope: HashMap<String, Ty>) {
-        let depth = self.tparams.len();
-        self.vparams.truncate(depth);
-        self.vparams.resize_with(depth, HashMap::new);
-        self.vparams.push(value_scope(decls));
-        self.pack_params.truncate(depth);
-        self.pack_params.resize_with(depth, HashMap::new);
-        self.pack_params.push(pack_scope(decls));
-        self.tparams.push(scope);
+    pub(super) fn push_param_scope_as(&self, decls: &[ParamDecl], scope: HashMap<String, Ty>) {
+        let mut scopes = self.param_scopes.borrow_mut();
+        let depth = scopes.types.len();
+        scopes.values.truncate(depth);
+        scopes.values.resize_with(depth, HashMap::new);
+        scopes.values.push(value_scope(decls));
+        scopes.packs.truncate(depth);
+        scopes.packs.resize_with(depth, HashMap::new);
+        scopes.packs.push(pack_scope(decls));
+        scopes.types.push(scope);
     }
 
     /// The list a type pack `decl` binds when its argument forwards a pack
@@ -2854,7 +2872,14 @@ impl Checker {
             return self.build_ct(bound, recording);
         }
         // A type parameter in scope shadows a same-named module constant.
-        if let Some(ty) = self.tparams.iter().rev().find_map(|scope| scope.get(name)) {
+        if let Some(ty) = self
+            .param_scopes
+            .borrow()
+            .types
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+        {
             return self.ct_param(CtValue::Type(ty.clone()));
         }
         // An applied constant is its application in a type position,
@@ -4254,7 +4279,7 @@ impl Checker {
     /// body's scope does); an unparameterized member's
     /// compile in the enclosing scope.
     pub(super) fn member_clauses(
-        &mut self,
+        &self,
         decls: &[ParamDecl],
         types: HashMap<String, Ty>,
         clauses: &[Expr],
@@ -4270,7 +4295,7 @@ impl Checker {
             .iter()
             .map(|condition| self.compile_where_clause(condition))
             .collect();
-        self.tparams.pop();
+        self.pop_param_scope();
         compiled
     }
 
@@ -4864,7 +4889,7 @@ impl Checker {
     /// application inlines only the body: a declared bound the inlined
     /// proposition would not re-check cannot be silently dropped.
     pub(super) fn compile_predicate_alias_body(
-        &mut self,
+        &self,
         decls: &[ParamDecl],
         value: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
@@ -4961,12 +4986,15 @@ impl Checker {
         // and triviality stay the propositions the instance answers.
         let types: Vec<(ParamId, TyArg)> = self
             .open_type_binders()
-            .map(|(binder, ty)| (binder.id.clone(), TyArg::Ty(ty.clone())))
+            .into_iter()
+            .map(|(binder, ty)| (binder.id, TyArg::Ty(ty)))
             .collect();
         let symbolic: Vec<(ParamId, TyArg)> = self
-            .vparams
+            .param_scopes
+            .borrow()
+            .values
             .iter()
-            .take(self.tparams.len())
+            .take(self.param_depth())
             .flat_map(HashMap::values)
             .filter_map(|reference| {
                 let id = reference.as_decl_ref()?.id.clone();
@@ -5451,8 +5479,9 @@ impl Checker {
             mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
             _ => None,
         };
-        let types = self
-            .tparams
+        let scopes = self.param_scopes.borrow();
+        let types = scopes
+            .types
             .iter()
             .flat_map(HashMap::values)
             .filter_map(|ty| {
@@ -5461,8 +5490,8 @@ impl Checker {
                 };
                 Some((binder.id.clone(), TyArg::Ty(ty.clone())))
             });
-        let values = self
-            .vparams
+        let values = scopes
+            .values
             .iter()
             .flat_map(HashMap::values)
             .filter_map(|value| {
@@ -5475,6 +5504,7 @@ impl Checker {
             .chain(types)
             .chain(values)
             .collect();
+        drop(scopes);
         let mut environment = ConstraintEnvironment::default();
         environment.bound.extend(
             arguments
@@ -5820,15 +5850,18 @@ impl Checker {
 
     /// The type parameters of the open scopes, each the type its binder
     /// denotes.
-    fn open_type_binders(&self) -> impl Iterator<Item = (&ParamRef, &Ty)> {
-        self.tparams
+    fn open_type_binders(&self) -> Vec<(ParamRef, Ty)> {
+        self.param_scopes
+            .borrow()
+            .types
             .iter()
             .rev()
             .flat_map(HashMap::values)
             .filter_map(|ty| match ty.kind() {
-                TyKind::Param { binder, .. } => Some((binder, ty)),
+                TyKind::Param { binder, .. } => Some((binder.clone(), ty.clone())),
                 _ => None,
             })
+            .collect()
     }
 
     /// The type the type parameter `binder` denotes, found by its
@@ -5836,8 +5869,9 @@ impl Checker {
     /// struct's, which `Self` binds.
     pub(super) fn binder_type(&self, binder: &ParamRef) -> Option<Ty> {
         self.open_type_binders()
+            .into_iter()
             .find(|(open, _)| open.id == binder.id)
-            .map(|(_, ty)| ty.clone())
+            .map(|(_, ty)| ty)
             .or_else(|| {
                 self.self_decls
                     .iter()
@@ -5868,8 +5902,9 @@ impl Checker {
             mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
             _ => None,
         };
-        (0..self.tparams.len()).rev().find_map(|level| {
-            let types = &self.tparams[level];
+        let scopes = self.param_scopes.borrow();
+        (0..scopes.types.len()).rev().find_map(|level| {
+            let types = &scopes.types[level];
             types
                 .get(spelling)
                 .or_else(|| types.get(&format!("*{spelling}")))
@@ -5877,13 +5912,8 @@ impl Checker {
                     TyKind::Param { binder, .. } => Some(binder.id.clone()),
                     _ => None,
                 })
-                .or_else(|| self.vparams.get(level)?.get(spelling).and_then(declared))
-                .or_else(|| {
-                    self.pack_params
-                        .get(level)?
-                        .get(spelling)
-                        .and_then(declared)
-                })
+                .or_else(|| scopes.values.get(level)?.get(spelling).and_then(declared))
+                .or_else(|| scopes.packs.get(level)?.get(spelling).and_then(declared))
         })
     }
 

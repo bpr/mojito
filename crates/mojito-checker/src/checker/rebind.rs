@@ -275,9 +275,24 @@ impl Checker {
     /// own or of its struct in scope.
     fn checking_parametric_body(&self) -> bool {
         !self.self_decls.is_empty()
-            || self.tparams.iter().any(|scope| !scope.is_empty())
-            || self.vparams.iter().any(|scope| !scope.is_empty())
-            || self.pack_params.iter().any(|scope| !scope.is_empty())
+            || self
+                .param_scopes
+                .borrow()
+                .types
+                .iter()
+                .any(|scope| !scope.is_empty())
+            || self
+                .param_scopes
+                .borrow()
+                .values
+                .iter()
+                .any(|scope| !scope.is_empty())
+            || self
+                .param_scopes
+                .borrow()
+                .packs
+                .iter()
+                .any(|scope| !scope.is_empty())
     }
 
     fn rebind_target_ty(&self, target: &ParamArg) -> Result<Ty, TypeError> {

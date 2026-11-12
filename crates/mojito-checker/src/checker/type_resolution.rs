@@ -566,6 +566,113 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    /// The function type `callable` spells, its signature resolved in the
+    /// scopes already open; `type_params` is the list its origin reference
+    /// signatures (`ref[o] T`) index, its own followed by any context.
+    pub(super) fn function_signature_type(
+        &self,
+        callable: &SourceType,
+        type_params: &[mojito_ast::ast::TypeParam],
+    ) -> Result<Ty, TypeError> {
+        let SourceType::Func {
+            params,
+            ret,
+            thin,
+            raises,
+            raises_type,
+            ..
+        } = callable
+        else {
+            return Err(TypeError::InvariantViolation(
+                "function signature lowering received a non-function type".to_string(),
+            ));
+        };
+        let environment = if *thin {
+            CallableEnvironment::Thin
+        } else {
+            CallableEnvironment::Default
+        };
+        let function_params: Vec<FnParam> = params
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| FnParam {
+                name: parameter
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("arg{index}")),
+                ty: parameter.ty.clone(),
+                default: None,
+                kind: parameter.kind,
+                convention: parameter.convention,
+                origin: parameter.origin.clone(),
+            })
+            .collect();
+        let regular: Vec<&FnParam> = function_params
+            .iter()
+            .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+            .collect();
+        let parameter_types = regular
+            .iter()
+            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .collect::<Result<Vec<_>, _>>()?;
+        let variadic = function_params
+            .iter()
+            .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Variadic)
+            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .transpose()?;
+        let kw_variadic = function_params
+            .iter()
+            .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
+            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .transpose()?;
+        let (return_type, ref_return) = match &**ret {
+            SourceType::Ref { referent, origin } => (
+                self.resolve_ty_from_anno(referent)?,
+                Some(Box::new(self.lower_callable_ref_sig(
+                    origin.as_ref().ok_or_else(|| {
+                        TypeError::Unsupported("reference return requires an origin".to_string())
+                    })?,
+                    type_params,
+                    &regular,
+                )?)),
+            ),
+            return_type => (self.resolve_ty_from_anno(return_type)?, None),
+        };
+        Ok(TyKind::Func(Box::new(FuncTy {
+            environment,
+            params: parameter_types,
+            names: function_params
+                .iter()
+                .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+            ret: return_type,
+            required: vec![true; regular.len()],
+            variadic,
+            kw_variadic,
+            positional_only: None,
+            keyword_only: None,
+            raises: *raises,
+            error: if *raises {
+                Some(match raises_type {
+                    Some(error) => self.resolve_ty_from_anno(error)?,
+                    None => Ty::error(),
+                })
+            } else {
+                None
+            },
+            conventions: function_params
+                .iter()
+                .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+                .map(|parameter| parameter.convention)
+                .collect(),
+            ref_params: self.lower_callable_ref_param_sigs(type_params, &regular)?,
+            ref_return,
+            transfers: TransferSet::default(),
+        }))
+        .into())
+    }
+
     /// The argument `expr` of the callable-value parameter `decl`, named
     /// `name` and typed `ty`, part of the instance's identity for a struct
     /// and a `def` alike: a function is its symbol, as the pin's
@@ -722,96 +829,36 @@ impl Checker {
     /// ([`TyKind::Generator`]): its parameters classified as a declaration's
     /// are (a value parameter by its type, a type parameter by its bounds),
     /// under the one owner every generator type's binders share, since a
-    /// generator converts by signature, names aside. A result naming one of
-    /// its own type parameters is that binder; a result naming a trait is
-    /// the trait used as a type, the type of a type a generator yields.
+    /// generator converts by signature, names aside. The list scopes the
+    /// result, so a result naming its own binders (`T`, `List[T]`) names
+    /// them; a result naming a trait is the trait used as a type, the type
+    /// of a type a generator yields.
     fn generator_type(
         &self,
         params: &[mojito_ast::ast::TypeParam],
         result: &SourceType,
     ) -> Result<Ty, TypeError> {
-        let mut decls = Vec::new();
-        for param in params {
-            let id = mojito_types::param_expr::ParamId::new(GENERATOR_TYPE_OWNER, decls.len());
-            let value_ty = match (&param.value_type, param.bounds.as_slice()) {
-                (Some(value_type), _) => Some(self.resolve_ty_from_anno(value_type)?),
-                (None, [only]) => scalar_type_name(only).or_else(|| {
-                    self.structs
-                        .contains_key(only)
-                        .then(|| TyKind::Struct(only.clone(), Vec::new()).into())
-                }),
-                _ => None,
-            };
-            let (name, infer_only, variadic) = (
-                param.name.clone(),
-                param.infer_only,
-                param.name.starts_with('*'),
-            );
-            if let Some(ty) = value_ty {
-                let decl = ParamDecl::Value {
-                    id,
-                    name,
-                    ty,
-                    default: None,
-                    callable_default: None,
-                    infer_only,
-                    variadic,
-                    constraints: Vec::new(),
-                };
-                if variadic {
-                    ParamDecl::push_value_pack(&mut decls, decl);
-                } else {
-                    decls.push(decl);
-                }
-                continue;
-            }
-            for bound in &param.bounds {
-                self.check_trait_name(bound)?;
-            }
-            let decl = ParamDecl::Type {
-                id,
-                name,
-                bounds: param.bounds.clone(),
-                trait_param: None,
-                callable_bound: None,
-                default: None,
-                infer_only,
-                variadic,
-                constraints: Vec::new(),
-            };
-            if variadic {
-                let trait_value = CtValue::Trait(self.canonical_trait_set(&param.bounds));
-                ParamDecl::push_type_pack(&mut decls, decl, &trait_value);
-            } else {
-                decls.push(decl);
-            }
-        }
+        let decls = self.classify_param_list(GENERATOR_TYPE_OWNER, params)?;
+        // The list scopes the result, as a declaration's list scopes its
+        // signature: `__generator_type[T: Copyable] List[T]`.
+        self.push_param_scope(&decls);
         let result = match result {
-            SourceType::Named(name, args) if args.is_empty() => {
-                match decls.iter().find(|decl| decl.name() == name) {
-                    Some(ParamDecl::Type { id, bounds, .. }) => TyKind::Param {
-                        binder: mojito_types::param_expr::ParamRef {
-                            id: id.clone(),
-                            name: name.as_str().into(),
-                        },
-                        bounds: bounds.clone(),
-                        callable_bound: None,
-                    }
-                    .into(),
-                    _ if !self.structs.contains_key(name)
-                        && !self.comptime_aliases.contains_key(name)
-                        && self.check_trait_name(name).is_ok() =>
-                    {
-                        TyKind::Trait(vec![name.clone()]).into()
-                    }
-                    _ => self.resolve_ty_from_anno(result)?,
-                }
+            SourceType::Named(name, args)
+                if args.is_empty()
+                    && self.lookup_tparam(name).is_none()
+                    && !self.structs.contains_key(name)
+                    && !self.comptime_aliases.contains_key(name)
+                    && self.check_trait_name(name).is_ok() =>
+            {
+                Ok(TyKind::Trait(vec![name.clone()]).into())
             }
-            SourceType::Named(name, members) if name == "$trait_composition" => {
-                TyKind::Trait(self.generator_result_composition(members)?).into()
-            }
-            _ => self.resolve_ty_from_anno(result)?,
+            SourceType::Named(name, members) if name == "$trait_composition" => self
+                .generator_result_composition(members)
+                .map(|traits| TyKind::Trait(traits).into()),
+            _ => self.resolve_ty_from_anno(result),
         };
+        self.pop_param_scope();
+        let result = result?;
         Ok(Ty::generator(decls, result))
     }
 
@@ -917,6 +964,26 @@ impl Checker {
         type_parameter(decl)
     }
 
+    /// The parametric function type `callable` spells inline, in a type
+    /// argument or an annotation (`OptionalReg[def[d: DType](Scalar[d])
+    /// thin -> Scalar[d]]`): its own list opened over the enclosing
+    /// declaration's, as an alias body or a callable bound opens it. The
+    /// binders are owned by the nesting level of inline spellings, so two
+    /// identical spellings are one type, as upstream identifies a function
+    /// type by its spelling, and a spelling nested in another's signature
+    /// never shares the outer list's binders.
+    fn inline_callable_type(&self, callable: &SourceType) -> Result<Ty, TypeError> {
+        let level = self.inline_callable_depth.get();
+        self.inline_callable_depth.set(level + 1);
+        let lowered = self.lower_anonymous_callable_type(
+            &format!("$callable:inline:{level}"),
+            callable,
+            &self.enclosing_type_params,
+        );
+        self.inline_callable_depth.set(level);
+        lowered
+    }
+
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         if let Some(reflected) = self.reflected_type_annotation(ty)? {
             return Ok(reflected);
@@ -927,18 +994,17 @@ impl Checker {
             SourceType::Generator { params, result } => self.generator_type(params, result)?,
             SourceType::Func {
                 type_params,
-                params,
-                ret,
-                thin,
-                raises,
-                raises_type,
                 where_clauses,
+                ..
             } => {
-                // Clauses are compiled onto the anonymous contract's decls by
-                // `lower_anonymous_callable_type`, which strips them before
-                // resolving here. Any clause still present is on a plain
-                // function-type annotation, where it has no binder to
-                // constrain.
+                // A function type with its own `def[...]` list is resolved
+                // in the scope of that list wherever it is spelled, as
+                // upstream emits every type in the scope of its own
+                // parameters: a `GenericFunc` over its binders.
+                if !type_params.is_empty() {
+                    return self.inline_callable_type(ty);
+                }
+                // A clause with no list has no binder to constrain.
                 if !where_clauses.is_empty() {
                     return Err(TypeError::Unsupported(
                         "a 'where' clause on a function type is only supported on a \
@@ -946,92 +1012,7 @@ impl Checker {
                             .to_string(),
                     ));
                 }
-                let environment = if *thin {
-                    CallableEnvironment::Thin
-                } else {
-                    CallableEnvironment::Default
-                };
-                let function_params: Vec<FnParam> = params
-                    .iter()
-                    .enumerate()
-                    .map(|(index, parameter)| FnParam {
-                        name: parameter
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| format!("arg{index}")),
-                        ty: parameter.ty.clone(),
-                        default: None,
-                        kind: parameter.kind,
-                        convention: parameter.convention,
-                        origin: parameter.origin.clone(),
-                    })
-                    .collect();
-                let regular: Vec<&FnParam> = function_params
-                    .iter()
-                    .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
-                    .collect();
-                let parameter_types = regular
-                    .iter()
-                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let variadic = function_params
-                    .iter()
-                    .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Variadic)
-                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
-                    .transpose()?;
-                let kw_variadic = function_params
-                    .iter()
-                    .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
-                    .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
-                    .transpose()?;
-                let (return_type, ref_return) = match &**ret {
-                    SourceType::Ref { referent, origin } => (
-                        self.resolve_ty_from_anno(referent)?,
-                        Some(Box::new(self.lower_callable_ref_sig(
-                            origin.as_ref().ok_or_else(|| {
-                                TypeError::Unsupported(
-                                    "reference return requires an origin".to_string(),
-                                )
-                            })?,
-                            type_params,
-                            &regular,
-                        )?)),
-                    ),
-                    return_type => (self.resolve_ty_from_anno(return_type)?, None),
-                };
-                TyKind::Func(Box::new(FuncTy {
-                    environment,
-                    params: parameter_types,
-                    names: function_params
-                        .iter()
-                        .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
-                        .map(|parameter| parameter.name.clone())
-                        .collect(),
-                    ret: return_type,
-                    required: vec![true; regular.len()],
-                    variadic,
-                    kw_variadic,
-                    positional_only: None,
-                    keyword_only: None,
-                    raises: *raises,
-                    error: if *raises {
-                        Some(match raises_type {
-                            Some(error) => self.resolve_ty_from_anno(error)?,
-                            None => Ty::error(),
-                        })
-                    } else {
-                        None
-                    },
-                    conventions: function_params
-                        .iter()
-                        .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
-                        .map(|parameter| parameter.convention)
-                        .collect(),
-                    ref_params: self.lower_callable_ref_param_sigs(type_params, &regular)?,
-                    ref_return,
-                    transfers: TransferSet::default(),
-                }))
-                .into()
+                self.function_signature_type(ty, &[])?
             }
             SourceType::Ref { referent, origin } => {
                 let spec = origin.as_ref().ok_or_else(|| {
@@ -4681,7 +4662,9 @@ impl Checker {
                 .rposition(|scope| scope.contains_key(name))
                 .map(|scope| (1u8, scope))
                 .or_else(|| {
-                    self.tparams
+                    self.param_scopes
+                        .borrow()
+                        .types
                         .iter()
                         .rposition(|scope| scope.contains_key(name))
                         .map(|scope| (0u8, scope))
@@ -5333,8 +5316,16 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
+            .or_else(|| {
+                self.param_scopes
+                    .borrow()
+                    .types
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name))
+                    .cloned()
+            })
     }
 
     /// The parameter value `value` binds a declaration to: a constant, or a

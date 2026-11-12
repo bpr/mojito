@@ -69,22 +69,22 @@ impl Checker {
         if let Some(bindings) = self.compile_time_bindings.last_mut() {
             bindings.insert(var.to_string());
         }
-        let level = self.tparams.len().saturating_sub(1);
+        let level = self.param_depth().saturating_sub(1);
         if let Some(scope) = self.local_comptime_parameters.last_mut() {
             scope.insert(var.to_string(), (level, element));
         }
         // The iterator is a binder in scope, which a function lifted in the
         // body over the variable takes; no spelling names it.
-        if let Some(scope) = self.innermost_value_scope() {
+        self.edit_innermost_value_scope(|scope| {
             scope.insert(key.clone(), binder);
-        }
+        });
         let result = self.declare_immutable(var, element_ty).and_then(|()| {
             self.record_statement_binding(stmt, var);
             self.check_block(body, ret, true)
         });
-        if let Some(scope) = self.innermost_value_scope() {
+        self.edit_innermost_value_scope(|scope| {
             scope.remove(&key);
-        }
+        });
         self.pop_scope();
         *self.uninitialized.borrow_mut() = before;
         result

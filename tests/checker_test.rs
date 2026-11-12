@@ -4976,6 +4976,31 @@ fn callable_contract_binders_belong_to_their_own_contract() {
 }
 
 #[test]
+fn an_inline_parametric_function_type_scopes_its_own_binders() {
+    // A function type's own `def[...]` list scopes its signature wherever
+    // the type is spelled, a type argument included.
+    ok_std(
+        "def main():\n    var o: OptionalReg[def[d: DType, w: SIMDLength, //](SIMD[d, w]) thin -> SIMD[d, w]] = None\n    print(Bool(o))\n",
+    );
+    // It scopes only its own spelling: a sibling argument does not see it.
+    let error = err_std(
+        "struct P[F: AnyType, G: AnyType]:\n    pass\n\ndef main():\n    comptime X = P[def[d: DType](Scalar[d]) thin -> Scalar[d], Scalar[d]]\n",
+    );
+    assert!(error.to_string().contains("'d'"), "{error}");
+}
+
+#[test]
+fn a_generator_types_own_list_scopes_its_result() {
+    ok_std(
+        "def count[G: __generator_type[T: Copyable] List[T]]() -> Int:\n    return 0\n\ndef main():\n    pass\n",
+    );
+    let error = err_std(
+        "def count[G: __generator_type[T: Copyable] List[U]]() -> Int:\n    return 0\n\ndef main():\n    pass\n",
+    );
+    assert!(error.to_string().contains('U'), "{error}");
+}
+
+#[test]
 fn callable_contract_closes_over_receiver_parameters() {
     // `h`'s contract names `Self.dtype`, so at `C[DType.int32]` it is
     // `def(Int32)`: `show` matches it, and an `Int64` handler does not.

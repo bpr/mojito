@@ -458,6 +458,7 @@ assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry
 assets/ok/generator_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generator_type_result_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_result_composition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_type_valued.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generator_unbound_application.mojo	-	ineligible	no-scalar-entry-shape
@@ -911,6 +912,7 @@ assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parametric_function_type_inline.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_setitem_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_method_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
