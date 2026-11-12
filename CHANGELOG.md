@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The check binds each explicit bracket argument once, as upstream does:
+  a call's explicit type arguments, resolved before its run-time arguments
+  are typed, are read back by its binder rather than resolved again, and a
+  static call's receiver (`Pair[Self.U].count()`, `Self.width()`) records
+  its attributes, type, and instantiation from the selected static's
+  binding of the struct application instead of binding it again (R755).
 - A local `comptime` tuple display binding is its literal constructor's
   application, as the pin's alias is its value, so `h(t[0])` is one type
   through two bindings of the same tuple, an alias, the inline display,

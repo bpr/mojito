@@ -90,14 +90,9 @@ impl Checker {
                 .and_then(|info| info.methods.get(method))
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
         {
-            let ty = self.infer_struct_static_method(
-                span.clone(),
-                &owner,
-                (&targs, None),
-                method,
-                call,
-            )?;
-            self.record_static_receiver(object, &owner, &targs);
+            let (ty, receiver) =
+                self.infer_struct_static_call(span.clone(), &owner, (&targs, None), method, call)?;
+            self.record_static_receiver(object, &owner, &receiver);
             // The receiver spells no struct name for lowering to compose
             // the symbol from.
             self.record_at(span.clone())
@@ -129,14 +124,14 @@ impl Checker {
                 .filter(|_| !pointer)
                 .and_then(|info| info.methods.get(method));
             if signatures.is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self)) {
-                let ty = self.infer_struct_static_method(
+                let (ty, receiver) = self.infer_struct_static_call(
                     span.clone(),
                     name,
                     (&targs, None),
                     method,
                     call,
                 )?;
-                self.record_static_receiver(object, name, &targs);
+                self.record_static_receiver(object, name, &receiver);
                 return Ok(Some(ty));
             }
             // No static of that name: an instance method called through the
@@ -201,9 +196,6 @@ impl Checker {
         let receiver = if parametric {
             self.static_value_receiver(object, &owner, method, record)?
         } else {
-            if record {
-                self.record_static_receiver(object, &owner, &[]);
-            }
             Vec::new()
         };
         // A `ref self` method is generic over its receiver's mutability
@@ -464,12 +456,9 @@ impl Checker {
         // `T.answer()` is `T[3]`), which lowering hands the elaborator.
         // Non-parametric statics keep the established path below.
         if !info.decls.is_empty() && signatures.iter().any(|sig| !sig.has_self) {
-            let (ty, arguments) =
+            let (ty, receiver) =
                 self.infer_struct_static_call(span.clone(), sname, (&[], None), method, call)?;
-            if !arguments.is_empty() {
-                self.record_at(object.source_span()).ty =
-                    Some(TyKind::Struct(sname.to_string(), arguments).into());
-            }
+            self.record_static_receiver(object, sname, &receiver);
             return Ok(Some(ty));
         }
         // The bare type name (never an expression binding) with only

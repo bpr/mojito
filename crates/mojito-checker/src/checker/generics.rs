@@ -1528,7 +1528,7 @@ impl Checker {
             mojito_ast::call::bind_spread(&matched, *position)
                 .map_err(|error| error.into_type_error(name))?;
         }
-        let explicit = self.explicit_type_subst(name, &signature.decls, param_args)?;
+        let explicit = self.explicit_type_args(name, &signature.decls, param_args)?;
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -1542,7 +1542,7 @@ impl Checker {
                 expression,
                 &params[index],
                 &signature.decls,
-                &explicit,
+                &explicit.subst,
             )?);
         }
         if let Some(element) = variadic {
@@ -1563,7 +1563,7 @@ impl Checker {
                         &args[position],
                         element,
                         &signature.decls,
-                        &explicit,
+                        &explicit.subst,
                     )?,
                 };
                 actuals.push(actual);
@@ -1583,7 +1583,13 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
-        } = self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
+        } = self.resolve_explicit_use_params(
+            name,
+            &signature.decls,
+            (param_args, &explicit),
+            &patterns,
+            &actuals,
+        )?;
         let values = DependentValues::own(&self.param_context, &signature.decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &signature.decls, &tyargs);

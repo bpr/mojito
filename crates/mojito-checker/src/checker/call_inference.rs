@@ -1940,7 +1940,7 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
-        let explicit = self.explicit_type_subst(name, decls, param_args)?;
+        let explicit = self.explicit_type_args(name, decls, param_args)?;
         let mut use_params = Vec::new();
         let mut arg_tys = Vec::new();
         let mut arg_exprs = Vec::new();
@@ -1951,7 +1951,7 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             use_params.push(params[i].clone());
-            arg_tys.push(self.solving_argument_ty(arg, &params[i], decls, &explicit)?);
+            arg_tys.push(self.solving_argument_ty(arg, &params[i], decls, &explicit.subst)?);
             arg_exprs.push(arg);
         }
         if let Some(elem) = variadic.as_ref() {
@@ -1965,7 +1965,7 @@ impl Checker {
                         elem,
                         self.owned_collectors.get(name).copied(),
                     )?,
-                    _ => self.solving_argument_ty(&args[p], elem, decls, &explicit)?,
+                    _ => self.solving_argument_ty(&args[p], elem, decls, &explicit.subst)?,
                 };
                 arg_tys.push(actual);
                 arg_exprs.push(&args[p]);
@@ -1988,7 +1988,8 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
-        } = self.resolve_call_params(name, decls, param_args, &use_params, &arg_tys)?;
+        } =
+            self.resolve_call_params(name, decls, (param_args, &explicit), &use_params, &arg_tys)?;
         let values = DependentValues::own(&self.param_context, decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
@@ -2559,12 +2560,12 @@ impl Checker {
         &self,
         name: &str,
         decls: &[ParamDecl],
-        param_args: &[mojito_ast::ast::ParamArg],
+        bracket: (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
         let mut bound = self
-            .resolve_use_params(name, decls, param_args, patterns, actuals)
+            .resolve_explicit_use_params(name, decls, bracket, patterns, actuals)
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
         for (pattern, actual) in patterns.iter().zip(actuals) {
             let deduced = self.existential_argument_ty(pattern, actual);

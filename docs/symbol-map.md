@@ -1391,7 +1391,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `solving_argument_ty` types an argument before its callee's binders are
   solved: a display against `List[K]`/`Set[T]`/`Dict[K, V]` takes its open
   element binder from its own elements, the bracket bindings
-  (`declarations.rs:explicit_type_subst`) substituted first; every generic
+  (`declarations.rs:explicit_type_args`) substituted first, each resolved
+  argument kept for the call's binder (`resolve_explicit_use_params`),
+  which reads it back rather than resolving it again; every generic
   call path then checks each argument against its solved parameter with
   `infer_with_expected`, last, so a display records that collection.
 - `checker/declarations.rs` owns parameter classification and method/function
@@ -2069,7 +2071,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the struct records none, as upstream's `#kgen.get_witness` fold does;
   `mono/infer.rs:bind_static_receiver` binds a struct's parameters
   from the receiver type a static call records, which
-  `checker/method_calls/statics.rs:record_static_receiver` types and MIR
+  `checker/method_calls/statics.rs:record_static_receiver` types from the
+  selected static's one binding of its struct application
+  (`StaticReceiver`, which `infer_struct_static_call` returns) and MIR
   lowering copies into `MirInstr::Call::receiver` (a static method's
   `Self.n` is a parameter constant of the struct's binder, which the
   checker records as `SemanticAdjustment::ParamValue`), and `infer_call` binds a

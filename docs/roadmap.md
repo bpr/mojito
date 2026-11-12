@@ -10094,23 +10094,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R755 The check still resolves some explicit bracket arguments more
-  than once while binding**
-
-  A few routes resolve an application's bracket list again after its
-  binder already did, where upstream binds each argument once.
-  - `explicit_type_subst` (`declarations.rs`) resolves the explicit type
-    arguments before `resolve_use_params` resolves them again.
-  - `record_static_receiver` (`method_calls/statics.rs`) binds a static
-    call's receiver application again after
-    `infer_struct_static_method` bound it.
-  - The lever: each route keeps its binder's `BoundParameters` (or
-    dimensions) and reads them where it now re-binds.
-  - Done when each named site reads its route's earlier binding.
-  - Found while landing R659 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R757 Bracket attributes are keyed by source position, where
   upstream's op keys them by parameter**
 

@@ -3283,12 +3283,12 @@ impl Checker {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls.clone();
-                let explicit = self.explicit_type_subst(name, &decls, param_args)?;
+                let explicit = self.explicit_type_args(name, &decls, param_args)?;
                 let arg_tys = args
                     .iter()
                     .zip(&params)
                     .map(|(argument, pattern)| {
-                        self.solving_argument_ty(argument, pattern, &decls, &explicit)
+                        self.solving_argument_ty(argument, pattern, &decls, &explicit.subst)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &params)?;
@@ -3298,10 +3298,10 @@ impl Checker {
                     mut subst,
                     arguments: tyargs,
                     attributes,
-                } = self.resolve_use_params(
+                } = self.resolve_explicit_use_params(
                     name,
                     &decls,
-                    param_args,
+                    (param_args, &explicit),
                     &instance_patterns,
                     &instance_actuals,
                 )?;
@@ -3449,7 +3449,7 @@ impl Checker {
                 return Ok(constructed);
             }
             let decls = info.decls.clone();
-            let explicit = self.explicit_type_subst(name, &decls, param_args)?;
+            let explicit = self.explicit_type_args(name, &decls, param_args)?;
             let overloaded = sigs.len() > 1;
             let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
             // Map arguments (positional and keyword) to each candidate's
@@ -3527,7 +3527,7 @@ impl Checker {
                     .enumerate()
                     .map(|(index, (expression, pattern, _))| match &forwarded {
                         Some(actual) if Some(index) == forwarded_index => Ok(actual.clone()),
-                        _ => self.solving_argument_ty(expression, pattern, &decls, &explicit),
+                        _ => self.solving_argument_ty(expression, pattern, &decls, &explicit.subst),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let patterns: Vec<Ty> = bound
@@ -3566,10 +3566,10 @@ impl Checker {
                             parameters
                         })
                     }
-                    None => self.resolve_use_params(
+                    None => self.resolve_explicit_use_params(
                         name,
                         &decls,
-                        param_args,
+                        (param_args, &explicit),
                         &instance_patterns,
                         &instance_actuals,
                     ),
@@ -3966,7 +3966,7 @@ impl Checker {
             ordered.as_slice()
         };
         let decls = info.decls.clone();
-        let explicit = self.explicit_type_subst(name, &decls, param_args)?;
+        let explicit = self.explicit_type_args(name, &decls, param_args)?;
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
         if field_tys.len() != args.len() {
             return Err(TypeError::ArityMismatch {
@@ -3989,7 +3989,7 @@ impl Checker {
                 } else if mojito_types::types::is_symbolic(field) {
                     // A field naming the struct's binders: the argument is
                     // checked against the solved field below.
-                    self.solving_argument_ty(argument, field, &decls, &explicit)
+                    self.solving_argument_ty(argument, field, &decls, &explicit.subst)
                 } else {
                     // Contextual: a display argument checks its elements
                     // against the field's element types, so a string literal
@@ -4007,10 +4007,10 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
-        } = self.resolve_use_params(
+        } = self.resolve_explicit_use_params(
             name,
             &decls,
-            param_args,
+            (param_args, &explicit),
             &instance_patterns,
             &instance_actuals,
         )?;
@@ -4154,6 +4154,26 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
+        self.resolve_explicit_use_params(
+            name,
+            decls,
+            (param_args, &ExplicitTypes::default()),
+            patterns,
+            actuals,
+        )
+    }
+
+    /// [`Self::resolve_use_params`] of a bracket whose explicit type
+    /// arguments [`Self::explicit_type_args`] already resolved: each is
+    /// read back, not resolved again.
+    pub(super) fn resolve_explicit_use_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        (param_args, explicit): (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<BoundParameters, TypeError> {
         let mut subst: TySubst = TySubst::new();
         if decls.is_empty() {
             if !param_args.is_empty() {
@@ -4179,7 +4199,7 @@ impl Checker {
             return self.bind_bracket_params(
                 name,
                 decls,
-                param_args,
+                (param_args, explicit),
                 unbound.as_ref().map(|slots| (slots, true)),
                 patterns,
                 actuals,
@@ -4430,8 +4450,14 @@ impl Checker {
                 decl.name()
             )));
         }
-        let bound =
-            self.bind_bracket_params(name, decls, param_args, Some((&unbound, false)), &[], &[])?;
+        let bound = self.bind_bracket_params(
+            name,
+            decls,
+            (param_args, &ExplicitTypes::default()),
+            Some((&unbound, false)),
+            &[],
+            &[],
+        )?;
         let arguments = bound
             .arguments
             .into_iter()
@@ -4443,20 +4469,22 @@ impl Checker {
 
     /// The type binders of `decls` a call's bracket arguments bind
     /// explicitly, each with the type it names: an argument display solves
-    /// only the binders these leave open.
-    pub(super) fn explicit_type_subst(
+    /// only the binders these leave open, and the call's binder reads each
+    /// resolved argument back.
+    pub(super) fn explicit_type_args(
         &self,
         name: &str,
         decls: &[ParamDecl],
         param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<TySubst, TypeError> {
-        let mut explicit = TySubst::new();
+    ) -> Result<ExplicitTypes, TypeError> {
+        let mut explicit = ExplicitTypes::default();
         if param_args.is_empty() || decls.is_empty() {
             return Ok(explicit);
         }
-        for (decl, arguments) in decls
+        for (index, (decl, arguments)) in decls
             .iter()
             .zip(bracket_bindings(name, decls, param_args, None)?)
+            .enumerate()
         {
             if let (
                 ParamDecl::Type {
@@ -4464,12 +4492,15 @@ impl Checker {
                     variadic: false,
                     ..
                 },
-                [(_, argument)],
+                [(position, argument)],
             ) = (decl, arguments.as_slice())
                 && mojito_ast::call::unbound_marker(argument).is_none()
-                && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?.value
             {
-                explicit.insert(id.clone(), ty);
+                let resolved = self.resolve_param_arg(decl, argument)?;
+                if let TyArg::Ty(ty) = &resolved.value {
+                    explicit.subst.insert(id.clone(), ty.clone());
+                }
+                explicit.insert(index, *position, resolved);
             }
         }
         Ok(explicit)
@@ -5682,7 +5713,7 @@ impl Checker {
         &self,
         name: &str,
         decls: &[ParamDecl],
-        param_args: &[mojito_ast::ast::ParamArg],
+        (param_args, explicit): (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
         unbound: Option<(&mojito_ast::call::UnboundSlots, bool)>,
         patterns: &[Ty],
         actuals: &[Ty],
@@ -5880,7 +5911,9 @@ impl Checker {
                 continue;
             }
             let tyarg = if let Some((position, argument)) = arguments.first() {
-                let resolved = self.resolve_param_arg(decl, argument)?;
+                let resolved = explicit
+                    .resolved(index, *position)
+                    .map_or_else(|| self.resolve_param_arg(decl, argument), Ok)?;
                 attributes[*position] = resolved.bracket_attribute(argument);
                 resolved.value
             } else if let Some(solved) = trait_solutions.get(decl.id()) {

@@ -5,6 +5,15 @@ use super::*;
 use crate::checker::call_inference::folded_parameter_arguments;
 use mojito_types::types::TyKind;
 
+/// What a static call bound its struct application to: the instance's
+/// arguments and each spelled receiver bracket argument's attribute, in
+/// source order, as upstream's op carries the receiver's one binding.
+#[derive(Default)]
+pub(super) struct StaticReceiver {
+    pub(super) arguments: Vec<TyArg>,
+    pub(super) attributes: BracketAttributes,
+}
+
 impl Checker {
     /// Type a static method on a parameterized built-in type. Currently only
     /// the compiler-private heap primitive
@@ -209,22 +218,27 @@ impl Checker {
         Ok(ty)
     }
 
-    /// Record the instance a static call's spelled receiver names
-    /// (`Pair[Self.U]` in `Pair[Self.U].count()`) as the receiver
-    /// expression's type. No argument of such a call need carry the struct's
-    /// parameters, so lowering hands the elaborator this type.
+    /// Record what a static call's spelled receiver (`Pair[Self.U]` in
+    /// `Pair[Self.U].count()`) bound, `receiver`, at the receiver
+    /// expression: each bracket argument's attribute, and the instance it
+    /// names as its type. No argument of such a call need carry the
+    /// struct's parameters, so lowering hands the elaborator this type.
     pub(super) fn record_static_receiver(
         &self,
         object: &Expr,
         sname: &str,
-        struct_targs: &[mojito_ast::ast::ParamArg],
+        receiver: &StaticReceiver,
     ) {
-        let _ = self.static_receiver_arguments(object, sname, struct_targs, true);
+        self.record_bracket_attributes(object.source_span(), receiver.attributes.clone());
+        if !receiver.arguments.is_empty() {
+            self.record_at(object.source_span()).ty =
+                Some(TyKind::Struct(sname.to_string(), receiver.arguments.clone()).into());
+        }
     }
 
     /// The arguments of the instance a static's spelled receiver names
-    /// (`Pair[Self.U]`), recording it as the receiver expression's type when
-    /// `record` is set, as [`Self::record_static_receiver`] does.
+    /// (`Pair[Self.U]`), recording it as [`Self::record_static_receiver`]
+    /// does when `record` is set.
     pub(super) fn static_receiver_arguments(
         &self,
         object: &Expr,
@@ -242,17 +256,14 @@ impl Checker {
             attributes,
             ..
         } = self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])?;
+        let receiver = StaticReceiver {
+            arguments,
+            attributes: partitioned.brackets.scatter(attributes),
+        };
         if record {
-            self.record_bracket_attributes(
-                object.source_span(),
-                partitioned.brackets.scatter(attributes),
-            );
-            if !arguments.is_empty() {
-                self.record_at(object.source_span()).ty =
-                    Some(TyKind::Struct(sname.to_string(), arguments.clone()).into());
-            }
+            self.record_static_receiver(object, sname, &receiver);
         }
-        Ok(arguments)
+        Ok(receiver.arguments)
     }
 
     pub(super) fn infer_struct_static_method(
@@ -267,10 +278,11 @@ impl Checker {
             .map(|(ty, _)| ty)
     }
 
-    /// [`Self::infer_struct_static_method`], also returning the struct
-    /// arguments the selected static was solved at: the receiver's explicit
-    /// arguments, those its argument types infer, and the declared defaults
-    /// of the rest.
+    /// [`Self::infer_struct_static_method`], also returning what the
+    /// selected static's binding of the struct application bound: the
+    /// receiver's explicit arguments, those its argument types infer, and
+    /// the declared defaults of the rest, with each spelled bracket
+    /// argument's attribute.
     pub(super) fn infer_struct_static_call(
         &self,
         span: SourceSpan,
@@ -278,7 +290,7 @@ impl Checker {
         (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
         method: &str,
         call: MethodCallArguments<'_>,
-    ) -> Result<(Ty, Vec<TyArg>), TypeError> {
+    ) -> Result<(Ty, StaticReceiver), TypeError> {
         let MethodCallArguments {
             param_args,
             args,
@@ -315,7 +327,7 @@ impl Checker {
         // The signature behind each match, recovered after selection by its
         // parameter shape (origin binding needs the declared binders).
         let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
-        let mut candidate_struct_args: Vec<Vec<TyArg>> = Vec::new();
+        let mut candidate_struct_args: Vec<BoundParameters> = Vec::new();
         let mut availability_failure = None;
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
@@ -325,7 +337,7 @@ impl Checker {
             // the solver's diagnostic (`WrongTypeArgCount`,
             // `CannotInferTypeParam`, ...) instead of collapsing it into a
             // generic no-overload failure.
-            let tyargs = match self.static_struct_arguments(
+            let bound = match self.static_struct_arguments(
                 sname,
                 method,
                 &info.decls,
@@ -334,27 +346,28 @@ impl Checker {
                 args,
                 kwargs,
             ) {
-                Ok(tyargs) => tyargs,
+                Ok(bound) => bound,
                 Err(error) if single_candidate => return Err(error),
                 Err(_) => continue,
             };
+            let tyargs = &bound.arguments;
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, &tyargs)))
+                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, tyargs)))
                 .collect();
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, &tyargs)));
+                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, tyargs)));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, &tyargs)));
+                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, tyargs)));
             // A default reading the struct's own binder (`[m: Int =
             // Self.n + 1]`) reads the receiver's argument, as a method
             // call's does.
-            let at_receiver = self.method_decls_at_receiver(sig, info, &tyargs);
+            let at_receiver = self.method_decls_at_receiver(sig, info, tyargs);
             let Ok((
                 params,
                 variadic,
@@ -377,7 +390,7 @@ impl Checker {
             };
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls, &tyargs)
+                self.method_constraint_result(sig, &method_arguments, &info.decls, tyargs)
             {
                 if single_candidate
                     && availability_failure.is_none()
@@ -405,7 +418,6 @@ impl Checker {
                 kwargs,
             ) {
                 candidate_sigs.push((sig, params.clone()));
-                candidate_struct_args.push(tyargs.clone());
                 matches.push(MethodCallResolution {
                     conversion_score: scored.rank,
                     simd_erasures: scored.simd_erasures,
@@ -421,7 +433,7 @@ impl Checker {
                     return_type: self.close_method_values(
                         &substitute(
                             &super::super::generics::expand_solved_packs(
-                                &substitute_at(&sig.ret, info, &tyargs),
+                                &substitute_at(&sig.ret, info, tyargs),
                                 &sig.decls,
                                 &method_arguments,
                             ),
@@ -433,7 +445,7 @@ impl Checker {
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
-                        substitute(&substitute_at(error, info, &tyargs), &method_subst)
+                        substitute(&substitute_at(error, info, tyargs), &method_subst)
                     }),
                     mutates_receiver: false,
                     consumes_receiver: false,
@@ -464,6 +476,7 @@ impl Checker {
                     bracket_attributes,
                     refined_bound: None,
                 });
+                candidate_struct_args.push(bound);
             }
         }
         if matches.is_empty()
@@ -483,11 +496,16 @@ impl Checker {
                 }
                 .to_string(),
             })?;
-        let struct_arguments = candidate_sigs
+        // The selected static's binding of the struct application is the
+        // receiver's one binding, which every record below reads.
+        let receiver_binding = candidate_sigs
             .iter()
             .position(|(_, params)| *params == selected.param_types)
             .map(|index| candidate_struct_args.swap_remove(index))
-            .unwrap_or_default();
+            .map_or_else(StaticReceiver::default, |bound| StaticReceiver {
+                arguments: bound.arguments,
+                attributes: partitioned.brackets.scatter(bound.attributes),
+            });
         self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
         self.type_runtime_param_args(param_args, &selected.bracket_attributes)?;
         if parameterized_syntax {
@@ -500,19 +518,10 @@ impl Checker {
             // keys the request, like a method call on one.
             let receiver_targs = receiver
                 .and_then(mojito_types::types::nominal_parts)
-                .map(|(_, arguments)| arguments.to_vec())
-                .or_else(|| {
-                    (!struct_targs.is_empty())
-                        .then(|| {
-                            self.structs.get(sname).and_then(|info| {
-                                self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
-                                    .ok()
-                                    .map(|bound| bound.arguments)
-                            })
-                        })
-                        .flatten()
-                })
-                .unwrap_or_else(|| struct_arguments.clone());
+                .map_or_else(
+                    || receiver_binding.arguments.clone(),
+                    |(_, arguments)| arguments.to_vec(),
+                );
             let owner_arguments = self
                 .instance_arguments(sname, &receiver_targs)
                 .unwrap_or_default();
@@ -542,12 +551,12 @@ impl Checker {
         // records its instantiation.
         if let Some((_, tyargs)) = receiver.and_then(mojito_types::types::nominal_parts) {
             self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
-        } else if !struct_targs.is_empty()
-            && let Ok(BoundParameters {
-                arguments: tyargs, ..
-            }) = self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
-        {
-            self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
+        } else if !struct_targs.is_empty() {
+            self.record_struct_instantiation(
+                sname,
+                &receiver_binding.arguments,
+                span.source.as_deref(),
+            );
         }
         self.finish_static_call(
             span,
@@ -560,7 +569,7 @@ impl Checker {
             args,
             kwargs,
         )
-        .map(|ty| (ty, struct_arguments))
+        .map(|ty| (ty, receiver_binding))
     }
 
     /// Complete a selected static call: bind the struct's origin parameters
@@ -732,7 +741,7 @@ impl Checker {
         (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Vec<TyArg>, TypeError> {
+    ) -> Result<BoundParameters, TypeError> {
         let keyword_names: Vec<_> = kwargs
             .iter()
             .filter(|argument| !argument.is_forwarded())
@@ -783,8 +792,6 @@ impl Checker {
         // as a construction's instance does.
         let (patterns, actuals) =
             self.constructed_unification(sname, receiver, &patterns, &actuals);
-        Ok(self
-            .resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)?
-            .arguments)
+        self.resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)
     }
 }

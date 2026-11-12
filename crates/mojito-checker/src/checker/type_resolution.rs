@@ -38,11 +38,41 @@ pub(super) struct BoundParameters {
     pub(super) attributes: BracketAttributes,
 }
 
+/// The explicit type arguments of a call's bracket, resolved once before
+/// its run-time arguments are typed: the substitution an argument display
+/// solves under, and each resolved argument, which the call's binder
+/// ([`Checker::resolve_explicit_use_params`]) reads instead of resolving
+/// it again, as upstream binds each bracket argument once.
+#[derive(Default)]
+pub(super) struct ExplicitTypes {
+    pub(super) subst: TySubst,
+    /// Each resolved argument with its parameter's index and its source
+    /// position in the bracket.
+    resolved: Vec<(usize, usize, BoundArgument)>,
+}
+
+impl ExplicitTypes {
+    /// Record `argument`, the bracket argument at `position`, bound to the
+    /// parameter at `index`.
+    pub(super) fn insert(&mut self, index: usize, position: usize, argument: BoundArgument) {
+        self.resolved.push((index, position, argument));
+    }
+
+    /// The argument at `position` resolved for the parameter at `index`.
+    pub(super) fn resolved(&self, index: usize, position: usize) -> Option<BoundArgument> {
+        self.resolved
+            .iter()
+            .find(|(slot, at, _)| (*slot, *at) == (index, position))
+            .map(|(_, _, argument)| argument.clone())
+    }
+}
+
 /// What [`Checker::resolve_param_arg`] bound one bracket argument to: its
 /// value, and whether binding made a value-shaped argument an attribute
 /// beyond what [`bracket_attribute`] reads off the value (a converted
 /// constructor application, a `SIMDLength`'s lane count, a generator, a
 /// trait, a display's literal application, a closed raw value list).
+#[derive(Clone)]
 pub(super) struct BoundArgument {
     pub(super) value: TyArg,
     attribute: bool,
