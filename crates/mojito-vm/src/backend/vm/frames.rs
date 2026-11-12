@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Execute one function, returning its return value plus the final variable
@@ -108,7 +109,7 @@ impl VmBackend {
                     continue 'frames;
                 }
                 frame.cursor.advance();
-                if let Some(child) = self.prepare_direct_call(prog, &frame, instruction)? {
+                if let Some(child) = self.prepare_direct_call(prog, &mut frame, instruction)? {
                     self.frames.push(frame);
                     self.frames.push(child);
                     continue 'frames;
@@ -192,15 +193,21 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         target: FrameId,
-        frame: Frame,
+        mut frame: Frame,
         value: Value,
     ) -> Result<Option<(Value, Vec<Value>)>, RuntimeError> {
         if frame.id == target {
             return Ok(Some((value, frame.variables)));
         }
-        let continuation = frame.continuation.ok_or_else(|| {
+        let mut continuation = frame.continuation.take().ok_or_else(|| {
             RuntimeError::Unsupported("vm: child frame has no return continuation".to_string())
         })?;
+        let value = match continuation.result_adapter.take() {
+            Some(adapter) => {
+                self.adapt_returned_result(prog, &mut frame, continuation.dest, &adapter, value)?
+            }
+            None => value,
+        };
         let target_ty = self.frames.last().and_then(|caller| {
             prog.mir
                 .functions
@@ -238,7 +245,7 @@ impl VmBackend {
     pub(super) fn prepare_direct_call(
         &mut self,
         prog: &Prog,
-        caller: &Frame,
+        caller: &mut Frame,
         instruction: &MirInstr,
     ) -> Result<Option<Frame>, RuntimeError> {
         if let MirInstr::CallIndirect {
@@ -352,127 +359,13 @@ impl VmBackend {
                         dest: *dest,
                         writebacks: Vec::new(),
                         raises: instruction.raise_edge().cloned(),
+                        result_adapter: None,
                     }),
                 )
                 .map(Some);
         }
-        if let MirInstr::MethodCall {
-            dest,
-            recv,
-            method,
-            resolved,
-            result_adapter,
-            args,
-            kwargs,
-            recv_place,
-            arg_places,
-            kwarg_places,
-            ..
-        } = instruction
-            && let Some(name) = prog.struct_name(
-                &caller.registers[recv.0 as usize],
-                prog.mir.functions[caller.function].1.reg_types.get(&recv.0),
-            )
-        {
-            let positional: Vec<Value> = args
-                .iter()
-                .map(|register| caller.registers[register.0 as usize].clone())
-                .collect();
-            let Some((function_name, index)) = prog
-                .runtime_method_name(name, method, resolved.as_deref(), positional.len())
-                .and_then(|function_name| {
-                    let index = prog.index_of(&function_name)?;
-                    Some((function_name, index))
-                })
-            else {
-                return Ok(None);
-            };
-            // An adapted abstract result must be materialized while the caller
-            // frame is directly available. Let the synchronous instruction path
-            // perform the checked read/copy instead of installing the ordinary
-            // raw-reference return continuation.
-            if result_adapter.is_some() {
-                return Ok(None);
-            }
-            if !prog.mir.functions[index].1.returns_reference {
-                return Ok(None);
-            }
-            let keywords: Vec<(String, Value)> = kwargs
-                .iter()
-                .map(|(key, register)| (key.clone(), caller.registers[register.0 as usize].clone()))
-                .collect();
-            let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-            let (mut bound, slots) = match prog.sigs.get(&function_name) {
-                Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
-                }
-                None => (
-                    positional,
-                    (0..args.len()).map(ArgSlot::Positional).collect(),
-                ),
-            };
-            let definition = &prog.mir.functions[index].1;
-            for parameter in 1..definition.ref_params.len() {
-                let place = bound_argument_place(
-                    slots.get(parameter - 1),
-                    prog.sigs
-                        .get(&function_name)
-                        .and_then(|signature| signature.frame_param_name(parameter - 1)),
-                    0,
-                    arg_places,
-                    &keyword_names,
-                    kwarg_places,
-                );
-                let Some(place) =
-                    caller_handle_place(definition, parameter, place).map_err(|_| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: a mut/ref argument to method '{function_name}' must be a place"
-                        ))
-                    })?
-                else {
-                    continue;
-                };
-                bound[parameter - 1] = self.reference_argument(
-                    caller.id,
-                    &caller.registers,
-                    &caller.variables,
-                    place,
-                )?;
-            }
-            // A ref-returning method's result handle roots in its receiver's
-            // storage, so the receiver passes as a reference to the caller's
-            // live slot — including a read (immutable) receiver, whose frame
-            // value copy would otherwise root the handle in this dying frame.
-            // A receiver without a place (an rvalue chain) still passes by
-            // value for a read convention.
-            let receiver = match recv_place.as_ref() {
-                Some(place) => {
-                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
-                }
-                None if !definition.ref_params.first().copied().unwrap_or(false) => {
-                    caller.registers[recv.0 as usize].clone()
-                }
-                None => {
-                    return Err(RuntimeError::Unsupported(format!(
-                        "vm: mutable receiver for '{function_name}' must be a place"
-                    )));
-                }
-            };
-            let mut call_args = Vec::with_capacity(bound.len() + 1);
-            call_args.push(receiver);
-            call_args.extend(bound);
-            return self
-                .make_frame(
-                    prog,
-                    index,
-                    call_args,
-                    Some(ReturnContinuation {
-                        dest: *dest,
-                        writebacks: Vec::new(),
-                        raises: instruction.raise_edge().cloned(),
-                    }),
-                )
-                .map(Some);
+        if matches!(instruction, MirInstr::MethodCall { .. }) {
+            return self.prepare_method_call(prog, caller, instruction);
         }
         let MirInstr::Call {
             dest,
@@ -556,9 +449,239 @@ impl VmBackend {
                 dest: *dest,
                 writebacks: Vec::new(),
                 raises: instruction.raise_edge().cloned(),
+                result_adapter: None,
             }),
         )
         .map(Some)
+    }
+
+    /// Push a frame for a method call whose receiver is a declared struct's
+    /// value, as upstream lowers the call to an ordinary `kgen.call` of the
+    /// method's function: the receiver enters by the rule
+    /// [`Self::method_call`] applies, and the call's result adapter runs
+    /// when the frame returns. `None` leaves the call to the synchronous
+    /// path: an intrinsic receiver (a place pointer's `copy`, a pack, a
+    /// heap pointer) and a `mut self` receiver held by value.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    fn prepare_method_call(
+        &mut self,
+        prog: &Prog,
+        caller: &mut Frame,
+        instruction: &MirInstr,
+    ) -> Result<Option<Frame>, RuntimeError> {
+        let MirInstr::MethodCall {
+            dest,
+            recv,
+            method,
+            resolved,
+            result_adapter,
+            args,
+            kwargs,
+            recv_place,
+            arg_places,
+            kwarg_places,
+            ..
+        } = instruction
+        else {
+            return Ok(None);
+        };
+        let reg_types = &prog.mir.functions[caller.function].1.reg_types;
+        let receiver_ty = reg_types.get(&recv.0);
+        let pointer_copy = method == "copy"
+            && resolved.is_none()
+            && args.is_empty()
+            && kwargs.is_empty()
+            && matches!(receiver_ty.map(Ty::kind), Some(TyKind::Pointer { .. }));
+        if pointer_copy {
+            return Ok(None);
+        }
+        let raw = caller.registers[recv.0 as usize].clone();
+        let receiver = if prog.held_field(receiver_ty).is_some() {
+            prog.boxed(raw, receiver_ty)
+        } else if matches!(raw, Value::Ref { .. }) {
+            let referent = self.read_reference(&raw, caller.id, &caller.variables)?;
+            prog.boxed(referent, receiver_ty.map(peel_references))
+        } else {
+            raw
+        };
+        let owner = match &receiver {
+            Value::Struct { name, .. } => name.clone(),
+            Value::Tuple(_) | Value::Pointer { .. } => return Ok(None),
+            _ => match resolved
+                .as_deref()
+                .filter(|selected| prog.index_of(selected).is_some())
+                .and_then(mojito_symbol::symbol::split_method_symbol)
+            {
+                Some((owner, _)) => owner.to_string(),
+                None => return Ok(None),
+            },
+        };
+        let Some((function_name, index)) = prog
+            .runtime_method_name(&owner, method, resolved.as_deref(), args.len())
+            .and_then(|function_name| {
+                let index = prog.index_of(&function_name)?;
+                Some((function_name, index))
+            })
+        else {
+            return Ok(None);
+        };
+        let definition = &prog.mir.functions[index].1;
+        let returns_reference = definition.returns_reference;
+        let reference_receiver = definition.ref_params.first().copied().unwrap_or(false);
+        let deinit_receiver = definition.deinit_params.first().copied().unwrap_or(false);
+        // A ref-returning method's result handle roots in its receiver's
+        // storage, so a receiver with a place passes as a reference to the
+        // caller's live slot — including a read receiver, whose frame value
+        // copy would otherwise root the handle in this dying frame. So does
+        // a borrowed receiver whose result carries reference fields; an
+        // owned or deinit receiver otherwise keeps its value transfer.
+        let receiver_as_reference = if returns_reference && result_adapter.is_none() {
+            recv_place.is_some()
+        } else {
+            reference_receiver
+                || (recv_place.is_some()
+                    && !definition.owned_params.first().copied().unwrap_or(false)
+                    && !deinit_receiver
+                    && Self::function_result_carries_reference(prog, index))
+        };
+        // A `mut self` the method does not take as a reference parameter
+        // is written back from its returned value by the synchronous path.
+        let source_name = format!("{owner}.{method}");
+        let mut_receiver = prog.structs.get(&owner).is_some_and(|declaration| {
+            let key = if function_name == source_name {
+                method.as_str()
+            } else {
+                function_name.as_str()
+            };
+            declaration.mut_self_methods.contains(key)
+        });
+        if mut_receiver && !receiver_as_reference {
+            return Ok(None);
+        }
+        let operand = |register: &Reg| {
+            prog.boxed(
+                caller.registers[register.0 as usize].clone(),
+                reg_types.get(&register.0),
+            )
+        };
+        let positional: Vec<Value> = args.iter().map(operand).collect();
+        let keywords: Vec<(String, Value)> = kwargs
+            .iter()
+            .map(|(key, register)| (key.clone(), operand(register)))
+            .collect();
+        let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
+        let (mut bound, slots) = match prog.sigs.get(&function_name) {
+            Some(signature) => {
+                self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
+            }
+            None => (
+                positional,
+                (0..args.len()).map(ArgSlot::Positional).collect(),
+            ),
+        };
+        for parameter in 1..definition.ref_params.len() {
+            let place = bound_argument_place(
+                slots.get(parameter - 1),
+                prog.sigs
+                    .get(&function_name)
+                    .and_then(|signature| signature.frame_param_name(parameter - 1)),
+                0,
+                arg_places,
+                &keyword_names,
+                kwarg_places,
+            );
+            let Some(place) = caller_handle_place(definition, parameter, place).map_err(|_| {
+                RuntimeError::Unsupported(format!(
+                    "vm: a mut/ref argument to method '{function_name}' must be a place"
+                ))
+            })?
+            else {
+                continue;
+            };
+            bound[parameter - 1] =
+                self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?;
+        }
+        let receiver = if receiver_as_reference {
+            let place = recv_place.as_deref().ok_or_else(|| {
+                RuntimeError::Unsupported(format!(
+                    "vm: reference receiver for method '{function_name}' must be a place"
+                ))
+            })?;
+            self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
+        } else {
+            // The call consumes its `deinit` receiver's place, as upstream's
+            // call consumes a `DeinitMem` operand: the place holds the
+            // ended-place tombstone from the call on.
+            if deinit_receiver && let Some(place) = recv_place.as_deref() {
+                self.store_at_call_place(
+                    caller.id,
+                    place,
+                    Value::Moved,
+                    &caller.registers,
+                    &mut caller.variables,
+                )?;
+            }
+            receiver
+        };
+        let mut call_args = Vec::with_capacity(bound.len() + 1);
+        call_args.push(receiver);
+        call_args.extend(bound);
+        self.make_frame(
+            prog,
+            index,
+            call_args,
+            Some(ReturnContinuation {
+                dest: *dest,
+                writebacks: Vec::new(),
+                raises: instruction.raise_edge().cloned(),
+                result_adapter: result_adapter
+                    .as_deref()
+                    .map(|adapter| ContinuationAdapter {
+                        adapter: adapter.clone(),
+                        returns_reference,
+                    }),
+            }),
+        )
+        .map(Some)
+    }
+
+    /// Apply a returning method frame's result adapter, as the synchronous
+    /// method call does: the caller's variables are the current frame, and
+    /// a reference into the returned receiver reads from `frame`'s
+    /// variables before they are discarded.
+    fn adapt_returned_result(
+        &mut self,
+        prog: &Prog,
+        frame: &mut Frame,
+        dest: Reg,
+        adapter: &ContinuationAdapter,
+        value: Value,
+    ) -> Result<Value, RuntimeError> {
+        let mut caller = self.frames.pop().ok_or_else(|| {
+            RuntimeError::Unsupported("vm: returning child has no caller frame".to_string())
+        })?;
+        let ty = prog
+            .mir
+            .functions
+            .get(caller.function)
+            .and_then(|(_, function)| function.reg_types.get(&dest.0));
+        let adapted = self.apply_checked_result_adapter(
+            prog,
+            value,
+            Some(ResultAdapter {
+                kind: adapter.adapter.kind,
+                constructor: adapter.adapter.constructor.as_deref(),
+                ty,
+            }),
+            adapter.returns_reference,
+            ResultAdapterFrames {
+                current: caller.id,
+                current_variables: &mut caller.variables,
+                returned: Some((frame.id, &mut frame.variables)),
+            },
+        );
+        self.frames.push(caller);
+        adapted
     }
 
     /// Pop a child frame a `raise` leaves into its caller, whose call has

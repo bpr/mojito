@@ -1844,7 +1844,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lifecycle-event log (`enable_lifecycle_log`/`lifecycle_log`) the native
   trace differential compares against. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.
-  `Prog::{held_field, boxed, unboxed, struct_name}` own the held
+  `Prog::{held_field, boxed, unboxed}` own the held
   representation of a one-field struct declaring register-passability
   unconditionally
   (`StructDef::register_field`, decided in `build_structs`), and
@@ -1858,7 +1858,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `FnLowering::holds_struct_value`), and closure-storage capture
   (`emit_thunk_body`, `lower/support.rs`) are its field's value.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
-  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`), which steps
+  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`; every resolved method call on a declared struct is a pushed frame too, `prepare_method_call`, its result adapter applied as the frame returns, `adapt_returned_result`), which steps
   each frame's `RegionCursor`, and a raising instruction's raise edge:
   `raise_into_edge` sets its flag and error from its outcome, and a child
   frame's `raise` pops into its caller's call (`raise_into_caller`,

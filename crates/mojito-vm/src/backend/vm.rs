@@ -20,7 +20,7 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirFunction, MirInstr, MirIntrinsicSubscript, MirPlace,
-    MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
+    MirProgram, MirResultAdapter, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::ct::ScalarConversion;
@@ -973,15 +973,6 @@ impl Prog {
         }
     }
 
-    /// The struct `value`, a value of `ty`, is to runtime-shape dispatch:
-    /// the held struct `ty` names, else its box's name.
-    fn struct_name<'a>(&'a self, value: &'a Value, ty: Option<&Ty>) -> Option<&'a str> {
-        self.held_field(ty).map(|(name, _)| name).or(match value {
-            Value::Struct { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-    }
-
     /// `value`, a value of `ty`, as the field it is held as where `ty` is a
     /// held struct and `value` is its box: [`Self::boxed`]'s inverse, which
     /// a frame's entry and a call's result apply. A box of another instance
@@ -1543,6 +1534,17 @@ struct ReturnContinuation {
     /// The raise edge of the call: a `raise` leaving the child sets its
     /// flag and error in the caller, which goes on to its error region.
     raises: Option<Raises>,
+    /// The checked adaptation of a method call's result, applied when the
+    /// child returns, while its frame's variables are still at hand.
+    result_adapter: Option<ContinuationAdapter>,
+}
+
+/// A method call's [`MirResultAdapter`] together with whether the method
+/// its call selected returns a reference, which decides whether the
+/// adaptation reads its result.
+struct ContinuationAdapter {
+    adapter: MirResultAdapter,
+    returns_reference: bool,
 }
 
 /// Add to `errors` the error register of every raise edge in `blocks`, at

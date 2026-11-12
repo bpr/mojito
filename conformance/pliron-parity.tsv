@@ -676,6 +676,7 @@ assets/ok/method_capturing_callable_parameter.mojo	main	exe-differential	sanitiz
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
 assets/ok/method_overload_parameter_pack.mojo	main	exe-differential	sanitized
+assets/ok/method_recursion_pushed_frames.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/method_signature_calls_later_method.mojo	main	exe-differential	sanitized
 assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized

@@ -98,33 +98,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1291 A method call returning no reference runs its callee on the
-  host stack, so recursion through a method overflows where upstream's
-  interpreter pushes a frame for every call**
-
-  `prepare_direct_call` pushes a frame for a `call.method` only when the
-  method returns a reference; every other method call runs through
-  `exec_instr`'s synchronous path (`call_frame`, a nested `drive_frames`).
-  - Upstream lowers a method call to an ordinary `kgen.call` of the
-    method's function, which its interpreter runs as one more frame.
-  - A free-function call and a `CallIndirect` are pushed frames, so the
-    gap is the method call alone.
-  - Probe: `def down(self, n: Int) -> Int:` returning
-    `self.down(n - 1) + self.step` for `n > 0`, else `0`;
-    `print(Walker(1).down(80))` aborts with a stack overflow in a debug
-    build (`down(60)` prints `60`), where the free-function form runs
-    100 000 deep.
-  - Probe: a `mut self` method `bump` adding 1 to `self.hits` and
-    recursing through `self.bump(n - 1)`: `c.bump(200)` overflows where
-    `c.bump(60)` prints `60`; its receiver must be written back through
-    `ReturnContinuation::writebacks`.
-  - Lever: push a frame for every resolved method call, its receiver and
-    `mut` arguments written back through the continuation, and its
-    `result_adapter` applied when the frame finishes.
-  - Found while landing R1272 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1731 A callee with a callable compile-time parameter, or a
   parameter holding a function, is no compile-time application**
 

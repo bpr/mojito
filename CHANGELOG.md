@@ -306,6 +306,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Recursion through a method runs at any depth on the VM, as through a
+  free function: every method call on a declared struct's value is a
+  pushed frame, its `mut self` receiver a handle into the caller and its
+  result adapter applied as the frame returns, instead of a nested host
+  call that overflowed the stack 80 calls deep in a debug build (R1291).
 - A generic struct holding a `String` whose parameter its layout never
   reads (`struct S[n: Int](Copyable, Movable)` with `var s: String`) now
   compiles and runs as at the pin, instead of failing the verifier after
