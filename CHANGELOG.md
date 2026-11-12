@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Every bracket is one subscript node, classified by its base, as
+  upstream's `SubscriptNode` is: the checker and the elaborator spell a
+  type's application as the subscript the parser builds, and a bracket
+  over a function (`twice[4]`) binds its parameters in place instead of
+  being respelled as a second application node, so `ExprKind::TypeApply`
+  and `CheckedOp::TypeApply` and their dead Variant-projection arms are
+  gone (R2112).
 - A closed bracket argument of a generic call, a method, a static, a
   construction, or `external_call` is now the checked call's parameter
   attribute, as upstream's op carries it, instead of a value node the call

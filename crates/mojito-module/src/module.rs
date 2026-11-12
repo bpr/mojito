@@ -379,10 +379,6 @@ fn rewrite_expr(
                 rewrite_expr(&mut arg.value, names, namespaces);
             }
         }
-        ExprKind::TypeApply { name, args } => {
-            rename(name, names);
-            rewrite_args(args, names, namespaces);
-        }
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
             rewrite_expr(value, names, namespaces);
         }

@@ -1532,10 +1532,6 @@ pub enum CheckedOp {
         object: CheckedNodeId,
         index: CheckedParamArg,
     },
-    TypeApply {
-        name: String,
-        args: Vec<CheckedParamArg>,
-    },
     Spread(CheckedNodeId),
     Transfer(CheckedNodeId),
     ListLit(Vec<CheckedNodeId>),
@@ -1656,11 +1652,6 @@ impl CheckedOp {
                 operands.extend(args);
                 kwargs(&mut operands, keywords);
             }
-            Self::TypeApply { args, .. } => {
-                for argument in args {
-                    argument.operands(&mut operands);
-                }
-            }
             Self::ListLit(values) | Self::TupleLit(values) => operands.extend(values),
             Self::BraceLit(entries) => {
                 for (key, value) in entries {
@@ -1767,11 +1758,6 @@ impl CheckedOp {
                 nodes.extend(args);
                 nodes.extend(kwargs.iter().map(|kwarg| kwarg.value));
             }
-            Self::TypeApply { args, .. } => {
-                for argument in args {
-                    argument.reached(&mut nodes);
-                }
-            }
             Self::Index { object, index } => {
                 nodes.push(*object);
                 index.reached(&mut nodes);
@@ -1877,10 +1863,6 @@ impl CheckedOp {
                 method: method.clone(),
                 args: values(map, args),
                 kwargs: kwargs(map, keywords),
-            },
-            Self::TypeApply { name, args } => Self::TypeApply {
-                name: name.clone(),
-                args: param_args(map, args),
             },
             Self::ListLit(items) => Self::ListLit(values(map, items)),
             Self::TupleLit(items) => Self::TupleLit(values(map, items)),
@@ -5866,7 +5848,7 @@ impl<'a> ArenaBuilder<'a> {
     }
 
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-        use ExprKind::{Identifier, Index, Member, MultiIndex, TypeApply, TypeValue};
+        use ExprKind::{Identifier, Index, Member, MultiIndex, TypeValue};
         if let Some(node) = self.spelled_construction(expression) {
             return node;
         }
@@ -5893,13 +5875,9 @@ impl<'a> ArenaBuilder<'a> {
                 })
             });
         let category = match expression.kind {
-            TypeApply { .. } | Index { .. } | MultiIndex { .. } if variant_projection => {
-                ValueCategory::Place
-            }
-            TypeApply { .. } | Index { .. } | MultiIndex { .. } if resolved_callable_value => {
-                ValueCategory::Value
-            }
-            TypeApply { .. } | TypeValue(_) => ValueCategory::Type,
+            Index { .. } | MultiIndex { .. } if variant_projection => ValueCategory::Place,
+            Index { .. } | MultiIndex { .. } if resolved_callable_value => ValueCategory::Value,
+            TypeValue(_) => ValueCategory::Type,
             Index { .. } | MultiIndex { .. } if type_application => ValueCategory::Type,
             // Expressions retained only inside constraints, reflection, and
             // other erased parameter metadata are deliberately absent from
@@ -6091,10 +6069,6 @@ impl<'a> ArenaBuilder<'a> {
                 method: method.clone(),
                 args: values(self, args),
                 kwargs: self.kwargs(kwargs),
-            },
-            ExprKind::TypeApply { name, args } => CheckedOp::TypeApply {
-                name: name.clone(),
-                args: self.param_args(expression, args),
             },
             ExprKind::ListLit(items) => CheckedOp::ListLit(values(self, items)),
             ExprKind::TupleLit(items) => CheckedOp::TupleLit(values(self, items)),

@@ -610,7 +610,10 @@ impl<'a> Flatten<'a> {
         self.display_without_plan(node, "a tuple display")
     }
 
-    pub(super) fn nested_type_apply(&mut self, node: Node<'a>, name: &str) -> Reg {
+    /// A bracket over the nested `def` `name` read as a value
+    /// (`inner[4]`): the nested declaration's closure, at the
+    /// specialization the check bound.
+    pub(super) fn nested_bracket_callable(&mut self, node: Node<'a>, name: &str) -> Reg {
         let info = self
             .nested_info(node)
             .expect("guard established a checked nested declaration");
@@ -681,7 +684,6 @@ impl<'a> Flatten<'a> {
                 | CheckedOp::MethodCall { .. }
                 | CheckedOp::Index { .. }
                 | CheckedOp::MultiIndex { .. }
-                | CheckedOp::TypeApply { .. }
         ) && let Some(value) = recorded_param_value(&checked.adjustments)
         {
             return Some(self.param_value_register(node, value));
@@ -692,17 +694,6 @@ impl<'a> Flatten<'a> {
             CheckedOp::MethodCall { method, .. } => {
                 self.with_write_backs(|this| this.method_call_expr(node, method))
             }
-            CheckedOp::TypeApply { name, .. } if !variant_projection(checked) => {
-                if checked
-                    .binding
-                    .is_some_and(|binding| self.nested.contains_key(&binding))
-                {
-                    self.nested_type_apply(node, name)
-                } else {
-                    let function = callable_target(&checked.adjustments)?;
-                    self.callable_constant(node, function)
-                }
-            }
             _ => return None,
         })
     }
@@ -712,9 +703,10 @@ impl<'a> Flatten<'a> {
     /// other op, which another family lowers.
     fn access_family(&mut self, node: Node<'a>) -> Option<Reg> {
         let bound = |id: &Option<CheckedNodeId>| id.and_then(|id| node.operand_of(id));
-        // A static read through its struct (`S.st`, `S.gst[10]`) is the
-        // function constant the check resolved it to; its type-name
-        // receiver is never lowered.
+        // A static read through its struct (`S.st`, `S.gst[10]`) or a
+        // bracket binding a function's parameters (`twice[4]`) is the
+        // function constant the check resolved it to; its base is never
+        // lowered. A nested `def`'s is its closure.
         if matches!(
             node.op(),
             CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
@@ -724,13 +716,20 @@ impl<'a> Flatten<'a> {
             && selected_call(&node.checked.adjustments).is_none()
             && let Some(function) = resolved_callable(&node.checked.adjustments)
         {
+            if node
+                .checked
+                .binding
+                .is_some_and(|binding| self.nested.contains_key(&binding))
+                && let Some(CheckedOp::Identifier(name)) = node.object().map(Node::op)
+            {
+                return Some(self.nested_bracket_callable(node, name));
+            }
             return Some(self.callable_constant(node, function));
         }
         Some(match node.op() {
             CheckedOp::Member { field, .. } => self.member_expr(node, node.object()?, field),
             // A variant projection spelled with a struct-name index
-            // (`v[String]`) carries the same checked adjustment as the
-            // type-token spelling below and lowers identically.
+            // (`v[String]`).
             CheckedOp::Index { .. } if variant_projection(node.checked) => {
                 self.variant_project_index(node, node.object()?)
             }
@@ -750,9 +749,6 @@ impl<'a> Flatten<'a> {
                 bound(step),
             ),
             CheckedOp::MultiIndex { args, .. } => self.multi_index_expr(node, node.object()?, args),
-            CheckedOp::TypeApply { name, .. } if variant_projection(node.checked) => {
-                self.variant_project_type_apply(node, name)
-            }
             _ => return None,
         })
     }

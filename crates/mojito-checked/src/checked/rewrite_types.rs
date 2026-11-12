@@ -856,9 +856,6 @@ impl RewriteTypes for CheckedOp {
             } => {
                 param_args.rewrite_types(rewrite);
             }
-            Self::TypeApply { name: _, args } => {
-                args.rewrite_types(rewrite);
-            }
             Self::Comprehension {
                 kind: _,
                 key: _,

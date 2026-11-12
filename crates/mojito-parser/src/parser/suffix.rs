@@ -213,34 +213,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // `SubscriptNode`: sema classifies it by its base (a parameter
         // application, a callable's binding, or `__getitem__`). A type
         // operand is the type value it spells.
-        let arguments = items
-            .into_iter()
-            .map(|item| {
-                let ParsedBracketItem::Param(argument, span) = item else {
-                    unreachable!("slices were handled above")
-                };
-                mojito_ast::ast::subscript_arg(argument, span).ok_or_else(|| {
-                    ParseError::UnexpectedToken(
-                        Token::RBracket,
-                        "a keyword argument takes one compile-time value".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let kind = match <[_; 1]>::try_from(arguments) {
-            Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
-                object: Box::new(object),
-                index: Box::new(index),
-            },
-            Ok(arguments) => ExprKind::MultiIndex {
-                object: Box::new(object),
-                args: arguments.into(),
-            },
-            Err(arguments) => ExprKind::MultiIndex {
-                object: Box::new(object),
-                args: arguments,
-            },
-        };
+        let operands = items.into_iter().map(|item| {
+            let ParsedBracketItem::Param(argument, span) = item else {
+                unreachable!("slices were handled above")
+            };
+            (argument, span)
+        });
+        let kind = mojito_ast::ast::subscript_application(object, operands, self.last_span)
+            .ok_or_else(|| {
+                ParseError::UnexpectedToken(
+                    Token::RBracket,
+                    "a keyword argument takes one compile-time value".to_string(),
+                )
+            })?;
         Ok(self.node(kind, start))
     }
 

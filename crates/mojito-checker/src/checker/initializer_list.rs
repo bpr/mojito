@@ -173,14 +173,9 @@ impl Checker {
             } if self.generic_type_alias(name) => Some(
                 self.ty_from_anno(&SourceType::Named(name.clone(), param_args.clone()))
                     .and_then(|ty| {
-                        let applied = Expr::new(
-                            ExprKind::TypeApply {
-                                name: name.clone(),
-                                args: param_args.clone(),
-                            },
-                            expression.span,
-                        );
-                        self.type_construction(expression, Some(&applied), &ty, args, kwargs)
+                        let applied =
+                            mojito_ast::ast::named_subscript(name, param_args, expression.span);
+                        self.type_construction(expression, applied.as_ref(), &ty, args, kwargs)
                             .and_then(|construction| self.infer_spelled(expression, construction))
                     }),
             ),

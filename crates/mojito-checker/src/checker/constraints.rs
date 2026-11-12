@@ -628,11 +628,12 @@ impl Checker {
                 None => {}
             }
         }
-        let mut body = value.clone();
-        body.kind = ExprKind::TypeApply {
-            name: struct_name,
-            args: rewritten,
+        let Some(applied) = mojito_ast::ast::named_subscript(&struct_name, &rewritten, value.span)
+        else {
+            return Ok(None);
         };
+        let mut body = value.clone();
+        body.kind = applied.kind;
         Ok(Some((generator_params, body)))
     }
 
@@ -840,12 +841,6 @@ impl Checker {
         expr: &Expr,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let (object, args) = match &expr.kind {
-            ExprKind::TypeApply { name, args } => {
-                return self.value_alias_application(name, args).or_else(|| {
-                    let object = Expr::new(ExprKind::Identifier(name.clone()), expr.span);
-                    self.generator_application_of(&object, args)
-                });
-            }
             ExprKind::Index { object, index } => (object, subscript_param_args(index)),
             ExprKind::MultiIndex { object, args } => (object, multi_subscript_param_args(args)?),
             _ => return None,
@@ -957,18 +952,10 @@ impl Checker {
         self.generator_constant(alias.decls.clone(), body).ok()
     }
 
-    /// Whether `expr` applies a value-bodied generic alias (`First[5, 6]`),
-    /// in either spelling the parser gives an application.
+    /// Whether `expr` applies a value-bodied generic alias (`First[5, 6]`).
     pub(super) fn applies_value_alias(&self, expr: &Expr) -> bool {
-        let name = match &expr.kind {
-            ExprKind::TypeApply { name, .. } => name,
-            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
-                match &object.kind {
-                    ExprKind::Identifier(name) => name,
-                    _ => return false,
-                }
-            }
-            _ => return false,
+        let Some((name, _)) = expr.bracket_application() else {
+            return false;
         };
         self.lookup(name).is_none()
             && self
@@ -1960,7 +1947,6 @@ impl Checker {
                 }
                 self.ct_param(ty)
             }
-            ExprKind::TypeApply { name, .. } => Err(self.unresolved_head(name)),
             // The length of a pack that is still a parameter, which the
             // instance's elements fix (a collector's `args.__len__()`).
             _ if let Some(length) = self.pack_length_query(expr) => Ok(length),
@@ -3267,7 +3253,7 @@ impl Checker {
     fn may_denote_type(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Identifier(name) => self.lookup(name).is_none(),
-            ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => true,
+            ExprKind::TypeValue(_) => true,
             ExprKind::Call { name, .. } => name == "type_of",
             ExprKind::Member { object, .. }
             | ExprKind::Index { object, .. }

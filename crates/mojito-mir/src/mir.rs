@@ -3800,30 +3800,6 @@ impl<'a> Flatten<'a> {
                 return dest;
             }
         }
-        if matches!(expression.op(), CheckedOp::TypeApply { .. })
-            && expression.adjustments().iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                )
-            })
-        {
-            let place = self.place(expression);
-            let handle_ty = mir_place_handle_ty(
-                &place,
-                expression.borrow_mutability().map(|mutable| {
-                    if mutable {
-                        mojito_types::origin::Mutability::Mutable
-                    } else {
-                        mojito_types::origin::Mutability::Immutable
-                    }
-                }),
-            )
-            .unwrap_or_else(Ty::error);
-            let dest = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
-            self.emit(MirInstr::MakeRef { dest, place });
-            return dest;
-        }
         if matches!(
             expression.op(),
             CheckedOp::Member { .. } | CheckedOp::Index { .. }
@@ -4190,11 +4166,6 @@ impl<'a> Flatten<'a> {
             });
         }
         std::mem::replace(&mut self.f.body, outer).instrs
-    }
-
-    fn resolved_place(&mut self, name: &str) -> MirPlace {
-        let var = self.var(name);
-        self.var_place(var)
     }
 
     /// The place name `expression` roots, spelled `name` at runtime: its
@@ -5756,6 +5727,16 @@ impl EnclosingBinders {
                 CheckedParamArg::Value(_) => None,
             }
         }
+        let attributes_mention = |arguments: &[CheckedParamArg]| {
+            arguments
+                .iter()
+                .filter_map(attribute)
+                .any(|argument| match argument {
+                    TyArg::Ty(ty) => self.mentioned_in(ty),
+                    TyArg::Val(value) => self.mentioned_in_value(value),
+                    TyArg::Origin(_) => false,
+                })
+        };
         let mut names: Vec<String> = Vec::new();
         let mut resolved = false;
         tables.walk_expression(node, &mut |walked| {
@@ -5786,18 +5767,10 @@ impl EnclosingBinders {
                 {
                     true
                 }
-                CheckedOp::Call { param_args, .. }
-                | CheckedOp::Invoke { param_args, .. }
-                | CheckedOp::TypeApply {
-                    args: param_args, ..
-                } => param_args
-                    .iter()
-                    .filter_map(attribute)
-                    .any(|argument| match argument {
-                        TyArg::Ty(ty) => self.mentioned_in(ty),
-                        TyArg::Val(value) => self.mentioned_in_value(value),
-                        TyArg::Origin(_) => false,
-                    }),
+                CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => {
+                    attributes_mention(param_args)
+                }
+                CheckedOp::Index { index, .. } => attributes_mention(std::slice::from_ref(index)),
                 _ => false,
             };
             WalkResult::Advance

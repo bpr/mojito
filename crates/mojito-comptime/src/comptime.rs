@@ -420,7 +420,7 @@ fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
         ParamArg::Value(value)
             if matches!(
                 value.kind,
-                ExprKind::TypeApply { .. } | ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+                ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
             ) =>
         {
             ct_param_source_type(&value.type_spelling()?)

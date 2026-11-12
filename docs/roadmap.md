@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2123**.
+Next free ID: **R2124**.
 
 ## Ordered Work
 
@@ -3963,6 +3963,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2123 A bracket over a nested generic `def` read as a value loads
+  the unspecialized closure**
+
+  Inside `main`, `var f = inner[4]` over a nested `def inner[n: Int]() ->
+  Int` stops elaboration with "in `main$inner`: unsupported
+  monomorphization cannot resolve parameter `n`", where the pin prints
+  `12` for `print(f())`; the call `inner[5]()` already runs.
+  - MIR lowers the bracket through `nested_bracket_callable`
+    (`mir/lower_expr/expr.rs`), which loads the nested declaration's
+    closure and drops the `GenericInstantiation` the check recorded at
+    the bracket, where a top-level `def`'s lowers to a
+    `Const::FunctionInstance` naming its instance.
+  - Upstream's value is a symbol reference to the nested function's
+    specialization; the closure must name the instance the bracket bound.
+  - Probe: the program above. A nested generic `def` that captures a
+    local (`return n + k`) fails earlier, with "Could not infer capture
+    convention of the captured value k".
+  - Found while landing R2112 (2026-11-12).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R2086 A struct's callable default naming a function fails at the
   struct's declaration**
 
@@ -4790,31 +4811,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while planning R1671 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2112 `ExprKind::TypeApply` is a second application node**
-
-  The checker and the elaborator still synthesize `ExprKind::TypeApply`
-  from a type spelling, and MIR reads it as `CheckedOp::TypeApply`, where
-  upstream has one `SubscriptNode` that sema classifies by its base.
-  - The parser builds every bracket suffix as `Index` or `MultiIndex`, so
-    a `TypeApply` now comes only from a synthesizer or a `Call` pattern's
-    head (`parser/patterns.rs`).
-  - Synthesizers: `Type::expression_spelling` (`ast.rs`),
-    `constraints.rs`, `inference.rs` (two sites),
-    `initializer_list.rs`, and `comptime/elab.rs`.
-  - Readers: `checked.rs`, HIR (`hir.rs`), MIR (`lower_stmt.rs`,
-    `expr.rs`, `expr_method.rs`, `facts.rs`, `mir.rs`),
-    `closure_uses.rs`, and `rewrite_types.rs`.
-  - The Variant-projection arms over `TypeApply` (`lower_stmt.rs`,
-    `expr.rs`, `mir.rs`, `hir.rs`, `indexing.rs`, `inference.rs`) look
-    unreachable now that no parsed `TypeApply` names a runtime local.
-    Prove it with an audit of the synthesizers before deleting them.
-  - The lever: the synthesizers and the pattern head build `Index` or
-    `MultiIndex` through `ast::subscript_arg`, then the node and
-    `CheckedOp::TypeApply` go.
-  - Found while landing R1514 (2026-11-11).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2117 The checker re-spells a `Self` operand as type syntax**
 
@@ -7149,7 +7145,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     a type whose argument is still a parameter expression (`T[t]`).
   - MIR lowering recognizes a static call's type receiver only by its
     syntax (`type_receiver_name`, `mir/lower_expr/expr_method.rs`): a
-    `TypeApply`, `type_of(…)`, or a bare name. A `Member` receiver the
+    bracket over a type name, `type_of(…)`, or a bare name. A `Member` receiver the
     checker resolved to a type is lowered as a value.
   - Upstream reads the member as its value, a type the elaborator
     substitutes per instance. A checked fact that a receiver denotes a
@@ -11138,7 +11134,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     takes the alias route (`check_generic_comptime_alias`), which refuses
     any alias inside a function.
   - Routed as a value instead, `IsTriviallyMovable[…]` types as a type
-    (`infer`'s `TypeApply` arm), and the compile-time path reads the name
+    (`infer`'s type-read-as-value arm), and the compile-time path reads the name
     as an unknown type. Only `compile_generic_constraint` knows the
     predicate.
   - Pinned by `conformance/probes/trivially_predicate_local_comptime.mojo`.

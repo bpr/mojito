@@ -2992,15 +2992,17 @@ fn parses_parameterized_pattern_heads() {
     );
     assert!(matches!(
         &cases[0].pattern.kind,
-        MatchPatternKind::Call { head: Expr { kind: ExprKind::TypeApply { name, args }, .. }, kwargs, .. }
-            if name == "P" && args.len() == 1 && kwargs.len() == 1
+        MatchPatternKind::Call { head, kwargs, .. }
+            if head.bracket_application().is_some_and(|(name, args)| name == "P" && args.len() == 1)
+                && matches!(head.kind, ExprKind::Index { .. })
+                && kwargs.len() == 1
     ));
     let member_over_apply = |kind: &MatchPatternKind, case: &str| match kind {
         MatchPatternKind::Call { head, .. } | MatchPatternKind::Head(head) => matches!(
             &head.kind,
             ExprKind::Member { object, field }
                 if field == case
-                    && matches!(&object.kind, ExprKind::TypeApply { name, .. } if name == "Optional")
+                    && object.bracket_application().is_some_and(|(name, _)| name == "Optional")
         ),
         _ => false,
     };

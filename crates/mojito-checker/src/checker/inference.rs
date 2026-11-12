@@ -579,10 +579,8 @@ impl Checker {
                             })
                     })
             }
-            _ if matches!(expr.kind, ExprKind::TypeApply { .. })
-                || (expr.bracket_application().is_some() && self.is_variant_projection(expr)) =>
-            {
-                self.fact(&expr.source_span(), |facts| {
+            _ if expr.bracket_application().is_some() && self.is_variant_projection(expr) => self
+                .fact(&expr.source_span(), |facts| {
                     facts.interior_reference.as_ref()
                 })
                 .and_then(|origin| {
@@ -597,8 +595,7 @@ impl Checker {
                             },
                             origin: mojito_types::origin::Origin::Place(origin),
                         })
-                })
-            }
+                }),
             ExprKind::Index { object, index } => match self.index_storage_ty(object, index)? {
                 referent if matches!(referent.kind(), TyKind::Ref(_)) => {
                     let TyKind::Ref(reference) = referent.into_kind() else {
@@ -1365,7 +1362,7 @@ impl Checker {
             {
                 self.read_bracketed_attribute(expr, &args)
             }
-            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::TypeApply { .. }
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
                 if let Some(read) = self.read_parametric_value(expr) =>
             {
                 read
@@ -1555,43 +1552,6 @@ impl Checker {
                 self.infer_multi_subscript(expr.source_span(), object, args)
             }
             ExprKind::TString { parts, .. } => self.infer_template_string(expr, parts),
-            // An application the checker or the elaborator synthesized from
-            // a type spelling: a function's specialization, a Variant
-            // projection, or a type read as a value.
-            ExprKind::TypeApply { name, args } => {
-                if let Some(specialized) = self.infer_specialized_callable_value(
-                    expr.source_span(),
-                    CallableValueSource::Binding(name),
-                    args,
-                    None,
-                    true,
-                )? {
-                    Ok(specialized)
-                } else if let Some(TyKind::Variant(alternatives)) =
-                    (self.lookup(name).cloned()).as_ref().map(Ty::kind)
-                {
-                    self.check_capture_access(name, false)?;
-                    let (index, result) = self.variant_alternative(alternatives, args)?;
-                    if let Some(owner) = self.lookup_owner(name) {
-                        self.record_at(expr.source_span()).binding = Some(owner);
-                    }
-                    self.record_at(expr.source_span()).adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives: alternatives.clone(),
-                            index,
-                        },
-                    ));
-                    self.record_interior_reference(expr.source_span(), expr, "value");
-                    // A projection value read copies a Copyable payload out of
-                    // the variant's storage rather than aliasing it.
-                    if self.is_implicitly_copyable(&result) {
-                        self.record_at(expr.source_span()).copy_place_value_use = true;
-                    }
-                    Ok(result)
-                } else {
-                    Err(type_read_as_value(name))
-                }
-            }
         }
     }
 
@@ -1617,7 +1577,7 @@ impl Checker {
                 self.type_value(index, ty).ok();
                 Some(mojito_ast::ast::ParamArg::Type(ty.clone()))
             }
-            ExprKind::Index { .. } | ExprKind::TypeApply { .. } | ExprKind::MultiIndex { .. }
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
                 if self.denoted_type(index, "Variant projection").is_ok() =>
             {
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
@@ -2055,10 +2015,10 @@ impl Checker {
                             _ => None,
                         })
                         .collect::<Option<Vec<_>>>()
-                        .map(|args| ExprKind::TypeApply {
-                            name: base.clone(),
-                            args,
+                        .and_then(|args| {
+                            mojito_ast::ast::named_subscript(&base, &args, expression.span)
                         })
+                        .map(|applied| applied.kind)
                 }
                 _ => None,
             }
@@ -2069,18 +2029,6 @@ impl Checker {
                 self.record_at(root_span).contextual_base = Some(base);
             }
             return Ok(ty);
-        }
-        if let ExprKind::TypeApply { name, args } = &expression.kind
-            && matches!(expected.kind(), TyKind::Func(_))
-            && let Some(specialized) = self.infer_specialized_callable_value(
-                expression.source_span(),
-                CallableValueSource::Binding(name),
-                args,
-                Some(expected),
-                record,
-            )?
-        {
-            return Ok(specialized);
         }
         // A static read through its struct selects among its overloads by
         // the expected callable type, as a function name does.
@@ -2110,15 +2058,7 @@ impl Checker {
             )
             && let Some((name, args)) = self.bracket_callable(expression)
         {
-            let spelled = super::initializer_list::derived_construction(
-                expression,
-                ExprKind::TypeApply { name, args },
-            );
-            let ty = self.infer_with_expected(&spelled, expected, record)?;
-            if record {
-                self.record_spelled_construction(expression, spelled, &ty);
-            }
-            return Ok(ty);
+            return self.bind_bracket_callable(expression, &name, &args, Some(expected), record);
         }
         // A brace with a keyword entry is upstream's initializer list at any
         // expected type: the construction of that type from its entries.
@@ -3492,6 +3432,17 @@ pub(super) fn contextual_member_name(expression: &Expr) -> String {
     }
 }
 
+/// The error for a type application read as a runtime value
+/// (`print(Pair[1, 2])`): a type is only valid as a static-method receiver
+/// (`UnsafePointer[T].alloc(…)`), typed in `infer_method_call`.
+pub(super) fn type_read_as_value(name: &str) -> TypeError {
+    TypeError::TypeMismatch {
+        expected: "a value".to_string(),
+        found: format!("the type '{name}[…]'"),
+        context: "a parameterized type is not a value".to_string(),
+    }
+}
+
 /// A clone of `expression` whose `$contextual` chain root is replaced by the
 /// resolved base type name. Spans and syntax ids are untouched, so recorded
 /// facts key identically to the original nodes.
@@ -3553,16 +3504,5 @@ fn parameter_lambda(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
         }
         mojito_ast::ast::ParamArg::Named { value, .. } => parameter_lambda(value),
         _ => None,
-    }
-}
-
-/// The error for a type application read as a runtime value
-/// (`print(Pair[1, 2])`): a type is only valid as a static-method receiver
-/// (`UnsafePointer[T].alloc(…)`), typed in `infer_method_call`.
-fn type_read_as_value(name: &str) -> TypeError {
-    TypeError::TypeMismatch {
-        expected: "a value".to_string(),
-        found: format!("the type '{name}[…]'"),
-        context: "a parameterized type is not a value".to_string(),
     }
 }

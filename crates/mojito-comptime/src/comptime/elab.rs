@@ -315,10 +315,7 @@ fn with_contextual_base(expression: &Expr, base: &str, args: &[ParamArg]) -> Opt
     let root = if args.is_empty() {
         ExprKind::Identifier(base.to_string())
     } else {
-        ExprKind::TypeApply {
-            name: base.to_string(),
-            args: args.to_vec(),
-        }
+        mojito_ast::ast::named_subscript(base, args, expression.span)?.kind
     };
     let mut resolved = expression.clone();
     replace(&mut resolved, &root).then_some(resolved)

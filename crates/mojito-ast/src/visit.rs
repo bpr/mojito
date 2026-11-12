@@ -394,7 +394,6 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
                 walk_expr(visitor, &argument.value);
             }
         }
-        ExprKind::TypeApply { args, .. } => walk_param_args(visitor, args),
         ExprKind::InitializerList { args, kwargs } => {
             walk_exprs(visitor, args);
             for argument in kwargs {
@@ -1204,7 +1203,6 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
                 walk_expr_mut(visitor, &mut arg.value);
             }
         }
-        ExprKind::TypeApply { args, .. } => walk_param_args_mut(visitor, args),
         ExprKind::InitializerList { args, kwargs } => {
             for arg in args {
                 walk_expr_mut(visitor, arg);

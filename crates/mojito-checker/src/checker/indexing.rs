@@ -385,30 +385,6 @@ impl Checker {
                     None => Err(TypeError::NotIndexable(object_type.to_string())),
                 }
             }
-            ExprKind::TypeApply { name, args } => {
-                self.check_capture_access(name, true)?;
-                if !self.is_binding_mutable(name) {
-                    return Err(TypeError::ImmutableBinding(name.clone()));
-                }
-                let variant = self
-                    .lookup(name)
-                    .cloned()
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                let TyKind::Variant(alternatives) = variant.kind() else {
-                    return Err(TypeError::InvalidAssignTarget(name.clone()));
-                };
-                let (index, alternative) = self.variant_alternative(alternatives, args)?;
-                self.record_at(place.source_span()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::VariantProject {
-                        alternatives: alternatives.clone(),
-                        index,
-                    },
-                ));
-                if let Some(owner) = self.lookup_owner(name) {
-                    self.record_at(place.source_span()).binding = Some(owner);
-                }
-                Ok(alternative)
-            }
             // A call returning a mutable reference (`bump(k) = 9`,
             // `bump(k) += 1`, `w.at[0]() = 5`): its result handle is the
             // place, written through and never read out as a value.
@@ -2274,7 +2250,7 @@ impl Checker {
         }
         let root = match &object.kind {
             ExprKind::Identifier(name) => Some(name.as_str()),
-            ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => None,
+            ExprKind::TypeValue(_) => None,
             _ if let Some((name, _)) = object.bracket_application() => Some(name),
             ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
                 Some(applied_member_root(object)?)

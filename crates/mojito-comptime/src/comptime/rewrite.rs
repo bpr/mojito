@@ -352,10 +352,6 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
                 }
             }
         }
-        ExprKind::TypeApply { name, args } => {
-            retype_head(name, args, subs);
-            retype_param_args(args, subs);
-        }
         ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => retype_expr(inner, subs),
         ExprKind::Infix(_, l, r) => {
             retype_expr(l, subs);

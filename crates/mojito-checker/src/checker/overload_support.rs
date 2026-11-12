@@ -320,7 +320,6 @@ pub(super) fn place_root_name(expr: &Expr) -> Option<&str> {
         | ExprKind::Index { object, .. }
         | ExprKind::Slice { object, .. }
         | ExprKind::MultiIndex { object, .. } => place_root_name(object),
-        ExprKind::TypeApply { name, .. } => Some(name),
         _ => None,
     }
 }

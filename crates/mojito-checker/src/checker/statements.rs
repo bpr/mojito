@@ -927,10 +927,9 @@ impl Checker {
         // A single-argument type application parses as a subscript
         // (`AHasher[SIMD[DType.uint64, 4](0)]`): the subscript shape
         // registers only over a declared struct.
-        let subscript_application = !matches!(value.kind, ExprKind::TypeApply { .. })
-            && value
-                .bracket_application()
-                .is_some_and(|(base, _)| self.declared_structs.contains(base));
+        let subscript_application = value
+            .bracket_application()
+            .is_some_and(|(base, _)| self.declared_structs.contains(base));
         // A struct member's application (`TypeList.of[Trait=AnyType, Int]`)
         // names a type the same way.
         let member_application = matches!(&value.kind,
@@ -949,10 +948,7 @@ impl Checker {
         if type_params.is_empty()
             && !subscript_application
             && !member_application
-            && !matches!(
-                value.kind,
-                ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
-            )
+            && !matches!(value.kind, ExprKind::Identifier(_) | ExprKind::TypeValue(_))
             && !self.denotes_type(value)
         {
             return Ok(());
@@ -2244,11 +2240,7 @@ impl Checker {
                             &value.kind,
                             ExprKind::Identifier(_) | ExprKind::TypeValue(_)
                         )
-                        || matches!(&value.kind, ExprKind::TypeApply { name, .. }
-                            if name != "__mlir_attr" || self.lookup(name).is_some())
-                        || (!matches!(value.kind, ExprKind::TypeApply { .. })
-                            && value.bracket_application().is_some()
-                            && self.denotes_type(value))
+                        || (value.bracket_application().is_some() && self.denotes_type(value))
                         || (matches!(&value.kind, ExprKind::Member { .. })
                             && self.denotes_type(value)))
                 {

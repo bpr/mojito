@@ -1185,43 +1185,53 @@ impl Checker {
     /// upstream's classification of a `SubscriptNode`'s base. A base with no
     /// value binding (a type, alias, trait, or builtin head) or a callable
     /// [`Self::bracket_callable`] binds is applied; a runtime value is
-    /// subscripted. A `TypeApply`, which only the checker and the
-    /// elaborator synthesize from a type spelling, is always an application.
+    /// subscripted.
     pub(super) fn parameter_application<'e>(
         &self,
         expr: &'e Expr,
     ) -> Option<(&'e str, std::borrow::Cow<'e, [mojito_ast::ast::ParamArg]>)> {
         let (name, args) = expr.bracket_application()?;
-        (matches!(expr.kind, ExprKind::TypeApply { .. })
-            || self.lookup(name).is_none()
-            || self.binds_bracket_parameters(name))
-        .then_some((name, args))
+        (self.lookup(name).is_none() || self.binds_bracket_parameters(name)).then_some((name, args))
     }
 
     /// Type a bracket over a function, which binds its parameters, or
-    /// `None` for any other base. A bracket over a function's name is
-    /// spelled as the parameter application it is (`twice[4]`), and one
-    /// over a static read through its struct binds the static's
-    /// (`S.gst[10]`).
+    /// `None` for any other base. A bracket over a function's name binds
+    /// its parameters in place (`twice[4]`), and one over a static read
+    /// through its struct binds the static's (`S.gst[10]`).
     pub(super) fn infer_bracket_callable(&self, expr: &Expr) -> Option<Result<Ty, TypeError>> {
         if let Some((name, args)) = self.bracket_callable(expr) {
-            let spelled = super::initializer_list::derived_construction(
-                expr,
-                ExprKind::TypeApply { name, args },
-            );
-            return Some(self.infer_spelled(expr, spelled));
+            return Some(self.bind_bracket_callable(expr, &name, &args, None, true));
         }
         self.static_method_bracket(expr)
             .map(|bracket| self.infer_static_method_bracket(expr, &bracket))
     }
 
+    /// Bind the bracket `expr` over the function `name` to `args` in place,
+    /// as upstream binds a `SubscriptNode` over an overload set: the
+    /// specialization `expected` selects, recorded at the bracket itself.
+    pub(super) fn bind_bracket_callable(
+        &self,
+        expr: &Expr,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+        expected: Option<&Ty>,
+        record: bool,
+    ) -> Result<Ty, TypeError> {
+        self.infer_specialized_callable_value(
+            expr.source_span(),
+            CallableValueSource::Binding(name),
+            args,
+            expected,
+            record,
+        )?
+        .ok_or_else(|| super::inference::type_read_as_value(name))
+    }
+
     /// Whether `value` reads a function its bracket specialized
     /// (`borrow[origin_of(v)]`, `twice[4]`) as a value.
     pub(super) fn specializes_callable_value(&self, value: &Expr) -> bool {
-        let spelled = self.spelled_construction(value);
-        let applied = spelled.as_ref().unwrap_or(value);
-        matches!(applied.kind, ExprKind::TypeApply { .. })
-            && self.has_fact(&applied.source_span(), |facts| {
+        self.bracket_callable(value).is_some()
+            && self.has_fact(&value.source_span(), |facts| {
                 facts.overload_target.is_some()
             })
     }

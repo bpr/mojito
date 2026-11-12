@@ -66,7 +66,7 @@ impl<'a> Flatten<'a> {
     /// The struct a static call's receiver names, when the receiver's node
     /// is a type rather than a value: a bracket over a type name in either
     /// subscript node (`Box[String]`, `Dict[Int, Int]`, `Origin[mut=True]`),
-    /// a synthesized type application, a name the check bound to nothing
+    /// a name the check bound to nothing
     /// (`Point`), or `type_of(operand)`, the instance the checker recorded
     /// it denotes. The bracket content is a
     /// compile-time argument the checker already resolved into its symbol
@@ -74,7 +74,6 @@ impl<'a> Flatten<'a> {
     pub(in crate::mir) fn type_receiver_name(&self, object: Node<'a>) -> Option<String> {
         let node = object.checked;
         match &node.op {
-            CheckedOp::TypeApply { name, .. } => Some(name.clone()),
             CheckedOp::Call { name, .. } if name == "type_of" => node
                 .ty
                 .as_ref()

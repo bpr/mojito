@@ -142,6 +142,56 @@ pub fn subscript_arg(argument: ParamArg, span: Span) -> Option<SubscriptArg> {
     }
 }
 
+/// A subscript of `object` spelling the compile-time arguments `args`,
+/// upstream's `SubscriptNode` built from its operands: the inverse of
+/// [`Expr::bracket_operands`].
+///
+/// No argument is the empty subscript at `span`, one positional argument an
+/// [`ExprKind::Index`], and any other list an [`ExprKind::MultiIndex`]; each
+/// operand is spelled at its own span. `None` where [`subscript_arg`] is.
+pub fn subscript_application(
+    object: Expr,
+    args: impl IntoIterator<Item = (ParamArg, Span)>,
+    span: Span,
+) -> Option<ExprKind> {
+    let operands = args
+        .into_iter()
+        .map(|(argument, at)| subscript_arg(argument, at))
+        .collect::<Option<Vec<_>>>()?;
+    let object = Box::new(object);
+    Some(match <[_; 1]>::try_from(operands) {
+        Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
+            object,
+            index: Box::new(index),
+        },
+        Ok(operands) => ExprKind::MultiIndex {
+            object,
+            args: operands.into(),
+        },
+        Err(operands) if operands.is_empty() => ExprKind::Index {
+            object,
+            index: Box::new(Expr::new(ExprKind::EmptySubscript, span)),
+        },
+        Err(operands) => ExprKind::MultiIndex {
+            object,
+            args: operands,
+        },
+    })
+}
+
+/// The application `name[args]` at `span`: a [`subscript_application`] of
+/// the identifier `name`, every operand spelled at `span`. `None` where
+/// [`subscript_arg`] is.
+pub fn named_subscript(name: &str, args: &[ParamArg], span: Span) -> Option<Expr> {
+    let object = Expr::new(ExprKind::Identifier(name.to_string()), span);
+    subscript_application(
+        object,
+        args.iter().map(|argument| (argument.clone(), span)),
+        span,
+    )
+    .map(|kind| Expr::new(kind, span))
+}
+
 /// A type annotation.
 ///
 /// Covers `Bool`, the closed string literal type, and `None` plus nominal (`struct`)
@@ -251,10 +301,7 @@ impl Type {
         let kind = match self {
             Self::SelfType => ExprKind::Identifier("Self".to_string()),
             Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
-            Self::Named(name, args) => ExprKind::TypeApply {
-                name: name.clone(),
-                args: args.clone(),
-            },
+            Self::Named(name, args) => return named_subscript(name, args, span),
             Self::SelfParam(name) if !name.starts_with('*') => ExprKind::Member {
                 object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
                 field: name.clone(),
@@ -1995,9 +2042,6 @@ impl Expr {
     /// slice operand (`twice[4]`, `pair[a=3, b=4]`, `total[]`). The view
     /// never says what the name denotes; each caller decides that.
     pub fn bracket_application(&self) -> Option<(&str, Cow<'_, [ParamArg]>)> {
-        if let ExprKind::TypeApply { name, args } = &self.kind {
-            return Some((name, Cow::Borrowed(args)));
-        }
         let (object, args) = self.bracket_operands()?;
         match &object.kind {
             ExprKind::Identifier(name) => Some((name, Cow::Owned(args))),
@@ -2041,7 +2085,6 @@ impl Expr {
             ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
                 Some(Type::Named(name.clone(), Vec::new()))
             }
-            ExprKind::TypeApply { name, args } => Some(Type::Named(name.clone(), args.clone())),
             _ if let Some((name, args)) = self.bracket_application()
                 && !name.chars().next()?.is_lowercase() =>
             {
@@ -2145,14 +2188,6 @@ pub enum ExprKind {
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
-    },
-    /// A parameter application `Name[param_args]` that the checker or the
-    /// elaborator synthesizes from a type spelling, and a `Call` pattern's
-    /// head. The parser builds every bracket suffix as an [`ExprKind::Index`]
-    /// or [`ExprKind::MultiIndex`] instead.
-    TypeApply {
-        name: String,
-        args: Vec<ParamArg>,
     },
     /// Positional call-argument expansion (`*values`). Heterogeneous pack
     /// specialization expands this into ordinary arguments before checking.
@@ -2576,7 +2611,6 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 lambdas_in_expr(&arg.value, out);
             }
         }
-        ExprKind::TypeApply { args, .. } => lambdas_in_param_args(args, out),
         ExprKind::InitializerList { args, kwargs } => {
             for arg in args {
                 lambdas_in_expr(arg, out);
@@ -2950,7 +2984,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.expr(&mut arg.value);
                     }
                 }
-                ExprKind::TypeApply { args, .. } => self.param_args(args),
                 ExprKind::InitializerList { args, kwargs } => {
                     for arg in args {
                         self.expr(arg);

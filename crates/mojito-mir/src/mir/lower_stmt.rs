@@ -666,18 +666,6 @@ impl<'a> Flatten<'a> {
                 }
                 p
             }
-            (CheckedOp::TypeApply { name, .. }, _) => {
-                let index = e
-                    .variant_projection_index()
-                    .expect("only checked Variant projection is a place TypeApply");
-                let mut p = self.resolved_place(name);
-                let ty = e
-                    .place_ty()
-                    .or_else(|| e.ty())
-                    .expect("checked Variant projection has a payload type");
-                p.project(Proj::Variant(index), ty);
-                p
-            }
             (other, _) => {
                 // A borrowing view a call returns is a place only as the base
                 // of a projection into its borrowed storage
@@ -2070,13 +2058,6 @@ impl<'a> Flatten<'a> {
                 e.project_member(&mut p, field);
                 Some(p)
             }
-            (CheckedOp::TypeApply { name, .. }, _) => {
-                let index = e.variant_projection_index()?;
-                let mut p = self.resolved_place(name);
-                let ty = e.place_ty().or_else(|| e.ty())?;
-                p.project(Proj::Variant(index), ty);
-                Some(p)
-            }
             _ => None,
         }
     }
@@ -2186,13 +2167,6 @@ impl<'a> Flatten<'a> {
                 } else {
                     p.proj.push(projection);
                 }
-                Some(p)
-            }
-            (CheckedOp::TypeApply { name, .. }, _) => {
-                let index = e.variant_projection_index()?;
-                let mut p = self.resolved_place(name);
-                let ty = e.place_ty().or_else(|| e.ty())?;
-                p.project(Proj::Variant(index), ty);
                 Some(p)
             }
             _ => None,
@@ -2449,7 +2423,6 @@ impl<'a> Flatten<'a> {
                                 CheckedOp::Identifier(_)
                                     | CheckedOp::Member { .. }
                                     | CheckedOp::Index { .. }
-                                    | CheckedOp::TypeApply { .. }
                             )
                         ) || value.pointer_keyword_subscript().is_some()))
                 {

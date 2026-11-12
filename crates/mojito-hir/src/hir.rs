@@ -25,7 +25,6 @@ use mojito_checked::checked::{
 };
 use mojito_types::origin::OwnerId;
 use mojito_types::types::Ty;
-use mojito_types::types::TyKind;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -655,29 +654,6 @@ impl Lower {
                 });
                 place.ty = ty;
                 Some(place)
-            }
-            CheckedOp::TypeApply { .. } => {
-                let (alternatives, index) =
-                    node.adjustments
-                        .iter()
-                        .find_map(|adjustment| match adjustment {
-                            SemanticAdjustment::VariantProject {
-                                alternatives,
-                                index,
-                            } => Some((alternatives, index.clone())),
-                            _ => None,
-                        })?;
-                let ty = node.place_ty.clone()?;
-                Some(HirPlace {
-                    owner: node.binding?,
-                    root_ty: TyKind::Variant(alternatives.clone()).into(),
-                    projections: vec![HirPlaceProjection {
-                        kind: HirPlaceProjectionKind::Variant(index),
-                        base_ty: TyKind::Variant(alternatives.clone()).into(),
-                        ty: ty.clone(),
-                    }],
-                    ty,
-                })
             }
             _ => None,
         }
@@ -2137,9 +2113,7 @@ fn named_operands(op: &CheckedOp) -> Vec<CheckedNodeId> {
             .chain(args.iter().copied())
             .chain(kwargs.iter().map(|kwarg| kwarg.value))
             .collect(),
-        CheckedOp::TypeApply { .. } | CheckedOp::TString { .. } | CheckedOp::Lambda { .. } => {
-            Vec::new()
-        }
+        CheckedOp::TString { .. } | CheckedOp::Lambda { .. } => Vec::new(),
         _ => op.operands(),
     }
 }

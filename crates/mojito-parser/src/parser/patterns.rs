@@ -707,15 +707,26 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             );
         }
         if matches!(self.peek_token()?, Some(Token::LBracket)) {
-            let ExprKind::Identifier(name) = &head.kind else {
+            if !matches!(head.kind, ExprKind::Identifier(_)) {
                 return Err(ParseError::UnexpectedToken(
                     Token::LBracket,
                     "a parameterized pattern head must be a bare struct name".to_string(),
                 ));
-            };
-            let name = name.clone();
+            }
             let args = self.parse_param_args()?;
-            head = self.node(ExprKind::TypeApply { name, args }, start);
+            let span = (start, self.last_span.1);
+            let applied = mojito_ast::ast::subscript_application(
+                head,
+                args.into_iter().map(|argument| (argument, span)),
+                span,
+            )
+            .ok_or_else(|| {
+                ParseError::UnexpectedToken(
+                    Token::RBracket,
+                    "a keyword argument takes one compile-time value".to_string(),
+                )
+            })?;
+            head = self.node(applied, start);
             while matches!(self.peek_token()?, Some(Token::Dot)) {
                 self.next_token()?;
                 let field = self.expect_case_name("Expected a member name after '.'")?;
@@ -729,10 +740,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         if !matches!(self.peek_token()?, Some(Token::LParen)) {
-            if matches!(
-                head.kind,
-                ExprKind::Identifier(_) | ExprKind::TypeApply { .. }
-            ) {
+            if matches!(head.kind, ExprKind::Identifier(_)) || head.bracket_application().is_some()
+            {
                 return Err(ParseError::UnexpectedToken(
                     self.next_token()?,
                     "expected '(' after a struct pattern head".to_string(),

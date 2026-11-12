@@ -1303,7 +1303,7 @@ impl<'a> Flatten<'a> {
         if let Some(mutable) = borrow
             && matches!(
                 node.op(),
-                CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::TypeApply { .. }
+                CheckedOp::Member { .. } | CheckedOp::Index { .. }
             )
         {
             let place = self.place(node);

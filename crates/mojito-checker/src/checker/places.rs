@@ -427,10 +427,7 @@ impl Checker {
         match &source.kind {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
             ExprKind::Member { object, .. } => self.transfer_root(object),
-            _ if self.designates_place(source)
-                && !matches!(source.kind, ExprKind::TypeApply { .. })
-                && !self.is_variant_projection(source) =>
-            {
+            _ if self.designates_place(source) && !self.is_variant_projection(source) => {
                 Err(TypeError::UntrackedTransfer)
             }
             _ => Ok(TransferRoot::Temporary),
@@ -504,10 +501,7 @@ pub(super) const fn owns_argument(convention: Option<ArgConvention>) -> bool {
 pub(super) fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::Identifier(_)
-            | ExprKind::Member { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::TypeApply { .. }
+        ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
     ) || pointer_offset_keyword_subscript(e).is_some()
 }
 

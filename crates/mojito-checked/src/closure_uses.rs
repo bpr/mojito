@@ -866,20 +866,20 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
                     CheckedOp::TypeValue { ty: Some(ty), .. } => types.push(ty.clone()),
                     _ => {}
                 }
-                if let CheckedOp::Call { param_args, .. }
-                | CheckedOp::Invoke { param_args, .. }
-                | CheckedOp::TypeApply {
-                    args: param_args, ..
-                } = &expression.op
-                {
-                    for argument in param_args.iter().filter_map(attribute) {
-                        match argument {
-                            TyArg::Ty(ty) | TyArg::Val(CtValue::Type(ty)) => {
-                                types.push(ty.clone());
-                            }
-                            TyArg::Val(CtValue::Expr(expr)) => exprs.push(expr.clone()),
-                            TyArg::Val(_) | TyArg::Origin(_) => {}
+                let param_args = match &expression.op {
+                    CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => {
+                        param_args.as_slice()
+                    }
+                    CheckedOp::Index { index, .. } => std::slice::from_ref(index),
+                    _ => &[],
+                };
+                for argument in param_args.iter().filter_map(attribute) {
+                    match argument {
+                        TyArg::Ty(ty) | TyArg::Val(CtValue::Type(ty)) => {
+                            types.push(ty.clone());
                         }
+                        TyArg::Val(CtValue::Expr(expr)) => exprs.push(expr.clone()),
+                        TyArg::Val(_) | TyArg::Origin(_) => {}
                     }
                 }
                 for adjustment in &expression.adjustments {

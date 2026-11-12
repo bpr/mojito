@@ -619,12 +619,6 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Read `Variant` projection node `e`, `name[T]`.
-    pub(super) fn variant_project_type_apply(&mut self, e: Node<'a>, name: &str) -> Reg {
-        let place = self.resolved_place(name);
-        self.variant_payload_read(e, place)
-    }
-
     /// The checked value-copy boundary of place read `e`, whose borrowed
     /// value is `loaded`: a read selected for a consuming value context
     /// runs its `__copyinit__`; any other read stays the borrow.
