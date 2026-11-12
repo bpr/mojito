@@ -3657,6 +3657,23 @@ impl Checker {
         self.record_at(span).parameter_attributes = Some(attributes);
     }
 
+    /// Record, beside the attributes the application at `span` already
+    /// recorded, the closed values `folded` carries for its value-shaped
+    /// bracket arguments: the instantiation solved them, so the call carries
+    /// them as parameter attributes, as upstream's op does.
+    pub(super) fn record_folded_bracket_attributes(
+        &self,
+        span: &SourceSpan,
+        folded: BracketAttributes,
+    ) {
+        if folded.iter().all(Option::is_none) {
+            return;
+        }
+        let mut attributes = self.recorded_bracket_attributes(span);
+        super::call_inference::merge_bracket_attributes(&mut attributes, folded);
+        self.record_at(span.clone()).parameter_attributes = Some(attributes);
+    }
+
     /// Resolve the type in value position `expr`, `ty`, recording the type
     /// at it ([`mojito_checked::checked::NodeFacts::type_operand`]).
     pub(super) fn type_value(&self, expr: &Expr, ty: &SourceType) -> Result<Ty, TypeError> {

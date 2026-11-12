@@ -2723,7 +2723,6 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments: tyargs.to_vec(),
-                folded_arguments: Vec::new(),
             });
         let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {
             return None;
@@ -2771,13 +2770,15 @@ impl Checker {
     /// call records its own: the struct's, then the selected constructor's
     /// own, in the layout the constructor's declaration restates them
     /// (`Counter[4](1)` calls `Counter[4].__init__`). A bracket argument
-    /// solved to a closed value travels in the record alone, so the call
-    /// lowers no run-time form for it.
+    /// solved to a closed value is the construction's parameter attribute,
+    /// so the call lowers no run-time form for it; `brackets` places the
+    /// forwarded `param_args` in the source bracket.
     fn record_construction_instantiation(
         &self,
         span: &SourceSpan,
         name: &str,
         bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
+        brackets: &super::type_resolution::ForwardedBrackets,
         parameter_names: &[String],
         arguments: Vec<TyArg>,
     ) {
@@ -2785,8 +2786,11 @@ impl Checker {
             return;
         }
         let (decls, param_args) = bracket;
-        let folded_arguments = crate::checker::call_inference::folded_parameter_arguments(
-            decls, param_args, &arguments,
+        self.record_folded_bracket_attributes(
+            span,
+            brackets.scatter(crate::checker::call_inference::folded_parameter_attributes(
+                decls, param_args, &arguments,
+            )),
         );
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
@@ -2795,7 +2799,6 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments,
-                folded_arguments,
             });
     }
 
@@ -3200,6 +3203,7 @@ impl Checker {
                     span,
                     name,
                     (&selected.param_decls, param_args),
+                    &partitioned.brackets,
                     &selected.parameter_names,
                     selected.instantiation.clone().unwrap_or_default(),
                 );
@@ -3368,6 +3372,7 @@ impl Checker {
                     span,
                     name,
                     (&decls, param_args),
+                    &partitioned.brackets,
                     &sig.names,
                     tyargs
                         .iter()
@@ -3877,6 +3882,7 @@ impl Checker {
                     span,
                     name,
                     (&decls, param_args),
+                    &partitioned.brackets,
                     &sig.names,
                     tyargs.iter().cloned().chain(own_arguments).collect(),
                 );
@@ -4030,6 +4036,7 @@ impl Checker {
             span,
             name,
             (&decls, param_args),
+            &partitioned.brackets,
             &field_names,
             tyargs.clone(),
         );
@@ -4928,6 +4935,7 @@ impl Checker {
             span,
             name,
             (&decls, param_args),
+            &partitioned.brackets,
             &sig.names,
             tyargs.iter().cloned().chain(own.arguments).collect(),
         );

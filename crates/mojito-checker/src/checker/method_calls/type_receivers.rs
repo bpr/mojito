@@ -2,7 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::checker::call_inference::folded_parameter_arguments;
+use crate::checker::call_inference::folded_parameter_attributes;
 use mojito_types::types::TyKind;
 
 /// A bracket over a static read through its struct, as
@@ -630,12 +630,11 @@ impl Checker {
                         parameter_names: selected.parameter_names.clone(),
                         overload,
                         arguments: arguments.clone(),
-                        folded_arguments: folded_parameter_arguments(
-                            &selected.param_decls,
-                            param_args,
-                            arguments,
-                        ),
                     });
+                self.record_folded_bracket_attributes(
+                    span,
+                    folded_parameter_attributes(&selected.param_decls, param_args, arguments),
+                );
             }
             return self
                 .finish_static_call(

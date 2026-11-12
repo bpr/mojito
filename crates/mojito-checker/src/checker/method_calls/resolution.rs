@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::checker::call_inference::folded_parameter_arguments;
+use crate::checker::call_inference::folded_parameter_attributes;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -145,12 +145,11 @@ impl Checker {
                     parameter_names: resolved.parameter_names.clone(),
                     overload,
                     arguments: arguments.clone(),
-                    folded_arguments: folded_parameter_arguments(
-                        &resolved.param_decls,
-                        param_args,
-                        arguments,
-                    ),
                 });
+            self.record_folded_bracket_attributes(
+                span,
+                folded_parameter_attributes(&resolved.param_decls, param_args, arguments),
+            );
         }
         if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct()
             && !targs.is_empty()

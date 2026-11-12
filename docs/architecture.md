@@ -3069,11 +3069,11 @@ carries its constant as `expr`. A closed
 bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`,
 `f["x"]()`) or of a construction (`Counter[4](1)`) has no run-time form: as
 Mojo's call carries a parameter attribute, the call carries the value in its
-instantiated arguments, the checker names the argument by its position
-among the call's bracket arguments, as Mojo's call op carries its parameter
-attributes positionally (`SemanticAdjustment::FoldedParameterArguments`, over
+instantiated arguments, the checked call carries the argument as that
+attribute (`CheckedParamArg::Attribute`, over
 `CtValue::is_parameter_attribute`), and MIR lowers no code for it and leaves
-its slot's register absent. A construction's instantiated arguments are the
+its slot's register absent wherever the call carries its instantiated
+arguments. A construction's instantiated arguments are the
 struct's followed by the selected constructor's own, the layout its
 declaration restates them in (`Counter[4](1)` calls `Counter[4].__init__`).
 A value parameter the call leaves to inference (`size(Counter[4](1))` binds

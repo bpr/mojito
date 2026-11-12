@@ -1322,7 +1322,6 @@ impl Checker {
                         parameter_types: Vec::new(),
                         variadic: None,
                         arguments: instance_arguments,
-                        folded_arguments: Vec::new(),
                     });
             }
             self.record_at(span.clone()).overload_target = Some(target);

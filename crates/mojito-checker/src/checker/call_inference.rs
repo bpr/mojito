@@ -1987,7 +1987,7 @@ impl Checker {
         let BoundParameters {
             subst,
             arguments: tyargs,
-            attributes,
+            mut attributes,
         } =
             self.resolve_call_params(name, decls, (param_args, &explicit), &use_params, &arg_tys)?;
         let values = DependentValues::own(&self.param_context, decls, &tyargs);
@@ -2149,6 +2149,10 @@ impl Checker {
         // retain the resolved application for instantiation discovery.
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
+        merge_bracket_attributes(
+            &mut attributes,
+            folded_parameter_attributes(decls, param_args, &tyargs),
+        );
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
         {
@@ -2164,7 +2168,6 @@ impl Checker {
                         .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
                         .collect(),
                     variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
-                    folded_arguments: folded_parameter_arguments(decls, param_args, &tyargs),
                     arguments: tyargs,
                 });
         }
@@ -2640,22 +2643,20 @@ impl Checker {
     }
 }
 
-/// The positions of the bracket arguments `param_args` supplies to a
+/// The attributes of the bracket arguments `param_args` supplies to a
 /// non-variadic value parameter of `decls` solved to a closed value
-/// ([`CtValue::is_parameter_attribute`]). Mojo's call carries such an
-/// argument as a parameter attribute alone; the call's instantiated arguments
-/// carry it here, so it has no run-time form at the call site
-/// ([`mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments`]).
-pub(super) fn folded_parameter_arguments(
+/// ([`CtValue::is_parameter_attribute`]), each that value, `None` for every
+/// other argument. Mojo's call carries such an argument as a parameter
+/// attribute alone, so it has no run-time form at the call site.
+pub(super) fn folded_parameter_attributes(
     decls: &[ParamDecl],
     param_args: &[mojito_ast::ast::ParamArg],
     arguments: &[TyArg],
-) -> Vec<usize> {
+) -> BracketAttributes {
     param_args
         .iter()
-        .enumerate()
         .zip(bracket_argument_slots(decls, param_args))
-        .filter_map(|((position, argument), index)| {
+        .map(|(argument, index)| {
             let index = index?;
             let ParamDecl::Value {
                 variadic: false, ..
@@ -2663,7 +2664,7 @@ pub(super) fn folded_parameter_arguments(
             else {
                 return None;
             };
-            let Some(TyArg::Val(value)) = arguments.get(index) else {
+            let value @ TyArg::Val(closed) = arguments.get(index)? else {
                 return None;
             };
             let is_value = match argument {
@@ -2673,9 +2674,28 @@ pub(super) fn folded_parameter_arguments(
                 }
                 mojito_ast::ast::ParamArg::Type(_) => false,
             };
-            (is_value && value.is_parameter_attribute()).then_some(position)
+            (is_value && closed.is_parameter_attribute()).then(|| value.clone())
         })
         .collect()
+}
+
+/// Set each attribute `folded` carries in `attributes`, the two lists over
+/// one bracket, keeping every attribute `folded` leaves `None`.
+pub(super) fn merge_bracket_attributes(
+    attributes: &mut BracketAttributes,
+    folded: BracketAttributes,
+) {
+    if folded.iter().all(Option::is_none) {
+        return;
+    }
+    if attributes.len() < folded.len() {
+        attributes.resize(folded.len(), None);
+    }
+    for (slot, attribute) in attributes.iter_mut().zip(folded) {
+        if attribute.is_some() {
+            *slot = attribute;
+        }
+    }
 }
 
 /// A call's origin-bound parameters, their declared spellings for the

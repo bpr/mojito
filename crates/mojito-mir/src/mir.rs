@@ -4322,19 +4322,19 @@ impl<'a> Flatten<'a> {
     /// vector instead of emitting an ambiguous `None` that would shift every
     /// following callable/scalar value parameter. An argument the check
     /// resolved to an origin (`V[Self.o]`, `Pointer[Int, origin_of(x)]`) is
-    /// one. A closed value the call carries in its instantiated arguments
-    /// (`folded`) is compile-time data on the call, as at Mojo's.
-    fn param_arg_has_no_runtime_form(argument: &CheckedParamArg, folded: bool) -> bool {
+    /// one. So is a closed value at a call that carries its instantiated
+    /// arguments (`folds`): the call carries it as a parameter attribute
+    /// alone, as Mojo's does.
+    fn param_arg_has_no_runtime_form(argument: &CheckedParamArg, folds: bool) -> bool {
         match argument {
-            CheckedParamArg::Value(_) => folded,
-            CheckedParamArg::Named { value, .. } => match &**value {
-                CheckedParamArg::Attribute { value, .. } => {
-                    attribute_has_no_runtime_form(value.as_ref())
-                }
-                CheckedParamArg::Value(_) | CheckedParamArg::Named { .. } => folded,
-            },
+            CheckedParamArg::Value(_) => false,
+            CheckedParamArg::Named { value, .. } => {
+                Self::param_arg_has_no_runtime_form(value, folds)
+            }
             CheckedParamArg::Attribute { value, .. } => {
                 attribute_has_no_runtime_form(value.as_ref())
+                    || (folds
+                        && matches!(value, Some(TyArg::Val(value)) if value.is_parameter_attribute()))
             }
         }
     }
@@ -4565,18 +4565,13 @@ impl<'a> Flatten<'a> {
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
     fn param_arg_regs(&mut self, call: Node<'a>) -> Vec<MirParamArg> {
-        let folded = call
-            .adjustments()
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments(
-                    positions,
-                ) => Some(positions),
-                _ => None,
-            })
-            .cloned()
-            .unwrap_or_default();
-        self.param_arg_regs_folding(call, &folded)
+        let folds = call.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::InstantiatedArguments(_)
+            )
+        });
+        self.param_arg_regs_folding(call, folds)
     }
 
     /// The compile-time argument slots of an indirect call over the
@@ -4590,16 +4585,16 @@ impl<'a> Flatten<'a> {
         if call.instantiated_callable_contract().is_some() {
             return self.param_arg_regs(call);
         }
-        let mut registers = self.param_arg_regs_folding(call, &[]);
+        let mut registers = self.param_arg_regs_folding(call, false);
         let inferred = self.inferred_param_args(call, decls, &registers);
         registers.extend(inferred);
         registers
     }
 
-    fn param_arg_regs_folding(&mut self, call: Node<'a>, folded: &[usize]) -> Vec<MirParamArg> {
+    fn param_arg_regs_folding(&mut self, call: Node<'a>, folds: bool) -> Vec<MirParamArg> {
         let site = call.location();
         let mut registers = Vec::new();
-        for (position, argument) in call.param_args().iter().enumerate() {
+        for argument in call.param_args() {
             // A positional origin argument binds the callee's origin slot,
             // which its parameter declarations do not list, so it takes no
             // positional slot from the value or type parameter after it
@@ -4617,8 +4612,7 @@ impl<'a> Flatten<'a> {
                 CheckedParamArg::Named { name, .. } => Some(name.clone()),
                 CheckedParamArg::Attribute { .. } | CheckedParamArg::Value(_) => None,
             };
-            let value = if Self::param_arg_has_no_runtime_form(argument, folded.contains(&position))
-            {
+            let value = if Self::param_arg_has_no_runtime_form(argument, folds) {
                 None
             } else {
                 self.param_arg_reg(call, argument, &site)

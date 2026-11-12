@@ -209,8 +209,8 @@ impl Checker {
             parameterized_syntax,
             ..
         } = call;
-        self.record_method_call_instantiation(site, &resolved);
         self.record_bracket_attributes(span.clone(), resolved.bracket_attributes.clone());
+        self.record_method_call_instantiation(site, &resolved);
         self.type_runtime_param_args(call.param_args, &resolved.bracket_attributes)?;
         if parameterized_syntax {
             self.record_at(span.clone()).parameterized_method_call =

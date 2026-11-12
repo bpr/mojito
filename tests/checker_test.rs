@@ -1217,38 +1217,53 @@ fn generic_call_sites_record_their_resolved_instantiations() {
 }
 
 #[test]
-fn closed_bracket_arguments_record_their_folded_positions() {
-    // A bracket argument solved to a closed value (a tuple, a struct, a
-    // scalar) is compile-time data on the call: its instantiation names the
-    // argument's position among the brackets so MIR lowers no code for it. An argument over the
-    // caller's binder is open and keeps its register.
+fn closed_bracket_arguments_are_the_calls_parameter_attributes() {
+    // A bracket argument solved to a closed value is compile-time data on
+    // the call, as Mojo's parameter attribute is: the checked call carries
+    // it as an attribute, so MIR lowers no code for it. An argument over the
+    // caller's binder is open and stays a value node. A struct
+    // construction, or a tuple holding one, is no closed value: it is the
+    // application of its `__init__` the elaborator evaluates.
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\ndef tup[p: Tuple[Int, Q]]():\n    print(p[0])\n\ndef one[q: Q]():\n    print(q.a)\n\ndef s[n: Int]():\n    print(n)\n\ndef f[n: Int]():\n    s[n]()\n\ndef main():\n    tup[(1, Q(8))]()\n    one[Q(8)]()\n    s[1 + 2]()\n    f[2]()\n";
     let checked = checked_with_std(source).expect("check");
-    let folded = |callee: &str| -> Vec<(bool, Vec<usize>)> {
-        checked
-            .generic_instantiations()
-            .values()
-            .filter(|instantiation| instantiation.callee == callee)
-            .map(|instantiation| {
-                let closed = instantiation.arguments.iter().all(|argument| {
-                    matches!(argument, mojito::TyArg::Val(value) if value.is_folded_parameter_argument())
-                });
-                (closed, instantiation.folded_arguments.clone())
-            })
-            .collect()
+    let is_value = |arguments: &[mojito::checked::CheckedParamArg]| {
+        matches!(arguments, [mojito::checked::CheckedParamArg::Value(_)])
     };
-    // A struct construction is the application of its `__init__`, which the
-    // elaborator evaluates, so it is no closed value at the check, nor is a
-    // tuple holding one.
-    assert_eq!(folded("tup"), vec![(false, vec![])]);
-    assert_eq!(folded("one"), vec![(false, vec![])]);
-    let scalar = folded("s");
-    assert!(scalar.contains(&(true, vec![0])), "{scalar:?}");
+    let is_application = |arguments: &[mojito::checked::CheckedParamArg]| {
+        matches!(
+            arguments,
+            [mojito::checked::CheckedParamArg::Attribute {
+                value: Some(mojito::types::TyArg::Val(mojito::CtValue::Expr(_))),
+                ..
+            }]
+        )
+    };
+    let tup = bracket_arguments(&checked, "tup");
     assert!(
-        scalar
-            .iter()
-            .all(|(closed, positions)| positions.len() == usize::from(*closed)),
-        "{scalar:?}"
+        tup.iter()
+            .all(|arguments| is_value(arguments) || is_application(arguments)),
+        "{tup:#?}"
+    );
+    let one = bracket_arguments(&checked, "one");
+    assert!(
+        one.iter()
+            .all(|arguments| is_value(arguments) || is_application(arguments)),
+        "{one:#?}"
+    );
+    let scalar = bracket_arguments(&checked, "s");
+    assert!(
+        scalar.iter().any(|arguments| matches!(
+            arguments.as_slice(),
+            [mojito::checked::CheckedParamArg::Attribute {
+                value: Some(mojito::types::TyArg::Val(mojito::CtValue::Int(3))),
+                ..
+            }]
+        )),
+        "{scalar:#?}"
+    );
+    assert!(
+        scalar.iter().any(|arguments| is_value(arguments)),
+        "{scalar:#?}"
     );
 }
 

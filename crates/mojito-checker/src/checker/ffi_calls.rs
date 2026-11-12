@@ -53,9 +53,11 @@ impl Checker {
             });
         };
         let ret = self.type_param_argument(return_arg, "external_call")?;
+        // The callee's name and the fixed-argument count are closed values,
+        // which the call carries as parameter attributes.
         let mut attributes = vec![None; param_args.len()];
+        attributes[0] = Some(TyArg::Val(CtValue::Str(callee_name.clone())));
         attributes[1] = bracket_attribute(return_arg, &TyArg::Ty(ret.clone()));
-        self.record_bracket_attributes(span.clone(), attributes);
         if !ffi::accepts_ret(row.ret, &ret) {
             return Err(TypeError::TypeMismatch {
                 expected: row.ret.describe().to_string(),
@@ -67,7 +69,6 @@ impl Checker {
             TyArg::Val(CtValue::Str(callee_name.clone())),
             TyArg::Ty(ret.clone()),
         ];
-        let mut folded_arguments = vec![0];
         for (position, extra) in param_args.iter().enumerate().skip(2) {
             let fixed = match extra {
                 ParamArg::Named { name, value } if name == "num_fixed_args" => match &**value {
@@ -76,7 +77,7 @@ impl Checker {
                         ..
                     }) => literal.wrapping_signed(64).inspect(|fixed| {
                         arguments.push(TyArg::Val(CtValue::Int(*fixed)));
-                        folded_arguments.push(position);
+                        attributes[position] = Some(TyArg::Val(CtValue::Int(*fixed)));
                     }),
                     _ => None,
                 },
@@ -126,6 +127,7 @@ impl Checker {
                 });
             }
         }
+        self.record_bracket_attributes(span.clone(), attributes);
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: "external_call".to_string(),
@@ -133,7 +135,6 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments,
-                folded_arguments,
             });
         Ok(ret)
     }

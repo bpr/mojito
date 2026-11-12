@@ -2106,16 +2106,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction through an overload or an owner-less instance
   (`Box.__init__$mono`), whose struct the VM takes from the call's result.
 - A closed bracket argument is compile-time data on its call: the checker's
-  `folded_parameter_arguments` (`checker/call_inference.rs`, over
-  `bracket_argument_slots`, over `call::match_parameter_slots`) fills
-  `GenericInstantiation::folded_arguments` (a construction's and
-  `external_call`'s included) and
-  `MethodInstantiation::folded_arguments` with the positions, among the
-  call's bracket arguments as written, of arguments solved
-  to `CtValue::is_parameter_attribute` values (a string, or a closed
-  scalar, vector, or aggregate), carried to MIR as
-  `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
+  `folded_parameter_attributes` (`checker/call_inference.rs`, over
+  `bracket_argument_slots`, over `call::match_parameter_slots`) makes each
+  value-shaped argument solved to a `CtValue::is_parameter_attribute` value
+  (a string, or a closed scalar, vector, or aggregate) the call's bracket
+  attribute, merged into the recorded ones by `merge_bracket_attributes` /
+  `Checker::record_folded_bracket_attributes` (a generic call's, a method's,
+  a static's, a construction's through `ForwardedBrackets::scatter`, and
+  `external_call`'s callee and fixed count), so the checked call carries it
+  as `CheckedParamArg::Attribute`; `Flatten::param_arg_regs`
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
+  such an attribute at a call carrying `InstantiatedArguments`, and an
+  indirect call without an instantiated contract gives it a constant
+  register the elaborator reads (`register_constant`, `mono/equiv.rs`);
   them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
   register against the call's `instantiated_args`, and checks a present one
   against its declared type closed under those arguments and the receiver

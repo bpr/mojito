@@ -367,7 +367,6 @@ impl RewriteTypes for GenericInstantiation {
             parameter_types: _,
             variadic: _,
             arguments,
-            folded_arguments: _,
         } = self;
         arguments.rewrite_types(rewrite);
     }
@@ -382,7 +381,6 @@ impl RewriteTypes for MethodInstantiation {
             parameter_names: _,
             overload: _,
             arguments,
-            folded_arguments: _,
         } = self;
         owner_arguments.rewrite_types(rewrite);
         arguments.rewrite_types(rewrite);
@@ -726,7 +724,6 @@ impl RewriteTypes for SemanticAdjustment {
                 captures: _,
                 materialized: _,
             }
-            | Self::FoldedParameterArguments(_)
             | Self::ImplicitlyCopyConsumingReceiver
             | Self::ReflectedOperator
             | Self::ReceiverFromFirstArgument { inner: _ }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2120**.
+Next free ID: **R2123**.
 
 ## Ordered Work
 
@@ -10094,22 +10094,58 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R757 Bracket attributes are keyed by source position, where
-  upstream's op keys them by parameter**
+- [ ] **R2120 A checked call's bracket arguments follow the source
+  bracket, where upstream's op carries one attribute per declared
+  parameter**
 
-  `NodeFacts::parameter_attributes` and `CheckedParamArg` follow the source
-  bracket list, and MIR's `param_arg_regs_folding` walks source positions,
-  the folded ones named by position
-  (`SemanticAdjustment::FoldedParameterArguments`).
+  `NodeFacts::parameter_attributes` and `CheckedOp::Call`/`Invoke`'s
+  `param_args` list the bracket arguments as written, and the checker's
+  binders return `BracketAttributes` in source order, scattered back
+  through `ForwardedBrackets`.
   - Upstream's call op carries the bound parameter list in declaration
     order, with defaults filled in.
-  - The lever: binding returns its attributes per declared parameter
-    (`BoundParameters::arguments` already is), the checked op carries
-    that list, and MIR reads it by parameter.
-  - Done when no checked fact names a bracket argument by its source
-    position.
+  - The lever: `resolve_use_params` returns each attribute per declared
+    parameter beside `BoundParameters::arguments`, and the checked call
+    carries that list, each slot named by its declaration.
+  - A closed value-shaped argument is already the call's attribute
+    (`folded_parameter_attributes`); only its keying is left.
+  - Done when `CheckedOp::Call` and `Invoke` name no bracket argument by
+    its source position.
   - Found while landing R659 (2026-10-13).
   - Depends on R756.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2121 A subscript call contract names its bracket operands by
+  source position**
+
+  `CheckedCallParameterArgument::operand` is an operand's position among
+  the subscript's bracket, which MIR's `mir_subscript_call_contract`
+  indexes into the lowered operands.
+  - Upstream's accessor call carries its parameters as the op's
+    attributes, one per declaration.
+  - The lever: the contract carries R2120's per-declaration list, an
+    operand named by its declaration.
+  - Done when `CheckedCallContract::parameter_arguments` holds no source
+    position.
+  - Found while landing R757 (2026-11-12).
+  - Depends on R2120.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2122 MIR's compile-time argument list follows the source
+  bracket, re-aligned by each consumer**
+
+  `Flatten::param_arg_regs_folding` lowers `MirParamArg`s in bracket
+  order, and `supplied_parameter_arguments` / `matched_parameter_arguments`
+  (`mir/ir.rs`) bind them to declarations again, positionally, in MIR
+  (`inferred_param_args`, `param_uses.rs`), analysis (`unused_params.rs`),
+  and the elaborator (`mono/unify.rs`).
+  - Upstream's op holds one attribute per declared parameter, so no
+    consumer re-binds.
+  - The lever: lower R2120's per-declaration list into `MirParamArg`s
+    named by their declarations, and retire the positional matcher.
+  - Done when no MIR consumer aligns a compile-time argument by position.
+  - Found while landing R757 (2026-11-12).
+  - Depends on R2120.
   - Model: Opus, Not Planned.
 
 - [ ] **R758 A trait method op holds no checked signature, where

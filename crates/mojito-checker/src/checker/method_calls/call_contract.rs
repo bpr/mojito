@@ -282,9 +282,10 @@ fn checked_call_arguments(
 }
 
 /// The call's explicit compile-time arguments, each value argument naming
-/// its operand position, and a value argument that bound to an attribute
-/// among `attributes` (the call's parameter attributes, in source order)
-/// left out.
+/// its operand position. A value argument that bound to an attribute among
+/// `attributes` (the call's parameter attributes, in source order) names
+/// none, as a type argument does, and one bound to an origin is left out:
+/// it fills the callee's origin slot, which no declaration lists.
 fn checked_parameter_arguments(
     param_args: &[mojito_ast::ast::ParamArg],
     attributes: &[Option<TyArg>],
@@ -301,14 +302,12 @@ fn checked_parameter_arguments(
             };
             let operand = match argument {
                 mojito_ast::ast::ParamArg::Type(_) => None,
-                mojito_ast::ast::ParamArg::Value(_)
-                    if attributes.get(position).is_some_and(Option::is_some) =>
-                {
-                    return None;
-                }
-                mojito_ast::ast::ParamArg::Value(_) | mojito_ast::ast::ParamArg::Named { .. } => {
-                    Some(position)
-                }
+                mojito_ast::ast::ParamArg::Value(_) => match attributes.get(position) {
+                    Some(Some(TyArg::Origin(_))) => return None,
+                    Some(Some(_)) => None,
+                    _ => Some(position),
+                },
+                mojito_ast::ast::ParamArg::Named { .. } => Some(position),
             };
             Some(mojito_checked::checked::CheckedCallParameterArgument { name, operand })
         })

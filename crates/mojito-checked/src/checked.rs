@@ -365,10 +365,6 @@ pub struct GenericInstantiation {
     /// only in where the collector sits or in its pack's bounds.
     pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
     pub arguments: Vec<mojito_types::types::TyArg>,
-    /// The bracket arguments [`Self::arguments`] carries as closed values, by
-    /// their positions among the call's bracket arguments as written
-    /// ([`SemanticAdjustment::FoldedParameterArguments`]).
-    pub folded_arguments: Vec<usize>,
 }
 
 /// One resolved application of a struct method that declares its own
@@ -396,9 +392,6 @@ pub struct MethodInstantiation {
     /// parameter names mint only the selected one's clone.
     pub overload: Option<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
-    /// The bracket arguments carried as closed values, by position, as
-    /// [`GenericInstantiation::folded_arguments`] records a `def`'s.
-    pub folded_arguments: Vec<usize>,
 }
 
 /// One closed application of an ordinary generic struct the checker reached as
@@ -903,12 +896,6 @@ pub enum SemanticAdjustment {
     /// a parameter no runtime parameter or result spells and the call emits
     /// no code for one.
     InstantiatedArguments(Vec<mojito_types::types::TyArg>),
-    /// The positions, among the call's bracket arguments as written, of those
-    /// [`Self::InstantiatedArguments`] carries as closed values
-    /// (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`). As Mojo's call carries a parameter
-    /// attribute, such an argument has no run-time form at the call site:
-    /// MIR lowers no code for it and leaves its slot's register absent.
-    FoldedParameterArguments(Vec<usize>),
     /// A consuming method receiver is a source place, but the selected type is
     /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
     /// tombstoning the caller's place. This coexists with parameterized-method
@@ -2035,7 +2022,10 @@ pub enum CheckedParamArg {
     /// it: a type, a compile-time value the spelling names (`Self.n`, a
     /// value-pack spread, a display element `L[0]`), or an origin; `None`
     /// where the check resolved none. Or one written as a value and bound
-    /// to a type or an origin (`List[String]`, `Pointer[Int, origin_of(x)]`).
+    /// to a type or an origin (`List[String]`, `Pointer[Int, origin_of(x)]`),
+    /// or, at an instantiated call, to a closed value its value parameter
+    /// takes (`s[1 + 2]()`, `tup[(1, Tag(8, "x"))]()`), which the call carries
+    /// as Mojo's carries a parameter attribute, with no run-time form.
     /// With the nodes of the applications the check lifted out of it.
     Attribute {
         value: Option<mojito_types::types::TyArg>,
@@ -7146,20 +7136,10 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
         adjustments.push(SemanticAdjustment::InstantiatedArguments(
             instantiation.arguments.clone(),
         ));
-        if !instantiation.folded_arguments.is_empty() {
-            adjustments.push(SemanticAdjustment::FoldedParameterArguments(
-                instantiation.folded_arguments.clone(),
-            ));
-        }
     } else if let Some(instantiation) = &facts.method_instantiation {
         adjustments.push(SemanticAdjustment::InstantiatedArguments(
             instantiation.arguments.clone(),
         ));
-        if !instantiation.folded_arguments.is_empty() {
-            adjustments.push(SemanticAdjustment::FoldedParameterArguments(
-                instantiation.folded_arguments.clone(),
-            ));
-        }
     }
     if let Some(elements) = &facts.tuple_unpack_plan {
         adjustments.push(SemanticAdjustment::TupleUnpack {

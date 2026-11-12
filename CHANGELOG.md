@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A closed bracket argument of a generic call, a method, a static, a
+  construction, or `external_call` is now the checked call's parameter
+  attribute, as upstream's op carries it, instead of a value node the call
+  names by its source position (`FoldedParameterArguments` is gone); MIR
+  lowers no code for it wherever the call carries its instantiated
+  arguments. A value-shaped attribute in a subscript accessor's contract
+  keeps its slot (R757, first slice; R2120–R2122 file the rest).
 - The check binds each explicit bracket argument once, as upstream does:
   a call's explicit type arguments, resolved before its run-time arguments
   are typed, are read back by its binder rather than resolved again, and a
