@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.188
+# Mojito Textual MIR Format, Version 1.189
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.188 is implemented end to end for inspection and loading: canonical
+Version 1.189 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.188
+mojito-mir 1.189
 ```
 
-The writer emits 1.188. The reader accepts 1.0 through 1.188; *Schema 1.0*
+The writer emits 1.189. The reader accepts 1.0 through 1.189; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1176,6 +1176,13 @@ contract holds its compile-time arguments per declared parameter
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
 
+Schema 1.189 gives `closure.make` an `arguments` list after its
+`captures`: the compile-time arguments a bracket bound to a generic nested
+`def`'s own parameters (`var f = inner[1]`), naming that instance's
+closure as `function_instance` names a function's (R71). The elaborator
+names the instance, so concrete MIR holds an empty list; an older
+artifact's `closure.make` carries none.
+
 Schema 1.188 lets a function symbol carry the compile-time arguments a
 bracket bound, upstream's symbol reference to a specialization
 (`run[twice[4]]`, a default `= twice[4]`, `S[twice[3]]`, a callable pack's
@@ -2256,7 +2263,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `InvalidateInteriors` | `interiors.invalidate` (pre-drop and drop-elaborated only: `lower-lit` erases it before the pre-elaboration pipeline, and concrete verification refuses one) |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
-| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`; schema 1.157 withdraws mode `move` and with it `constructor` and `destructor`: a capture is `closure_capture { place }`, a reference to its place, and a 1.156 or older artifact's capture may spell `mode: reference`) |
+| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`; schema 1.157 withdraws mode `move` and with it `constructor` and `destructor`: a capture is `closure_capture { place }`, a reference to its place, and a 1.156 or older artifact's capture may spell `mode: reference`; schema 1.189: `closure.make` carries `arguments: [<ty_arg>…]` after `captures`, a bracket's arguments to a generic nested `def`, empty in concrete MIR) |
 | `Const` / `MaterializeLiteral` | `const` / `literal.materialize`, whose `target` is a `kgen_simd` storage from schema 1.170, of any width from 1.171 (schema 1.148 removes `layout.size_of`, schema 1.155 `type.name`) |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |

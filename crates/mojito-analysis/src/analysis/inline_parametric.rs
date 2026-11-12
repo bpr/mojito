@@ -652,7 +652,8 @@ impl Closures {
                     dest,
                     function,
                     captures,
-                } => {
+                    arguments,
+                } if arguments.is_empty() => {
                     self.made.insert(
                         dest.0,
                         Closure {

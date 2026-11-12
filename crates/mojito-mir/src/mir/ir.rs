@@ -1963,6 +1963,11 @@ pub enum MirInstr {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
         function: String,
         captures: Vec<MirClosureCapture>,
+        /// The compile-time arguments a bracket bound to a generic nested
+        /// `def`'s own parameters (`inner[1]`), naming that instance's
+        /// closure as `Const::FunctionInstance` names a function's; the
+        /// elaborator names the instance, so concrete MIR holds none.
+        arguments: Vec<TyArg>,
     },
     /// Extend an owner's MIR live range through a closure invocation without
     /// performing a value-level copy. `lower-lit` erases it after drop

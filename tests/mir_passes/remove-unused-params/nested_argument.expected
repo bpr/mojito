@@ -204,7 +204,7 @@
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "g$ign", captures: [] },
+              closure.make { dest: %r0, function: "g$ign", captures: [], arguments: [] },
               call { dest: %r1, func: apply, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r2, value: int_literal(9) },
               literal.materialize { dest: %r6, value: %r2, target: kgen_simd { dtype: int, width: 1 } },

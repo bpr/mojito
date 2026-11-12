@@ -2523,6 +2523,23 @@ impl<'a> Specializer<'a> {
                         self.nested_bindings(target, &self.enclosing, false)?;
                     *target = self.enqueue(target, bindings, arguments)?;
                 }
+                // A bracket binding a generic nested body's own parameters
+                // (`inner[1]`) makes the closure of that instance.
+                MirInstr::MakeClosure {
+                    function: target,
+                    arguments,
+                    ..
+                } if !arguments.is_empty()
+                    && self
+                        .declarations
+                        .get(target.as_str())
+                        .is_some_and(|declaration| {
+                            declaration.enclosing.as_deref() == Some(owner)
+                        }) =>
+                {
+                    *target = self.nested_value_instance(owner, target, arguments)?;
+                    arguments.clear();
+                }
                 MirInstr::MakeClosure {
                     function: target, ..
                 }
@@ -2549,6 +2566,39 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The instance the closure of the generic nested body `target`
+    /// names at the bracket `arguments`: its enclosing scope's binders
+    /// bound by the instance being specialized, its own by `arguments`,
+    /// and defaulted past them. It removes no argument, as a call through
+    /// the value passes the whole signature.
+    fn nested_value_instance(
+        &mut self,
+        owner: &str,
+        target: &str,
+        arguments: &[TyArg],
+    ) -> Result<String, MonoError> {
+        let decls = self
+            .declarations
+            .get(target)
+            .map(|declaration| declaration.param_decls.clone())
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!("closure of `{target}` lacks declaration facts"),
+                )
+            })?;
+        let arguments = arguments
+            .iter()
+            .map(|argument| substitute_arg(argument, &self.enclosing))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (mut bindings, mut instance_arguments) =
+            self.nested_bindings(target, &self.enclosing, false)?;
+        self.bind_instantiated_arguments(owner, target, &decls, &arguments, &mut bindings)?;
+        apply_defaults(&decls, &[], &mut bindings)?;
+        instance_arguments.extend(ordered_arguments(&decls, &bindings, target)?);
+        self.enqueue(target, bindings, instance_arguments)
     }
 
     /// The instance a generic function's value names: `target`'s

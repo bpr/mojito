@@ -320,6 +320,7 @@ impl VmBackend {
                 dest,
                 function: target,
                 captures,
+                ..
             } => {
                 let environment = captures
                     .iter()

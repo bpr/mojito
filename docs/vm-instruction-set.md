@@ -521,6 +521,12 @@ reference parameter, but no accepted program builds a capturing
 `closure.make` (R1946). A closure value owns nothing, so it has no
 destructor.
 
+A bracket binding a generic nested `def`'s own parameters (`var f =
+inner[1]`) makes the closure of that instance: the instruction's
+`arguments` hold the bracket's compile-time arguments, and the elaborator
+names the instance under the enclosing one, so the VM only ever sees an
+empty list.
+
 ### `call.indirect` — Callable Value
 
 ```text

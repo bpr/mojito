@@ -731,7 +731,11 @@ policy or data-model responsibilities to focused children:
   binders: its declaration names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`), whose binders the verifier's scope
   admits in its body, and `native::mono` instantiates it under each instance
-  of that declaration (`Specializer::instantiate_nested_bodies`). One
+  of that declaration (`Specializer::instantiate_nested_bodies`). A
+  bracket binding its own parameters read as a value (`var f =
+  inner[1]`) is a `MakeClosure` carrying the bracket's arguments, which
+  the elaborator resolves to that instance's closure, as upstream's
+  bracket names the specialization. One
   declared inside a kept `comptime for` is a generator over the loop's
   index too (`MirFunctionDeclaration::region_binders`), instantiated once
   per unrolled copy of the loop (`instantiate_region_references`). Every

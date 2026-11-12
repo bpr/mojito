@@ -1776,7 +1776,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
   `binder_scope`) instantiates a nested body under its enclosing instance,
   a direct call's `infer_call` binding the enclosing binders from the
-  calling scope before the declared result unifies; a call of a closure
+  calling scope before the declared result unifies, and a bracket's
+  closure (`closure.make` with `arguments`, from MIR lowering's
+  `nested_bracket_callable` through `emit_nested_instance_closure`)
+  naming the full instance `Specializer::nested_value_instance` binds,
+  its own parameters from the bracket; a call of a closure
   storage's method binds its struct's parameters from the receiver as
   any method call does. A
   declaration inside a kept `comptime for` also declares the loop indices

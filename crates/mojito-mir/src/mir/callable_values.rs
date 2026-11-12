@@ -71,6 +71,7 @@ fn visit_callables(
                 dest,
                 function,
                 captures,
+                ..
             } => Some((dest.0, (function.clone(), captures.is_empty()))),
             MirInstr::Const {
                 dest,

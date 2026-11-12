@@ -294,8 +294,15 @@ macro_rules! type_visitor {
                 | I::DropPlace { place, .. }
                 | I::MarkInitialized { place }
                 | I::MarkDestroyed { place } => visitor.visit_place(place),
-                I::MakeClosure { captures, .. } => slice_iter!($($m)? captures)
-                    .try_for_each(|capture| visitor.visit_place(&$($m)? capture.place)),
+                I::MakeClosure {
+                    captures,
+                    arguments,
+                    ..
+                } => {
+                    slice_iter!($($m)? captures)
+                        .try_for_each(|capture| visitor.visit_place(&$($m)? capture.place))?;
+                    $helpers::visit_ty_args(visitor, arguments)
+                }
                 I::MaterializeLiteral { target: ty, .. }
                 | I::PointerStorageTake { element: ty, .. }
                 | I::PointerStorageDestroy { element: ty, .. }

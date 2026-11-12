@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket over a generic `def` read as a value is that specialization:
+  `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`, in a plain or
+  generic enclosing `def`, and `apply(inner[5], x)` now run on the VM and
+  natively, where Mojito stopped elaboration with "cannot resolve parameter
+  `m`"; the nested closure names the instance the bracket bound, as at the
+  pin. The MIR text format moves to 1.189, `closure.make` carrying the
+  bracket's `arguments` (R71, R2123).
 - A bracket over a function read as a compile-time value is the symbol of
   its specialization, typed by the instance's signature, as at the pin:
   `comptime g = twice[4]`, `comptime s = tagged[Int, 7]`, and `comptime t:

@@ -658,6 +658,18 @@ impl TypeVisitor for ConcreteCx<'_> {
     fn visit_instruction(&mut self, instruction: &MirInstr) -> Result<(), Self::Error> {
         self.family = Family::of(instruction);
         self.slots_reported = false;
+        if let MirInstr::MakeClosure {
+            function,
+            arguments,
+            ..
+        } = instruction
+            && !arguments.is_empty()
+        {
+            self.errors.push(format!(
+                "{} keeps the unelaborated closure instance of `{function}` in elaborated MIR",
+                self.head
+            ));
+        }
         walk_instruction(self, instruction)
     }
 

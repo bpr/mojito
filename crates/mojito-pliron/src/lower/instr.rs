@@ -688,6 +688,7 @@ impl FnLowering<'_> {
                 dest,
                 function,
                 captures,
+                ..
             } => self.lower_make_closure(ctx, *dest, function, captures),
             MirInstr::CallIndirect {
                 dest,

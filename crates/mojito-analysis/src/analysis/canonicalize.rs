@@ -541,7 +541,8 @@ fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations
                     dest,
                     function,
                     captures,
-                } => {
+                    arguments,
+                } if arguments.is_empty() => {
                     let places = captures.iter().map(|capture| capture.place.clone());
                     (dest, KnownCallee::new(function, places.collect()))
                 }

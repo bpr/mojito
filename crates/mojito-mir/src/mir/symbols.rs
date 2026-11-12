@@ -682,6 +682,7 @@ mod tests {
                 dest: Reg(1),
                 function: "g".to_string(),
                 captures: Vec::new(),
+                arguments: Vec::new(),
             },
             MirInstr::Const {
                 dest: Reg(2),

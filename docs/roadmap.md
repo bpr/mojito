@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2155**.
+Next free ID: **R2156**.
 
 ## Ordered Work
 
@@ -4035,26 +4035,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2123 A bracket over a nested generic `def` read as a value loads
-  the unspecialized closure**
+- [ ] **R2155 A nested `def` reading a capture-free sibling `def` as a
+  value takes it for a captured local**
 
-  Inside `main`, `var f = inner[4]` over a nested `def inner[n: Int]() ->
-  Int` stops elaboration with "in `main$inner`: unsupported
-  monomorphization cannot resolve parameter `n`", where the pin prints
-  `12` for `print(f())`; the call `inner[5]()` already runs.
-  - MIR lowers the bracket through `nested_bracket_callable`
-    (`mir/lower_expr/expr.rs`), which loads the nested declaration's
-    closure and drops the `GenericInstantiation` the check recorded at
-    the bracket, where a top-level `def`'s lowers to a
-    `Const::FunctionInstance` naming its instance.
-  - Upstream's value is a symbol reference to the nested function's
-    specialization; the closure must name the instance the bracket bound.
-  - Probe: the program above. A nested generic `def` that captures a
-    local (`return n + k`) fails earlier, with "Could not infer capture
-    convention of the captured value k".
-  - Found while landing R2112 (2026-11-12).
+  Problem: inside `outer`, `def sib(y: Int) -> Int: var g = inner; return
+  g(y)` beside a capture-free sibling `def inner(y: Int) -> Int` is
+  rejected with "Could not infer capture convention of the captured value
+  inner", where the pin prints `9` for `outer(2)` over `return y + 7`.
+  - The identifier-read capture check in `checker/scopes.rs` takes every
+    enclosing binding a nested body reads as a captured value needing a
+    convention; only a call by name is exempt
+    (`Checker::record_permitted_call_capture`).
+  - Upstream's reference to a capture-free nested function is a symbol
+    reference, which captures nothing.
+  - Probe: the same `sib` reading a generic sibling's bracket (`var g =
+    inner[7]` over `def inner[m: Int](y: Int) -> Int`) fails the same
+    way, where the pin prints `9`; the call `inner[7](y)` already runs.
+  - Found while landing R71 (2026-11-12).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2086 A struct's callable default naming a function fails at the
   struct's declaration**
@@ -6375,24 +6374,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R71 A bracket application of a generic `def` is not a function
-  value**
-
-  Problem: `var g = h[4]; g(1)` over `def h[k: Int](t: Int)` reports "type
-  'def[k: Int](Int) thin -> None' cannot be indexed here", where the pin
-  binds the instance and prints `5`.
-  - Called at once (`h[4](1)`), the application runs. Bound or passed, the
-    bracket reaches `Checker::infer_index` (`checker/indexing.rs`) as a
-    run-time subscript of the function value.
-  - Upstream's bracket on a generic function's name is a parameter
-    application whose result is the instance, a thin function value.
-  - Probe: `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`
-    fails the same way, where the pin prints `3` for `x = 2`.
-  - A bare reference to a generic `def` (`apply(as_int, 3)`, `var g =
-    as_int`) is rejected at the pin too, so it is not part of this entry.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R73 An arithmetic `where` operand compiles for `def`s and struct methods
   only**
 
@@ -6518,6 +6499,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parametric function as a runtime closure". The direct `var o: _B =
     twice` already gives the pin's message; the `@implicit` constructor's
     argument does not.
+  - Probe: an empty bracket over a `def` whose parameters all default,
+    read as a value (`var g = h[]` over `def h[b: Int = 3](y: Int)`,
+    module-level or nested), runs with the defaults, where the pin
+    rejects it as a parametric runtime closure ("parameter 'b' is not
+    bound"); `h[2]` over `def h[a: Int, b: Int = 3]` defaults `b` at
+    both.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

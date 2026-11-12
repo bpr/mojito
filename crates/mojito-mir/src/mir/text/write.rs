@@ -900,6 +900,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             dest,
             function,
             captures,
+            arguments,
         } => record(
             tag,
             &[
@@ -911,6 +912,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                         record("closure_capture", &[("place", place_value(&capture.place))])
                     })),
                 ),
+                ("arguments", list(arguments.iter().map(ty_arg))),
             ],
         ),
         MirInstr::KeepAlive { var } => record(tag, &[("var", var_value(*var))]),

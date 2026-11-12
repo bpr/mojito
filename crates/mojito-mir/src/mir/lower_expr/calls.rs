@@ -678,6 +678,18 @@ impl<'a> Flatten<'a> {
     /// parameter. A body without storage captures nothing in a checked
     /// program the pin accepts (R1946).
     pub(in crate::mir) fn emit_nested_closure(&mut self, info: &NestedInfo, at: SourceSpan) -> Reg {
+        self.emit_nested_instance_closure(info, at, Vec::new())
+    }
+
+    /// The closure of the body `info` without storage at `at`, at the
+    /// compile-time `arguments` a bracket bound to its own parameters:
+    /// the instance's closure, which the elaborator names.
+    pub(in crate::mir) fn emit_nested_instance_closure(
+        &mut self,
+        info: &NestedInfo,
+        at: SourceSpan,
+        arguments: Vec<mojito_types::types::TyArg>,
+    ) -> Reg {
         let captures = info
             .captures
             .iter()
@@ -693,6 +705,7 @@ impl<'a> Flatten<'a> {
             dest,
             function: info.mangled.clone(),
             captures,
+            arguments,
         });
         dest
     }

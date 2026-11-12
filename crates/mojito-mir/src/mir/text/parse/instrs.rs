@@ -373,6 +373,13 @@ impl Decoder {
                 captures: self.req(value, fields, "captures", |d, v| {
                     Some(d.closure_captures(v))
                 })?,
+                // Schema 1.189 records the arguments a bracket bound to a
+                // generic nested `def`; an older artifact carries none.
+                arguments: self
+                    .field(fields, "arguments")
+                    .ok()
+                    .map(|found| self.ty_args(found))
+                    .unwrap_or_default(),
             }),
             "lifetime.keep_alive" => Some(MirInstr::KeepAlive {
                 var: self.req(value, fields, "var", Self::var)?,

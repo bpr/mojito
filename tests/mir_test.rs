@@ -5254,6 +5254,37 @@ fn nested_def_closure_is_made_at_its_first_class_use() {
 }
 
 #[test]
+fn nested_generic_bracket_value_makes_the_instance_closure() {
+    // A bracket binding a generic nested `def`'s own parameters read as a
+    // value makes the closure of that instance: the closure carries the
+    // bracket's arguments for the elaborator to name it.
+    let src = "def outer(x: Int) -> Int:\n    def inner[m: Int](y: Int) -> Int:\n        return y + m\n    var f = inner[1]\n    return f(x)\n";
+    let mir = lower_program(&linked(src)).expect("checked lowering");
+    let outer = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered")
+        .1;
+    let arguments: Vec<_> = outer
+        .body
+        .instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeClosure {
+                function,
+                arguments,
+                ..
+            } if function == "outer$inner" => Some(arguments.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arguments.len(), 1, "one closure, the bracket's");
+    assert_eq!(arguments[0].len(), 1, "it binds `m`: {:?}", arguments[0]);
+    assert!(mojito::mir::verify::verify(&mir).is_empty());
+}
+
+#[test]
 fn copied_capture_lives_in_the_storage_slot() {
     // A call of a nested `def` by name is a direct call of its lifted body,
     // the storage's method, which takes its `var` capture's copy from the

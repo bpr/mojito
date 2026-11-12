@@ -1012,6 +1012,7 @@ fn instruction_families_reprint_byte_identically() {
                 MirClosureCapture { place: place(1) },
                 MirClosureCapture { place: place(2) },
             ],
+            arguments: vec![TyArg::Val(CtValue::Int(1))],
         },
         MirInstr::KeepAlive { var: 1 },
         MirInstr::MovePlace {

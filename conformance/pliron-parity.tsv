@@ -474,6 +474,7 @@ assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	saniti
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
+assets/ok/generic_def_bracket_function_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_def_static_receiver_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_display_argument_infers_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generic_display_argument_typed_by_parameter.mojo	main	exe-differential	sanitized

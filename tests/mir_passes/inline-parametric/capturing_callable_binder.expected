@@ -47,7 +47,7 @@
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "outer$plus", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }] },
+              closure.make { dest: %r0, function: "outer$plus", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }], arguments: [] },
               const { dest: %r1, value: int_literal(3) },
               literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r4] },

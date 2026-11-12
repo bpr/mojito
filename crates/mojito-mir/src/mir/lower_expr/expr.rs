@@ -612,12 +612,19 @@ impl<'a> Flatten<'a> {
 
     /// A bracket over the nested `def` `name` read as a value
     /// (`inner[4]`): the nested declaration's closure, at the
-    /// specialization the check bound.
+    /// specialization the check bound. One binding its own parameters is
+    /// that instance's closure, as upstream's bracket on a generic
+    /// function names its specialization.
     pub(super) fn nested_bracket_callable(&mut self, node: Node<'a>, name: &str) -> Reg {
         let info = self
             .nested_info(node)
             .expect("guard established a checked nested declaration");
-        let dest = self.load_nested_closure(name, &info, node.location());
+        let arguments = node.instantiated_args();
+        let dest = if arguments.is_empty() || info.storage.is_some() {
+            self.load_nested_closure(name, &info, node.location())
+        } else {
+            self.emit_nested_instance_closure(&info, node.location(), arguments)
+        };
         // The closure slot carries the declaration's generic callable
         // type; this expression carries the checker's concrete Origin
         // substitution and must win at the MIR value boundary.

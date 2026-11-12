@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "outer$inner", captures: [] },
+              closure.make { dest: %r0, function: "outer$inner", captures: [], arguments: [] },
               value.copy { dest: %r1, value: %r0 },
               var.use { dest: %r2, var: $v0, mode: copy },
               call.indirect { dest: %r3, callee: %r1, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
