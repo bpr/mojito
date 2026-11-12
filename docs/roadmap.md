@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2138**.
+Next free ID: **R2141**.
 
 ## Ordered Work
 
@@ -2674,19 +2674,44 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2113 `Origin` is only a binder bound, not a type**
+- [ ] **R2140 An augmented assignment through a struct's `Pointer` field
+  fails at run time on the VM**
 
-  `comptime O = Origin[mut=True]` prints `ok` at the pin, inside a function
-  and at module scope, where Mojito rejects both: `Origin` exists only as
-  a parameter's bound (`[o: Origin[mut=True]]`), and the bundled library
-  declares no `Origin` struct to apply.
-  - Inside a function it fails: "not a compile-time Int constant: not an
-    associated comptime expression".
-  - At module scope it fails: "Undefined variable 'Origin'".
-  - Upstream declares `struct Origin[mut: Bool, _mlir_origin: …, //]` in
-    `std/origin/__init__.mojo`, and `comptime MutOrigin =
-    Origin[mut=True]` aliases it.
-  - Found while landing R1514 (2026-11-11).
+  `h.p[] += 1`, where `h` is a `struct H[o: MutOrigin]` holding `var p:
+  Pointer[Int, Self.o]`, checks but stops on the VM with "Type error:
+  cannot index ref", where the pin prints `2`.
+  - `h.p[] = 5` and `h.p[] = h.p[] + 1` run, and so does `q[] += 1` over
+    `var q = h.p`.
+  - The binder spelled `Origin[mut=True]` fails the same way.
+  - The diagnostic comes from the VM's place projection
+    (`vm/places.rs`, `Proj::Index`), so MIR lowers the in-place update as an
+    index projection of the field's dereference.
+  - Found while planning R2113 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2139 An origin binder is classified by its bound's spelling, not by
+  its type being the `Origin` struct**
+
+  Upstream's origin parameter is a value parameter whose type is the
+  library's `Origin[mut=m]`. Mojito's `Origin` is now that library struct
+  (`stdlib/std/origin.mojo`), but every origin site still classifies a
+  binder by `bounds == ["Origin"]` and `TypeParam::origin_mutability`.
+  - A binder typed by an alias of an origin type is readable only because
+    `fold_origin_alias_bounds` (`comptime/synth.rs`) rewrites it to that
+    spelling before the check. Ordinary type resolution should do it.
+  - The struct declares only `mut`: upstream's `_mlir_origin` parameter, its
+    implicit immutable conversion, `unsafe_mut_cast`, `equals`, and
+    `contains` are absent.
+  - `OriginSet` and the untracked, static, and unsafe origin names are
+    builtin identities (`BUILTIN_MODULE_EXPORTS`), where upstream declares
+    them as source aliases of `Origin`.
+  - `auto_parameterize` skips an origin binder by name
+    (`TypeParam::is_erased_origin_param`) rather than by its type.
+  - The migration spans the checker, symbol, and MIR layers. This entry's
+    session plans it and files the slices as entries chained by Depends
+    bullets, replacing this one.
+  - Found while landing R2113 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -5079,6 +5104,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The same alias at module scope runs.
   - Probe: `conformance/probes/local_generic_comptime_alias.mojo`.
   - Found while landing R310 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2138 A module alias of a struct that leaves an infer-only
+  parameter unbound is rejected**
+
+  `comptime O = Org` over `struct Org[mut: Bool, //]` fails with "cannot
+  infer type parameter 'mut' of 'Org' from the arguments", where the pin
+  accepts it.
+  - The check binds an alias's value as an application that must solve
+    every parameter. Upstream keeps the alias as the struct with its
+    infer-only parameter open.
+  - Probe: `comptime O = Origin`, then `def f[o: O](ref[o] x: Int)`, prints
+    `3` at the pin for `f(n)` with `n = 3`. Once the alias checks,
+    `fold_origin_alias_bounds` already folds the bare `Origin`.
+  - Found while landing R2113 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11163,6 +11204,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: a local `comptime f = seven` naming a function, then `comptime
     t = f()`, takes the same alias route and fails the same way, where the
     pin prints `7`. So does `comptime f = inner` over a nested `def`.
+  - Probe: a local `comptime S = Org` over `struct Org[mut: Bool, //]`
+    takes the same route and fails the same way, where the pin accepts it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

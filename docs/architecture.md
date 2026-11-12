@@ -1487,7 +1487,7 @@ without selecting an arm, unrolling a loop, stubbing a template, or minting a
 clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 automatic parameterization of each parameter an argument's struct type
 leaves unbound — bare, `_`, or `...` — into an infer-only binder of the
-declaration, SIMD alias-bound folding). The elaborator keeps every
+declaration, origin and SIMD alias-bound folding). The elaborator keeps every
 `comptime if` and `comptime for` of every function body, plain or generic
 (`comptime/elab.rs:def_body`), and the one check types every body once with its declaration's
 parameters left symbolic (`checker/comptime_validation.rs`): each condition

@@ -147,8 +147,15 @@ impl<'a> Declared<'a> {
             .map(|name| name.trim_start_matches('*').to_string())
             .collect();
         let mut binders = Vec::new();
-        for parameter in type_params.iter_mut() {
-            if parameter.callable_bound.is_some() || parameter.origin_mutability.is_some() {
+        // Origin metadata the checker infers from places is not a
+        // struct-typed argument, though `Origin` is a library struct.
+        let erased: Vec<bool> = type_params
+            .iter()
+            .map(|parameter| parameter.is_erased_origin_param(type_params))
+            .collect();
+        for (parameter, erased) in type_params.iter_mut().zip(erased) {
+            if erased || parameter.callable_bound.is_some() || parameter.origin_mutability.is_some()
+            {
                 continue;
             }
             let spelled = match (&parameter.value_type, parameter.bounds.as_slice()) {

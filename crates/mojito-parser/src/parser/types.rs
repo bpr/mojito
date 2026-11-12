@@ -560,12 +560,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
             let mut value_type = None;
-            let (first_bound, callable_bound, fixed_mutability, spelled_bound) =
+            let (first_bound, callable_bound, spelled_bound) =
                 if matches!(self.peek_token()?, Some(Token::Def)) {
                     (
                         "<function type>".to_string(),
                         Some(self.parse_type()?),
-                        None,
                         String::new(),
                     )
                 // `G: __generator_type[Idx: Int] Int` is a value parameter
@@ -575,37 +574,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     (
                         "__generator_type".to_string(),
                         None,
-                        None,
                         "__generator_type".to_string(),
                     )
                 } else {
                     let bound = self.expect_identifier(
                         "Expected a trait or type in the type-parameter bound",
                     )?;
-                    let bound_span = self.last_span;
-                    let fixed = match bound.as_str() {
-                        "ImmOrigin" => Some(false),
-                        "MutOrigin" => Some(true),
-                        _ => None,
-                    };
-                    let first_bound = if fixed.is_some() {
-                        "Origin".to_string()
-                    } else {
-                        bound.clone()
-                    };
-                    (
-                        first_bound,
-                        None,
-                        fixed.map(|flag| Expr::new(ExprKind::Bool(flag), bound_span)),
-                        bound,
-                    )
+                    (bound.clone(), None, bound)
                 };
             // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
             // Origin classification and parse the mutability expression; semantic
-            // origin parameters are deliberately deferred. Upstream's `ImmOrigin`
-            // and `MutOrigin` are `comptime` aliases of `Origin[mut=False]` and
-            // `Origin[mut=True]`, so they record as the `Origin` bound with a
-            // fixed mutability.
+            // origin parameters are deliberately deferred. An alias of an origin
+            // type (`ImmOrigin`, `MutOrigin`) records as spelled, and
+            // preparation resolves it.
             // `Tr: type_of(AnyType)` is a value parameter typed by the trait
             // metatype; the spelled head stays the bound, as for a qualified
             // value type.
@@ -637,29 +618,27 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else {
                 first_bound
             };
-            let origin_mutability = if let Some(fixed) = fixed_mutability {
-                Some(fixed)
-            } else if first_bound == "Origin" && matches!(self.peek_token()?, Some(Token::LBracket))
-            {
-                self.next_token()?;
-                let key = self.expect_identifier("Expected 'mut' in Origin[mut=...]")?;
-                if key != "mut" {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::Identifier(key),
-                        "expected 'mut' in Origin[mut=...]".into(),
-                    ));
-                }
-                self.expect(&Token::Assign, "Expected '=' after 'mut' in Origin")?;
-                let mutability = self.parse_expression(Precedence::Lowest)?;
-                self.expect(&Token::RBracket, "Expected ']' after Origin mutability")?;
-                Some(mutability)
-            } else if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                let args = self.parse_param_args()?;
-                value_type = Some(Type::Named(first_bound.clone(), args));
-                None
-            } else {
-                None
-            };
+            let origin_mutability =
+                if first_bound == "Origin" && matches!(self.peek_token()?, Some(Token::LBracket)) {
+                    self.next_token()?;
+                    let key = self.expect_identifier("Expected 'mut' in Origin[mut=...]")?;
+                    if key != "mut" {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::Identifier(key),
+                            "expected 'mut' in Origin[mut=...]".into(),
+                        ));
+                    }
+                    self.expect(&Token::Assign, "Expected '=' after 'mut' in Origin")?;
+                    let mutability = self.parse_expression(Precedence::Lowest)?;
+                    self.expect(&Token::RBracket, "Expected ']' after Origin mutability")?;
+                    Some(mutability)
+                } else if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                    let args = self.parse_param_args()?;
+                    value_type = Some(Type::Named(first_bound.clone(), args));
+                    None
+                } else {
+                    None
+                };
             let mut bounds = vec![first_bound];
             let mut callable_bound = callable_bound;
             while matches!(self.peek_token()?, Some(Token::Amp)) {

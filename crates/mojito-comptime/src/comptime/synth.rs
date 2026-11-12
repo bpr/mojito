@@ -473,6 +473,42 @@ pub(super) fn fold_simd_alias_bounds(
     }
 }
 
+/// Fold a binder whose type is an alias of an origin type (`[o: MutOrigin]`,
+/// `comptime O = Origin[mut=True]` with `[o: O]`) into the spelling the
+/// parser gives `[o: Origin[mut=True]]`: the `Origin` bound with the alias's
+/// mutability, none for a bare `Origin`. Upstream resolves the alias as
+/// any other type spelling; the specialization registry classifies an
+/// origin binder by its bound, so the alias resolves here, before it does.
+/// The program's own module aliases resolve through chains of other
+/// aliases, and an imported package's aliases, as its build checked them,
+/// by the bound's name.
+pub(super) fn fold_origin_alias_bounds(
+    program: &mut [Stmt],
+    installed: Option<&InstalledInterfaces>,
+) {
+    let aliases: HashMap<String, Expr> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } if type_params.is_empty() => Some((name.clone(), value.clone())),
+            _ => None,
+        })
+        .collect();
+    if aliases.is_empty() && installed.is_none() {
+        return;
+    }
+    let mut fold = OriginAliasFold {
+        aliases,
+        installed,
+        span: (0, 0),
+    };
+    mojito_ast::visit::walk_block_mut(&mut fold, program);
+}
+
 /// The `SIMD[dtype, width]` arguments the module alias `name` of
 /// `aliases` names, through other aliases (`comptime Byte = UInt8`) and a
 /// partially bound one applied to the arguments its `_` slots take
@@ -703,4 +739,106 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
             _ => {}
         }
     }
+}
+
+/// The [`fold_origin_alias_bounds`] walk: the program's own module aliases,
+/// the imported package, and the span of the statement being walked, which
+/// an imported alias's mutability is spelled at.
+struct OriginAliasFold<'a> {
+    aliases: HashMap<String, Expr>,
+    installed: Option<&'a InstalledInterfaces>,
+    span: Span,
+}
+
+/// The origin type an alias names: `Origin` with its mutability open, or
+/// applied to a mutability.
+enum AliasedOrigin {
+    Open,
+    Mutability(Expr),
+}
+
+impl OriginAliasFold<'_> {
+    /// The origin type the alias `name` names, if it names one.
+    fn aliased_origin(&self, name: &str) -> Option<AliasedOrigin> {
+        let mut name = name;
+        for _ in 0..=self.aliases.len() {
+            let Some(value) = self.aliases.get(name) else {
+                return self.imported_aliased_origin(name);
+            };
+            match &value.kind {
+                ExprKind::Identifier(next) if next == "Origin" => {
+                    return Some(AliasedOrigin::Open);
+                }
+                ExprKind::Identifier(next) => name = next,
+                _ => {
+                    let (applied, args) = value.bracket_application()?;
+                    if applied != "Origin" {
+                        return None;
+                    }
+                    return origin_mut_argument(&args).map(AliasedOrigin::Mutability);
+                }
+            }
+        }
+        None
+    }
+
+    /// [`Self::aliased_origin`] of the imported package's alias `name`.
+    fn imported_aliased_origin(&self, name: &str) -> Option<AliasedOrigin> {
+        let ty = self.installed?.type_alias(name)?;
+        let (applied, args) = mojito_types::types::nominal_parts(ty)?;
+        if applied != "Origin" {
+            return None;
+        }
+        match args.first() {
+            Some(TyArg::Val(value)) => {
+                Some(AliasedOrigin::Mutability(value.materialize(self.span)?))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl mojito_ast::visit::MutVisitor for OriginAliasFold<'_> {
+    fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
+        self.span = statement.span;
+    }
+
+    fn visit_type_param_mut(&mut self, parameter: &mut TypeParam) {
+        if parameter.value_type.is_some()
+            || parameter.callable_bound.is_some()
+            || parameter.origin_mutability.is_some()
+        {
+            return;
+        }
+        let [only] = parameter.bounds.as_slice() else {
+            return;
+        };
+        if only == "Origin" {
+            return;
+        }
+        if let Some(origin) = self.aliased_origin(only) {
+            parameter.bounds = vec!["Origin".to_string()];
+            parameter.origin_mutability = match origin {
+                AliasedOrigin::Open => None,
+                AliasedOrigin::Mutability(mutability) => Some(mutability),
+            };
+        }
+    }
+}
+
+/// The `mut` argument of an `Origin[...]` application, by keyword or first
+/// position.
+fn origin_mut_argument(args: &[ParamArg]) -> Option<Expr> {
+    args.iter()
+        .find_map(|argument| match argument {
+            ParamArg::Named { name, value } if name == "mut" => match value.as_ref() {
+                ParamArg::Value(value) => Some(value.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .or_else(|| match args.first()? {
+            ParamArg::Value(value) => Some(value.clone()),
+            _ => None,
+        })
 }

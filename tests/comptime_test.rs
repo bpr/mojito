@@ -1898,3 +1898,31 @@ fn a_self_construction_over_a_runtime_argument_is_not_compile_time() {
         "got: {err}"
     );
 }
+
+#[test]
+fn prepare_folds_an_origin_alias_bound_into_the_origin_bound() {
+    // As upstream resolves an alias in a binder's type, a binder typed by an
+    // alias of `Origin[mut=True]`, through a chain, is the `Origin` binder
+    // with that mutability; a bound naming a trait alias stays as spelled.
+    let src = "comptime O = Origin[mut=True]\ncomptime P = O\ncomptime B = Origin\ndef f[o: P, b: B, T: Copyable](ref[o] x: Int):\n    pass\n";
+    let prepared = mojito::comptime::prepare(mojito::parse(src).unwrap()).unwrap();
+    let type_params = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Def { type_params, .. } => Some(type_params),
+            _ => None,
+        })
+        .expect("the def");
+    assert_eq!(type_params[0].bounds, vec!["Origin"]);
+    assert!(matches!(
+        type_params[0].origin_mutability,
+        Some(mojito::ast::Expr {
+            kind: mojito::ast::ExprKind::Bool(true),
+            ..
+        })
+    ));
+    assert_eq!(type_params[1].bounds, vec!["Origin"]);
+    assert!(type_params[1].origin_mutability.is_none());
+    assert_eq!(type_params[2].bounds, vec!["Copyable"]);
+    assert!(type_params[2].origin_mutability.is_none());
+}

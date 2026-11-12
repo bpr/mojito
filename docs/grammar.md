@@ -355,8 +355,10 @@ form is also an ordinary origin argument (a struct or
 holding it is classified by its base as any bracket is. Named
 `Origin[mut=...]` parameters and the `//` infer-only marker are likewise
 retained; the marker is followed by `,` or the closing `]`, so `[T: Copyable
-// U: AnyType]` is upstream's "expected ']' for parameter list"; upstream's `ImmOrigin` and `MutOrigin` aliases are accepted as the
-bound and record as `Origin[mut=False]` and `Origin[mut=True]`.
+// U: AnyType]` is upstream's "expected ']' for parameter list". Any other
+bound name, `ImmOrigin` and `MutOrigin` included, records as spelled: those
+two are library aliases of `Origin`, and preparation resolves an origin alias
+in a bound before the check.
 Signature-level origin inference and substitution remain deferred.
 Origin positions also recognize two member projections as ordinary member
 syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a

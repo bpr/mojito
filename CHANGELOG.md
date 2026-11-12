@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Origin` is a library struct in `std.origin`, exported by the prelude,
+  and `ImmOrigin`/`MutOrigin` are its `comptime` aliases, as upstream
+  declares them, so `comptime O = Origin[mut=True]` checks at module and
+  function scope. A binder whose type is an alias of an origin type
+  (`[o: O]`, an alias of `MutOrigin`, or a chain of aliases) binds as the
+  origin type itself; the parser no longer rewrites `ImmOrigin`/`MutOrigin`
+  bounds (R2113).
 - `Self(...)` and a static call through `Self` (`Self.make()`) construct
   the instance `Self` is bound to, the struct over its own parameters,
   instead of the checker re-spelling `Self` as the struct applied to

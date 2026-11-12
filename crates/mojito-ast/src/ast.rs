@@ -365,9 +365,9 @@ pub struct TypeParam {
     /// semantic decision; the parser preserves the complete function type.
     pub callable_bound: Option<Type>,
     /// `Some(expr)` for `Origin[mut=expr]`; `None` for type/value parameters.
-    /// Upstream's `ImmOrigin` and `MutOrigin` are `comptime` aliases of
-    /// `Origin[mut=False]` and `Origin[mut=True]`, so the parser records them
-    /// as the `Origin` bound with a fixed `Bool` mutability.
+    /// A bound naming an alias of an origin type (`ImmOrigin`, `MutOrigin`)
+    /// records as spelled until preparation resolves it to the `Origin` bound
+    /// and the alias's mutability.
     pub origin_mutability: Option<Expr>,
     /// Whether this parameter precedes the `//` infer-only marker.
     pub infer_only: bool,

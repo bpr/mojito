@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1177
+# swept-count	1178
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -813,6 +813,7 @@ assets/type_error/optional_init_with_wrong_result.mojo	compile-reject	agree	erro
 assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/optional_owned_iteration_linear_element.mojo	compile-reject	agree	error: 'opt' abandoned without being explicitly destroyed: type 'Optional' does not conditionally conform to 'Deinitable' for these parameters
+assets/type_error/origin_alias_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/origin_annotated_reassignment.mojo	compile-reject	agree	error: cannot implicitly convert 'List[Int]' value to 'Span[Int, origin_of(xs)]'
 assets/type_error/origin_carrying_callable_struct.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/origin_cast_from_removed.mojo	compile-reject	agree	error: 'ImmOrigin' value has no attribute 'cast_from'

@@ -733,9 +733,10 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
 }
 
 /// Builtin names exported by the canonical `std.traits`/`std.origin` module
-/// homes. These traits and origin spellings are compiler builtins with no
-/// source declaration, so the module files export them through this table
-/// (mirroring the audited upstream export surface). The table is additive, so
+/// homes. These traits and the origin spellings `std.origin` does not
+/// declare are compiler builtins with no source declaration, so the module
+/// files export them through this table (mirroring the audited upstream
+/// export surface). The table is additive, so
 /// a module with real declarations keeps them. Matched by canonical-path
 /// suffix, wherever the library is installed.
 fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
@@ -1253,7 +1254,7 @@ impl<'p> Linker<'p> {
         // The canonical `std.traits`/`std.origin` module homes export compiler
         // builtins that have no source declaration. Bind them as identities:
         // the checker resolves these names structurally, and bound-string
-        // comparisons (`bounds == ["Origin"]`) require the unqualified
+        // comparisons (`bounds == ["OriginSet"]`) require the unqualified
         // spelling to survive `rewrite_program`/`rewrite_type_param`.
         if let Some(builtin_names) = builtin_module_exports(canon) {
             for name in builtin_names {
@@ -2235,10 +2236,7 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
     (
         "std/origin.mojo",
         &[
-            "Origin",
             "OriginSet",
-            "ImmOrigin",
-            "MutOrigin",
             "ImmStaticOrigin",
             "UntrackedOrigin",
             "MutUntrackedOrigin",
@@ -2320,6 +2318,9 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "StringLiteral",
     "IntLiteral",
     "FloatLiteral",
+    "Origin",
+    "ImmOrigin",
+    "MutOrigin",
     "debug_assert",
     "Absable",
     "Roundable",
@@ -2902,6 +2903,9 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.builtin.string_literal", "StringLiteral") => Some("StringLiteral"),
         ("std.builtin.int_literal", "IntLiteral") => Some("IntLiteral"),
         ("std.builtin.float_literal", "FloatLiteral") => Some("FloatLiteral"),
+        ("std.origin", "Origin") => Some("Origin"),
+        ("std.origin", "ImmOrigin") => Some("ImmOrigin"),
+        ("std.origin", "MutOrigin") => Some("MutOrigin"),
         ("std.builtin.value", "Defaultable") => Some("Defaultable"),
         ("std.builtin.value", "RegisterPassable") => Some("RegisterPassable"),
         ("std.builtin.value", "TrivialRegisterPassable") => Some("TrivialRegisterPassable"),

@@ -9,8 +9,8 @@
 //!
 //! - **Preparation** ([`prepare`]) — qualifies struct packs, synthesizes the
 //!   derived `copy` and `__hash__`, parameterizes a declaration over the
-//!   parameters its arguments' struct types leave unbound, and folds SIMD
-//!   alias bounds and `!kgen.type` parameters. It selects no arm
+//!   parameters its arguments' struct types leave unbound, and folds origin
+//!   and SIMD alias bounds and `!kgen.type` parameters. It selects no arm
 //!   and unrolls no loop.
 //! - **Elaboration** ([`elaborate_prepared`]) — every `comptime`
 //!   declaration, `comptime if`, `comptime for`, and `comptime match` is
@@ -73,7 +73,7 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// Qualify struct packs, synthesize the derived `copy`, `__hash__`,
 /// `__eq__`, `write_to`, and `write_repr_to` methods,
 /// parameterize each declaration over the parameters its arguments' struct
-/// types leave unbound, fold SIMD alias bounds, and fold a
+/// types leave unbound, fold origin and SIMD alias bounds, and fold a
 /// `!kgen.type`-typed parameter into a type binder. A trait
 /// default stays in its trait; a conformer's wrapper for a default it
 /// inherits is the check's to build, over the default's resolved signature.
@@ -89,13 +89,14 @@ pub fn prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// imports.
 ///
 /// `installed` holds the package's module constants as its build
-/// elaborated them, whose SIMD aliases bound an own parameter. No package
+/// elaborated them, whose origin and SIMD aliases bound an own parameter. No package
 /// declaration is read or rewritten.
 pub fn prepare_importing(
     mut own: Vec<Stmt>,
     installed: Option<&InstalledInterfaces>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut own)?;
+    fold_origin_alias_bounds(&mut own, installed);
     synthesize_copyable_copy(&mut own, installed);
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);

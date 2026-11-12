@@ -3712,33 +3712,21 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
 }
 
 #[test]
-fn parses_bare_imm_and_mut_origin_binders() {
-    // Upstream's `ImmOrigin` / `MutOrigin` aliases record as the `Origin`
-    // bound with a fixed mutability.
+fn records_imm_and_mut_origin_binders_as_spelled() {
+    // Upstream's `ImmOrigin` / `MutOrigin` are library aliases of `Origin`,
+    // so the parser records the bound as spelled; preparation resolves it.
     let source = "struct Named[T: AnyType, o: ImmOrigin]:\n    var p: Pointer[Self.T, Self.o]\n\ndef bump[o: MutOrigin](p: Pointer[Int, o]):\n    pass\n";
     let stmts = parse(source);
     let StmtKind::Struct { type_params, .. } = &stmts[0].kind else {
         panic!("expected a struct");
     };
-    assert_eq!(type_params[1].bounds, vec!["Origin"]);
-    assert!(matches!(
-        type_params[1].origin_mutability,
-        Some(Expr {
-            kind: ExprKind::Bool(false),
-            ..
-        })
-    ));
+    assert_eq!(type_params[1].bounds, vec!["ImmOrigin"]);
+    assert!(type_params[1].origin_mutability.is_none());
     let StmtKind::Def { type_params, .. } = &stmts[1].kind else {
         panic!("expected a def");
     };
-    assert_eq!(type_params[0].bounds, vec!["Origin"]);
-    assert!(matches!(
-        type_params[0].origin_mutability,
-        Some(Expr {
-            kind: ExprKind::Bool(true),
-            ..
-        })
-    ));
+    assert_eq!(type_params[0].bounds, vec!["MutOrigin"]);
+    assert!(type_params[0].origin_mutability.is_none());
 }
 
 #[test]
