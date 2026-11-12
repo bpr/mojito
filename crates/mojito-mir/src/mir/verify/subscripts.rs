@@ -794,7 +794,7 @@ pub(super) fn verify_param_arguments(
             && !matches!(
                 instantiated.get(index),
                 Some(mojito_types::types::TyArg::Val(value))
-                    if !matches!(value, mojito_types::ct::CtValue::Deferred(_) | mojito_types::ct::CtValue::Marker(_))
+                    if !matches!(value, mojito_types::ct::CtValue::Deferred(_))
             )
         {
             errors.push(format!(

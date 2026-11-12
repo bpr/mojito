@@ -851,7 +851,7 @@ impl Specializer<'_> {
                         .iter()
                         .map(|element| match element {
                             CtValue::Expr(expr) => eval_ct(expr, &self.enclosing).ok(),
-                            CtValue::Deferred(_) | CtValue::Marker(_) => None,
+                            CtValue::Deferred(_) => None,
                             value => Some(value.clone()),
                         })
                         .collect::<Option<Vec<CtValue>>>();
@@ -871,11 +871,7 @@ impl Specializer<'_> {
                         variadic: false, ..
                     },
                     TyArg::Val(value),
-                ) if !matches!(
-                    value,
-                    CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg
-                ) =>
-                {
+                ) if !matches!(value, CtValue::Deferred(_) | CtValue::RemovedArg) => {
                     let closed = match value {
                         CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
                             Ok(value) => value,

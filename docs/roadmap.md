@@ -9340,21 +9340,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2114 `CtValue::Marker` has no producer**
-
-  No compiler phase builds a `CtValue::Marker` since R1514 deleted the
-  comptime value rewrite, yet `CtMarker` still rides through `ct.rs`, about
-  ten `Marker(_)` match arms, and the MIR text format.
-  - Only the MIR text reader constructs one (`marker_local`,
-    `marker_type`, `$local`, `$type`, `$applied`, `$tuple-origin`).
-  - `docs/symbol-map.md` still says the elaborator keeps an applied
-    constant's name as `CtMarker::Applied`, which nothing does.
-  - Delete the variant end to end, with the MIR text and package format
-    bumps that removing a value form needs.
-  - Found while landing R1514 (2026-11-11).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.

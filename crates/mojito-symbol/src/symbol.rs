@@ -3219,7 +3219,7 @@ pub fn mangle_parts(
 /// spelling; a callable type is closed relative to its own binders.
 pub fn specialization_value_is_closed(value: &CtValue) -> bool {
     match value {
-        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => false,
+        CtValue::Expr(_) | CtValue::Deferred(_) => false,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
@@ -3408,7 +3408,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             out.push_str(&format!("g{}:{rendered}", rendered.len()));
         }
         // `mangle_parts` validated the whole key before encoding began.
-        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => {}
+        CtValue::Expr(_) | CtValue::Deferred(_) => {}
     }
 }
 

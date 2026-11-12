@@ -4816,9 +4816,7 @@ impl<'d> Instantiation<'d> {
                     ..
                 },
                 TyArg::Val(value),
-            ) if !decl.binds_callables()
-                && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
-            {
+            ) if !decl.binds_callables() && !matches!(value, CtValue::Deferred(_)) => {
                 let value = self.context.constant(value.clone()).ok()?;
                 self.bindings.bind(id.clone(), value.clone());
                 Some(Bound::Value(value))

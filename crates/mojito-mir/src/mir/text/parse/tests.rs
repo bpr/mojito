@@ -425,12 +425,6 @@ fn fancy_struct_ty() -> TyKind {
                 CtValue::Type(Ty::int()),
                 CtValue::Expr(int_parameter("Holder", 1, "N")),
                 CtValue::Deferred(test_binder("callback")),
-                CtValue::Marker(CtMarker::RuntimeLocal),
-                CtValue::Marker(CtMarker::TypeName),
-                CtValue::Marker(CtMarker::TupleOrigin {
-                    id: OriginParamId(2),
-                    mutability: Mutability::Param(OriginParamId(2)),
-                }),
                 CtValue::Dict {
                     spelling: Some(mojito_types::types::dict_type(Ty::int(), Ty::bool())),
                     entries: vec![(CtValue::Int(1), CtValue::Bool(true))],
@@ -3428,10 +3422,7 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     let program = program_with(vec![(
         "main".into(),
         function_with(
-            vec![holder(vec![
-                CtValue::Deferred(test_binder("callback")),
-                CtValue::Marker(CtMarker::RuntimeLocal),
-            ])],
+            vec![holder(vec![CtValue::Deferred(test_binder("callback"))])],
             Vec::new(),
         ),
     )]);
@@ -3455,8 +3446,7 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
         .replace(
             "ct_deferred(binder { owner: \"$test:callback\", slot: 0, name: callback })",
             "ct_deferred(callback)",
-        )
-        .replace("ct_marker(marker_local)", "ct_deferred(\"$local\")");
+        );
     assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.10", 1), text);
     let earlier = read(&older);
     let TyKind::Struct(_, arguments) = earlier.kind() else {
@@ -3466,10 +3456,46 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
         &arguments[0],
         TyArg::Val(CtValue::Deferred(binder)) if binder.is_unbound() && &*binder.name == "callback"
     ));
-    assert_eq!(
-        arguments[1],
-        TyArg::Val(CtValue::Marker(CtMarker::RuntimeLocal))
-    );
+}
+
+/// Schema 1.185 withdraws the elaborator markers: neither `ct_marker` nor
+/// an older artifact's deferred slot spelling one loads.
+#[test]
+fn withdrawn_elaborator_markers_do_not_load() {
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::new(TyKind::Struct(
+                "Buf".into(),
+                vec![TyArg::Val(CtValue::Deferred(test_binder("callback")))],
+            ))],
+            Vec::new(),
+        ),
+    )]);
+    let text = write::program(&program);
+    let binder = "ct_deferred(binder { owner: \"$test:callback\", slot: 0, name: callback })";
+    assert!(text.contains(binder));
+    for (spelling, message) in [
+        (
+            "ct_marker(marker_local)",
+            "withdrawn compile-time value `ct_marker`",
+        ),
+        (
+            "ct_deferred(\"$local\")",
+            "withdrawn elaborator marker `$local`",
+        ),
+        (
+            "ct_deferred(\"$tuple-origin:2:imm\")",
+            "withdrawn elaborator marker `$tuple-origin:2:imm`",
+        ),
+    ] {
+        let error = artifact(
+            text.replace(binder, spelling).as_bytes(),
+            "unit.mir".to_string(),
+        )
+        .expect_err("a withdrawn marker must not load");
+        assert!(format!("{error:?}").contains(message), "{error:?}");
+    }
 }
 
 /// Schema 1.184 carries a function symbol bound to a callable-typed

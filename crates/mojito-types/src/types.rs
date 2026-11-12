@@ -5902,7 +5902,6 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::FuncSymbol(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
-        | CtValue::Marker(_)
         | CtValue::RemovedArg => value.clone(),
     })
 }
@@ -6114,8 +6113,8 @@ pub fn referenced_parameters<S: std::hash::BuildHasher>(
     );
 }
 
-/// Whether a deferred slot ([`CtValue::Deferred`]) or an elaborator marker
-/// ([`CtValue::Marker`]) occurs in a value argument anywhere in `ty`.
+/// Whether a deferred slot ([`CtValue::Deferred`]) occurs in a value
+/// argument anywhere in `ty`.
 pub fn mentions_deferred_value(ty: &Ty) -> bool {
     struct Finder(bool);
     impl TyRewrite for Finder {
@@ -6124,7 +6123,7 @@ pub fn mentions_deferred_value(ty: &Ty) -> bool {
         }
 
         fn value(&mut self, value: &CtValue) {
-            self.0 |= matches!(value, CtValue::Deferred(_) | CtValue::Marker(_));
+            self.0 |= matches!(value, CtValue::Deferred(_));
         }
     }
     let mut finder = Finder(false);
@@ -6456,7 +6455,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
             memory.iter().flatten().flatten().any(ct_value_is_symbolic)
         }
         CtValue::StoreToMem(referent) => ct_value_is_symbolic(referent),
-        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => true,
+        CtValue::Expr(_) | CtValue::Deferred(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {

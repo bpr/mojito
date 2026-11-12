@@ -2373,7 +2373,7 @@ impl Checker {
 
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
-            CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::int()),
+            CtValue::Int(_) | CtValue::Deferred(_) => Some(Ty::int()),
             CtValue::Expr(expr) => expr
                 .meta()
                 .value_ty()

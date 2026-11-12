@@ -122,7 +122,6 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         | CtValue::Trait(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
-        | CtValue::Marker(_)
         | CtValue::RemovedArg => Err(RuntimeError::Unsupported(
             "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
         )),

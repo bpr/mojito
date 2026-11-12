@@ -899,10 +899,7 @@ pub(super) fn bind_value(
     bindings: &mut Bindings,
 ) -> Result<(), String> {
     let name = &binder.name;
-    if matches!(
-        value,
-        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-    ) {
+    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) {
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(binder) {

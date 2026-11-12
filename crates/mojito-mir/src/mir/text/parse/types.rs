@@ -1306,46 +1306,22 @@ impl Decoder {
 
     /// A deferred slot: the `binder` record of the parameter whose slot it
     /// fills. An artifact older than schema 1.5 spells it as a bare symbol,
-    /// which reads as an unbound reference of that spelling, or as the
-    /// elaborator marker the symbol spells.
+    /// which reads as an unbound reference of that spelling; a symbol that
+    /// spelled an elaborator marker, withdrawn by schema 1.185, no longer
+    /// loads.
     fn deferred_slot(&mut self, value: &Value) -> Option<CtValue> {
         if matches!(&value.kind, ValueKind::Record(tag, _) if tag == "binder") {
             return self.binder_ref(value).map(CtValue::Deferred);
         }
         let name = self.symbol(value)?;
-        Some(legacy_marker(&name).map_or_else(
-            || CtValue::Deferred(ParamRef::unbound(&name)),
-            CtValue::Marker,
-        ))
-    }
-
-    fn ct_marker(&mut self, value: &Value) -> Option<CtMarker> {
-        match &value.kind {
-            ValueKind::Atom(tag) if tag == "marker_local" => Some(CtMarker::RuntimeLocal),
-            ValueKind::Atom(tag) if tag == "marker_type" => Some(CtMarker::TypeName),
-            ValueKind::Record(tag, fields) if tag == "marker_tuple_origin" => {
-                let id = self.req(value, fields, "id", Self::uint32)?;
-                let mutability = self.req(value, fields, "mutability", Self::mutability)?;
-                self.unknown(fields, &["id", "mutability"]);
-                Some(CtMarker::TupleOrigin {
-                    id: OriginParamId(id),
-                    mutability,
-                })
-            }
-            ValueKind::Atom(tag) if tag == "marker_applied" => Some(CtMarker::Applied),
-            // Schema 1.37 and earlier carried the folded value of an applied
-            // constant, and spelled a layout constant apart.
-            ValueKind::Positional(tag, inner) if tag == "marker_applied" => {
-                self.int64(inner).map(|_| CtMarker::Applied)
-            }
-            ValueKind::Positional(tag, inner) if tag == "marker_layout" => {
-                self.ty(inner).map(|_| CtMarker::Applied)
-            }
-            _ => {
-                self.error(value.span, "expected compile-time marker");
-                None
-            }
+        if is_withdrawn_marker(&name) {
+            self.error(
+                value.span,
+                format!("withdrawn elaborator marker `{name}` (schema 1.185)"),
+            );
+            return None;
         }
+        Some(CtValue::Deferred(ParamRef::unbound(&name)))
     }
 
     pub(super) fn ct_value(&mut self, value: &Value) -> Option<CtValue> {
@@ -1380,7 +1356,13 @@ impl Decoder {
                     .map(|target| CtValue::KgenTarget(Box::new(target))),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
                 "ct_deferred" => self.deferred_slot(inner),
-                "ct_marker" => self.ct_marker(inner).map(CtValue::Marker),
+                "ct_marker" => {
+                    self.error(
+                        value.span,
+                        "withdrawn compile-time value `ct_marker` (schema 1.185)",
+                    );
+                    None
+                }
                 // Schema 1.0 spelled both a parameter reference and a
                 // deferred callable-value slot this way; a declared scalar
                 // value parameter is the reference.
@@ -1564,22 +1546,10 @@ enum LegacyBinder {
     Undeclared,
 }
 
-/// The elaborator marker a deferred slot older than schema 1.5 spells.
-fn legacy_marker(name: &str) -> Option<CtMarker> {
-    match name {
-        "$local" => return Some(CtMarker::RuntimeLocal),
-        "$type" => return Some(CtMarker::TypeName),
-        _ => {}
-    }
-    let (index, permission) = name.strip_prefix("$tuple-origin:")?.split_once(':')?;
-    let id = OriginParamId(index.parse().ok()?);
-    let mutability = match permission {
-        "imm" => Mutability::Immutable,
-        "mut" => Mutability::Mutable,
-        "param" => Mutability::Param(id),
-        _ => return None,
-    };
-    Some(CtMarker::TupleOrigin { id, mutability })
+/// Whether a deferred slot older than schema 1.5 spells an elaborator
+/// marker, which schema 1.185 withdrew.
+fn is_withdrawn_marker(name: &str) -> bool {
+    matches!(name, "$local" | "$type" | "$applied") || name.starts_with("$tuple-origin:")
 }
 
 /// The `SIMDLength` a schema 1.125 width's lane count `lanes` is:

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.184
+# Mojito Textual MIR Format, Version 1.185
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.184 is implemented end to end for inspection and loading: canonical
+Version 1.185 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.184
+mojito-mir 1.185
 ```
 
-The writer emits 1.184. The reader accepts 1.0 through 1.184; *Schema 1.0*
+The writer emits 1.185. The reader accepts 1.0 through 1.185; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -79,7 +79,8 @@ symbol, and an elaborator marker, which an older artifact spelled as a
 deferred slot, is `ct_marker`. A 1.4 consumer rejects both, which is the
 intended failure. A 1.5 consumer reads an older bare symbol as an unbound
 reference of that spelling, or as the marker the symbol spells (`$local`,
-`$type`, `$tuple-origin:<id>:<imm|mut|param>`).
+`$type`, `$tuple-origin:<id>:<imm|mut|param>`). Schema 1.185 withdrew the
+markers, so a consumer since rejects both `ct_marker` and those spellings.
 
 Minor version 6 carries that identity on a pack query. The `pack` field of
 `param_pack_query` is a `binder { owner, slot, name }` record where it was a
@@ -1164,6 +1165,14 @@ literal records how the `None` it passes as `__slice_literal__` reaches
 the marker's `NoneType` parameter (`CheckedSliceLiteral::marker`), as an
 omitted operand's already did (R2097). The MIR text is unchanged.
 
+Schema 1.185 withdraws the compile-time value `ct_marker` (an elaborator
+classification of a name: `marker_local`, `marker_type`,
+`marker_tuple_origin`, `marker_applied`), which no compiler phase has
+produced since the comptime value rewrite was removed (R2114). An older
+artifact holding one, or a pre-1.5 deferred slot spelling one (`$local`,
+`$type`, `$applied`, `$tuple-origin:…`), no longer loads. The package
+format moves to `mojito-package 211`.
+
 Schema 1.184 adds the compile-time value `ct_func_symbol("symbol")`,
 upstream's `#kgen.func.symbol<@symbol>`: a thin function's symbol bound
 to a callable-typed parameter, which joins generic identity (a struct
@@ -1777,13 +1786,8 @@ own parameters and nothing else (schema 1.112),
 `ct_expr(param-expr)` for a residual
 parameter expression,
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value
-parameter the VM reifies) and which is no part of generic identity, or
-`ct_marker(marker)` for an elaborator classification of a name that is no
-parameter: `marker_local`, `marker_type`,
-`marker_tuple_origin { id, mutability }`, or `marker_applied`, a module
-constant whose initializer applies a callable, which the check binds as its
-application (schema 1.38; a 1.37 artifact's `marker_applied(int)` and
-`marker_layout(type)` read as the same marker). A deferred slot names the binder
+parameter the VM reifies) and which is no part of generic identity
+(schema 1.185 withdrew `ct_marker`). A deferred slot names the binder
 whose slot it fills by a `binder { owner, slot, name }` record.
 
 `ct_pointer { offset: int, slots: dangling | [ct-value | absent, ...] }`

@@ -1860,9 +1860,7 @@ second expression tree.
   witness's binders slot by slot (`rebind_slots`). A deferred slot (`CtValue::Deferred`)
   carries the `ParamRef` of the binder whose slot it fills, taken from the
   declaration at each site the checker builds one, so the Tuple closedness
-  check (`ClosingBinders`) counts it as bound only by that binder. The
-  elaborator's markers for a name that is no parameter are a separate
-  variant, `CtValue::Marker(CtMarker)`. A pack query
+  check (`ClosingBinders`) counts it as bound only by that binder. A pack query
   (`ParamKind::PackQuery`) takes its pack as an operand, as upstream's
   `pop.variadic.size` and `TypeList` queries do: the pack binder's
   `DeclRef` in a template, the list a substitution bound it to after one

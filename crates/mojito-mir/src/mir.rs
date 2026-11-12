@@ -4628,10 +4628,7 @@ impl<'a> Flatten<'a> {
                     },
                     TyArg::Val(value),
                 ) if !occupied.contains(&name.as_str())
-                    && !matches!(
-                        value,
-                        CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::FuncSymbol(_)
-                    ) =>
+                    && !matches!(value, CtValue::Deferred(_) | CtValue::FuncSymbol(_)) =>
                 {
                     Some((name.clone(), value))
                 }

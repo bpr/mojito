@@ -403,6 +403,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `CtValue::Marker` and its `CtMarker` classifications are gone: no
+  phase has built one since the comptime value rewrite was removed, so the
+  variant's match arms and MIR text form go with it. MIR text moves to
+  schema 1.185, which rejects `ct_marker` and the pre-1.5 deferred-slot
+  marker spellings, and the package format to `mojito-package 211`
+  (R2114).
 - A value-shaped bracket argument's attribute (a type, an origin, a
   converted constructor application, a lane count, a generator, a trait,
   a raw value list) is carried once, by its call, as upstream's op carries

@@ -2216,7 +2216,7 @@ impl Checker {
                 (ParamDecl::Type { variadic: true, .. }, _) => return None,
                 // A deferred callable-value slot is not part of the key; a
                 // residual value names no clone at all (`mangle` refuses it).
-                (_, TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_))) => continue,
+                (_, TyArg::Val(CtValue::Deferred(_))) => continue,
                 (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                     values.push(CtValue::Type(ty.clone()));
                 }

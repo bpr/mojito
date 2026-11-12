@@ -7,7 +7,7 @@ use mojito_checked::checked::{
     ComptimeSequence,
 };
 use mojito_checked::declaration::InlineLevel;
-use mojito_types::ct::{CtMarker, CtValue};
+use mojito_types::ct::CtValue;
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOriginSet, Mutability, Origin, OriginSeg,
     PointerOrigin, RefSig, RefTy, SigMutability, SigOrigin,
@@ -3042,24 +3042,8 @@ fn ct_value(value: &CtValue) -> String {
         ),
         CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),
         CtValue::Deferred(v) => positional("ct_deferred", &binder_ref(v)),
-        CtValue::Marker(v) => positional("ct_marker", &ct_marker(v)),
         CtValue::RemovedArg => "ct_removed_arg".into(),
         CtValue::None => "ct_none".into(),
-    }
-}
-
-fn ct_marker(value: &CtMarker) -> String {
-    match value {
-        CtMarker::RuntimeLocal => "marker_local".into(),
-        CtMarker::TypeName => "marker_type".into(),
-        CtMarker::TupleOrigin { id, mutability } => record(
-            "marker_tuple_origin",
-            &[
-                ("id", id.0.to_string()),
-                ("mutability", mutability_value(*mutability)),
-            ],
-        ),
-        CtMarker::Applied => "marker_applied".into(),
     }
 }
 

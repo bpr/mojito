@@ -181,13 +181,10 @@ impl DependentValues {
 /// parameters, or an aggregate holding one.
 pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
     match argument {
-        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => true,
-        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values.iter().any(|value| {
-            matches!(
-                value,
-                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-            )
-        }),
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
+        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values
+            .iter()
+            .any(|value| matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))),
         TyArg::Val(_) => false,
         TyArg::Origin(
             mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,

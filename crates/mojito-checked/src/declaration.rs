@@ -381,9 +381,7 @@ impl StructDeclaration {
                         ..
                     },
                     TyArg::Val(value),
-                ) if !decl.binds_callables()
-                    && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
-                {
+                ) if !decl.binds_callables() && !matches!(value, CtValue::Deferred(_)) => {
                     bindings.bind(id.clone(), context.constant(value.clone()).ok()?);
                 }
                 _ => return None,

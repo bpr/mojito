@@ -4790,10 +4790,9 @@ impl MetaTy {
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either; a
             // function symbol does not carry its signature.
-            CtValue::FuncSymbol(_)
-            | CtValue::Deferred(_)
-            | CtValue::Marker(_)
-            | CtValue::RemovedArg => Self::value(Ty::infer()),
+            CtValue::FuncSymbol(_) | CtValue::Deferred(_) | CtValue::RemovedArg => {
+                Self::value(Ty::infer())
+            }
         }
     }
 
