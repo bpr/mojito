@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2134**.
+Next free ID: **R2138**.
 
 ## Ordered Work
 
@@ -12005,22 +12005,62 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2119 An annotation is parsed by a separate type grammar**
+- [ ] **R2134 An annotation's named heads and projections bypass the expression grammar**
 
-  `parse_type` (`parser/types.rs`) parses an annotation (`x: Self.T`,
-  `-> None`, `-> Self`) with its own grammar into `SourceType`, where
-  upstream parses an annotation as an expression and converts the `None`
-  value to `NoneType` in a type context.
-  - Bracket operands already parse as expressions (R1511, R1512, R1514).
-    What remains is the annotation position itself.
-  - No program behaves differently today: the cost is a second grammar
-    and the `SourceType` arms that mirror expression forms.
-  - The session plans the migration in slices and lands the first, the
-    atoms `None`, `Self`, and `Self.<member>` parsed as expressions and
-    converted through `Expr::type_spelling`.
-  - Found while landing R1512 (2026-11-11).
-  - Depends on R2118.
+  `parse_type` still reads `NAME`, `NAME[args]`, `T.NAME[args]`,
+  `T[expr]`, and constructions (`Pair[Int](1, 2)`) with its own grammar
+  (`parse_named_type`, `parse_type_assoc_tail`), where upstream parses the
+  annotation as one postfix expression.
+  - Parse them with `parse_expression(Precedence::Power)` and grow
+    `Expr::annotation_type` to convert a bracket application on any base,
+    a lowercase-rooted chain (`values.element_types[i]`, `tl[1]`), and a
+    call (`Type::Value`).
+  - Deletes `parse_named_type`, the tail's dot/bracket/construction arms
+    (whose `.NAME` uses `expect_identifier`, not `expect_member_name`),
+    and the parser's use of `Type::expression_spelling`.
+  - Stop condition: a parse dump of every `assets/` and `stdlib/` file
+    differs from the base binary only in `SyntaxId` lines.
+  - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R2135 `type_of`, function, and generator annotations bypass the expression grammar**
+
+  `parse_type` reads `type_of(...)`, `def(...)`, and `__generator_type`
+  with its own arms, where the expression grammar already yields a `Call`
+  and `ExprKind::TypeValue` for them.
+  - `Expr::annotation_type` unwraps them, and a generator result's `&`
+    composition becomes the `Infix(BitAnd)` upstream parses, converted to
+    `$trait_composition`.
+  - After it, `parse_type` is the `ref`/`*` prefixes plus one expression.
+  - Depends on R2134.
+  - Model: Fable, Planned.
+
+- [ ] **R2136 Type-parameter bounds are a third, identifier-led grammar**
+
+  `parse_type_params` (`parser/types.rs`) reads a bound (`T: Copyable &
+  Hashable`, `v: Self.T`, `x: M.A`, `o: Origin[mut=e]`) with its own
+  grammar, where upstream parses the bound as an expression.
+  - Parse one expression at `Precedence::BitOr` and classify it: trait
+    names and compositions → `bounds`, `def` → `callable_bound`,
+    `Origin[mut=e]`/`ImmOrigin`/`MutOrigin` → `origin_mutability`,
+    anything else → `value_type`.
+  - Deletes the `v: Self.T` and `x: M.A` special arms.
+  - Depends on R2135.
+  - Model: Fable, Planned.
+
+- [ ] **R2137 The AST stores an annotation as a parsed type, not as its expression**
+
+  `Param.ty`, field types, `ret`, `VarDecl` annotations, and
+  `FunctionTypeParam.ty` hold the `Type` the parser built, where upstream
+  keeps the annotation expression and sema evaluates it in a type context.
+  - Plan it first: about 350 `SourceType`/`Type::` uses across the crates
+    make it multi-session, so the plan splits it into chained entries.
+  - The checker's `ty_from_anno` would convert through
+    `Expr::annotation_type`, deleting `Type` as a parser product along with
+    `Type::Value` and `Type::expression_spelling`.
+  - Updates `docs/architecture.md` and `docs/symbol-map.md`.
+  - Depends on R2136.
+  - Model: Fable, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

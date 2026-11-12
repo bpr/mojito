@@ -6,8 +6,20 @@ use super::*;
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a type annotation: `Bool`, `None`, `Self.T`, associated lookups
     /// like `C.Element`, or a named type optionally applied to type arguments
-    /// (`Pair[Int]`).
+    /// (`Pair[Int]`). The atoms `None`, `Self`, and `Self.<member>` are read
+    /// by the expression grammar and converted in the annotation's type
+    /// context ([`Expr::annotation_type`]), as upstream parses an annotation.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
+        if matches!(self.peek_token()?, Some(Token::None))
+            || matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "Self")
+        {
+            let start = self.peek_start();
+            let atom = self.parse_member_chain()?;
+            let ty = atom.annotation_type().ok_or_else(|| {
+                ParseError::Message("expected a type, found an expression".to_string())
+            })?;
+            return self.parse_type_assoc_tail(ty, start);
+        }
         let token = self.next_token()?;
         let start = self.last_span.0;
         let ty = match token {
@@ -16,30 +28,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // the qualified spread keeps its own node so the elaborator can
             // tell it from a bare `*Ts`, which a struct member may not use.
             Token::Star => {
-                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
-                if name == "Self" && matches!(self.peek_token()?, Some(Token::Dot)) {
-                    self.next_token()?; // consume '.'
-                    let pack =
-                        self.expect_identifier("Expected a type-pack name after '*Self.'")?;
-                    return Ok(Type::SelfParam(format!("*{pack}")));
+                if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+                    let name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                    return Ok(Type::Named(format!("*{name}"), Vec::new()));
                 }
-                Ok(Type::Named(format!("*{name}"), Vec::new()))
+                let mut operand = self.parse_prefix()?;
+                if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
+                    && matches!(self.peek_token()?, Some(Token::Dot))
+                {
+                    operand = self.parse_infix(operand)?;
+                    return pack_spread_type(&operand).ok_or_else(|| {
+                        ParseError::Message("Expected a type-pack name after '*Self.'".to_string())
+                    });
+                }
+                pack_spread_type(&operand).ok_or_else(|| {
+                    ParseError::Message("Expected a type-pack name after '*'".to_string())
+                })
             }
             // A function type: `def(types) [effects] -> ret`.
             Token::Def => self.parse_function_type_tail(),
             // A generator type: `__generator_type [params] result`.
             Token::GeneratorType => self.parse_generator_type_tail(),
-            Token::None => Ok(Type::None),
             Token::Identifier(id) => match id.as_str() {
-                // `Self.T` references one of the enclosing struct's type
-                // parameters; bare `Self` is the enclosing struct/trait type.
-                "Self" if matches!(self.peek_token()?, Some(Token::Dot)) => {
-                    self.next_token()?; // consume '.'
-                    let param =
-                        self.expect_identifier("Expected a type parameter name after 'Self.'")?;
-                    Ok(Type::SelfParam(param))
-                }
-                "Self" => Ok(Type::SelfType),
                 // Upstream's `type_of(x)`: the type of a compile-time
                 // expression, retained as its operand.
                 "type_of" if matches!(self.peek_token()?, Some(Token::LParen)) => {
@@ -71,6 +81,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }?;
 
         self.parse_type_assoc_tail(ty, start)
+    }
+
+    /// Parses an annotation atom through the expression grammar: a primary
+    /// followed by its `.NAME` members, leaving a following `[` or `(` to the
+    /// annotation's projection tail.
+    fn parse_member_chain(&mut self) -> Result<Expr, ParseError> {
+        let mut atom = self.parse_prefix()?;
+        while matches!(self.peek_token()?, Some(Token::Dot)) {
+            atom = self.parse_infix(atom)?;
+        }
+        Ok(atom)
     }
 
     /// Parses the rest of a named type whose name `id` (starting at `start`)
@@ -464,14 +485,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 return Ok(ParamArg::Type(Type::Named(format!("*{name}"), Vec::new())));
             }
             let operand = self.parse_expression(Precedence::Lowest)?;
-            return Ok(match &operand.kind {
-                ExprKind::Identifier(name) => {
-                    ParamArg::Type(Type::Named(format!("*{name}"), Vec::new()))
-                }
-                ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
-                    ParamArg::Type(Type::SelfParam(format!("*{field}")))
-                }
-                _ => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
+            return Ok(match pack_spread_type(&operand) {
+                Some(ty) => ParamArg::Type(ty),
+                None => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
             });
         }
         if self.peek_starts_type()? {
@@ -746,4 +762,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     // --- Expressions (Pratt parser) ---
+}
+
+/// The pack type a `*` spread's operand names: a bare pack (`*Ts`) or the
+/// enclosing struct's own pack (`*Self.Ts`). `None` for any other type-list
+/// expression, which spreads as a value.
+fn pack_spread_type(operand: &Expr) -> Option<Type> {
+    match &operand.kind {
+        ExprKind::Identifier(name) => Some(Type::Named(format!("*{name}"), Vec::new())),
+        _ => operand
+            .self_member()
+            .map(|field| Type::SelfParam(format!("*{field}"))),
+    }
 }

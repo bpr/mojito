@@ -1237,6 +1237,12 @@ function_type_param:
 fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
+An annotation's `None`, `Self`, and `Self.NAME` atoms are read by the
+expression grammar (the `None` literal, a name, a member access) and
+converted in the annotation's type context, where the `None` value is the
+none type; a bracket operand reads the same expression but keeps `None` a
+value. The `type:` productions describe the shapes an annotation accepts.
+
 `None` is a reserved keyword. `Bool` is a plain `NAME`, the prelude's
 `std.builtin.bool.Bool` struct, which a program's own `struct Bool` shadows.
 `Int`, `UInt`, and `Float64` are plain `NAME`s too: the prelude's `comptime`

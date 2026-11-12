@@ -458,6 +458,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An annotation's `None`, `Self`, and `Self.<member>` atoms parse
+  through the expression grammar and convert in the annotation's type
+  context (`Expr::annotation_type`), as upstream parses an annotation as
+  an expression; a bracket `None` stays a value. A member name after
+  `Self.` now admits the member keywords the expression grammar does
+  (R2119).
 - The checker reads a bracket operand's `Self.<member>` only as the
   expression the parser produces, as upstream does: the arms that matched
   it as a `Self.<member>` type spelling beside that expression (origin,

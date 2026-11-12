@@ -5369,3 +5369,67 @@ fn self_and_none_in_a_bracket_are_expressions() {
         "{call:?}"
     );
 }
+
+/// The parameter types and result of each method of the one struct `source`
+/// declares.
+fn method_signatures(source: &str) -> Vec<(Vec<Type>, Option<Type>)> {
+    match parse(source).into_iter().next().map(|stmt| stmt.kind) {
+        Some(StmtKind::Struct { methods, .. }) => methods
+            .into_iter()
+            .map(|method| {
+                (
+                    method.params.into_iter().map(|param| param.ty).collect(),
+                    method.ret,
+                )
+            })
+            .collect(),
+        other => panic!("expected a struct, got {other:?}"),
+    }
+}
+
+#[test]
+fn annotation_atoms_parse_through_the_expression_grammar() {
+    let self_param = |name: &str| Type::SelfParam(name.into());
+    let signatures = method_signatures(
+        "struct S[T: AnyType, *Ts: AnyType]:\n    \
+         def f(self, x: Self.T) -> Self:\n        pass\n    \
+         def g(self) -> None:\n        pass\n    \
+         def h(self, x: Self.T.Element):\n        pass\n    \
+         def k(self, *args: *Self.Ts):\n        pass\n",
+    );
+    assert_eq!(
+        signatures,
+        vec![
+            (vec![self_param("T")], Some(Type::SelfType)),
+            (vec![], Some(Type::None)),
+            (
+                vec![Type::Assoc {
+                    base: Box::new(self_param("T")),
+                    name: "Element".into(),
+                    args: vec![],
+                }],
+                None,
+            ),
+            (vec![self_param("*Ts")], None),
+        ]
+    );
+}
+
+#[test]
+fn annotation_method_call_is_not_a_type() {
+    let error = mojito::parse("struct S:\n    def f(self) -> Self.make():\n        pass\n")
+        .expect_err("a method call is no annotation");
+    assert!(
+        error
+            .to_string()
+            .starts_with("expected a type, found an expression"),
+        "{error}"
+    );
+}
+
+#[test]
+fn annotation_none_is_the_none_type_but_a_bracket_none_stays_a_value() {
+    let none = Expr::from(ExprKind::None);
+    assert_eq!(none.annotation_type(), Some(Type::None));
+    assert_eq!(none.type_spelling(), None);
+}

@@ -2506,7 +2506,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the bracket suffix parses, which the checker classifies as a type or a
   value by what it denotes (`Checker::denoted_type`). An overload key spells
   an application operand (`List[Pair[Int]]`) as the type it names
-  (`Expr::type_spelling`, read by `symbol::ast_raw`).
+  (`Expr::type_spelling`, read by `symbol::ast_raw`). An annotation's
+  `None`, `Self`, and `Self.<member>` atoms parse as expressions in
+  `Parser::parse_type` and convert through `Expr::annotation_type`, the
+  annotation's type context, which alone maps the `None` value to
+  `Type::None`.
   A callable bound (`F: def[width: SIMDLength](...) -> ...`) spells
   through `symbol::func_annotation_raw`/`annotation_display`, which mirror
   the checked contract's `write_callable`/`write_param_decls` display, its

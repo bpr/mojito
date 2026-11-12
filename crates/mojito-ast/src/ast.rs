@@ -2100,6 +2100,17 @@ impl Expr {
             _ => None,
         }
     }
+
+    /// The type an annotation's expression spells (`x: Self.T`, `-> None`):
+    /// the annotation's type context, where upstream turns the `None` value
+    /// into the none type. A bracket operand is no such context (`List[None]`
+    /// keeps a `None` value), so [`Self::type_spelling`] leaves `None` alone.
+    pub fn annotation_type(&self) -> Option<Type> {
+        match &self.kind {
+            ExprKind::None => Some(Type::None),
+            _ => self.type_spelling(),
+        }
+    }
 }
 
 /// Wrap a bare [`ExprKind`] into an [`Expr`] with a dummy span. Convenient for
