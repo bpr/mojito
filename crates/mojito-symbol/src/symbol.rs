@@ -2303,8 +2303,7 @@ fn simd_binder_slot<'a>(
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
-        })
-        | ParamArg::Type(Type::SelfParam(name)) => name.as_str(),
+        }) => name.as_str(),
         ParamArg::Value(expr) => expr.self_member()?,
         _ => return None,
     };
@@ -2403,11 +2402,8 @@ fn syntactic_origin_argument(
             Some([only]) if only == "Origin" || only == "OriginSet"
         )
     };
-    let value = match arg {
-        ParamArg::Value(value) => value,
-        // A struct's own origin binder, as the checker spells `Self.origin`.
-        ParamArg::Type(Type::SelfParam(name)) => return is_origin_binder(name),
-        _ => return false,
+    let ParamArg::Value(value) = arg else {
+        return false;
     };
     // A struct's own origin binder, spelled `Self.origin`.
     if let Some(name) = value.self_member() {

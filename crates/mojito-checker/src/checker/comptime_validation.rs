@@ -5718,12 +5718,11 @@ impl Checker {
         )
     }
 
-    /// The raw parameter list a bracket argument names: the enclosing
-    /// struct's own `Self.values`, or any compile-time value that is one
-    /// (`vs.values`, a `raw: KGENParamList[T]` parameter).
+    /// The raw parameter list a bracket argument names: any compile-time
+    /// value that is one (`Self.values`, `vs.values`, a `raw:
+    /// KGENParamList[T]` parameter).
     pub(super) fn raw_list_argument(&self, argument: &ParamArg) -> Option<ParamExpr> {
         match argument {
-            ParamArg::Type(SourceType::SelfParam(name)) => self.self_raw_list(name),
             ParamArg::Value(expr) => self.compile_dependent_ct_expr(expr).ok().filter(|raw| {
                 raw.as_decl_ref().is_some()
                     && matches!(raw.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
@@ -5799,29 +5798,6 @@ impl Checker {
             }
             _ => None,
         }
-    }
-
-    /// The enclosing struct's own value pack or raw parameter list
-    /// `Self.<field>`, as the parameter-list reference its binder declares.
-    pub(super) fn self_raw_list(&self, field: &str) -> Option<ParamExpr> {
-        if let Some(pack) = self.self_value_pack(field) {
-            return Some(pack);
-        }
-        self.self_decls.iter().find_map(|decl| match decl {
-            ParamDecl::Value { ty, .. }
-                if decl.name().trim_start_matches('*') == field
-                    && matches!(
-                        decl.binder_meta(),
-                        mojito_types::param_expr::MetaTy::ParamList(_)
-                    ) =>
-            {
-                Some(
-                    self.param_context
-                        .intern(&super::annotations::value_parameter_expr(decl, ty)),
-                )
-            }
-            _ => None,
-        })
     }
 
     /// The enclosing struct's pack visible binder named `field` (`Self.vs`,

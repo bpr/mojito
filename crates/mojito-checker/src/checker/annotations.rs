@@ -94,34 +94,16 @@ impl Checker {
         {
             return Ok(dtype);
         }
-        if let mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) = arg {
-            match self.self_param_value(param) {
-                Some(value) if let Some(dtype) = mojito_types::types::dtype_of_value(&value) => {
-                    return Ok(SimdDtype::Known(dtype));
-                }
-                Some(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::dtype()) => {
-                    return Ok(SimdDtype::Expr(expr));
-                }
-                _ => {}
-            }
-        }
         // Any other compile-time expression of type `DType`
         // (`_uint_type_of_width[w]()`, a value's `x.dtype`, the enclosing
         // struct's `comptime` member `Self.integral_type`) is the value it
         // folds to, or that expression while its operands are open.
-        let spelled = match arg {
-            mojito_ast::ast::ParamArg::Type(ty @ SourceType::SelfParam(_)) => {
-                ty.expression_spelling(mojito_common::token::DUMMY_SPAN)
-            }
-            _ => None,
-        };
-        if let Some(expr) = spelled.as_ref().or(match arg {
-            mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
-            _ => None,
-        }) && matches!(
-            expr.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Member { .. }
-        ) {
+        if let mojito_ast::ast::ParamArg::Value(expr) = arg
+            && matches!(
+                expr.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Member { .. }
+            )
+        {
             let _lifting = self.lifting_position();
             let evaluated = self.eval_associated_ct(expr);
             match evaluated {

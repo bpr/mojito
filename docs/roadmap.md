@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2133**.
+Next free ID: **R2134**.
 
 ## Ordered Work
 
@@ -4812,30 +4812,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2118 The checker reads a bracket operand's `Self.<member>` type
-  spelling**
+- [ ] **R2133 The checker reads member-chain bracket operands as type
+  syntax**
 
-  About twenty checker arms match `ParamArg::Type(SourceType::SelfParam(..))`
-  beside the `Value(Self.<member>)` arm that reads the same operand,
-  where upstream has the expression alone.
-  - Arms: `trait_type_arg`, `resolve_param_arg`, `slot_value`,
-    `resolve_trait_param_arg`, `pointer_origin_arg`, `syntactic_origin_argument`, and
-    `check_origin_mutability_argument` (`type_resolution.rs`), with
-    `type_spelled_member_read` and `self_field_read`.
-  - More arms: `resolve_origin_param_arg` and
-    `collect_field_origin_binders` (`origins/binders.rs`),
-    `param_arg_value_ty` (`declarations.rs`), `bracket_operand`
-    (`constraints.rs`), `raw_list_argument` (`comptime_validation.rs`),
-    the `Self.dt` dtype arm (`annotations.rs`), and `simd_binder_slot`
-    and `syntactic_origin_argument` (`mojito-symbol/src/symbol.rs`).
-  - Each deletion moves its body to the `Value` arm (`Expr::self_member`)
-    where that arm does not already read the operand.
-  - Done when `rg 'ParamArg::Type\((SourceType|Type)::SelfParam' crates`
-    finds only the `*` pack arms.
-  - `trait_type_arg`'s `Value` arm re-spells `Self.<member>` into its own
-    type arm (`type_resolution.rs`), the last synthesizer of the form:
-    delete the recursion with the arm.
-  - Found while landing R1512 (2026-11-11).
+  Arms still match a `ParamArg::Type(SourceType::Assoc { .. })` operand
+  (`Self.T.K`, `Self.dtype._mlir_value`), which neither the parser nor
+  elaboration produces, where upstream has the expression alone.
+  - Arms: `type_spelled_member_read` and its five call sites
+    (`lower_assoc_application_arg`, `resolve_param_arg`, `slot_value` in
+    `type_resolution.rs`, `param_arg_value_ty` in `declarations.rs`,
+    `bracket_operand` in `constraints.rs`), and `mlir_value_operand`'s
+    `Assoc` arm (`mojito-types/src/types.rs`).
+  - Confirm no producer first: `rg 'ParamArg::Type\(' crates` lists the
+    constructions (parser `*` packs and function types, `retype_param_arg`
+    and `substitute_source_param_arg_bindings` replacements, and
+    `source_type_from_ty_with_origins`).
+  - Done when no arm matches a `ParamArg::Type` holding `Assoc`.
+  - Found while landing R2118 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

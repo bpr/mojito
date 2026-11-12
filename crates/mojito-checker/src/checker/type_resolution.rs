@@ -1770,11 +1770,6 @@ impl Checker {
             }) if field == "_mlir_origin" => {
                 self.pointer_origin_arg(&ParamArg::Value((**object).clone()))?
             }
-            ParamArg::Type(SourceType::Assoc { base, name, args })
-                if name == "_mlir_origin" && args.is_empty() =>
-            {
-                self.pointer_origin_arg(&ParamArg::Type((**base).clone()))?
-            }
             _ => return Err(unsupported_mlir_type()),
         };
         Ok(TyKind::LitRefPack { elements, origin }.into())
@@ -1897,28 +1892,23 @@ impl Checker {
                     .then(|| Ok(TyKind::Trait(vec![name.clone()]).into()))
                 });
             }
-            ParamArg::Type(SourceType::SelfParam(param)) => {
-                return self.self_param_value(param).and_then(|value| match value {
-                    CtValue::Trait(traits) => Some(Ok(TyKind::Trait(traits).into())),
-                    CtValue::Expr(expr) if value.is_trait_valued() => {
-                        Some(Ok(DependentType::resolve(expr)))
-                    }
-                    _ => None,
-                });
-            }
             ParamArg::Type(_) => return None,
         };
         if let Some(traits) = self.trait_value(expr) {
             return Some(traits.map(|traits| TyKind::Trait(traits).into()));
         }
-        match &expr.kind {
-            ExprKind::Identifier(name) => trait_binder(name),
-            // The enclosing struct's own trait-valued binder (`Self.Trait`).
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                self.trait_type_arg(&ParamArg::Type(SourceType::SelfParam(field.clone())))
+        if let ExprKind::Identifier(name) = &expr.kind {
+            return trait_binder(name);
+        }
+        // The enclosing struct's own trait-valued binder (`Self.Trait`).
+        let param = expr.self_member()?;
+        self.self_param_value(param).and_then(|value| match value {
+            CtValue::Trait(traits) => Some(Ok(TyKind::Trait(traits).into())),
+            CtValue::Expr(expr) if value.is_trait_valued() => {
+                Some(Ok(DependentType::resolve(expr)))
             }
             _ => None,
-        }
+        })
     }
 
     /// The type a compiler-known name applies to `args` (`Never`, `SIMD`,
@@ -3858,55 +3848,15 @@ impl Checker {
                         context: format!("value parameter '{name}'"),
                     })
                 }
-                // `Self.n` names the enclosing struct's own value parameter:
-                // symbolic while checking the template (exactly the bare
-                // spelling `eval_associated_ct` resolves), bound to the
-                // instance value inside a per-instantiation clone.
-                ParamArg::Type(SourceType::SelfParam(param))
-                    if matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_))) =>
-                {
-                    let value = self
-                        .self_param_value(param)
-                        .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))?;
-                    let Some(actual) = self
-                        .ct_value_ty(&value, ty)
-                        .filter(|actual| !coerces(actual, ty))
-                    else {
-                        return Ok(TyArg::Val(value).into());
-                    };
-                    if let Some(lanes) = self.simd_length_lanes(
-                        &actual,
-                        ty,
-                        &self
-                            .param_context
-                            .constant(value.clone())
-                            .map_err(param_error)?,
-                    ) {
-                        let lanes = lanes?;
-                        return Ok(TyArg::Val(
-                            lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int),
-                        )
-                        .into());
-                    }
-                    self.implicit_parameter_application(&actual, ty, |slot| {
-                        self.applied_value(value, slot)
-                    })?
-                    .map(|application| TyArg::Val(CtValue::Expr(application)).into())
-                    .ok_or_else(|| TypeError::TypeMismatch {
-                        expected: ty.to_string(),
-                        found: actual.to_string(),
-                        context: format!("value parameter '{name}'"),
-                    })
-                }
                 ParamArg::Type(source)
-                    if let Some(read) = self
-                        .type_spelled_member_read(source)
-                        .or_else(|| self_field_read(source)) =>
+                    if let Some(read) = self.type_spelled_member_read(source) =>
                 {
                     self.resolve_param_arg(decl, &ParamArg::Value(read))
                 }
-                // A bare parameter name, or `Self.<field>`, in a value slot.
-                ParamArg::Type(ty) if let Some(error) = self.bare_or_field_in_value_slot(ty) => {
+                // A bare parameter name in a value slot.
+                ParamArg::Type(ty)
+                    if let Some(error) = self.bare_struct_param_in_value_slot(ty) =>
+                {
                     Err(error)
                 }
                 ParamArg::Type(_) => Err(TypeError::TypeMismatch {
@@ -4283,9 +4233,6 @@ impl Checker {
         use mojito_types::origin::PointerOrigin;
 
         let constant = match argument {
-            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(name)) => {
-                return self.enclosing_origin_param(name);
-            }
             mojito_ast::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
                 ..
@@ -4297,52 +4244,6 @@ impl Checker {
             }
             mojito_ast::ast::ParamArg::Value(expression) => {
                 return self.pointer_origin_expr(expression);
-            }
-            // `origin._subtree` in type-annotation position parses as an
-            // associated member of the origin base; expression positions
-            // route through `pointer_origin_expr` instead.
-            mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
-                if name == "_subtree" && args.is_empty() =>
-            {
-                let origin =
-                    self.pointer_origin_arg(&mojito_ast::ast::ParamArg::Type((**base).clone()))?;
-                return append_subtree(origin);
-            }
-            // `Self.origin._get_owned_interior["tag"]` in type-annotation
-            // position parses as an indexed projection over an associated
-            // member of the origin parameter; expression positions route
-            // through `pointer_origin_expr` instead.
-            mojito_ast::ast::ParamArg::Type(SourceType::IndexedProjection { base, index }) => {
-                let SourceType::Assoc {
-                    base: origin_base,
-                    name,
-                    args,
-                } = base.as_ref()
-                else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "an interior origin projection".to_string(),
-                        found: "an indexed type projection".to_string(),
-                        context: "Pointer origin".to_string(),
-                    });
-                };
-                if name != "_get_owned_interior" || !args.is_empty() {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "'_get_owned_interior[\"tag\"]'".to_string(),
-                        found: format!("'{name}'"),
-                        context: "Pointer origin projection".to_string(),
-                    });
-                }
-                let ExprKind::Str(tag) = &index.kind else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a compile-time tag string".to_string(),
-                        found: "a non-string index".to_string(),
-                        context: "interior origin projection".to_string(),
-                    });
-                };
-                let origin = self.pointer_origin_arg(&mojito_ast::ast::ParamArg::Type(
-                    (**origin_base).clone(),
-                ))?;
-                return append_interior_tag(origin, tag);
             }
             _ => {
                 return Err(TypeError::TypeMismatch {
@@ -4729,11 +4630,6 @@ impl Checker {
                     }
                 },
             },
-            ParamArg::Type(SourceType::SelfParam(param))
-                if let Some(value) = self.self_param_value(param) =>
-            {
-                value
-            }
             ParamArg::Type(source) => return Err(type_argument(source)?),
         };
         match self.ct_value_ty(&value, &Ty::error()) {
@@ -5361,30 +5257,15 @@ impl Checker {
                     Err(error) => CtValue::Expr(self.lifted_application(expr).ok_or(error)?),
                 }
             }
-            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param))
-                if let Some(value) = self.self_param_value(param) =>
-            {
-                value
-            }
             mojito_ast::ast::ParamArg::Type(source)
                 if let Some(read) = self.type_spelled_member_read(source) =>
             {
                 self.eval_associated_ct(&read)?
             }
-            // `Self.e.rows`, a field of a struct-typed value parameter,
-            // parses as an associated member of the parameter.
-            mojito_ast::ast::ParamArg::Type(source @ SourceType::Assoc { base, .. })
-                if matches!(&**base, SourceType::SelfParam(_))
-                    && let Some(read) =
-                        source.expression_spelling(mojito_common::token::DUMMY_SPAN) =>
-            {
-                self.eval_associated_ct(&read)?
-            }
             // A type argument in a width slot: the enclosing struct's own
-            // parameter spelled bare, a field spelled `Self.<field>`, or a
-            // type.
+            // parameter spelled bare, or a type.
             mojito_ast::ast::ParamArg::Type(ty) => {
-                if let Some(error) = self.bare_or_field_in_value_slot(ty) {
+                if let Some(error) = self.bare_struct_param_in_value_slot(ty) {
                     return Err(error);
                 }
                 return Err(TypeError::BadSimdWidth("a type".to_string()));
@@ -5396,12 +5277,12 @@ impl Checker {
     }
 
     /// The read a type-spelled bracket argument denotes in a value slot,
-    /// where upstream's argument is an expression: `Self.n` or `Self.T.K`
-    /// naming a compile-time value member (a struct's, or a trait's through
+    /// where upstream's argument is an expression: `Self.T.K` naming a
+    /// compile-time value member (a struct's, or a trait's through
     /// its own `Self` or a bound). `None` for any other spelling, a type
     /// parameter or type member among them, which stays a type.
     pub(super) fn type_spelled_member_read(&self, source: &SourceType) -> Option<Expr> {
-        if !matches!(source, SourceType::SelfParam(_) | SourceType::Assoc { .. }) {
+        if !matches!(source, SourceType::Assoc { .. }) {
             return None;
         }
         let read = source.expression_spelling(mojito_common::token::DUMMY_SPAN)?;
@@ -5413,17 +5294,15 @@ impl Checker {
             .then_some(read)
     }
 
-    /// Upstream's rejections of two type-shaped spellings in a value slot: the
-    /// enclosing struct's own parameter spelled bare (`Counter[length]`, which
-    /// parses as a type argument) and a field spelled `Self.<field>`.
-    pub(super) fn bare_or_field_in_value_slot(&self, ty: &SourceType) -> Option<TypeError> {
+    /// Upstream's rejection of the enclosing struct's own parameter spelled
+    /// bare as a type argument in a value slot (`Counter[length]`).
+    pub(super) fn bare_struct_param_in_value_slot(&self, ty: &SourceType) -> Option<TypeError> {
         match ty {
             SourceType::Named(name, args)
                 if args.is_empty() && self.is_enclosing_struct_param(name) =>
             {
                 Some(TypeError::UnqualifiedStructParam(name.clone()))
             }
-            SourceType::SelfParam(field) => self.instance_field_without_instance(field),
             _ => None,
         }
     }
@@ -5815,7 +5694,6 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
     }
     match value {
         mojito_ast::ast::ParamArg::Type(mojito_ast::ast::Type::Named(_, targs)) => targs.is_empty(),
-        mojito_ast::ast::ParamArg::Type(mojito_ast::ast::Type::SelfParam(_)) => true,
         mojito_ast::ast::ParamArg::Value(expression) => {
             matches!(
                 &expression.kind,
@@ -5870,7 +5748,6 @@ fn check_origin_mutability_argument(
             ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
             _ => None,
         },
-        ParamArg::Type(mojito_ast::ast::Type::SelfParam(_)) => None,
         ParamArg::Type(_) => return Err(mismatch("a type")),
         ParamArg::Named { .. } => None,
     };
@@ -5936,17 +5813,6 @@ impl mojito_types::types::TyRewrite for BinderSearch<'_> {
             mojito_types::types::rewrite_ty(ty, self)?;
         }
         Ok(expr.clone())
-    }
-}
-
-/// `Self.e.rows`, a field of a struct-typed value parameter, which parses
-/// as an associated member of the parameter, read as the value it spells.
-fn self_field_read(source: &SourceType) -> Option<Expr> {
-    match source {
-        SourceType::Assoc { base, .. } if matches!(&**base, SourceType::SelfParam(_)) => {
-            source.expression_spelling(mojito_common::token::DUMMY_SPAN)
-        }
-        _ => None,
     }
 }
 

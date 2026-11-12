@@ -3644,12 +3644,6 @@ impl Checker {
                 ..
             }) => self.build_ct(spliced, recording),
             ParamArg::Value(expr) => self.build_ct(expr, recording),
-            // `Self.values`, which a bracket parses as a type argument.
-            ParamArg::Type(SourceType::SelfParam(field))
-                if let Some(list) = self.self_raw_list(field) =>
-            {
-                Ok(list)
-            }
             // `Self.value`, a value parameter a bracket parses as a type.
             ParamArg::Type(source) if let Some(read) = self.type_spelled_member_read(source) => {
                 self.build_ct(&read, recording)
@@ -5141,11 +5135,6 @@ impl Checker {
             {
                 let attribute = self.lookup_tparam(name).map(TyArg::Ty);
                 return Ok((ConstraintOperand::Param(binder), attribute));
-            }
-            // `Self.T` names the struct's binder, as in `conforms_to`.
-            mojito_ast::ast::ParamArg::Type(ty @ SourceType::SelfParam(name)) => {
-                let attribute = self.ty_from_anno(ty).ok().map(TyArg::Ty);
-                return Ok((ConstraintOperand::Param(self.self_binder(name)), attribute));
             }
             mojito_ast::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             mojito_ast::ast::ParamArg::Named { .. } => {

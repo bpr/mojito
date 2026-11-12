@@ -382,13 +382,12 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
         use mojito_types::origin::{Mutability, Origin};
 
-        // The parser may classify a bare identifier (or `Self.name`) argument
-        // as a type argument; treat it as an origin name in an origin slot.
+        // A bare origin name spelled as a type argument is an origin name in
+        // an origin slot.
         let type_arg_name = match argument {
             ParamArg::Type(mojito_ast::ast::Type::Named(name, targs)) if targs.is_empty() => {
                 Some(name)
             }
-            ParamArg::Type(mojito_ast::ast::Type::SelfParam(name)) => Some(name),
             _ => None,
         };
         if let Some(name) = type_arg_name {
@@ -536,7 +535,6 @@ impl Checker {
                 ParamArg::Type(mojito_ast::ast::Type::Named(name, targs)) if targs.is_empty() => {
                     name.as_str()
                 }
-                ParamArg::Type(mojito_ast::ast::Type::SelfParam(name)) => name.as_str(),
                 ParamArg::Value(expression) => origin_binder_name(expression)?,
                 _ => return None,
             };

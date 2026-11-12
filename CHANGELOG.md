@@ -458,6 +458,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker reads a bracket operand's `Self.<member>` only as the
+  expression the parser produces, as upstream does: the arms that matched
+  it as a `Self.<member>` type spelling beside that expression (origin,
+  trait, dtype, raw-list, value-slot, and overload-key readers) and
+  `trait_type_arg`'s re-spelling of the expression into one are gone
+  (R2118).
 - `CtValue::Marker` and its `CtMarker` classifications are gone: no
   phase has built one since the comptime value rewrite was removed, so the
   variant's match arms and MIR text form go with it. MIR text moves to
