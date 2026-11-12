@@ -927,9 +927,10 @@ impl Checker {
         // A single-argument type application parses as a subscript
         // (`AHasher[SIMD[DType.uint64, 4](0)]`): the subscript shape
         // registers only over a declared struct.
-        let subscript_application = matches!(&value.kind, ExprKind::Index { object, .. }
-                if matches!(&object.kind, ExprKind::Identifier(base)
-                    if self.declared_structs.contains(base)));
+        let subscript_application = !matches!(value.kind, ExprKind::TypeApply { .. })
+            && value
+                .bracket_application()
+                .is_some_and(|(base, _)| self.declared_structs.contains(base));
         // A struct member's application (`TypeList.of[Trait=AnyType, Int]`)
         // names a type the same way.
         let member_application = matches!(&value.kind,
@@ -1525,6 +1526,15 @@ impl Checker {
                     && (self.structs.contains_key(source)
                         || self.traits.contains_key(source)
                         || self.comptime_aliases.contains_key(source))
+                {
+                    return Err(TypeError::DynamicTypeValue(name.clone()));
+                }
+                // Nor has a type application, in whichever bracket node the
+                // parser built it (`var x = pair[1, 2]`, `var x = G[3]`).
+                if value
+                    .bracket_application()
+                    .is_some_and(|(source, _)| self.lookup(source).is_none())
+                    && self.denotes_type_value(value)
                 {
                     return Err(TypeError::DynamicTypeValue(name.clone()));
                 }
@@ -2236,6 +2246,9 @@ impl Checker {
                         )
                         || matches!(&value.kind, ExprKind::TypeApply { name, .. }
                             if name != "__mlir_attr" || self.lookup(name).is_some())
+                        || (!matches!(value.kind, ExprKind::TypeApply { .. })
+                            && value.bracket_application().is_some()
+                            && self.denotes_type(value))
                         || (matches!(&value.kind, ExprKind::Member { .. })
                             && self.denotes_type(value)))
                 {

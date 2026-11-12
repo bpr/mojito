@@ -1356,6 +1356,14 @@ impl Checker {
                         }
                     })
                 }),
+            // Upstream's bracketed attribute (`` __mlir_attr[`8`, ` : index`] ``),
+            // unless a binding shadows the name.
+            _ if let Some((name, args)) = expr.bracket_application()
+                && name == "__mlir_attr"
+                && self.lookup(name).is_none() =>
+            {
+                self.read_bracketed_attribute(expr, &args)
+            }
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::TypeApply { .. }
                 if let Some(read) = self.read_parametric_value(expr) =>
             {
@@ -1367,6 +1375,15 @@ impl Checker {
                 if let Some(applied) = self.infer_bracket_callable(expr) =>
             {
                 applied
+            }
+            // A type application read as a runtime value, in whichever
+            // bracket node the parser built it (`pair[1, 2]`, `G[3]`).
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+                if let Some((name, _)) = expr.bracket_application()
+                    && self.lookup(name).is_none()
+                    && self.denotes_type_value(expr) =>
+            {
+                Err(type_read_as_value(name))
             }
             ExprKind::Index { object, index } => {
                 // A subscript base that is itself a reference result
@@ -1538,14 +1555,8 @@ impl Checker {
                 self.infer_multi_subscript(expr.source_span(), object, args)
             }
             ExprKind::TString { parts, .. } => self.infer_template_string(expr, parts),
-            // A parameterized type is not a runtime value; it is only valid as a
-            // static-method receiver (`UnsafePointer[T].alloc(…)`), typed in
-            // `infer_method_call`.
-            ExprKind::TypeApply { name, args }
-                if name == "__mlir_attr" && self.lookup(name).is_none() =>
-            {
-                self.read_bracketed_attribute(expr, args)
-            }
+            // A function's specialization, a Variant projection, or a type
+            // read as a value.
             ExprKind::TypeApply { name, args } => {
                 if let Some(specialized) = self.infer_specialized_callable_value(
                     expr.source_span(),
@@ -1577,11 +1588,7 @@ impl Checker {
                     }
                     Ok(result)
                 } else {
-                    Err(TypeError::TypeMismatch {
-                        expected: "a value".to_string(),
-                        found: format!("the type '{name}[…]'"),
-                        context: "a parameterized type is not a value".to_string(),
-                    })
+                    Err(type_read_as_value(name))
                 }
             }
         }
@@ -3545,5 +3552,16 @@ fn parameter_lambda(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
         }
         mojito_ast::ast::ParamArg::Named { value, .. } => parameter_lambda(value),
         _ => None,
+    }
+}
+
+/// The error for a type application read as a runtime value
+/// (`print(Pair[1, 2])`): a type is only valid as a static-method receiver
+/// (`UnsafePointer[T].alloc(…)`), typed in `infer_method_call`.
+fn type_read_as_value(name: &str) -> TypeError {
+    TypeError::TypeMismatch {
+        expected: "a value".to_string(),
+        found: format!("the type '{name}[…]'"),
+        context: "a parameterized type is not a value".to_string(),
     }
 }

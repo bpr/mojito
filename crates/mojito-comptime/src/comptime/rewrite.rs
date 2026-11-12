@@ -86,6 +86,10 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         *e = materialized;
         return;
     }
+    // A bracket after a name is one parameter application whichever node
+    // it parsed as, so its operands' expansion is named as a `TypeApply`'s.
+    let applied = e.bracket_application().is_some();
+    let parent = e.syntax_id;
     match &mut e.kind {
         ExprKind::Identifier(name) => {
             if let Some(value) = subs(name) {
@@ -120,7 +124,9 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         // A value **parameter** argument (`Box[CAP](…)`, `UnsafePointer[CAP]`) may
         // reference a comptime constant, so rewrite the `Value` param args too.
-        ExprKind::TypeApply { args, .. } => rewrite_spelled_param_args(args, subs, e.syntax_id),
+        ExprKind::TypeApply { args, .. } => {
+            rewrite_spelled(&mut args[..], subs, parent, &Operands::PARAM);
+        }
         ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => rewrite_expr(inner, subs),
         ExprKind::Infix(_, l, r) => {
             rewrite_expr(l, subs);
@@ -176,7 +182,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     _ => {}
                 }
             }
-            rewrite_spelled_param_args(param_args, subs, e.syntax_id);
+            rewrite_spelled(&mut param_args[..], subs, parent, &Operands::PARAM);
             rewrite_exprs(args, subs);
             for k in kwargs {
                 rewrite_expr(&mut k.value, subs);
@@ -258,7 +264,11 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         ExprKind::Index { object, index } => {
             rewrite_expr(object, subs);
-            rewrite_expr(index, subs);
+            if applied {
+                rewrite_spelled(&mut **index, subs, parent, &Operands::INDEX);
+            } else {
+                rewrite_expr(index, subs);
+            }
         }
         ExprKind::Slice {
             object,
@@ -274,23 +284,10 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         ExprKind::MultiIndex { object, args } => {
             rewrite_expr(object, subs);
-            for argument in args {
-                match argument {
-                    mojito_ast::ast::SubscriptArg::Index(value)
-                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        rewrite_expr(value, subs);
-                    }
-                    mojito_ast::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    }
-                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            rewrite_expr(value, subs);
-                        }
-                    }
-                }
+            if applied {
+                rewrite_spelled(&mut args[..], subs, parent, &Operands::SUBSCRIPT);
+            } else {
+                rewrite_subscript_args(args, subs);
             }
         }
         ExprKind::ListLit(elems) | ExprKind::TupleLit(elems) => rewrite_exprs(elems, subs),
@@ -302,7 +299,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
             kwargs,
         } => {
             rewrite_expr(callee, subs);
-            rewrite_spelled_param_args(param_args, subs, e.syntax_id);
+            rewrite_spelled(&mut param_args[..], subs, parent, &Operands::PARAM);
             rewrite_exprs(args, subs);
             for argument in kwargs {
                 rewrite_expr(&mut argument.value, subs);
@@ -835,29 +832,27 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
     }
 }
 
-/// Rewrite the parameter arguments of the expression `parent`. A type an
-/// alias or binder expands to (`c_int` spelling `SIMD[DType.int32, 1]`)
-/// brings expression nodes of its own; each takes an identity derived from
-/// `parent`, so every clone of one template names them alike. Ordinals 0
-/// and 1 are a vector alias call's dtype and width.
-fn rewrite_spelled_param_args(
-    args: &mut [mojito_ast::ast::ParamArg],
+/// Rewrite the parameter operands of the application `parent` (a
+/// `TypeApply`'s arguments, or a bracket's after a name). A type an alias or
+/// binder expands to (`c_int` spelling `SIMD[DType.int32, 1]`) brings
+/// expression nodes of its own; each takes an identity derived from
+/// `parent`, so every clone of one template names them alike, in whichever
+/// bracket node the application parsed as. Ordinals 0 and 1 are a vector
+/// alias call's dtype and width.
+fn rewrite_spelled<T: ?Sized>(
+    operands: &mut T,
     subs: Subs,
     parent: mojito_common::token::SyntaxId,
+    kind: &Operands<T>,
 ) {
     let mut spelled = Spelled::default();
-    for argument in args.iter() {
-        mojito_ast::visit::walk_param_arg(&mut spelled, argument);
-    }
-    rewrite_param_args(args, subs);
-    let mut synthesized = spelled.synthesized(parent, 2);
-    for argument in args.iter_mut() {
-        mojito_ast::visit::walk_param_arg_mut(&mut synthesized, argument);
-    }
+    (kind.spell)(&mut spelled, operands);
+    (kind.rewrite)(operands, subs);
+    (kind.name)(&mut spelled.synthesized(parent, 2), operands);
 }
 
 /// Rewrite the annotation of the statement `parent`, naming its expansion's
-/// nodes as [`rewrite_spelled_param_args`] does.
+/// nodes as [`rewrite_spelled`] does.
 fn rewrite_spelled_type(ty: &mut Type, subs: Subs, parent: mojito_common::token::SyntaxId) {
     let mut spelled = Spelled::default();
     mojito_ast::visit::walk_type(&mut spelled, ty);
@@ -898,6 +893,88 @@ impl mojito_ast::visit::MutVisitor for Synthesized {
             expr.syntax_id = mojito_common::token::SyntaxId::derived(self.parent, self.next);
             self.next += 1;
         }
+    }
+}
+
+/// How [`rewrite_spelled`] walks one shape of application operands.
+struct Operands<T: ?Sized> {
+    spell: fn(&mut Spelled, &T),
+    rewrite: fn(&mut T, Subs),
+    name: fn(&mut Synthesized, &mut T),
+}
+
+impl Operands<[mojito_ast::ast::ParamArg]> {
+    const PARAM: Self = Self {
+        spell: |spelled, args| {
+            for argument in args {
+                mojito_ast::visit::walk_param_arg(spelled, argument);
+            }
+        },
+        rewrite: rewrite_param_args,
+        name: |synthesized, args| {
+            for argument in args {
+                mojito_ast::visit::walk_param_arg_mut(synthesized, argument);
+            }
+        },
+    };
+}
+
+impl Operands<Expr> {
+    const INDEX: Self = Self {
+        spell: mojito_ast::visit::walk_expr,
+        rewrite: rewrite_expr,
+        name: mojito_ast::visit::walk_expr_mut,
+    };
+}
+
+impl Operands<[mojito_ast::ast::SubscriptArg]> {
+    const SUBSCRIPT: Self = Self {
+        spell: |spelled, args| {
+            for value in args.iter().filter_map(application_operand) {
+                mojito_ast::visit::walk_expr(spelled, value);
+            }
+        },
+        rewrite: rewrite_subscript_args,
+        name: |synthesized, args| {
+            for argument in args {
+                if let mojito_ast::ast::SubscriptArg::Index(value)
+                | mojito_ast::ast::SubscriptArg::Keyword { value, .. } = argument
+                {
+                    mojito_ast::visit::walk_expr_mut(synthesized, value);
+                }
+            }
+        },
+    };
+}
+
+fn rewrite_subscript_args(args: &mut [mojito_ast::ast::SubscriptArg], subs: Subs) {
+    for argument in args {
+        match argument {
+            mojito_ast::ast::SubscriptArg::Index(value)
+            | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
+                rewrite_expr(value, subs);
+            }
+            mojito_ast::ast::SubscriptArg::Slice {
+                lower, upper, step, ..
+            }
+            | mojito_ast::ast::SubscriptArg::KeywordSlice {
+                lower, upper, step, ..
+            } => {
+                for value in [lower, upper, step].into_iter().flatten() {
+                    rewrite_expr(value, subs);
+                }
+            }
+        }
+    }
+}
+
+/// The expression a positional or keyword subscript operand spells; an
+/// application has no slice operand.
+const fn application_operand(argument: &mojito_ast::ast::SubscriptArg) -> Option<&Expr> {
+    match argument {
+        mojito_ast::ast::SubscriptArg::Index(value)
+        | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => Some(value),
+        _ => None,
     }
 }
 

@@ -1169,6 +1169,17 @@ impl Checker {
         Ok(mojito_types::types::DependentType::resolve(built))
     }
 
+    /// Whether `expr` evaluates to a type, upstream's `emitExprType`
+    /// question: a type-shaped expression whose compile-time value has the
+    /// type metatype (`Int`, `pair[1, 2]`, `G[3]`), not a value constant
+    /// (`XS[1]`) or a trait.
+    pub(super) fn denotes_type_value(&self, expr: &Expr) -> bool {
+        self.may_denote_type(expr)
+            && self
+                .build_ct(expr, Recording::Silent)
+                .is_ok_and(|built| *built.meta() == MetaTy::Type)
+    }
+
     /// `type_of(operand)`, upstream's `MagicFunctionNode::emitTypeOf`: the
     /// type of the operand, which is typed without being evaluated (inside a
     /// probe, as upstream emits it into a block it then erases). A trait or a
@@ -1180,11 +1191,7 @@ impl Checker {
         if let Some(traits) = self.trait_value(operand) {
             return Ok(TyKind::AnyTrait(traits?).into());
         }
-        if self.may_denote_type(operand)
-            && self
-                .build_ct(operand, Recording::Silent)
-                .is_ok_and(|built| *built.meta() == MetaTy::Type)
-        {
+        if self.denotes_type_value(operand) {
             return Err(TypeError::Unsupported(
                 "'type_of' of a type is not supported yet".to_string(),
             ));
@@ -1224,13 +1231,7 @@ impl Checker {
         else {
             return Ok(None);
         };
-        let denotes_type = |operand: &Expr| {
-            self.may_denote_type(operand)
-                && self
-                    .build_ct(operand, Recording::Silent)
-                    .is_ok_and(|built| *built.meta() == MetaTy::Type)
-        };
-        if !denotes_type(left) && !denotes_type(right) {
+        if !self.denotes_type_value(left) && !self.denotes_type_value(right) {
             return Ok(None);
         }
         self.reject_type_parameter_comparison(*op, left, right)?;
@@ -1944,20 +1945,22 @@ impl Checker {
             ExprKind::Identifier(name) => self.build_ct_name(name, recording),
             // Upstream's bracketed attribute (`` __mlir_attr[`8`, ` : index`] ``),
             // unless a binding shadows the name.
-            ExprKind::TypeApply { name, args }
-                if name == "__mlir_attr" && self.lookup(name).is_none() =>
+            _ if let Some((name, args)) = expr.bracket_application()
+                && name == "__mlir_attr"
+                && self.lookup(name).is_none() =>
             {
-                self.mlir_bracket_attribute(args, recording)
+                self.mlir_bracket_attribute(&args, recording)
             }
-            ExprKind::TypeApply { name, args } => {
-                let (ty, attributes) = self
-                    .applied_type_value(name, args)?
-                    .ok_or_else(|| self.unresolved_head(name))?;
+            _ if let Some((name, args)) = self.parameter_application(expr)
+                && let Some(applied) = self.applied_type_value(name, &args).transpose() =>
+            {
+                let (ty, attributes) = applied?;
                 if record {
                     self.record_bracket_attributes(expr.source_span(), attributes);
                 }
                 self.ct_param(ty)
             }
+            ExprKind::TypeApply { name, .. } => Err(self.unresolved_head(name)),
             // The length of a pack that is still a parameter, which the
             // instance's elements fix (a collector's `args.__len__()`).
             _ if let Some(length) = self.pack_length_query(expr) => Ok(length),
@@ -2024,17 +2027,6 @@ impl Checker {
             // A tuple or list display is its literal constructor's
             // application at its natural type.
             _ if let Some(applied) = self.display_application(expr, None) => applied,
-            // A type application whose bracket argument parses as runtime
-            // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
-            // parse split for a single non-scalar argument).
-            ExprKind::Index { object, index }
-                if let ExprKind::Identifier(name) = &object.kind
-                    && let Some(ty) = self
-                        .ty_value_from_name(name, &subscript_param_args(index))
-                        .transpose() =>
-            {
-                self.ct_param(ty?)
-            }
             // An element of the struct's own type pack (`Self.Ts[0]`): its
             // `TypeList`'s `__getitem_param__`, at an index that may read an
             // earlier member (`Self.Ts[Self.width - 1]`).
@@ -4347,33 +4339,18 @@ impl Checker {
         };
         Ok(match &expr.kind {
             ExprKind::Bool(value) => GenericConstraint::Bool(*value),
-            ExprKind::TypeApply { name, args }
-                if mojito_types::types::trivial_predicate_name(name).is_some() =>
+            // `IsTriviallyMovable[T]`, in whichever bracket node it parsed as.
+            _ if let Some((name, args)) = expr.bracket_application()
+                && let Some(kind) = mojito_types::types::trivial_predicate_name(name) =>
             {
-                let kind = mojito_types::types::trivial_predicate_name(name).expect("guarded");
-                if args.len() != 1 {
+                let [argument] = &*args else {
                     return Err(TypeError::Unsupported(format!(
                         "{name}[T] takes exactly one type argument"
                     )));
-                }
-                let (operand, attribute) = self.predicate_operand(&args[0])?;
+                };
+                let (operand, attribute) = self.predicate_operand(argument)?;
                 self.record_bracket_attributes(expr.source_span(), vec![attribute]);
                 GenericConstraint::Trivial(kind, operand)
-            }
-            // A single non-scalar bracket argument (`IsTriviallyMovable[T]`)
-            // parses as runtime indexing; recognize the predicate here too.
-            ExprKind::Index { object, index }
-                if matches!(
-                    &object.kind,
-                    ExprKind::Identifier(name)
-                        if mojito_types::types::trivial_predicate_name(name).is_some()
-                ) =>
-            {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                let kind = mojito_types::types::trivial_predicate_name(name).expect("guarded");
-                GenericConstraint::Trivial(kind, self.constraint_operand(index)?)
             }
             ExprKind::Prefix(PrefixOp::Not, value) => {
                 GenericConstraint::Not(Box::new(self.compile_generic_constraint(value)?))
@@ -4702,7 +4679,12 @@ impl Checker {
             ExprKind::Member { object, .. } => {
                 matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr")
             }
-            ExprKind::TypeApply { name, .. } => name == "__mlir_attr",
+            _ if expr
+                .bracket_application()
+                .is_some_and(|(name, _)| name == "__mlir_attr") =>
+            {
+                true
+            }
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
             _ => false,
         };

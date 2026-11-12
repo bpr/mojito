@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The checker's main inference, constraint, and alias dispatch read a
+  bracket after a name as one parameter application whether it parsed as
+  `TypeApply`, `Index`, or `MultiIndex`. A lowercase struct's
+  `pair[5, 6]` now works as a local `comptime` alias and a type argument
+  as at the pin, `var x = pair[1, 2]` reports the pin's "dynamic type
+  values" error, and a module alias's arity mismatch names the struct
+  (R2109).
 - The checker and compile-time passes read a bracket after a name
   (`G[3]`, `pred[a, b]`, `S[k=v]`) as the same parameter application
   whether it parsed as `TypeApply`, `Index`, or `MultiIndex`, classifying

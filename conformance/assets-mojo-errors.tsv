@@ -33,7 +33,8 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1171
+# swept-count	1173
+assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/none_result_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -1173,6 +1174,7 @@ assets/type_error/value_parameter_display_identity.mojo	compile-reject	agree	err
 assets/type_error/value_parameter_string_aggregate_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'p' has 'Tuple[Int, String]' type, but value has type 'Tuple[Int, Float64]'
 assets/type_error/value_param_typed_by_type_param_mismatch.mojo	compile-reject	agree	error: invalid call to 'pair': 'pair' parameter 'w' has 'Int' type, but value has type 'Bool'
 assets/type_error/value_param_typed_by_type_param_trait.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'v' cannot be converted from 'StringLiteral["a"]' to 'T', argument type 'StringLiteral["a"]' does not conform to trait 'Intable & ImplicitlyCopyable'
+assets/type_error/var_bound_to_type_bracket.mojo	compile-reject	agree	error: dynamic type values not permitted yet; try creating a 'comptime' instead of a 'var'
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/variadic_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'show' call
 assets/type_error/variadic_list_not_copyable.mojo	compile-reject	agree	error: value of type 'VariadicList[Int, False]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'

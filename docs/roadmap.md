@@ -4775,33 +4775,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2109 The main inference and constraint dispatch reads a bracket
-  application only as `TypeApply`**
-
-  The hottest `TypeApply` arms of `infer_impl`, `infer_with_expected`, and
-  the constraint builder have no `Index`/`MultiIndex` twin, so the parser
-  cannot yet stop emitting `TypeApply` (R1514).
-  - The lever: each arm gains a twin guarded by
-    `Checker::parameter_application` (`checker/generics.rs`), placed
-    before the runtime `Index` arm; a Variant projection keys on
-    `is_variant_projection`.
-  - `inference.rs`: `read_parametric_value`, the `__mlir_attr` and
-    application arms of `infer_impl`, and the expected-`Func`
-    specialization in `infer_with_expected`.
-  - `statements.rs`: the comptime alias routing (`Identifier | TypeApply |
-    TypeValue` and the `TypeApply` alias test).
-  - `constraints.rs`: `value_alias_application`, the bracketed attribute
-    and applied type value arms, `may_denote_type`, the trivial-predicate
-    constraint, and the `__mlir_attr` test.
-  - `comptime/rewrite.rs`: `rewrite_spelled_param_args` and
-    `projection_to_subscript` read `TypeApply` only.
-  - The risk is `G[3]`, already `Index`, changing route: check
-    `bracket_function_application`, `mlir_attr_bracket`,
-    `parametric_static_method_value`, and `bool_alias_predicate_where`.
-  - Found while landing R1513 (2026-11-11).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1514 A capitalized, keyword, or type-operand bracket is parsed as a
   parameter application**
 
@@ -4818,10 +4791,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `parameter_application`, `call_name`, `expression_name_starts_lowercase`,
     and `self_param_rooted_expression` go.
   - Also: the value category of a type-denoting subscript
-    (`crates/mojito-checked/src/checked.rs`), `rewrite_spelled_param_args`'
-    re-keying for the bracket shapes (`comptime/rewrite.rs`), the parser
-    tests' `TypeApply` assertions, and `docs/grammar.md`'s `subscript_arg`
-    "value bases only" note.
+    (`crates/mojito-checked/src/checked.rs`), the parser tests' `TypeApply`
+    assertions, and `docs/grammar.md`'s `subscript_arg` "value bases only"
+    note.
+  - `projection_to_subscript` (`comptime/rewrite.rs`) converts a
+    `TypeApply` over a runtime local into the `Index` the parser already
+    builds otherwise; after the flip it is dead and goes.
   - Probe: `comptime U256 = SIMD[DType.uint64, 4]`
     (`stdlib/std/hash/_ahash.mojo`) must stay a type alias; an
     unconverted parser flip stops the bundled std packaging there.
@@ -6255,6 +6230,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   where the pin binds the specialized function and prints `7`.
   - The alias path evaluates the right-hand side as a type application.
   - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
+  - Probe: module-scope `comptime g = twice[4]` over `def twice[n: Int]()
+    -> Int: return 2 * n`, then `print(g())`, fails with "vm backend does
+    not support the built-in or callee 'g' yet"; the pin prints `8`. The
+    local `comptime h = twice[5]` fails with "not a compile-time Int
+    constant: twice"; the pin prints `10`.
   - Found while landing R446 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9296,6 +9276,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: a `comptime` binding the check does not lift, passed to
     `_FormatUtils.format_to_comptime[…]`, reports "Undefined variable
     '__module$std$string$_FormatUtils'".
+  - Probe: `var y = DType.int8` then `SIMD[y, 1](3)` reports "cannot
+    infer type parameter 'dtype' of 'SIMD'" from the constructor's
+    inference, where the pin reports "cannot use a dynamic value in a
+    parameter list"; `assets/type_error/dtype_dynamic_parameter_rejected.mojo`
+    fails its `# expect:` at `b0747f9ea`.
   - Found while landing R1973 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.

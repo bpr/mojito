@@ -624,6 +624,7 @@ assets/ok/local_type_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/loop_never_breaks_returning_body.mojo	main	exe-differential	sanitized
 assets/ok/loop_result_two_breaks.mojo	main	exe-differential	sanitized
+assets/ok/lowercase_struct_bracket_application.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/match_binding_kinds_on_temporary.mojo	main	exe-differential	sanitized
 assets/ok/match_case_layouts.mojo	main	exe-differential	sanitized
