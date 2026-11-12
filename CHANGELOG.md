@@ -306,6 +306,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A caught error of a struct with no fields, raised after
+  `inline-parametric` and `mem-2-reg` promote its empty `__init__`'s
+  `out self` to `uninitmem`, prints its value on the VM as on native and
+  the pin; the VM builds a fieldless struct's `uninitmem` from the
+  register's type (R1318).
+
 - Each literal receiver is its own instance owner, as each literal is its
   own type upstream: `(-0.5).__neg__()` and `(-709.4).__neg__()`, or
   `2.5 * 3.0` and `1.5 * 3.0`, no longer share the first instance's

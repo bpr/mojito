@@ -56,27 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R1318 The VM reads a promoted zero-field struct as `<uninit>`:
-  its `const uninitmem` ignores the register's type**
-
-  `raise E()` of a fieldless struct `E`, caught and printed, prints
-  `<uninit>` on the VM, where native and the pin print the value.
-  - Probe: `assets/ok/optional_raising_subscript.mojo` (the VM prints
-    `8 <uninit>` for `EmptyOptionalError[Int]()`), and any
-    `struct E(Writable)` with no fields raised from `def f() raises E`.
-  - Cause: `inline-parametric` inlines the empty `E.__init__`, and
-    `mem-2-reg` promotes its `out self` slot, which no store defines, to
-    `const uninitmem`, as upstream's `Mem2Reg` reads `undef`.
-  - The VM's `const_value` (`crates/mojito-vm/src/backend/vm.rs`) makes
-    every `uninitmem` an empty `Value::UninitStorage`, where a struct's
-    unwritten value is that struct with no field set yet, as the VM
-    already builds for a slot at its first use.
-  - Lever: build `uninitmem` from the destination register's type.
-  - With the pipeline off (`MOJITO_PRE_ELABORATION=0`) the VM prints the
-    value. Found while landing R1310 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2017 With the pre-elaboration pipeline off, a call to a
   `Some[Indexer]` parameter reaches the elaborator with the anonymous
   parameter unsolved**
