@@ -2878,6 +2878,30 @@ fn binds_a_function_named_bare_as_a_compile_time_value() {
 }
 
 #[test]
+fn binds_a_function_specialization_as_a_compile_time_value() {
+    // A bracket over a function binds its specialization's symbol at the
+    // instance's signature, which a call of the binding calls; an
+    // annotation selects one declaration of an overload set.
+    ok_std(
+        "def twice[n: Int]() -> Int:\n    return 2 * n\n\n\
+        def f(x: Int) -> Int:\n    return x\n\n\
+        def f(x: String) -> Int:\n    return 1\n\n\
+        comptime g = twice[4]\n\
+        comptime k: def(Int) thin -> Int = f\n\
+        def main():\n    comptime h = twice[5]\n    var a: Int = g() + h() + k(1)\n",
+    );
+    // The specialization's signature must convert to the annotation.
+    let mismatch = err_std(
+        "def twice[n: Int]() -> Int:\n    return 2 * n\n\n\
+        comptime k: def(String) thin -> Int = twice[4]\n",
+    );
+    assert!(
+        matches!(&mismatch, TypeError::TypeMismatch { context, .. } if context == "comptime initializer"),
+        "got {mismatch:?}"
+    );
+}
+
+#[test]
 fn reads_a_static_method_through_its_struct_as_a_function_value() {
     ok_std(
         "struct S:\n    @staticmethod\n    def st(x: Int) -> Int:\n        return x + 1\n\n\

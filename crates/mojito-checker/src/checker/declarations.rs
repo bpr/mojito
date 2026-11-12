@@ -1531,6 +1531,14 @@ impl Checker {
                 }
             },
         };
+        // A module constant folded to a function's symbol (`comptime g =
+        // twice[4]`) is that symbol.
+        if arguments.is_empty()
+            && self.binding_scope(name) == Some(0)
+            && let Some(function) = self.folded_function_callee(name)
+        {
+            return Ok(self.lookup(name).cloned().map(|ty| (ty, function)));
+        }
         if self.is_local_binding(name) || self.value_parameter_in_scope(name).is_some() {
             return Ok(None);
         }

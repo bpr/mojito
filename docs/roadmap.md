@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2152**.
+Next free ID: **R2155**.
 
 ## Ordered Work
 
@@ -5877,32 +5877,51 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2147 A `comptime` binding forms a function's symbol from its bare
-  name alone**
+- [ ] **R2152 A function symbol over a binder is no parameter expression**
 
-  `comptime h = g[2]` over `def g[n: Int](x: Int) -> Int`, then `h(3)`,
-  stops with "vm backend does not support the built-in or callee 'h'",
-  where the pin prints `5`.
-  - The binding reads a function only through `function_symbol_value`
-    (`checker/constraints.rs`), which takes a bare name and no declared
-    type.
-  - `callable_value_symbol` (`checker/declarations.rs`) already forms the
-    symbol from an expression and an expected type, a bracket's
-    specialization and a contextual overload included. A parameter
-    argument (`run[g[2]]`) goes through it.
-  - Probe: `comptime r = h(4)` after the above prints `6` at the pin.
-  - Probe: `var f = h` stops in MIR with "untyped variable slot".
-  - Probe: a local `comptime k = g[3]` then `k(5)` stops with "not a
-    compile-time Int constant: g".
-  - Probe: `comptime k: def(Int) thin -> Int = f` over two `f` overloads
-    reports "cannot form a reference to overloaded declaration of 'f'".
-    The pin's verdict is not verified; check it first.
-  - A call through a folded specialization must name its instance
-    (`folded_function_callee` reads bare symbols only).
-  - Found while landing R1707 (2026-11-12).
+  `comptime h = twice[m]` inside `def k[m: Int]()`, then `h()`, reports
+  "'twice[m]' is not a compile-time constant here", where the pin prints
+  `6` for `k[3]()`.
+  - `ParamContext::constant` (`mojito-types/src/param_expr.rs`) rejects a
+    `CtValue::FuncSymbol` whose arguments are still symbolic, and no
+    `ParamKind` spells `#kgen.func.symbol<@twice<m>>` over a binder.
+  - `Checker::function_specialization_symbol` forms the reference; the
+    elaborator already names a dependent `FuncSymbolRef`'s instance
+    (`substitute_func_ref`).
+  - Probe: `var h = twice[m]` then `h()` runs; only the `comptime`
+    binding fails.
+  - Found while landing R452 (2026-11-12).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
+- [ ] **R2153 A struct's `comptime` member holding a function is no value
+  of its function type**
+
+  `comptime f = four` (or `= twice[3]`) in `struct S`, then `S.f()`,
+  reports "Undefined variable 'S'", where the pin prints the result.
+  - A member read is the associated-member path, which has no case for a
+    `CtValue::FuncSymbol` member: `var x = S.f` reports "cannot copy
+    non-Copyable type '_'".
+  - A module or local binding of the same value works
+    (`folded_function_callee`); the member path should fold to it too.
+  - Probe: `(S.f)()` and `var x = S.f; x()`; the pin prints the result of
+    each.
+  - Found while landing R452 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2154 A local binding of an overload set keeps the overload type**
+
+  `var k: def(Int) thin -> Int = f` over two `f` overloads stops natively
+  with "pliron backend: unsupported type `Overload(...)`", where the pin
+  selects `f(Int)` and prints `3` for `k(3)`; the VM runs it.
+  - The binding's register stays the overload set's type instead of the
+    declaration the annotation selects.
+  - Probe: the local `comptime k: def(Int) thin -> Int = f` fails the
+    same way; the module one runs on both backends.
+  - Found while landing R452 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 - [ ] **R2148 A generic function is no compile-time value of a parametric
   function type**
 
@@ -6245,22 +6264,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `ParameterList()`, whose infer-only `type` then has no value to solve
     from; the keyword form `ParameterList[type=Int]()` binds it.
   - Found while landing R325 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R452 A `comptime` alias of an applied generic function is rejected**
-
-  Problem: `comptime g = f[7]` then `g()`, over `def f[v: Int]() -> Int`,
-  fails with "not a compile-time value: 'f' is not a compile-time type",
-  where the pin binds the specialized function and prints `7`.
-  - The alias path evaluates the right-hand side as a type application.
-  - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
-  - Probe: module-scope `comptime g = twice[4]` over `def twice[n: Int]()
-    -> Int: return 2 * n`, then `print(g())`, fails with "vm backend does
-    not support the built-in or callee 'g' yet"; the pin prints `8`. The
-    local `comptime h = twice[5]` fails with "not a compile-time Int
-    constant: twice"; the pin prints `10`.
-  - Found while landing R446 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

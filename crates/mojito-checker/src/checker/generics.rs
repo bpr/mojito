@@ -1244,12 +1244,48 @@ impl Checker {
         expected: Option<&Ty>,
         record: bool,
     ) -> Result<Option<Ty>, TypeError> {
+        let Some((selected, instance_arguments, target)) =
+            self.specialized_callable_value(&span, source, arguments, expected, record)?
+        else {
+            return Ok(None);
+        };
+        if record {
+            // A generic function's value names its instance at the
+            // arguments the bracket bound, as upstream's symbol reference
+            // names a specialization; MIR carries them to the elaborator.
+            if !instance_arguments.is_empty() {
+                self.record_at(span.clone()).generic_instantiation =
+                    Some(mojito_checked::checked::GenericInstantiation {
+                        callee: target.clone(),
+                        parameter_names: Vec::new(),
+                        parameter_types: Vec::new(),
+                        variadic: None,
+                        arguments: instance_arguments,
+                    });
+            }
+            self.record_at(span.clone()).overload_target = Some(target);
+            self.record_at(span).ty = Some(selected.clone());
+        }
+        Ok(Some(selected))
+    }
+
+    /// The function value `source` reads at the bracket `arguments`: its
+    /// type, the instance arguments the bracket bound, and the symbol it
+    /// lowers to, the candidate `expected` selects from an overload set.
+    pub(super) fn specialized_callable_value(
+        &self,
+        span: &SourceSpan,
+        source: CallableValueSource<'_>,
+        arguments: &[mojito_ast::ast::ParamArg],
+        expected: Option<&Ty>,
+        record: bool,
+    ) -> Result<Option<(Ty, Vec<TyArg>, String)>, TypeError> {
         let Some(CallableValueCandidates {
             name,
             callable,
             signatures,
             targets,
-        }) = self.callable_value_candidates(&span, source, record)?
+        }) = self.callable_value_candidates(span, source, record)?
         else {
             return Ok(None);
         };
@@ -1320,24 +1356,7 @@ impl Checker {
                     .unwrap_or_else(|| name.to_string());
                 (specialized, target)
             };
-        if record {
-            // A generic function's value names its instance at the
-            // arguments the bracket bound, as upstream's symbol reference
-            // names a specialization; MIR carries them to the elaborator.
-            if !instance_arguments.is_empty() {
-                self.record_at(span.clone()).generic_instantiation =
-                    Some(mojito_checked::checked::GenericInstantiation {
-                        callee: target.clone(),
-                        parameter_names: Vec::new(),
-                        parameter_types: Vec::new(),
-                        variadic: None,
-                        arguments: instance_arguments,
-                    });
-            }
-            self.record_at(span.clone()).overload_target = Some(target);
-            self.record_at(span).ty = Some(selected.clone());
-        }
-        Ok(Some(selected))
+        Ok(Some((selected, instance_arguments, target)))
     }
 
     /// Record a generic-struct application reached as a constructor target or

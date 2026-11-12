@@ -4425,14 +4425,20 @@ impl Checker {
                 .insert(name.to_string(), (level, generator));
             return Ok(true);
         }
-        // A function named bare is its symbol (`comptime h = sq`), which a
-        // call of the binding calls; the statement types the binding. A
-        // module constant's symbol was folded before any declaration.
-        if let ExprKind::Identifier(function) = &value.kind
-            && let Some(symbol) = self.function_symbol_value(function)
-        {
+        // A function named bare or specialized is its symbol (`comptime h =
+        // sq`, `comptime g = twice[4]`), which a call of the binding calls;
+        // the statement types the binding. A module constant's symbol
+        // folded before any declaration, unless its annotation selects it
+        // from an overload set, which binds here.
+        if let Some(symbol) = self.annotated_function_value(annotation, value) {
             let symbol = symbol?;
-            if !self.function_bases.is_empty() {
+            if self.function_bases.is_empty() {
+                if let Some(folded) = symbol.as_constant()
+                    && !self.has_module_constant_entry(name)
+                {
+                    self.module_values.insert(name.to_string(), folded.clone());
+                }
+            } else {
                 let level = self.param_depth().saturating_sub(1);
                 if let Some(scope) = self.local_comptime_parameters.last_mut() {
                     scope.insert(name.to_string(), (level, symbol));

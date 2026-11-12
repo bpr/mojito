@@ -26,6 +26,8 @@ pub(super) fn is_module_constant_attribute(value: &CtValue) -> bool {
             value,
             CtValue::Str(_) | CtValue::MlirAttr(_) | CtValue::KgenTarget(_)
         )
+        || (matches!(value, CtValue::FuncSymbol(_))
+            && !mojito_types::types::ct_value_is_symbolic(value))
 }
 
 /// The literal conversion a whitespace-free bracketed attribute spells,
@@ -1530,13 +1532,14 @@ impl Checker {
         }
     }
 
-    /// The table entry the module constant `name` reads from, unless a
-    /// nearer binding shadows it: its application, its folded `Int`, its
-    /// folded attribute, or its literal initializer, in that order.
     /// The function the compile-time constant `name`, module or local,
-    /// folds to, when it is a function's symbol (`comptime h = sq`): a
-    /// call of `name` calls it.
-    pub(super) fn folded_function_callee(&self, name: &str) -> Option<String> {
+    /// folds to, when it is a function's symbol, bare or specialized
+    /// (`comptime h = sq`, `comptime g = twice[4]`): a call of `name` calls
+    /// it.
+    pub(super) fn folded_function_callee(
+        &self,
+        name: &str,
+    ) -> Option<mojito_types::ct::FuncSymbolRef> {
         let expression = self.module_constant_value(name).or_else(|| {
             self.local_comptime_parameters
                 .get(self.binding_scope(name)?)?
@@ -1544,11 +1547,14 @@ impl Checker {
                 .map(|(_, expression)| expression.clone())
         })?;
         match expression.as_constant()? {
-            CtValue::FuncSymbol(function) if function.is_bare() => Some(function.symbol.clone()),
+            CtValue::FuncSymbol(function) => Some(function.clone()),
             _ => None,
         }
     }
 
+    /// The table entry the module constant `name` reads from, unless a
+    /// nearer binding shadows it: its application, its folded `Int`, its
+    /// folded attribute, or its literal initializer, in that order.
     fn module_constant_entry(&self, name: &str) -> Option<ModuleConstant<'_>> {
         if self.module_constant_shadowed(name) {
             return None;
@@ -1975,6 +1981,14 @@ impl Checker {
                 && self.lookup(name).is_none() =>
             {
                 self.mlir_bracket_attribute(&args, recording)
+            }
+            // A bracket over a module function is its specialization's
+            // symbol (`twice[4]`), a value of the instance's function type.
+            _ if let Some(specialized) = self.function_specialization_symbol(expr) => {
+                let (ty, symbol) = specialized?;
+                context
+                    .constant_as(CtValue::FuncSymbol(symbol), &ty)
+                    .map_err(param_error)
             }
             _ if let Some((name, args)) = self.parameter_application(expr)
                 && let Some(applied) = self.applied_type_value(name, &args).transpose() =>
@@ -2954,7 +2968,8 @@ impl Checker {
     /// type rather than a type alias (`comptime h = sq`): one typed already,
     /// or an overload set not declared yet, which its statement rejects.
     pub(super) fn names_function_value(&self, value: &Expr) -> bool {
-        matches!(&value.kind, ExprKind::Identifier(name)
+        self.function_specialization_symbol(value).is_some()
+            || matches!(&value.kind, ExprKind::Identifier(name)
             if self.function_symbol_value(name).is_some()
                 || (self.lookup(name).is_none()
                     && self.overload_sets.is_function(name)
@@ -2986,6 +3001,93 @@ impl Checker {
             TyKind::Overload(_) => Some(Err(TypeError::OverloadedReference(name.to_string()))),
             _ => None,
         }
+    }
+
+    /// The function `value` names or specializes read as a compile-time
+    /// value, its symbol typed by its signature: a bare function
+    /// ([`Self::function_symbol_value`]) or a bracket over one
+    /// ([`Self::function_specialization_symbol`]).
+    pub(super) fn function_value(&self, value: &Expr) -> Option<Result<ParamExpr, TypeError>> {
+        if let ExprKind::Identifier(name) = &value.kind {
+            return self.function_symbol_value(name);
+        }
+        self.function_specialization_symbol(value)
+            .map(|specialized| {
+                specialized.and_then(|(ty, symbol)| {
+                    self.param_context
+                        .constant_as(CtValue::FuncSymbol(symbol), &ty)
+                        .map_err(param_error)
+                })
+            })
+    }
+
+    /// [`Self::function_value`] at the declared function type of a
+    /// `comptime` binding, which selects an overload (`comptime k: def(Int)
+    /// thin -> Int = f`) as a callable parameter's type does.
+    pub(super) fn annotated_function_value(
+        &self,
+        annotation: Option<&SourceType>,
+        value: &Expr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let symbol = self.function_value(value)?;
+        let Some(expected) = annotation
+            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .filter(|expected| matches!(expected.kind(), TyKind::Func(_)))
+        else {
+            return Some(symbol);
+        };
+        Some(
+            self.callable_value_symbol(value, &expected)
+                .and_then(|selected| {
+                    let Some((actual, symbol)) = selected else {
+                        return symbol;
+                    };
+                    if !self.value_coerces(&actual, &expected) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: actual.to_string(),
+                            context: "comptime initializer".to_string(),
+                        });
+                    }
+                    self.param_context
+                        .constant_as(CtValue::FuncSymbol(symbol), &expected)
+                        .map_err(param_error)
+                }),
+        )
+    }
+
+    /// The module function the bracket `expr` specializes read as a
+    /// compile-time value (`comptime g = twice[4]`): its type at the bound
+    /// arguments and its symbol, upstream's `#kgen.func.symbol` of the
+    /// specialization. `None` when the bracket applies no module function
+    /// a nearer binding leaves visible.
+    pub(super) fn function_specialization_symbol(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<(Ty, mojito_types::ct::FuncSymbolRef), TypeError>> {
+        let (name, arguments) = expr.bracket_application()?;
+        if !self.overload_sets.is_function(name)
+            || self.is_local_binding(name)
+            || self.local_comptime_value(name).is_some()
+            || !matches!(
+                self.lookup(name)?.kind(),
+                TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+            )
+        {
+            return None;
+        }
+        let specialized = self.specialized_callable_value(
+            &expr.source_span(),
+            super::CallableValueSource::Binding(name),
+            &arguments,
+            None,
+            false,
+        );
+        specialized.transpose().map(|specialized| {
+            specialized.map(|(ty, arguments, symbol)| {
+                (ty, mojito_types::ct::FuncSymbolRef { symbol, arguments })
+            })
+        })
     }
 
     /// The rejection of an application or subscript headed by `name` that

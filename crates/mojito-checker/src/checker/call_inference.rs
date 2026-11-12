@@ -1095,12 +1095,17 @@ impl Checker {
         // A call through a compile-time function value (`comptime h = sq`,
         // `h(7)`) is the call of the function it folds to, `sq(7)`, never
         // of the binding.
-        if let Some(function) = self
+        let folded = self
             .folded_function_callee(name)
-            .filter(|function| function != name && self.binding_scope(function) == Some(0))
-        {
-            let called = self.infer_call(span.clone(), &function, param_args, args, kwargs)?;
-            self.record_at(span).overload_target.get_or_insert(function);
+            .filter(|function| function.symbol != name);
+        if let Some(function) = folded.as_ref().filter(|function| {
+            function.is_bare() && self.binding_scope(&function.symbol) == Some(0)
+        }) {
+            let called =
+                self.infer_call(span.clone(), &function.symbol, param_args, args, kwargs)?;
+            self.record_at(span)
+                .overload_target
+                .get_or_insert_with(|| function.symbol.clone());
             return Ok(called);
         }
         self.record_permitted_call_capture(name);
@@ -1368,6 +1373,25 @@ impl Checker {
         }
         self.record_free_call_result_origins(&span, &ty, origin_signatures.first(), args, kwargs);
         self.record_call_parameter_names(&span, &ty);
+        // A call through a module constant's function value (`comptime g =
+        // twice[4]`, `g()`, or an overload its annotation selected), typed
+        // by the selected signature, is the call of that function, as
+        // upstream folds a call of a `#kgen.func.symbol` constant; a local
+        // one calls its slot.
+        if let Some(function) = folded.filter(|_| self.binding_scope(name) == Some(0)) {
+            let mut record = self.record_at(span.clone());
+            record.overload_target = Some(function.symbol.clone());
+            if !function.is_bare() {
+                record.generic_instantiation =
+                    Some(mojito_checked::checked::GenericInstantiation {
+                        callee: function.symbol,
+                        parameter_names: Vec::new(),
+                        parameter_types: Vec::new(),
+                        variadic: None,
+                        arguments: function.arguments,
+                    });
+            }
+        }
         let ret = self.bind_call_result_tail(&span, ret);
         if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
             self.require_call_error(span, format!("call to raising function '{name}'"), error)?;

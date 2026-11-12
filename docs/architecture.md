@@ -4880,7 +4880,10 @@ the signature of a module `def` a constant names before the constants fold
 (`declare_functions_comptime_reads`, `checker/statements.rs`), the counterpart
 of upstream's on-demand declaration resolution, and a call through such a
 constant is the call of the function it folds to (`folded_function_callee`,
-`infer_call`). VM compile-time execution freezes a function value back to its
+`infer_call`); a bracket over a function (`comptime g = twice[4]`) folds to
+its specialization's symbol, and a call through a module one is the call of
+that instance at the bound arguments, as upstream folds a call of a
+`#kgen.func.symbol` constant. VM compile-time execution freezes a function value back to its
 symbol (`crossing::vm_to_ct`), a closed constant may hold one as a leaf
 (`CtValue::is_closed_leaf`), and the elaborator and the native reachable set
 treat each such leaf as a function value the instance reaches

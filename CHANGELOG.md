@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket over a function read as a compile-time value is the symbol of
+  its specialization, typed by the instance's signature, as at the pin:
+  `comptime g = twice[4]`, `comptime s = tagged[Int, 7]`, and `comptime t:
+  def() thin -> Int = twice[6]`, module or local, bind it, and `g()`,
+  `comptime r = g()`, `var k = g`, and `apply[g]()` call it on the VM and
+  natively, where Mojito reported "not a compile-time Int constant: twice"
+  or "vm backend does not support the built-in or callee 'g'". A callable
+  parameter takes a bare function's binding too, and a `comptime`'s
+  function-type annotation selects one declaration of an overload set
+  (R452, R2147).
 - A function named where a compile-time value is read is a value of its
   function type, its symbol, as at the pin: a module, local, or struct
   `comptime` binds it bare (`comptime h = sq`) or through `OptionalReg`'s

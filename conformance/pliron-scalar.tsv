@@ -214,6 +214,7 @@ assets/ok/comptime_for_value_pack_iterator.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/comptime_for_value_parameter_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_value_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_function_specialization_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_function_symbol_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_headers_and_local_aliases.mojo	-	ineligible	no-scalar-entry-shape
