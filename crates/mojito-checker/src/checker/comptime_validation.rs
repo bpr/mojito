@@ -2798,8 +2798,8 @@ impl Checker {
     /// and the parameter expressions of its arguments: the one overload
     /// under the spelled name the arguments bind and type, whose `where`
     /// clauses have compiled. `Self(...)` in a struct's member is the
-    /// construction of the struct over its own parameters, as the check
-    /// spells it ([`Self::self_instance_spelling`]), and a slice subscript
+    /// construction of the instance `Self` is bound to, the struct over its
+    /// own parameters, and a slice subscript
     /// is its receiver's `__getitem__` of the slice literal's construction
     /// ([`Self::slice_literal_spelling`]).
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
@@ -2819,7 +2819,6 @@ impl Checker {
     /// [`Self::selected_application`], a construction spelled without its
     /// instance's bracket constructing `spelled` when it is given.
     fn selected_application_at(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<Selected<'_>> {
-        let self_spelling;
         // The construction bracket of an initializer called by name
         // (`S[2].__init__[3, 0]()`), whose own bracket binds the
         // initializer's own parameters, as its run-time call's does
@@ -2913,16 +2912,14 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-            } if name == "Self" && self.lookup("Self").is_none() => {
-                let (owner, spelled) = self.self_instance_spelling()?;
-                self_spelling = spelled;
-                let param_args = if param_args.is_empty() {
-                    self_spelling.as_slice()
-                } else {
-                    param_args.as_slice()
-                };
-                (owner, None, None, param_args, args, kwargs)
-            }
+            } if name == "Self" && self.lookup("Self").is_none() => (
+                self.self_struct_owner()?,
+                Some(self.self_ty.clone()?),
+                None,
+                param_args.as_slice(),
+                args,
+                kwargs,
+            ),
             // A local of the name shadows the module function.
             ExprKind::Call {
                 name,
@@ -2996,7 +2993,10 @@ impl Checker {
                         [].as_slice(),
                     ),
                     (true, true) => (
-                        spelled.cloned().or_else(|| self.run_time_type(expr)),
+                        spelled
+                            .or(instance.as_ref())
+                            .cloned()
+                            .or_else(|| self.run_time_type(expr)),
                         param_args,
                     ),
                     _ => (instance.clone(), param_args),

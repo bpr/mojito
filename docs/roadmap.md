@@ -4812,30 +4812,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2117 The checker re-spells a `Self` operand as type syntax**
-
-  `index_argument` (`checker/type_resolution.rs`) and
-  `self_instance_spelling` (`checker/initializer_list.rs`) build
-  `ParamArg::Type(SourceType::SelfParam(..))` from a `Self.<member>`
-  operand, where upstream keeps the operand an expression and classifies
-  it where it binds.
-  - The parser no longer builds that form (R1512), so these synthesizers
-    are what keep its reader arms alive (R2118).
-  - Probe: `index_argument` as the identity on a `Self.<member>` index
-    fails the std package at `TypeList`'s `_mlir_type =
-    _MLIR.KGENParamListType[Self.Trait]`, because `trait_type_arg`
-    reads `Self.Trait` only through its type arm.
-  - Probe: `self_instance_spelling` building `Self.<param>` expressions
-    fails the std package with "'Self.mut' is not a type parameter of the
-    enclosing struct": `type_runtime_param_args` infers the synthesized
-    `Self.mut`, and `infer_member` finds no `mut` in a `Span` scope whose
-    `self_decls` hold only `T`.
-  - The synthesized expressions carry `DUMMY_SPAN`, and node facts are
-    keyed by span, so each needs a real span before it can be inferred.
-  - Found while landing R1512 (2026-11-11).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2118 The checker reads a bracket operand's `Self.<member>` type
   spelling**
 
@@ -4856,8 +4832,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     where that arm does not already read the operand.
   - Done when `rg 'ParamArg::Type\((SourceType|Type)::SelfParam' crates`
     finds only the `*` pack arms.
+  - `trait_type_arg`'s `Value` arm re-spells `Self.<member>` into its own
+    type arm (`type_resolution.rs`), the last synthesizer of the form:
+    delete the recursion with the arm.
   - Found while landing R1512 (2026-11-11).
-  - Depends on R2117.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2116 A value bound to a type parameter reports Mojito's own

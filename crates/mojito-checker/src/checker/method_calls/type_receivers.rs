@@ -79,19 +79,25 @@ impl Checker {
             return Ok(Some(ty));
         }
         // `Self.width()`: a static method of the enclosing struct, called on
-        // the instance `Self` names, which is the struct applied to its own
-        // parameters (`Grid[Self.n].width()`).
+        // the instance `Self` is bound to, the struct over its own
+        // parameters.
         if let ExprKind::Identifier(name) = &object.kind
             && name == "Self"
-            && let Some((owner, targs)) = self.self_instance_spelling()
+            && let Some(owner) = self.self_struct_owner()
+            && let Some(instance) = self.self_ty.clone()
             && self
                 .structs
                 .get(&owner)
                 .and_then(|info| info.methods.get(method))
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
         {
-            let (ty, receiver) =
-                self.infer_struct_static_call(span.clone(), &owner, (&targs, None), method, call)?;
+            let (ty, receiver) = self.infer_struct_static_call(
+                span.clone(),
+                &owner,
+                (&[], Some(&instance)),
+                method,
+                call,
+            )?;
             self.record_static_receiver(object, &owner, &receiver);
             // The receiver spells no struct name for lowering to compose
             // the symbol from.
@@ -291,7 +297,7 @@ impl Checker {
         method: &str,
     ) -> Option<(String, bool)> {
         let owner = match &object.kind {
-            ExprKind::Identifier(name) if name == "Self" => self.self_instance_spelling()?.0,
+            ExprKind::Identifier(name) if name == "Self" => self.self_struct_owner()?,
             ExprKind::Identifier(name) if self.lookup(name).is_none() => name.clone(),
             ExprKind::Identifier(_) => return None,
             // An applied struct (`P[Int].st`) is a parametric receiver, as

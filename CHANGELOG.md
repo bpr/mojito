@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Self(...)` and a static call through `Self` (`Self.make()`) construct
+  the instance `Self` is bound to, the struct over its own parameters,
+  instead of the checker re-spelling `Self` as the struct applied to
+  `Self.<param>` type arguments; a member application's one index
+  (`Self.Get[0]`) is bound as the operand it is. A construction whose
+  instance forwards the struct's own type pack now binds the pack rather
+  than an empty one, so `Self(copy=self)` and `Self(init_with=...)` work
+  in a pack struct (R2117).
 - MIR names each compile-time argument by the declaration the check
   bound it to (`MirParamArg::name`, MIR schema 1.187), as upstream's call
   op holds one attribute per declared parameter: the checked call's

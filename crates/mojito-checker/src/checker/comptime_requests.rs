@@ -196,7 +196,7 @@ impl CalleeOracle for super::Checker {
         } else if function {
             Callee::Function
         } else if self.structs.contains_key(name)
-            || (name == "Self" && self.self_instance_spelling().is_some())
+            || (name == "Self" && self.self_struct_owner().is_some())
         {
             Callee::Struct
         } else {

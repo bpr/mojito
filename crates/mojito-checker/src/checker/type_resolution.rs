@@ -1181,7 +1181,11 @@ impl Checker {
                             _ => Ty::self_type(),
                         };
                         if self.declared_type_member(&base, name) {
-                            Some(self.member_application(&base, name, &[index_argument(index)])?)
+                            Some(self.member_application(
+                                &base,
+                                name,
+                                &[mojito_ast::ast::subscript_param_arg(index)],
+                            )?)
                         } else {
                             self.parameterized_assoc_application(
                                 &base,
@@ -1434,7 +1438,11 @@ impl Checker {
             .parameterized_assoc_params(&base_ty, name)
             .is_some_and(|params| params.iter().any(|param| param.infer_only));
         let applied = if infers || self.declared_type_member(&base_ty, name) {
-            Some(self.member_application(&base_ty, name, &[index_argument(index)])?)
+            Some(self.member_application(
+                &base_ty,
+                name,
+                &[mojito_ast::ast::subscript_param_arg(index)],
+            )?)
         } else {
             self.parameterized_assoc_application(
                 &base_ty,
@@ -5890,15 +5898,6 @@ fn check_origin_mutability_argument(
         });
     }
     Ok(())
-}
-
-/// A one-argument bracket as the argument a declared parameter list binds:
-/// a type the index spells is a type argument.
-fn index_argument(index: &Expr) -> mojito_ast::ast::ParamArg {
-    index.type_spelling().map_or_else(
-        || mojito_ast::ast::ParamArg::Value(index.clone()),
-        mojito_ast::ast::ParamArg::Type,
-    )
 }
 
 /// The first of a generator's own binders a read value names

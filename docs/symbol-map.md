@@ -545,9 +545,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct's parameters through `constructed_unification`; MIR's
   `type_receiver_name` names the static by the instance recorded on the
   `type_of` node);
-  `Self(...)` in a struct's body is spelled as the construction of the
-  struct over its own parameters (`self_instance_spelling`, which the
-  static call through `Self` shares, an infer-only one by keyword); a
+  `Self(...)` in a struct's body is the construction of the instance
+  `self_ty` `Self` is bound to, with no bracket spelled
+  (`instance_construction`), and a static call through `Self` takes that
+  instance as its receiver (`self_struct_owner` names the struct); the
+  instance solves the struct's parameters through
+  `constructed_unification`, its own pack binder forwarded whole; a
   type member's receiver is respelled by `type_member_spelling` (an
   infer-only argument by keyword, `keyword_spelling`; a member over an
   application with no source spelling, `T[n=f()]`, by its own spelling
@@ -2364,8 +2367,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   slot to the struct value of its fields read off it
   (`Checker::bind_struct_slots`, over `declared_fields`), and
   `selected_application` selects a call on a compile-time struct value
-  (`applied_receiver`, after `applied_owner`) and maps `Self(...)` through
-  `self_instance_spelling`. A folded struct result is respelled as the
+  (`applied_receiver`, after `applied_owner`) and maps `Self(...)` to the
+  construction of the instance `Self` is bound to. A folded struct result is respelled as the
   method's call (`respelled_struct_value`). `build_ct`'s operators
   (`Checker::infix_value`, `negated_value`, `checker/constraints.rs`) call
   an operand's builtin dunder through `struct_operator_value`; a
@@ -2833,8 +2836,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   requirement in its scope. A bracket operand `Self.n` or `Self.T.K` reaches
   the value-slot entries of `resolve_param_arg`, `param_arg_value_ty`,
   `simd_width`, and `lower_assoc_application_arg` as the expression it is;
-  a type spelling the checker itself synthesizes in a value slot
-  (`self_instance_spelling`, `index_argument`) is the read
+  a type spelling in a value slot (the one the checker still synthesizes
+  is `trait_type_arg`'s `Self.<member>` recursion) is the read
   `type_resolution.rs:type_spelled_member_read` respells, and a type member
   or type parameter there stays a type. A requirement's signature reads its `Self` members at the
   conformer it is matched against (`requirement_at`) and at a bound

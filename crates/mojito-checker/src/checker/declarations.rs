@@ -2955,7 +2955,15 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> (Vec<Ty>, Vec<Ty>) {
-        match constructed.zip(self.self_instance_ty(name)) {
+        // The pattern in the instance's canonical form, as an elementwise
+        // pack spreads (`Tuple[*Ts]`).
+        let instance = self
+            .self_instance_ty(name)
+            .map(|instance| match instance.kind() {
+                TyKind::Struct(_, arguments) => Self::struct_instance_type(name, arguments.clone()),
+                _ => instance,
+            });
+        match constructed.zip(instance) {
             Some((constructed, instance)) => (
                 std::iter::once(instance)
                     .chain(patterns.iter().cloned())
@@ -4242,6 +4250,10 @@ impl Checker {
             solve_value_args(pat, act, &mut value_solutions);
         }
         solve_value_binders_from_defaults(decls, &mut value_solutions);
+        // The packs whose binding is the self-binding collected elements
+        // leave, as distinct from an instance that forwards the pack's own
+        // binder (`Self(copy=self)` in the pack's struct).
+        let mut collected_packs = std::collections::HashSet::new();
         for (pat, act) in patterns.iter().zip(actuals) {
             if let TyKind::Param { binder, bounds, .. } = pat.kind()
                 && binder.name.starts_with('*')
@@ -4266,10 +4278,16 @@ impl Checker {
                 // A pack forwarded whole binds the callee's pack to the
                 // caller's; elements bind the pack to itself and are
                 // collected below.
-                let solved = if forwards_pack(act) { act } else { pat };
-                subst
-                    .entry(binder.id.clone())
-                    .or_insert_with(|| solved.clone());
+                if forwards_pack(act) {
+                    subst
+                        .entry(binder.id.clone())
+                        .or_insert_with(|| act.clone());
+                } else if let std::collections::hash_map::Entry::Vacant(slot) =
+                    subst.entry(binder.id.clone())
+                {
+                    slot.insert(pat.clone());
+                    collected_packs.insert(binder.id.clone());
+                }
             } else if let TyKind::Param { binder, bounds, .. } = pat.kind()
                 && !subst.contains_key(&binder.id)
                 && self.binds_unmaterialized_literal(act, bounds)
@@ -4392,12 +4410,13 @@ impl Checker {
                         let binder = typed.binder();
                         let pack_name = binder.name.trim_start_matches('*');
                         let argument = match subst.get(id) {
-                            // Only the *caller's* pack, bound here by a whole
-                            // forward, stands as the argument. The binding a
+                            // A pack bound by a whole forward stands as the
+                            // argument, the struct's own pack included when
+                            // its instance forwards it. The binding a
                             // collected element leaves is this pack bound to
-                            // itself, which spreads like a forward but names
-                            // this very binder: its elements are below.
-                            Some(pack) if forwards_pack(pack) && !binds_pack_itself(pack, id) => {
+                            // itself, which spreads like a forward: its
+                            // elements are below.
+                            Some(pack) if forwards_pack(pack) && !collected_packs.contains(id) => {
                                 TyArg::Ty(pack.clone())
                             }
                             // A spread of the pack in a parameter type

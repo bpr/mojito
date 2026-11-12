@@ -1127,6 +1127,7 @@ assets/ok/scalar_sequence_destructure.mojo	main	exe-differential	sanitized
 assets/ok/scalar_simd_lane_methods.mojo	main	exe-differential	sanitized
 assets/ok/scalar_uint_dtype.mojo	main	exe-differential	sanitized
 assets/ok/self_call_construction.mojo	main	exe-differential	sanitized
+assets/ok/self_construction_bound_instance.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized
 assets/ok/self_member_alias_construction.mojo	main	exe-differential	sanitized

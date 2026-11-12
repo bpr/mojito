@@ -98,24 +98,18 @@ impl Checker {
     /// type alias heads `expression`.
     pub(super) fn infer_type_alias_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
         match &expression.kind {
-            // `Self(...)`: the struct's own alias, so the construction of
-            // the struct over its own parameters (`G[Self.T](...)`).
+            // `Self(...)`: the construction of the instance `Self` is bound
+            // to, the struct over its own parameters.
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
             } if name == "Self" && param_args.is_empty() && self.lookup(name).is_none() => {
-                let (owner, param_args) = self.self_instance_spelling()?;
-                let construction = derived_construction(
-                    expression,
-                    ExprKind::Call {
-                        name: owner,
-                        param_args,
-                        args: args.clone(),
-                        kwargs: kwargs.clone(),
-                    },
-                );
+                self.self_struct_owner()?;
+                let self_ty = self.self_ty.as_ref()?;
+                let construction =
+                    self.instance_construction(expression, self_ty, args.clone(), kwargs.clone())?;
                 Some(self.infer_spelled(expression, construction))
             }
             // `Self` is bound already: a bracket on it is the pin's
@@ -328,35 +322,12 @@ impl Checker {
             .ok()
     }
 
-    /// The struct the enclosing declaration's `Self` names, and the bracket
-    /// arguments applying it to its own parameters (`Grid[Self.n]`), as
-    /// upstream binds `Self` to the struct over its own parameters: an
-    /// infer-only one by keyword (`CompilationTarget[_mlir_value=
-    /// Self._mlir_value]`), since no position binds it. `None` outside a
-    /// struct.
-    pub(super) fn self_instance_spelling(
-        &self,
-    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+    /// The struct the enclosing declaration's `Self` is bound to. `None`
+    /// outside a struct.
+    pub(super) fn self_struct_owner(&self) -> Option<String> {
         let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
         let owner = mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance);
-        let info = self.structs.get(owner)?;
-        let param_args = info
-            .source_params
-            .iter()
-            .map(|parameter| {
-                let read =
-                    mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()));
-                if parameter.infer_only {
-                    mojito_ast::ast::ParamArg::Named {
-                        name: parameter.name.clone(),
-                        value: Box::new(read),
-                    }
-                } else {
-                    read
-                }
-            })
-            .collect();
-        Some((owner.to_string(), param_args))
+        self.structs.contains_key(owner).then(|| owner.to_string())
     }
 
     /// Record that the sugar `expression` checked as `construction` of type
