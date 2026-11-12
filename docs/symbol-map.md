@@ -1450,8 +1450,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::expr` and its adjustments (`lower_expr/entry.rs`), the place
   family (`place`, `try_place`, `simple_place`, `pure_field_place` in
   `lower_stmt.rs`, `name_place_root` in `mir.rs`), `reference_handle`, the
-  compile-time argument slots (`param_arg_regs` over the op's
-  `CheckedParamArg`s; `indirect_param_arg_regs` for a `CallIndirect`, with
+  compile-time argument slots (`param_arg_regs` over the op's declared
+  `CheckedParameter`s, each `MirParamArg` named by its parameter's
+  declaration; `indirect_param_arg_regs` for a `CallIndirect`, with
   `inferred_param_args` appending the value parameters the check inferred), and `mir/calls.rs`'s argument, receiver, anchor, and
   invalidation lowering take a `Node`, and so do statement lowering
   (`lower_stmt`, the subscript-store and augmented-subscript family,
@@ -2691,7 +2692,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   literal argument converts to the element the call solved
   (`call_inference.rs`); `verify_param_arguments` (`verify/subscripts.rs`)
   and `mir::matched_parameter_arguments` (`mir/ir.rs`) let a pack take every
-  positional compile-time argument; `bind_pack` (`mono/unify.rs`) binds the
+  compile-time argument naming it (`MirParamArg::declaration_index`); `bind_pack` (`mono/unify.rs`) binds the
   pack from the call's `TyArg::Val(CtValue::Tuple)` or the overflow's types,
   `ct_bindings` (`mono/symbolic.rs`) carries the solution, value binders'
   constants and closed type binders' types, into `eval_ct` and

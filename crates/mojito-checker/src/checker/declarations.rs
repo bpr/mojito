@@ -5789,7 +5789,7 @@ impl Checker {
             unbound.map_or((None, false), |(slots, solve)| (Some(slots), solve));
         let bound = bracket_bindings(name, decls, param_args, unbound)?;
         let open = |index: usize| unbound.is_some_and(|slots| slots.open[index].is_some());
-        let mut attributes = DeclaredAttributes::new(decls.len());
+        let mut attributes = DeclaredAttributes::new(decls);
         // Infer parameters hidden before `//` even when later parameters
         // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
         // `value` while binding the explicit hasher argument). A pack

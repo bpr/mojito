@@ -1204,9 +1204,19 @@ impl<'a> Flatten<'a> {
         let param_arg_regs = contract
             .parameter_arguments
             .iter()
-            .flat_map(|parameter| &parameter.arguments)
-            .map(|argument| MirParamArg {
-                name: argument.name.clone(),
+            .enumerate()
+            .flat_map(|(index, parameter)| {
+                let declaration = contract
+                    .param_decls
+                    .get(index)
+                    .map(|decl| mojito_ast::call::CompileTimeParam::keyword(decl).to_string());
+                parameter
+                    .arguments
+                    .iter()
+                    .map(move |argument| (declaration.clone(), argument))
+            })
+            .map(|(name, argument)| MirParamArg {
+                name,
                 value: argument.operand.as_ref().and_then(|source| {
                     operands
                         .iter()

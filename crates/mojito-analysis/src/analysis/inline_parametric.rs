@@ -1472,9 +1472,16 @@ impl<'c> Inliner<'_, 'c> {
         ),
         owner: Option<&OwnerInstance<'_>>,
     ) -> Option<Instantiated<'c>> {
-        let callables: Vec<Option<CallableArgument>> = param_arg_regs
+        let callables: Vec<Option<CallableArgument>> = declaration
+            .param_decls
             .iter()
-            .map(|argument| self.callable_argument(block, index, argument.value?))
+            .map(|decl| {
+                let name = mojito_ast::call::CompileTimeParam::keyword(decl);
+                let argument = param_arg_regs
+                    .iter()
+                    .find(|argument| argument.name.as_deref() == Some(name))?;
+                self.callable_argument(block, index, argument.value?)
+            })
             .collect();
         let key = callables.iter().all(Option::is_none).then(|| InstanceKey {
             callee: target.to_string(),
@@ -4566,7 +4573,7 @@ enum CallableArgument {
 /// binder (`f: def(Int) -> Int`) is bound to.
 struct Arguments<'a> {
     compile_time: &'a [TyArg],
-    /// Aligned with `compile_time`; shorter when the call passes no registers.
+    /// Per declared parameter, aligned with `compile_time`.
     callables: &'a [Option<CallableArgument>],
     /// Each `Some[Trait]` binder of the callee's parameters, which no
     /// declaration declares, with the type the call deduces it at.

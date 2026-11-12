@@ -1301,8 +1301,8 @@ fn array_literal_construction(
     let none = frame.fresh_register(Ty::none());
     let marker = frame.fresh_register(Ty::none_type());
     let length_reg = frame.fresh_register(Ty::int());
-    let unbound = || mojito_mir::mir::MirParamArg {
-        name: None,
+    let unbound = |name: &str| mojito_mir::mir::MirParamArg {
+        name: Some(name.to_string()),
         value: None,
         expr: None,
     };
@@ -1340,10 +1340,10 @@ fn array_literal_construction(
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
             param_arg_regs: vec![
-                unbound(),
+                unbound(mojito_types::types::ARRAY_ELEMENT_PARAM),
                 mojito_mir::mir::MirParamArg {
                     value: Some(length_reg),
-                    ..unbound()
+                    ..unbound(mojito_types::types::ARRAY_LENGTH_PARAM)
                 },
             ],
             receiver: None,

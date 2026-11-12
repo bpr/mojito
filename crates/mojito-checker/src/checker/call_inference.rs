@@ -2651,7 +2651,7 @@ pub(super) fn folded_parameter_attributes(
     param_args: &[mojito_ast::ast::ParamArg],
     arguments: &[TyArg],
 ) -> DeclaredAttributes {
-    let mut folded = DeclaredAttributes::new(decls.len());
+    let mut folded = DeclaredAttributes::new(decls);
     for (position, (argument, index)) in param_args
         .iter()
         .zip(bracket_argument_slots(decls, param_args))

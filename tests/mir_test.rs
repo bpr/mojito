@@ -992,6 +992,46 @@ def main():
     );
 }
 
+/// Each compile-time argument is named by the declaration it binds,
+/// whether written positionally or by keyword, in declaration order, so no
+/// consumer binds it again (`hash[T: Hashable, //, H]` binds `H` first).
+#[test]
+fn compile_time_arguments_name_their_declarations() {
+    let source = r#"
+def pair[a: Int, b: Int]():
+    print(a, b)
+
+def skip[T: Intable, //, h: Int](x: T):
+    print(h + Int(x))
+
+def main():
+    pair[1, 2]()
+    pair[b=4, a=3]()
+    skip[5](1)
+"#;
+    let mir = checked_program_mir(source);
+    let main = mir_function(&mir, "main");
+    let names: Vec<Vec<Option<String>>> = nested_instructions(&main.body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { param_arg_regs, .. } if !param_arg_regs.is_empty() => Some(
+                param_arg_regs
+                    .iter()
+                    .map(|argument| argument.name.clone())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    let named = |names: &[&str]| -> Vec<Option<String>> {
+        names.iter().map(|name| Some((*name).to_string())).collect()
+    };
+    assert_eq!(
+        names,
+        vec![named(&["a", "b"]), named(&["a", "b"]), named(&["h"])]
+    );
+}
+
 #[test]
 fn bool_binder_condition_lifts_nothing() {
     let source = r#"

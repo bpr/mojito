@@ -298,20 +298,20 @@ fn checked_parameter_arguments(
 ) -> Vec<mojito_checked::checked::CheckedCallParameter> {
     use mojito_checked::checked::{CheckedCallParameter, CheckedCallParameterArgument};
     let argument = |argument: &mojito_ast::ast::ParamArg, attribute: Option<&TyArg>| {
-        let (name, argument) = match argument {
-            mojito_ast::ast::ParamArg::Named { name, value } => (Some(name.clone()), &**value),
-            argument => (None, argument),
+        let argument = match argument {
+            mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
+            argument => argument,
         };
         let operand = match (argument, attribute) {
             (_, Some(TyArg::Origin(_))) => return None,
             (mojito_ast::ast::ParamArg::Value(value), None) => Some(value.source_span()),
             _ => None,
         };
-        Some(CheckedCallParameterArgument { name, operand })
+        Some(CheckedCallParameterArgument { operand })
     };
     let mut placed = vec![false; param_args.len()];
     let mut parameters = binding
-        .0
+        .slots
         .iter()
         .map(|slot| CheckedCallParameter {
             arguments: slot

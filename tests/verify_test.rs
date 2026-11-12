@@ -1584,6 +1584,32 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
     });
     expect_finding(&prog, "register type StringLiteral, declared Int");
 
+    // An argument binds the declaration it names, never a position: one
+    // naming none is rejected, and so is a second naming the same one.
+    let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.body.instrs[0] else {
+        unreachable!()
+    };
+    param_arg_regs[0].name = None;
+    expect_finding(
+        &prog,
+        "compile-time argument does not match a parameter declaration",
+    );
+    let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.body.instrs[0] else {
+        unreachable!()
+    };
+    *param_arg_regs = vec![
+        MirParamArg {
+            name: Some("n".to_string()),
+            value: Some(Reg(1)),
+            expr: None,
+        };
+        2
+    ];
+    expect_finding(
+        &prog,
+        "compile-time parameter 'n' is supplied more than once",
+    );
+
     let MirInstr::Call { param_arg_regs, .. } = &mut prog.functions[0].1.body.instrs[0] else {
         unreachable!()
     };
@@ -1698,7 +1724,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
-                    name: None,
+                    name: Some("index".to_string()),
                     value: Some(Reg(1)),
                     expr: None,
                 }],
@@ -1738,7 +1764,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
-                    name: None,
+                    name: Some("index".to_string()),
                     value: Some(Reg(1)),
                     expr: None,
                 }],

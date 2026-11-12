@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.186
+# Mojito Textual MIR Format, Version 1.187
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.186 is implemented end to end for inspection and loading: canonical
+Version 1.187 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.186
+mojito-mir 1.187
 ```
 
-The writer emits 1.186. The reader accepts 1.0 through 1.186; *Schema 1.0*
+The writer emits 1.187. The reader accepts 1.0 through 1.187; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1175,6 +1175,20 @@ contract holds its compile-time arguments per declared parameter
 (`CheckedCallParameter`), a run-time operand named by its source
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
+
+Schema 1.187 names every compile-time argument by the declaration it
+binds: a `param_arg`'s `name` is the declared parameter's (each element of
+a pack names the pack), written positionally or by keyword alike, and the
+list is in the callee's declaration order, as upstream's call op holds one
+attribute per declared parameter (R2122). No consumer binds an argument by
+its position any more, so a `param_arg` whose `name` is `absent` binds no
+declaration (an erased origin argument), and an older artifact's positional
+argument carrying a register is rejected at load. A call through a callable
+contract or a trait requirement names the contract's declarations; the
+elaborator renames them to its witness's by position, as a conformance
+maps a requirement's parameters to its witness's. The package format moves
+to `mojito-package 215`, the checked call's declared parameters now naming
+their declarations (`CheckedParameter::declaration`).
 
 Schema 1.186 adds the parameter declaration `origin_binder`, upstream's
 origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) declared in place in

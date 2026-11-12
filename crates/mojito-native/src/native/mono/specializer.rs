@@ -3110,6 +3110,19 @@ impl<'a> Specializer<'a> {
                     if !self.functions.contains_key(target.as_str()) {
                         continue;
                     }
+                    // A witness binds the requirement's arguments by
+                    // position in its own parameter list.
+                    if resolved
+                        .as_deref()
+                        .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                        && let Some(declaration) = self.declarations.get(target.as_str())
+                    {
+                        super::unify::witness_arguments(
+                            param_decls,
+                            &declaration.param_decls,
+                            param_arg_regs,
+                        );
+                    }
                     // The adapter copies the element out of a reference
                     // the method returns: one that returns the element
                     // itself needs none.
@@ -3246,6 +3259,13 @@ impl<'a> Specializer<'a> {
                             } else {
                                 instantiated_args.clone()
                             };
+                            if let Some(declaration) = self.declarations.get(target.as_str()) {
+                                super::unify::witness_arguments(
+                                    contract,
+                                    &declaration.param_decls,
+                                    param_arg_regs,
+                                );
+                            }
                             // An initializer read as a value returns
                             // the struct its `out self` initializes, so
                             // the call is that construction. A `def`

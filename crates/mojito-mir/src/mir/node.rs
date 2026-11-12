@@ -153,6 +153,15 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// The declared compile-time parameters of a call or invocation, each
+    /// with the arguments bound to it.
+    pub(super) fn parameters(self) -> &'a [mojito_checked::checked::CheckedParameter] {
+        match self.op() {
+            CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => param_args,
+            _ => &[],
+        }
+    }
+
     /// The value operand compile-time argument `argument` of this call
     /// passes, through its keyword; `None` for a type argument.
     pub(super) fn param_value(self, argument: &CheckedParamArg) -> Option<Self> {

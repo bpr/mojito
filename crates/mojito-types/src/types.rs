@@ -1578,6 +1578,11 @@ impl GeneratorTy {
 
 pub const ARRAY_TYPE_NAME: &str = "Array";
 
+/// The declared parameters of `Array[T: AnyType, length: Int]`, which an
+/// array literal's construction names its compile-time arguments by.
+pub const ARRAY_ELEMENT_PARAM: &str = "T";
+pub const ARRAY_LENGTH_PARAM: &str = "length";
+
 /// The owner of a canonicalized generic contract's own binders
 /// ([`canonical_generic_signature`]): slot `i` of every contract is one
 /// identity, so contracts differing only in binder spelling compare equal.

@@ -4537,9 +4537,7 @@ impl<'a> Flatten<'a> {
         mojito_types::types::simd_length_image(&ParamContext::detached(), &value).ok()
     }
 
-    /// An erased argument keeps its (empty) slot: every backend aligns the
-    /// slots with the callee's declarations positionally, so a dropped slot
-    /// would shift the reified arguments after it (`Dict[String, Int, H]`).
+    /// An erased argument keeps its (empty) slot, named by its declaration.
     fn param_arg_regs(&mut self, call: Node<'a>) -> Vec<MirParamArg> {
         let folds = call.adjustments().iter().any(|adjustment| {
             matches!(
@@ -4567,34 +4565,38 @@ impl<'a> Flatten<'a> {
         registers
     }
 
+    /// The compile-time arguments of `call`, each named by the declared
+    /// parameter the check bound it to
+    /// ([`mojito_checked::checked::CheckedParameter::declaration`]).
     fn param_arg_regs_folding(&mut self, call: Node<'a>, folds: bool) -> Vec<MirParamArg> {
         let site = call.location();
         let mut registers = Vec::new();
-        for argument in call.param_args() {
-            // A positional origin argument binds the callee's origin slot,
-            // which its parameter declarations do not list, so it takes no
-            // positional slot from the value or type parameter after it
-            // (`f[ImmStaticOrigin, 3]()`).
-            if matches!(
-                argument,
-                CheckedParamArg::Attribute {
-                    value: Some(TyArg::Origin(_)),
-                    ..
+        for parameter in call.parameters() {
+            for argument in &parameter.arguments {
+                // An origin argument binds the callee's origin slot, which
+                // the lowered parameter declarations do not list
+                // (`f[ImmStaticOrigin, 3]()`).
+                if matches!(
+                    argument,
+                    CheckedParamArg::Attribute {
+                        value: Some(TyArg::Origin(_)),
+                        ..
+                    }
+                ) {
+                    continue;
                 }
-            ) {
-                continue;
+                let value = if Self::param_arg_has_no_runtime_form(argument, folds) {
+                    None
+                } else {
+                    self.param_arg_reg(call, argument, &site)
+                };
+                let expr = value.and_then(|_| self.forwarded_value(argument));
+                registers.push(MirParamArg {
+                    name: parameter.declaration.clone(),
+                    value,
+                    expr,
+                });
             }
-            let name = match argument {
-                CheckedParamArg::Named { name, .. } => Some(name.clone()),
-                CheckedParamArg::Attribute { .. } | CheckedParamArg::Value(_) => None,
-            };
-            let value = if Self::param_arg_has_no_runtime_form(argument, folds) {
-                None
-            } else {
-                self.param_arg_reg(call, argument, &site)
-            };
-            let expr = value.and_then(|_| self.forwarded_value(argument));
-            registers.push(MirParamArg { name, value, expr });
         }
         registers
     }

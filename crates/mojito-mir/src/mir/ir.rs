@@ -675,8 +675,7 @@ pub fn count_register_reads(block: &mut MirBlock, reads: &mut [u32]) {
 }
 
 /// Each supplied compile-time argument with a run-time register paired
-/// with the declaration it fills, and that register, by
-/// [`supplied_parameter_arguments`]' binding.
+/// with the declaration it names, and that register.
 pub fn matched_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
@@ -691,26 +690,18 @@ pub fn matched_parameter_arguments<'a>(
         .collect()
 }
 
-/// Each supplied compile-time argument paired with the declaration it
-/// fills, a closed value or type argument with no register included.
+/// Each supplied compile-time argument paired with the declaration of
+/// `decls` it names ([`MirParamArg::declaration_index`]).
 ///
-/// The list binds as its source bracket did, by
-/// [`mojito_ast::call::bind_parameter_slots`]: positional arguments skip
-/// the infer-only declarations (`hash[T: Hashable, //, HasherType]` binds
-/// `HasherType` first), then keywords bind by name. An argument binding no
-/// declaration (an erased origin argument) is dropped.
+/// A closed value or type argument with no register is included; an
+/// argument naming no declaration (an erased origin argument) is dropped.
 pub fn supplied_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
 ) -> Vec<(&'a ParamDecl, &'a MirParamArg)> {
-    let keywords: Vec<Option<&str>> = arguments
+    arguments
         .iter()
-        .map(|argument| argument.name.as_deref())
-        .collect();
-    mojito_ast::call::bind_parameter_slots(decls, &keywords)
-        .into_iter()
-        .zip(arguments)
-        .filter_map(|(slot, argument)| Some((&decls[slot.ok()?], argument)))
+        .filter_map(|argument| Some((&decls[argument.declaration_index(decls)?], argument)))
         .collect()
 }
 
@@ -1384,16 +1375,15 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Reg(pub u32);
 
-/// One source `[...]` argument after lowering.
+/// One compile-time argument of a call, named by the declared parameter
+/// it binds.
 ///
-/// `name` preserves keyword binding (`callback=increment`); `value` is absent
-/// for an erased type argument. Semantic Origin/OriginSet arguments do not
+/// Upstream's call op holds one attribute per declared parameter, so no
+/// consumer binds an argument again: `name` is the declaration's (each
+/// element of a pack names the pack), `None` for an argument bound to no
+/// declaration (an erased origin argument). `value` is absent for a type
+/// argument and a folded one. Semantic Origin/OriginSet arguments do not
 /// enter this list.
-///
-/// Keeping binding identity separate from the optional runtime register lets
-/// the VM normalize arguments to declaration order before applying defaults.
-/// A bare `None` register cannot express the difference between an omitted
-/// parameter and a supplied type argument.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MirParamArg {
     pub name: Option<String>,
@@ -1406,6 +1396,16 @@ pub struct MirParamArg {
     /// over them that monomorphization evaluates under the caller instance's
     /// bindings. `value` still carries the runtime register the VM reads.
     pub expr: Option<mojito_types::param_expr::ParamExpr>,
+}
+
+impl MirParamArg {
+    /// The index in `decls` of the declared parameter this argument names.
+    pub fn declaration_index(&self, decls: &[ParamDecl]) -> Option<usize> {
+        let name = self.name.as_deref()?;
+        decls
+            .iter()
+            .position(|decl| mojito_ast::call::CompileTimeParam::keyword(decl) == name)
+    }
 }
 
 /// A source byte range `(start, end)` — re-exported from [`mojito_common::token`], the
@@ -2226,11 +2226,10 @@ pub enum MirInstr {
         /// Concrete captured-owner effects performed transitively during this
         /// call. Static verification consumes these; execution erases them.
         capture_accesses: Vec<MirCaptureAccess>,
-        /// Supplied compile-time arguments in source order. Each entry retains
-        /// an optional keyword name and an optional value register; type
-        /// arguments have no register. Origin arguments are semantically erased
-        /// before this list. Consumers bind these entries to `ParamDecl` order
-        /// before applying defaults.
+        /// Supplied compile-time arguments in the callee's declaration
+        /// order, each named by the declared parameter it binds
+        /// ([`MirParamArg`]); type arguments have no register. Origin
+        /// arguments are semantically erased before this list.
         param_arg_regs: Vec<MirParamArg>,
         /// The spelled receiver of a static call on a generic struct
         /// (`Pair[Self.U].count()`), in the caller's binder scope. No runtime
@@ -2278,7 +2277,7 @@ pub enum MirInstr {
         kwarg_places: Vec<Option<MirPlace>>,
         capture_accesses: Vec<MirCaptureAccess>,
         /// Compile-time arguments supplied while invoking a generic callable
-        /// value, in the same source-order representation as `Call`.
+        /// value, named by their declarations as `Call`'s are.
         param_arg_regs: Vec<MirParamArg>,
         /// The generic callable contract selected by checking. Contract-side
         /// defaults govern omitted arguments even when the concrete function

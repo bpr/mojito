@@ -508,12 +508,12 @@ impl<'a> Flatten<'a> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![
                     MirParamArg {
-                        name: None,
+                        name: Some(mojito_types::types::ARRAY_ELEMENT_PARAM.to_string()),
                         value: None,
                         expr: None,
                     },
                     MirParamArg {
-                        name: None,
+                        name: Some(mojito_types::types::ARRAY_LENGTH_PARAM.to_string()),
                         value: Some(length_reg),
                         expr: None,
                     },

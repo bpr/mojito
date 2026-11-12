@@ -1256,13 +1256,21 @@ upstream parameter list a `BuiltinParam` table spells
 it through `Checker::record_declared_attributes`. The checked call holds
 that list as upstream's call op holds one attribute per declared parameter:
 `CheckedOp::Call`/`Invoke`'s `param_args` are `CheckedParameter`s in the
-callee's declaration order, each holding the arguments bound to it (none for
-an omitted or inferred parameter, one per element for a pack), and name no
-argument by its source position; only a bracket no declared-parameter binder
-binds (a compiler rule's) is a parameter per argument after the declared
-ones. MIR lowers the arguments in that order (`bracket_arguments`), which
-binds as the source bracket did, since positional arguments fill declared
-slots in order. A type-shaped argument's
+callee's declaration order, each naming its declaration (the binder's
+`DeclaredAttributes` carries the names to `BracketBinding::declarations`)
+and holding the arguments bound to it (none for an omitted or inferred
+parameter, one per element for a pack), and name no argument by its source
+position; only a bracket no declared-parameter binder binds (a compiler
+rule's) is a parameter per argument after the declared ones, naming none.
+MIR lowers each argument as a `MirParamArg` named by its parameter's
+declaration (`Flatten::param_arg_regs_folding`; a subscript contract's by
+its `param_decls`), so no consumer binds an argument by position again:
+`mir::supplied_parameter_arguments` and the verifier pair each with the
+declaration it names (`MirParamArg::declaration_index`). A call through a
+callable contract or a trait requirement names the contract's
+declarations, which the elaborator renames to its witness's by position
+(`mono/unify.rs`'s `witness_arguments`), as a conformance maps a
+requirement's parameters to its witness's. A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),
@@ -7005,7 +7013,7 @@ point where a slot declared in a loop is uninitialized again.
   symbolic). A callable value binder
   (`f: def(Int) thin -> Int`, a `value_param` of function type bound to a
   deferred value) is read as its parameter constant too; the call's
-  `param_arg_regs` entry, aligned with `instantiated_args`, names its
+  `param_arg_regs` entry naming the binder's declaration holds its
   argument, which the pass resolves through `mir::callable_targets` over
   the caller, or the `const function` the block defines, and binds the
   binder to the function's symbol, which `fold_parameter_constants` reads

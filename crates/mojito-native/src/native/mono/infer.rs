@@ -115,7 +115,9 @@ impl Specializer<'_> {
         // over it closes, and joins the instance identity.
         let mut explicit = Vec::new();
         let removed = self.removed_params(&target, true);
-        for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
+        for (decl, param_arg) in
+            mojito_mir::mir::supplied_parameter_arguments(&call.param_decls, &call.param_arg_regs)
+        {
             // The argument of a parameter the accessor removed is no longer
             // passed ([`mojito_mir::mir::with_removed_forwards_erased`]).
             let erased = param_arg.value.is_none()

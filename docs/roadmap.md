@@ -10130,27 +10130,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2122 MIR's compile-time argument list names no declaration, so
-  each consumer re-aligns it**
-
-  `Flatten::param_arg_regs_folding` flattens the checked call's
-  per-declaration list into `MirParamArg`s, each positional or keyword as
-  written, and `supplied_parameter_arguments` / `matched_parameter_arguments`
-  (`mir/ir.rs`) bind them to declarations again, positionally, in MIR
-  (`inferred_param_args`, `param_uses.rs`), analysis (`unused_params.rs`),
-  and the elaborator (`mono/unify.rs`).
-  - Upstream's op holds one attribute per declared parameter, so no
-    consumer re-binds.
-  - The lever: lower R2120's per-declaration list into `MirParamArg`s
-    named by their declarations, and retire the positional matcher.
-  - Probe: a subscript's `Flatten::mir_subscript_call_contract`
-    (`mir/facts.rs`) flattens its contract's per-declaration
-    `CheckedCallParameter`s the same way (R2121).
-  - Done when no MIR consumer aligns a compile-time argument by position.
-  - Found while landing R757 (2026-11-12).
-  - Depends on R2120.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2132 A parameter subscript's key rides its `Index` instruction
   as a run-time operand**
 
@@ -10264,7 +10243,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     below the check read `ParamDecl::argument_binders`:
     `native/mono/{specializer,unify}.rs`, `mir/verify/{subscripts,
     intrinsics,scope,calls}.rs`, `mir/param_uses.rs`,
-    `mir/call_defaults.rs`, `mir::matched_parameter_arguments`.
+    `mir/call_defaults.rs`.
+  - Probe: a construction the check synthesizes at struct level over
+    `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
+    (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
+    `m=` and origin arguments in parameters naming no declaration
+    (`CheckedParameter::declaration` is `None`), so once origins lower
+    they would bind nothing.
   - Done when the interface projects every struct row again and MIR text
     writes an `origin_binder` record for each declared origin.
   - Depends on R2126.

@@ -104,7 +104,6 @@ pub struct CheckedCallParameter {
 /// names a run-time argument's.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameterArgument {
-    pub name: Option<String>,
     pub operand: Option<SourceSpan>,
 }
 
@@ -1812,6 +1811,7 @@ impl CheckedOp {
             parameters
                 .iter()
                 .map(|parameter| CheckedParameter {
+                    declaration: parameter.declaration.clone(),
                     arguments: parameter
                         .arguments
                         .iter()
@@ -2098,6 +2098,9 @@ impl CheckedParamArg {
 /// `objs[0](3)`).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedParameter {
+    /// The name of the declared parameter this is, `None` for an argument
+    /// bound to no declaration.
+    pub declaration: Option<String>,
     pub arguments: Vec<CheckedParamArg>,
 }
 
@@ -2116,21 +2119,27 @@ pub fn bracket_arguments(
 /// parameter, in declaration order, each bracket argument bound to it
 /// ([`BracketBound`]).
 #[derive(Debug, Clone, Default)]
-pub struct BracketBinding(pub Vec<Vec<BracketBound>>);
+pub struct BracketBinding {
+    pub slots: Vec<Vec<BracketBound>>,
+    /// The name of each slot's declared parameter, `None` past the
+    /// declarations (a function's origin argument, which its list declares
+    /// no binder for).
+    pub declarations: Vec<Option<String>>,
+}
 
 impl BracketBinding {
     /// The attributes laid out by the bracket arguments' source positions,
     /// `None` for a run-time value and for a position bound to nothing.
     pub fn source_order(&self) -> Vec<Option<mojito_types::types::TyArg>> {
         let len = self
-            .0
+            .slots
             .iter()
             .flatten()
             .map(|bound| bound.position + 1)
             .max()
             .unwrap_or(0);
         let mut attributes = vec![None; len];
-        for bound in self.0.iter().flatten() {
+        for bound in self.slots.iter().flatten() {
             attributes[bound.position].clone_from(&bound.attribute);
         }
         attributes
@@ -2138,7 +2147,7 @@ impl BracketBinding {
 
     /// Whether no argument bound to an attribute: each is a run-time value.
     pub fn is_runtime(&self) -> bool {
-        self.0
+        self.slots
             .iter()
             .flatten()
             .all(|bound| bound.attribute.is_none())
@@ -2153,7 +2162,7 @@ impl BracketBinding {
         attribute: Option<mojito_types::types::TyArg>,
     ) {
         if let Some(bound) = self
-            .0
+            .slots
             .iter_mut()
             .flatten()
             .find(|bound| bound.position == position)
@@ -2161,13 +2170,24 @@ impl BracketBinding {
             bound.attribute = attribute;
             return;
         }
-        if self.0.len() <= index {
-            self.0.resize(index + 1, Vec::new());
+        if self.slots.len() <= index {
+            self.slots.resize(index + 1, Vec::new());
         }
-        self.0[index].push(BracketBound {
+        self.slots[index].push(BracketBound {
             position,
             attribute,
         });
+    }
+
+    /// Name slot `index`'s declared parameter `declaration` where the
+    /// binding names none yet.
+    pub fn declare(&mut self, index: usize, declaration: Option<&str>) {
+        if self.declarations.len() <= index {
+            self.declarations.resize(index + 1, None);
+        }
+        if self.declarations[index].is_none() {
+            self.declarations[index] = declaration.map(str::to_string);
+        }
     }
 }
 
@@ -6356,8 +6376,14 @@ impl<'a> ArenaBuilder<'a> {
             .as_ref();
         let mut placed = vec![false; arguments.len()];
         let mut parameters = Vec::new();
-        for slot in binding.map_or(&[][..], |binding| &binding.0) {
-            let mut parameter = CheckedParameter::default();
+        let (slots, declarations) = binding.map_or((&[][..], &[][..]), |binding| {
+            (&binding.slots, &binding.declarations)
+        });
+        for (index, slot) in slots.iter().enumerate() {
+            let mut parameter = CheckedParameter {
+                declaration: declarations.get(index).cloned().flatten(),
+                arguments: Vec::new(),
+            };
             for bound in slot {
                 let Some(argument) = arguments.get(bound.position) else {
                     continue;
@@ -6374,6 +6400,7 @@ impl<'a> ArenaBuilder<'a> {
         for (argument, placed) in arguments.iter().zip(placed) {
             if !placed {
                 parameters.push(CheckedParameter {
+                    declaration: None,
                     arguments: vec![self.param_arg(argument, None)],
                 });
             }

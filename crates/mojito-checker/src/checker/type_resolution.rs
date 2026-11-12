@@ -260,21 +260,32 @@ pub(super) fn dtype_attribute(
 /// call's node-building reads to build its declared parameters
 /// ([`mojito_checked::checked::CheckedParameter`]).
 #[derive(Clone, Debug, Default)]
-pub(super) struct DeclaredAttributes(Vec<Vec<BoundAttribute>>);
+pub(super) struct DeclaredAttributes {
+    slots: Vec<Vec<BoundAttribute>>,
+    /// The name of each slot's declared parameter, `None` for a slot the
+    /// binder keyed by no declaration.
+    declarations: Vec<Option<String>>,
+}
 
 impl DeclaredAttributes {
-    /// No attribute yet for any of `len` declared parameters.
-    pub(super) fn new(len: usize) -> Self {
-        Self(vec![Vec::new(); len])
+    /// No attribute yet for any of the declared parameters `decls`.
+    pub(super) fn new<P: mojito_ast::call::CompileTimeParam>(decls: &[P]) -> Self {
+        Self {
+            slots: vec![Vec::new(); decls.len()],
+            declarations: decls
+                .iter()
+                .map(|decl| Some(decl.keyword().to_string()))
+                .collect(),
+        }
     }
 
     /// Bind the argument at source `position` of the parameter declared at
     /// `index` to `attribute`, replacing what it was bound to.
     pub(super) fn bind(&mut self, index: usize, position: usize, attribute: Option<TyArg>) {
-        if self.0.len() <= index {
-            self.0.resize(index + 1, Vec::new());
+        if self.slots.len() <= index {
+            self.slots.resize(index + 1, Vec::new());
         }
-        let slot = &mut self.0[index];
+        let slot = &mut self.slots[index];
         match slot.iter_mut().find(|bound| bound.position == position) {
             Some(bound) => bound.attribute = attribute,
             None => slot.push(BoundAttribute {
@@ -284,14 +295,29 @@ impl DeclaredAttributes {
         }
     }
 
+    /// Name the parameter declared at `index` `declaration`.
+    pub(super) fn declare(&mut self, index: usize, declaration: &str) {
+        if self.declarations.len() <= index {
+            self.declarations.resize(index + 1, None);
+        }
+        self.declarations[index] = Some(declaration.to_string());
+    }
+
     /// Set each attribute `folded` carries, keeping every one it leaves
     /// `None`.
     pub(super) fn merge(&mut self, folded: Self) {
-        for (index, slot) in folded.0.into_iter().enumerate() {
+        for (index, slot) in folded.slots.into_iter().enumerate() {
             for bound in slot {
                 if bound.attribute.is_some() {
                     self.bind(index, bound.position, bound.attribute);
                 }
+            }
+        }
+        for (index, declaration) in folded.declarations.into_iter().enumerate() {
+            if let Some(declaration) = declaration
+                && self.declarations.get(index).is_none_or(Option::is_none)
+            {
+                self.declare(index, &declaration);
             }
         }
     }
@@ -300,7 +326,7 @@ impl DeclaredAttributes {
     /// argument sits at source position `positions[i]`, at the bracket's
     /// positions.
     pub(super) fn relocated(mut self, positions: &[usize]) -> Self {
-        for bound in self.0.iter_mut().flatten() {
+        for bound in self.slots.iter_mut().flatten() {
             if let Some(&position) = positions.get(bound.position) {
                 bound.position = position;
             }
@@ -311,7 +337,10 @@ impl DeclaredAttributes {
     /// The binding the checked node records
     /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]).
     pub(super) fn binding(&self) -> mojito_checked::checked::BracketBinding {
-        mojito_checked::checked::BracketBinding(self.0.clone())
+        mojito_checked::checked::BracketBinding {
+            slots: self.slots.clone(),
+            declarations: self.declarations.clone(),
+        }
     }
 
     /// The attributes laid out by source position.
@@ -331,7 +360,7 @@ impl DeclaredAttributes {
         let keywords = mojito_ast::call::bracket_keywords(args);
         let slots = mojito_ast::call::match_parameter_slots(params, &keywords)
             .map_err(|error| error.into_type_error(name))?;
-        let mut declared = Self::new(params.len());
+        let mut declared = Self::new(params);
         for (position, (index, attribute)) in slots.into_iter().zip(attributes).enumerate() {
             declared.bind(index, position, attribute);
         }
@@ -445,7 +474,7 @@ impl CallableSpecialization {
     pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
         let mut declared = bound.relocated(&self.positions);
         declared
-            .0
+            .slots
             .extend(self.origins.iter().map(|origin| vec![origin.clone()]));
         declared
     }
@@ -500,18 +529,21 @@ impl PartitionedStructArgs {
     /// theirs.
     pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
         let mut declared = DeclaredAttributes::default();
-        for (source, slot) in self.kept.0.iter().enumerate() {
+        for (source, slot) in self.kept.slots.iter().enumerate() {
             let index = self.slots.source.get(source).copied().unwrap_or(source);
             for attribute in slot {
                 declared.bind(index, attribute.position, attribute.attribute.clone());
             }
         }
         let bound = bound.relocated(&self.positions);
-        for (index, slot) in bound.0.into_iter().enumerate() {
+        for (index, slot) in bound.slots.into_iter().enumerate() {
             let index = self.slots.binders.get(index).copied().unwrap_or(index);
             for attribute in slot {
                 declared.bind(index, attribute.position, attribute.attribute);
             }
+        }
+        for (index, name) in self.slots.names.iter().enumerate() {
+            declared.declare(index, name);
         }
         declared
     }
@@ -523,6 +555,8 @@ impl PartitionedStructArgs {
 pub(super) struct StructSlots {
     source: Vec<usize>,
     binders: Vec<usize>,
+    /// The name of each declared parameter, by slot.
+    names: Vec<String>,
 }
 
 impl Checker {
@@ -2403,9 +2437,17 @@ impl Checker {
                     })
                     .map(|(index, _)| index)
                     .collect(),
+                names: source_params
+                    .iter()
+                    .map(|param| param.name.trim_start_matches('*').to_string())
+                    .collect(),
             };
         };
         StructSlots {
+            names: params
+                .iter()
+                .map(|decl| mojito_ast::call::CompileTimeParam::keyword(decl).to_string())
+                .collect(),
             source: source_params
                 .iter()
                 .enumerate()
@@ -3879,7 +3921,7 @@ impl Checker {
         attributes: &DeclaredAttributes,
     ) {
         let binding = attributes.binding();
-        if binding.0.iter().all(Vec::is_empty)
+        if binding.slots.iter().all(Vec::is_empty)
             || (binding.is_runtime()
                 && self.has_fact(&span, |facts| facts.parameter_attributes.is_some()))
         {
@@ -3904,12 +3946,15 @@ impl Checker {
         let mut binding = self
             .fact(span, |facts| facts.parameter_attributes.as_ref())
             .unwrap_or_default();
-        for (index, slot) in folded.0.into_iter().enumerate() {
+        for (index, slot) in folded.slots.into_iter().enumerate() {
             for bound in slot {
                 if bound.attribute.is_some() {
                     binding.set(index, bound.position, bound.attribute);
                 }
             }
+        }
+        for (index, declaration) in folded.declarations.iter().enumerate() {
+            binding.declare(index, declaration.as_deref());
         }
         self.record_at(span.clone()).parameter_attributes = Some(binding);
     }

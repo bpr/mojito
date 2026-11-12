@@ -920,7 +920,10 @@ impl RewriteTypes for CheckedOp {
 
 impl RewriteTypes for CheckedParameter {
     fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
-        let Self { arguments } = self;
+        let Self {
+            declaration: _,
+            arguments,
+        } = self;
         arguments.rewrite_types(rewrite);
     }
 }

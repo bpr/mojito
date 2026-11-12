@@ -288,6 +288,14 @@ impl Decoder {
         // names; a type argument has no run-time form, so it is read and
         // ignored.
         self.unknown(fields, &["name", "value", "binder", "expr"]);
+        // Before schema 1.187 a positional argument named no declaration and
+        // bound by its position, which no consumer reads any more.
+        if self.minor < 187 && name.is_none() && param_value.is_some() {
+            self.error(
+                value.span,
+                "a pre-1.187 positional compile-time argument names no declaration",
+            );
+        }
         Some(MirParamArg {
             name,
             value: param_value,

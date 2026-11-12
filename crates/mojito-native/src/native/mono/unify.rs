@@ -127,6 +127,28 @@ pub(super) fn owner_instance_ty(
     Ok(TyKind::Struct(name, ty_arguments).into())
 }
 
+/// Rename each of `arguments`, named by the declarations of the contract
+/// `contract`, to the declaration in the same position of `decls`'s
+/// trailing own parameters, as a conformance maps a requirement's
+/// parameters to its witness's (`def[n: Int](Int)` answered by
+/// `__call__[k: Int]`). An argument naming no contract declaration keeps
+/// its name.
+pub(super) fn witness_arguments(
+    contract: &[ParamDecl],
+    decls: &[ParamDecl],
+    arguments: &mut [mojito_mir::mir::MirParamArg],
+) {
+    let own = &decls[decls.len().saturating_sub(contract.len())..];
+    for argument in arguments {
+        if let Some(witness) = argument
+            .declaration_index(contract)
+            .and_then(|index| own.get(index))
+        {
+            argument.name = Some(mojito_ast::call::CompileTimeParam::keyword(witness).to_string());
+        }
+    }
+}
+
 pub(super) fn bind_explicit_value_arguments(
     decls: &[ParamDecl],
     removed: &[mojito_types::param_expr::ParamId],

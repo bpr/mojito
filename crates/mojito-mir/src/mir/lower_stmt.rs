@@ -3086,8 +3086,8 @@ impl<'a> Flatten<'a> {
                 param_arg_regs: extraction
                     .param_decls
                     .iter()
-                    .map(|_| MirParamArg {
-                        name: None,
+                    .map(|decl| MirParamArg {
+                        name: Some(mojito_ast::call::CompileTimeParam::keyword(decl).to_string()),
                         value: Some(idx),
                         expr: None,
                     })

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- MIR names each compile-time argument by the declaration the check
+  bound it to (`MirParamArg::name`, MIR schema 1.187), as upstream's call
+  op holds one attribute per declared parameter: the checked call's
+  declared parameters name their declarations, and MIR's argument
+  pairing, its verifier, unused-parameter removal, and the elaborator read
+  that name instead of re-binding the list by position. A call through a
+  callable contract or trait requirement is renamed to its witness's
+  parameters by position at the conformance (R2122).
 - A selected call's contract holds its compile-time arguments per
   declared parameter, in declaration order (`CheckedCallParameter`), as
   the checked call does, and names a run-time operand (`b[n - 1]` on a
