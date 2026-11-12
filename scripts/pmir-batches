@@ -71,14 +71,15 @@ def main() -> int:
     log_dir.mkdir(parents=True, exist_ok=True)
     summary = Summary(log_dir / "summary.md")
     unfinished: list[str] = []
-    for number, _ in batches:
-        if number < args.start:
-            continue
-        # Re-read the roadmap: an earlier batch may have landed or split entries.
-        ids = open_ids(note_batches()[number - 1])
+    # A batch run edits the note and the roadmap, so batch positions shift
+    # mid-run: track the batches by the entries already attempted (or
+    # skipped by `--start`), never by position.
+    attempted = {i for _, ids in batches[: args.start - 1] for i in ids}
+    while True:
+        ids, number = next_batch(attempted)
         if not ids:
-            summary.line(f"batch {number}: nothing open, skipped")
-            continue
+            break
+        attempted.update(ids)
         summary.line(f"batch {number}: {' '.join(ids)}")
 
         loop = [sys.executable, "scripts/claude_loop.py", "--model", "opus",
@@ -119,6 +120,16 @@ def main() -> int:
         return 1
     summary.line("done; every batch passed")
     return 0
+
+
+def next_batch(attempted: set[str]) -> tuple[list[str], int]:
+    """The first batch in the note, re-read now, with an open entry not yet
+    attempted: those entries and the batch's current number, or `([], 0)`."""
+    for number, ids in enumerate(note_batches(), 1):
+        fresh = [i for i in open_ids(ids) if i not in attempted]
+        if fresh:
+            return fresh, number
+    return [], 0
 
 
 def note_batches() -> list[list[str]]:
