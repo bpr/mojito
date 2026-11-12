@@ -1162,7 +1162,7 @@ impl Checker {
             ExprKind::Call { name, args, .. } => {
                 (name == "comptime" || name == "conforms_to") && !args.is_empty()
             }
-            ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
+            _ if cond.bracket_application().is_some() => {
                 self.predicate_alias_application(cond).is_some()
                     || predicate_spelling(cond).is_some_and(|name| {
                         mojito_types::types::trivial_predicate_name(name).is_some()
@@ -1391,11 +1391,11 @@ impl Checker {
             }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
-            ExprKind::TypeApply { name, .. }
-                if mojito_types::types::trivial_predicate_name(name).is_none()
-                    && self.comptime_name_resolves(name).is_err() =>
+            _ if let Some((name, _)) = self.parameter_application(cond)
+                && mojito_types::types::trivial_predicate_name(name).is_none()
+                && self.comptime_name_resolves(name).is_err() =>
             {
-                return Err(TypeError::UnknownType(name.clone()));
+                return Err(TypeError::UnknownType(name.to_string()));
             }
             _ => {}
         }
@@ -3571,10 +3571,10 @@ impl Checker {
             self.applicable_functions
                 .contains_key(&format!("{owner}.{method}"))
         };
-        let named = |name: &String, args: Vec<ParamArg>| {
+        let named = |name: &str, args: Vec<ParamArg>| {
             (self.binding_scope(name).is_none() && applicable(name))
                 .then(|| {
-                    self.ty_from_anno(&SourceType::Named(name.clone(), args))
+                    self.ty_from_anno(&SourceType::Named(name.to_string(), args))
                         .ok()
                 })
                 .flatten()
@@ -3586,18 +3586,9 @@ impl Checker {
                     .is_some_and(|(owner, _)| applicable(template_name(owner)))
             }),
             ExprKind::Identifier(name) => named(name, Vec::new()),
-            ExprKind::TypeApply { name, args } => named(name, args.clone()),
-            // A lone value argument parses as a subscript (`G[n]`).
-            ExprKind::Index { object, index } => match (&object.kind, &index.kind) {
-                (ExprKind::Identifier(name), ExprKind::TupleLit(elements)) => named(
-                    name,
-                    elements.iter().cloned().map(ParamArg::Value).collect(),
-                ),
-                (ExprKind::Identifier(name), _) => {
-                    named(name, vec![ParamArg::Value((**index).clone())])
-                }
-                _ => None,
-            },
+            _ if let Some((name, args)) = object.bracket_application() => {
+                named(name, args.into_owned())
+            }
             _ => None,
         }?;
         match instance.kind() {
@@ -5255,12 +5246,12 @@ impl Checker {
             // A reflection handle is a compile-time value, not a type, and a
             // predicate or value `comptime` alias or a trivial predicate
             // applies to a value.
-            ExprKind::TypeApply { name, .. }
-                if self
+            _ if let Some((name, _)) = self.parameter_application(expr)
+                && (self
                     .comptime_aliases
                     .get(name)
                     .is_some_and(|alias| !matches!(alias.body, super::AliasBody::Type(_)))
-                    || mojito_types::types::trivial_predicate_name(name).is_some() =>
+                    || mojito_types::types::trivial_predicate_name(name).is_some()) =>
             {
                 Ok(None)
             }
@@ -5274,10 +5265,8 @@ impl Checker {
                 // end is the read's own failure.
                 Err(error)
                     if matches!(error, TypeError::UnknownType(_))
-                        || matches!(
-                            expr.kind,
-                            ExprKind::TypeValue(_) | ExprKind::TypeApply { .. }
-                        )
+                        || matches!(expr.kind, ExprKind::TypeValue(_))
+                        || self.parameter_application(expr).is_some()
                         || matches!(&expr.kind, ExprKind::Call { name, .. } if name == "type_of")
                         || matches!(&expr.kind, ExprKind::Index { object, .. }
                             if matches!(self.type_list_operand(object), Ok(Some(_)))) =>
@@ -7300,14 +7289,7 @@ const fn is_scalar_attribute(value: &CtValue) -> bool {
 /// The predicate name a bracket application spells (`IsTriviallyCopyable`
 /// in `IsTriviallyCopyable[T]`, which may parse as an index).
 fn predicate_spelling(expr: &Expr) -> Option<&str> {
-    match &expr.kind {
-        ExprKind::TypeApply { name, .. } => Some(name),
-        ExprKind::Index { object, .. } => match &object.kind {
-            ExprKind::Identifier(name) => Some(name),
-            _ => None,
-        },
-        _ => None,
-    }
+    expr.bracket_application().map(|(name, _)| name)
 }
 
 /// Whether two bound lists name the same traits, in any order.

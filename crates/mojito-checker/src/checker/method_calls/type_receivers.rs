@@ -153,7 +153,11 @@ impl Checker {
                     )
                     .map(Some);
             }
-            if pointer || matches!(object.kind, ExprKind::TypeApply { .. }) {
+            // A bracket over a generic alias is the type it names, below.
+            if pointer
+                || matches!(object.kind, ExprKind::TypeApply { .. })
+                || !self.comptime_aliases.contains_key(name)
+            {
                 reject_kwargs(kwargs)?;
                 return self
                     .infer_static_method(&object.source_span(), name, &targs, method, args)

@@ -1340,7 +1340,7 @@ impl Checker {
         // runtime argument; ordinary generic-method specialization then leaves
         // an exact callable target for HIR/MIR.
         if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Param) {
-            let parameter_arguments = [mojito_ast::ast::ParamArg::Value(index.clone())];
+            let parameter_arguments = [mojito_ast::ast::subscript_param_arg(index)];
             let result = self.infer_method_call(
                 &span,
                 object,
@@ -2260,26 +2260,25 @@ impl Checker {
         object: &Expr,
     ) -> Option<Result<Ty, TypeError>> {
         // A member of a type or of its application (`S[Int].Of`).
-        fn applied_member_root(object: &Expr) -> Option<&String> {
+        fn applied_member_root(object: &Expr) -> Option<&str> {
             let ExprKind::Member { object, .. } = &object.kind else {
                 return None;
             };
             match &object.kind {
-                ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => Some(name),
-                _ => None,
+                ExprKind::Identifier(name) => Some(name),
+                _ => object.bracket_application().map(|(name, _)| name),
             }
         }
         if let Some(instance) = self.type_of_receiver(object) {
             return Some(instance);
         }
         let root = match &object.kind {
-            ExprKind::Identifier(name) => Some(name),
-            ExprKind::Index { object, .. } => match &object.kind {
-                ExprKind::Identifier(name) => Some(name),
-                _ => Some(applied_member_root(object)?),
-            },
-            ExprKind::MultiIndex { object, .. } => Some(applied_member_root(object)?),
+            ExprKind::Identifier(name) => Some(name.as_str()),
             ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => None,
+            _ if let Some((name, _)) = object.bracket_application() => Some(name),
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                Some(applied_member_root(object)?)
+            }
             // A construction (`TypeList[Trait=AnyType, Ts.values]()`,
             // `TypeList.of[Int]()`) is read on the type it constructs.
             ExprKind::Call { name, .. }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2109**.
+Next free ID: **R2112**.
 
 ## Ordered Work
 
@@ -3911,6 +3911,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2110 A function value a bracket specialized has no symbol in a
+  compile-time callable slot**
+
+  `CtValue::FuncSymbol` and `CallableDefault::Symbol` hold a bare symbol,
+  so a callable argument or default that binds a generic function's
+  parameters (`twice[4]`) keeps only `twice`, and the elaborator stops
+  with "monomorphization cannot resolve parameter `n`". Upstream's
+  `#kgen.func.symbol` names the specialization, its parameters applied.
+  - The check already records the bound arguments as the bracket's
+    `GenericInstantiation` fact (`infer_specialized_callable_value`);
+    the symbol slot must carry them, or name the instance.
+  - Probe: `def run[f: def() thin -> Int = twice[4]]()` over `def
+    twice[n: Int]() -> Int: return n * 2`, then `print(run())`; the pin
+    prints `8`. The keyword form `twice[n=4]` is the same.
+  - Probe: `run[twice[4]]()` over `def run[f: def() thin -> Int]()`
+    fails the same way; the pin prints `8`.
+  - Found while landing R1513 (2026-11-11).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2111 A bracket over a generic callable parameter read as a value
+  has no declaration facts**
+
+  Inside `def run[f: def[n: Int]() thin -> Int]()`, `var g = f[4]` stops
+  elaboration with "unsupported function value `f` lacks declaration
+  facts", where the pin prints `8` for `run[twice]()`; the call `f[4]()`
+  already runs.
+  - The value read names the parameter `f`, which has no declaration of
+    its own; the elaborator must specialize the callable bound to `f`,
+    as a call through it does.
+  - Probe: the program above over `def twice[n: Int]() -> Int: return n
+    * 2`.
+  - Found while landing R1513 (2026-11-11).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R2086 A struct's callable default naming a function fails at the
   struct's declaration**
 
@@ -4739,40 +4775,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1513 Compile-time consumers read a bracket application only as
-  `TypeApply`**
+- [ ] **R2109 The main inference and constraint dispatch reads a bracket
+  application only as `TypeApply`**
 
-  About two dozen checker and comptime sites match `ExprKind::TypeApply`
-  alone, where upstream's sema reads one `SubscriptNode` whatever its
-  operands, so the parser cannot yet emit `Index`/`MultiIndex` for a
-  capitalized, keyword, or type-operand bracket (R1514).
-  - The lever: each site reads `Expr::bracket_application`
-    (`crates/mojito-ast/src/ast.rs`) and keeps its own check of what the
-    name denotes. It is additive: the parser still emits `TypeApply`.
-  - Sites that match only `TypeApply`: `infer_reference_value` and
-    `infer_variant_storage_method` (`checker/inference.rs`),
-    `check_ct_bool` and `comptime_type_operand`
-    (`checker/comptime_validation.rs`), `lower_parameterized_member`
-    (`checker/constraints.rs`), `places.rs` `transfer_root`,
-    `statements.rs`'s comptime type-alias route, `applied_member_root`
-    (`checker/indexing.rs`), `origins/actuals.rs` and `origins/sig.rs`,
-    the type-parameter and callable defaults (`checker/declarations.rs`),
-    `fold_simd_alias_bounds` (`comptime/synth.rs`), `retype_head`
-    (`comptime/rewrite.rs`), `simd_width.rs`, and the pattern heads in
-    `checker/patterns.rs`.
-  - Sites that read `Index` but not `MultiIndex`, so `Name[a, b]` and
-    `Name[k=v]` escape them: `type_spelling` (`ast.rs`),
-    `symbol::spelled_type_argument`, `comptime_validation.rs`,
-    `constraints.rs`, and `comptime.rs`.
-  - Sites that build `ParamArg::Value(index)` by hand, so neither unwrap a
-    `TypeValue` nor split a tuple: `comptime_validation.rs`,
-    `type_resolution.rs`, `indexing.rs`, `ast.rs` `type_spelling`,
-    `comptime.rs`, and `variant_projection_type_argument`
-    (`inference.rs`). They switch to `subscript_param_args`.
-  - `Checker::bracket_callable` (`checker/generics.rs`) treats a local
-    holding a function value as an overload set; upstream binds only a
-    declared `def`. The lever: test `lookup_callable_origins`.
-  - Found while landing R1371 (2026-10-27).
+  The hottest `TypeApply` arms of `infer_impl`, `infer_with_expected`, and
+  the constraint builder have no `Index`/`MultiIndex` twin, so the parser
+  cannot yet stop emitting `TypeApply` (R1514).
+  - The lever: each arm gains a twin guarded by
+    `Checker::parameter_application` (`checker/generics.rs`), placed
+    before the runtime `Index` arm; a Variant projection keys on
+    `is_variant_projection`.
+  - `inference.rs`: `read_parametric_value`, the `__mlir_attr` and
+    application arms of `infer_impl`, and the expected-`Func`
+    specialization in `infer_with_expected`.
+  - `statements.rs`: the comptime alias routing (`Identifier | TypeApply |
+    TypeValue` and the `TypeApply` alias test).
+  - `constraints.rs`: `value_alias_application`, the bracketed attribute
+    and applied type value arms, `may_denote_type`, the trivial-predicate
+    constraint, and the `__mlir_attr` test.
+  - `comptime/rewrite.rs`: `rewrite_spelled_param_args` and
+    `projection_to_subscript` read `TypeApply` only.
+  - The risk is `G[3]`, already `Index`, changing route: check
+    `bracket_function_application`, `mlir_attr_bracket`,
+    `parametric_static_method_value`, and `bool_alias_predicate_where`.
+  - Found while landing R1513 (2026-11-11).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -4799,8 +4825,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime U256 = SIMD[DType.uint64, 4]`
     (`stdlib/std/hash/_ahash.mojo`) must stay a type alias; an
     unconverted parser flip stops the bundled std packaging there.
+  - Pattern heads: `parser/patterns.rs` builds a `Call` pattern's head as
+    `TypeApply` itself, not through `parse_bracket_suffix`.
+  - MIR: `checked.rs` lowers `ExprKind::TypeApply` to
+    `CheckedOp::TypeApply`, which MIR reads in `lower_stmt.rs`,
+    `expr.rs`, `expr_method.rs`, `facts.rs`, and `mir.rs`. After the flip
+    a bracket the checker classified as an application or a Variant
+    projection must still lower to it, or MIR must read both.
   - Found while landing R1371 (2026-10-27).
-  - Depends on R1513.
+  - Depends on R2109.
   - Model: Fable, Not Planned.
 
 - [ ] **R1511 A scalar type name in a bracket is a type by its spelling**

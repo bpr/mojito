@@ -77,16 +77,13 @@ impl<'a> Declared<'a> {
                     value,
                     ..
                 } => {
-                    if let ExprKind::TypeApply {
-                        name: applied,
-                        args,
-                    } = &value.kind
+                    if let Some((applied, args)) = value.bracket_application()
                         && type_params.is_empty()
                         && args.iter().any(|argument| hole(argument).is_some())
                     {
                         declared
                             .partial_aliases
-                            .insert(name.clone(), (applied.clone(), args.clone()));
+                            .insert(name.clone(), (applied.to_string(), args.into_owned()));
                     }
                     if !type_params.is_empty() {
                         declared

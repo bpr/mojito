@@ -887,7 +887,7 @@ impl Checker {
                 self.parameterized_assoc_application(
                     &ty,
                     "__getitem_param__",
-                    &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+                    &[mojito_ast::ast::subscript_param_arg(index)],
                 )?
                 .ok_or_else(|| TypeError::NotIndexable(ty.to_string()))?
             }
@@ -922,7 +922,7 @@ impl Checker {
                             self.parameterized_assoc_application(
                                 &base,
                                 name,
-                                &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+                                &[mojito_ast::ast::subscript_param_arg(index)],
                             )?
                         }
                     }
@@ -1175,7 +1175,7 @@ impl Checker {
             self.parameterized_assoc_application(
                 &base_ty,
                 name,
-                &[mojito_ast::ast::ParamArg::Value(index.clone())],
+                &[mojito_ast::ast::subscript_param_arg(index)],
             )?
         };
         applied
@@ -4370,8 +4370,8 @@ impl Checker {
                     Err(error) => {
                         let source = match &expr.kind {
                             ExprKind::Identifier(name) => SourceType::Named(name.clone(), vec![]),
-                            ExprKind::TypeApply { name, args } => {
-                                SourceType::Named(name.clone(), args.clone())
+                            _ if let Some((name, args)) = self.parameter_application(expr) => {
+                                SourceType::Named(name.to_string(), args.into_owned())
                             }
                             _ => return Err(error),
                         };

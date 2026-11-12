@@ -1917,7 +1917,7 @@ fn spelled_type_argument(arg: &ParamArg) -> Cow<'_, ParamArg> {
         ParamArg::Value(value)
             if matches!(
                 value.kind,
-                ExprKind::TypeApply { .. } | ExprKind::Index { .. }
+                ExprKind::TypeApply { .. } | ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
             ) =>
         {
             value.type_spelling().map_or(Cow::Borrowed(arg), |spelled| {

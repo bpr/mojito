@@ -1374,12 +1374,12 @@ impl Checker {
                     self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
                 }
             }
-            ExprKind::TypeApply { name, args } => {
-                let (ty, attributes) = self.applied_type(name, args)?;
+            ExprKind::TypeValue(ty) => self.type_value(value, ty),
+            _ if let Some((name, args)) = self.parameter_application(value) => {
+                let (ty, attributes) = self.applied_type(name, &args)?;
                 self.record_bracket_attributes(value.source_span(), attributes);
                 Ok(ty)
             }
-            ExprKind::TypeValue(ty) => self.type_value(value, ty),
             _ => Err(TypeError::TypeMismatch {
                 expected: "a type".to_string(),
                 found: "a value".to_string(),
@@ -1445,8 +1445,10 @@ impl Checker {
             return Ok(CallableDefault::Parameter(ParamRef::unbound(name)));
         }
 
-        let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &expression.kind
-        else {
+        let Some(name) = (match &expression.kind {
+            ExprKind::Identifier(name) => Some(name.as_str()),
+            _ => expression.bracket_application().map(|(name, _)| name),
+        }) else {
             return Err(TypeError::Unsupported(
                 "a callable default must be a function, an earlier callable parameter, or a conditional of those values"
                     .to_string(),
@@ -1455,7 +1457,7 @@ impl Checker {
         let (actual, symbol) = self
             .callable_value_symbol(expression, expected)?
             .ok_or_else(|| TypeError::NotCallable {
-                name: name.clone(),
+                name: name.to_string(),
                 ty: self
                     .lookup(name)
                     .map_or_else(|| "undefined".to_string(), ToString::to_string),
@@ -1482,12 +1484,14 @@ impl Checker {
         expected: &Ty,
     ) -> Result<Option<(Ty, String)>, TypeError> {
         let (name, arguments) = match &expression.kind {
-            ExprKind::Identifier(name) => (name.as_str(), &[][..]),
-            ExprKind::TypeApply { name, args } => (name.as_str(), args.as_slice()),
+            ExprKind::Identifier(name) => (name.as_str(), std::borrow::Cow::Borrowed(&[][..])),
             ExprKind::Member { object, field } => {
                 return self.static_value_symbol(expression, object, field, expected);
             }
-            _ => return Ok(None),
+            _ => match self.parameter_application(expression) {
+                Some(application) => application,
+                None => return Ok(None),
+            },
         };
         if self.is_local_binding(name) {
             return Ok(None);
@@ -1495,7 +1499,7 @@ impl Checker {
         let Some(actual) = self.infer_specialized_callable_value(
             expression.source_span(),
             CallableValueSource::Binding(name),
-            arguments,
+            &arguments,
             Some(expected),
             true,
         )?

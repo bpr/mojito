@@ -559,12 +559,8 @@ impl Checker {
             return false;
         };
         let base = match &object.kind {
-            ExprKind::Identifier(base) => base,
-            ExprKind::TypeApply { name, .. } if !applied => name,
-            ExprKind::Index { object, .. } if !applied => match &object.kind {
-                ExprKind::Identifier(base) => base,
-                _ => return false,
-            },
+            ExprKind::Identifier(base) => base.as_str(),
+            _ if !applied && let Some((name, _)) = object.bracket_application() => name,
             _ => return false,
         };
         self.declared_structs.contains(base)
@@ -4760,8 +4756,9 @@ fn alias_dependency_order(stmts: &[Stmt]) -> Vec<usize> {
     impl mojito_ast::visit::Visitor for Names {
         fn visit_expr(&mut self, expr: &Expr) {
             match &expr.kind {
-                ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => {
-                    self.0.push(name.clone());
+                ExprKind::Identifier(name) => self.0.push(name.clone()),
+                _ if let Some((name, _)) = expr.bracket_application() => {
+                    self.0.push(name.to_string());
                 }
                 _ => {}
             }

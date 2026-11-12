@@ -92,6 +92,19 @@ impl Checker {
                     "reference binding to a non-place expression".to_string(),
                 ))
             }
+            _ if let Some((name, _)) = expr.bracket_application()
+                && self.is_variant_projection(expr) =>
+            {
+                let root = self
+                    .lookup_owner(name)
+                    .ok_or_else(|| TypeError::UndefinedVariable(name.to_string()))?;
+                // `record_interior_reference` adds the payload's named
+                // `Interior("value")` segment after this base is resolved.
+                Ok(OriginPlace {
+                    root,
+                    path: Vec::new(),
+                })
+            }
             ExprKind::Index { object, .. } => {
                 let mut place = self.origin_place(object)?;
                 place.path.push(OriginSeg::AnyIndex);
@@ -104,29 +117,6 @@ impl Checker {
                 let mut place = self.origin_place(object)?;
                 place.path.push(OriginSeg::AnyIndex);
                 Ok(place)
-            }
-            ExprKind::TypeApply { name, .. }
-                if self
-                    .node_facts
-                    .borrow()
-                    .get(&expr.source_span())
-                    .and_then(|facts| facts.adjustment.as_deref())
-                    .is_some_and(|operation| {
-                        matches!(
-                            operation,
-                            mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                        )
-                    }) =>
-            {
-                let root = self
-                    .lookup_owner(name)
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                // `record_interior_reference` adds the payload's named
-                // `Interior("value")` segment after this base is resolved.
-                Ok(OriginPlace {
-                    root,
-                    path: Vec::new(),
-                })
             }
             // A reference-returning call is a place: the one its result
             // origin names, so `inner(w).t` projects `w.t`.

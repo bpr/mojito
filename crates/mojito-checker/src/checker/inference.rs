@@ -521,24 +521,12 @@ impl Checker {
             }
             let place_ty = match &expr.kind {
                 ExprKind::Identifier(_) | ExprKind::Member { .. } => self.place_storage_ty(expr),
+                _ if expr.bracket_application().is_some() && self.is_variant_projection(expr) => {
+                    Some(ty.clone())
+                }
                 ExprKind::Index { object, index } => self
                     .index_storage_ty(object, index)
                     .or_else(|| Some(ty.clone())),
-                ExprKind::TypeApply { .. }
-                    if self
-                        .node_facts
-                        .borrow()
-                        .get(&expr.source_span())
-                        .and_then(|facts| facts.adjustment.as_deref())
-                        .is_some_and(|operation| {
-                            matches!(
-                                operation,
-                                mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                            )
-                        }) =>
-                {
-                    Some(ty.clone())
-                }
                 _ => None,
             };
             if let Some(place_ty) = place_ty {
@@ -591,6 +579,26 @@ impl Checker {
                             })
                     })
             }
+            _ if matches!(expr.kind, ExprKind::TypeApply { .. })
+                || (expr.bracket_application().is_some() && self.is_variant_projection(expr)) =>
+            {
+                self.fact(&expr.source_span(), |facts| {
+                    facts.interior_reference.as_ref()
+                })
+                .and_then(|origin| {
+                    self.infer(expr)
+                        .ok()
+                        .map(|referent| mojito_types::origin::RefTy {
+                            referent,
+                            mutability: if self.owner_is_mutable(origin.root) {
+                                mojito_types::origin::Mutability::Mutable
+                            } else {
+                                mojito_types::origin::Mutability::Immutable
+                            },
+                            origin: mojito_types::origin::Origin::Place(origin),
+                        })
+                })
+            }
             ExprKind::Index { object, index } => match self.index_storage_ty(object, index)? {
                 referent if matches!(referent.kind(), TyKind::Ref(_)) => {
                     let TyKind::Ref(reference) = referent.into_kind() else {
@@ -612,23 +620,6 @@ impl Checker {
                         origin: mojito_types::origin::Origin::Place(origin),
                     }),
             },
-            ExprKind::TypeApply { .. } => self
-                .fact(&expr.source_span(), |facts| {
-                    facts.interior_reference.as_ref()
-                })
-                .and_then(|origin| {
-                    self.infer(expr)
-                        .ok()
-                        .map(|referent| mojito_types::origin::RefTy {
-                            referent,
-                            mutability: if self.owner_is_mutable(origin.root) {
-                                mojito_types::origin::Mutability::Mutable
-                            } else {
-                                mojito_types::origin::Mutability::Immutable
-                            },
-                            origin: mojito_types::origin::Origin::Place(origin),
-                        })
-                }),
             _ => None,
         }
     }
@@ -1690,7 +1681,7 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         // A type application is a static method receiver for the ordinary
         // method path.
-        if matches!(object.kind, ExprKind::TypeApply { .. }) {
+        if self.parameter_application(object).is_some() {
             return None;
         }
         let object_ty = match self.infer(object) {

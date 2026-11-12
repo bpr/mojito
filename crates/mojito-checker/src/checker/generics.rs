@@ -1168,22 +1168,36 @@ impl Checker {
     }
 
     /// The function a bracket after a name binds and the operands it binds,
-    /// when the name denotes a function: upstream's `SubscriptNode` over an
-    /// overload set, whose operands are parameter bindings (`twice[4]`,
-    /// `pair[a=3, b=4]`, `total[]`). `None` for any other base.
+    /// when the name denotes a declared function or a compile-time callable:
+    /// upstream's `SubscriptNode` over an overload set or a callable
+    /// parameter, whose operands are parameter bindings (`twice[4]`,
+    /// `pair[a=3, b=4]`, `total[]`). `None` for any other base, a runtime
+    /// local holding a function value included: upstream subscripts that.
     pub(super) fn bracket_callable(
         &self,
         expr: &Expr,
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         let (name, args) = expr.bracket_application()?;
-        self.lookup(name)
-            .is_some_and(|ty| {
-                matches!(
-                    ty.kind(),
-                    TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
-                ) || super::is_closure_storage(ty)
-            })
+        self.binds_bracket_parameters(name)
             .then(|| (name.to_string(), args.into_owned()))
+    }
+
+    /// The name a bracket applies and the operands it spells, when the
+    /// bracket is a parameter application rather than a runtime subscript:
+    /// upstream's classification of a `SubscriptNode`'s base. A base with no
+    /// value binding (a type, alias, trait, or builtin head) or a callable
+    /// [`Self::bracket_callable`] binds is applied; a runtime value is
+    /// subscripted. A `TypeApply` the parser already classified is always
+    /// an application.
+    pub(super) fn parameter_application<'e>(
+        &self,
+        expr: &'e Expr,
+    ) -> Option<(&'e str, std::borrow::Cow<'e, [mojito_ast::ast::ParamArg]>)> {
+        let (name, args) = expr.bracket_application()?;
+        (matches!(expr.kind, ExprKind::TypeApply { .. })
+            || self.lookup(name).is_none()
+            || self.binds_bracket_parameters(name))
+        .then_some((name, args))
     }
 
     /// Type a bracket over a function, which binds its parameters, or
@@ -1835,6 +1849,21 @@ impl Checker {
         }
         Ok(())
     }
+    /// Whether a bracket after `name` binds a callable's parameters: the
+    /// name denotes a function, and it is a declared `def` or a compile-time
+    /// callable (a callable parameter, a `comptime` binding) rather than a
+    /// runtime value holding one.
+    fn binds_bracket_parameters(&self, name: &str) -> bool {
+        self.lookup(name).is_some_and(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+            ) || super::is_closure_storage(ty)
+        }) && (self.lookup_callable_origins(name).is_some()
+            || self.is_compile_time_binding(name)
+            || self.is_value_parameter(name))
+    }
+
     /// The candidates `source` reads as a function value, or `None` when it
     /// names no function: the value's type (an `Overload` of several), each
     /// candidate's origin signature, and the symbol each lowers to.

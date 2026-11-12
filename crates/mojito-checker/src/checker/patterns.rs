@@ -1063,7 +1063,10 @@ impl Checker {
         join: Join<'_>,
         commands: &mut Commands,
     ) -> Result<(), TypeError> {
-        let (ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. }) = &head.kind else {
+        let Some(name) = (match &head.kind {
+            ExprKind::Identifier(name) => Some(name.as_str()),
+            _ => head.bracket_application().map(|(name, _)| name),
+        }) else {
             return Err(TypeError::MatchPattern(match &head.kind {
                 ExprKind::Member { object, .. } if is_contextual(object) => {
                     "cannot resolve inferred member without a contextual type".to_string()
@@ -1491,10 +1494,8 @@ pub fn irrefutable(pattern: &MatchPattern) -> bool {
         MatchPatternKind::As { pattern, .. } => irrefutable(pattern),
         MatchPatternKind::Or(items) => items.iter().any(irrefutable),
         MatchPatternKind::Call { head, args, kwargs } => {
-            matches!(
-                head.kind,
-                ExprKind::Identifier(_) | ExprKind::TypeApply { .. }
-            ) && args.iter().all(irrefutable)
+            (matches!(head.kind, ExprKind::Identifier(_)) || head.bracket_application().is_some())
+                && args.iter().all(irrefutable)
                 && kwargs.iter().all(|(_, pattern)| irrefutable(pattern))
         }
         MatchPatternKind::Fields(fields) => fields.iter().all(|(_, pattern)| irrefutable(pattern)),
@@ -1887,8 +1888,9 @@ fn is_contextual(object: &Expr) -> bool {
 /// dots, an application by its name.
 fn head_spelling(owner: &Expr) -> String {
     match &owner.kind {
-        ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => name.clone(),
+        ExprKind::Identifier(name) => name.clone(),
         ExprKind::Member { object, field } => format!("{}.{field}", head_spelling(object)),
+        _ if let Some((name, _)) = owner.bracket_application() => name.to_string(),
         _ => "pattern head".to_string(),
     }
 }

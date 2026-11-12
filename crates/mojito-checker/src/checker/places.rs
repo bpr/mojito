@@ -242,13 +242,7 @@ impl Checker {
         }
         // A variant's `unsafe_get[T]()` projects its payload in place, as
         // upstream's `ref [self] T` result does.
-        let projection = self.has_fact(&expr.source_span(), |facts| {
-            matches!(
-                facts.adjustment.as_deref(),
-                Some(mojito_checked::checked::SemanticAdjustment::VariantProject { .. })
-            )
-        });
-        if !projection
+        if !self.is_variant_projection(expr)
             && let Some(linear) = self.destruction_verdict(ty)
             && self.infer_reference_value(expr).is_none()
         {
@@ -414,6 +408,18 @@ impl Checker {
         })
     }
 
+    /// Whether the check recorded `expr` as a Variant payload projection
+    /// (`v[Int]`, `v.unsafe_get[T]()`): a place inside the variant, whatever
+    /// the bracket's spelling.
+    pub(super) fn is_variant_projection(&self, expr: &Expr) -> bool {
+        self.has_fact(&expr.source_span(), |facts| {
+            matches!(
+                facts.adjustment.as_deref(),
+                Some(mojito_checked::checked::SemanticAdjustment::VariantProject { .. })
+            )
+        })
+    }
+
     /// What `source`'s field projections reach: a named binding, or a
     /// temporary (a call result, a by-value subscript). Any other subscript
     /// yields a reference, which reaches no tracked root.
@@ -422,7 +428,8 @@ impl Checker {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
             ExprKind::Member { object, .. } => self.transfer_root(object),
             _ if self.designates_place(source)
-                && !matches!(source.kind, ExprKind::TypeApply { .. }) =>
+                && !matches!(source.kind, ExprKind::TypeApply { .. })
+                && !self.is_variant_projection(source) =>
             {
                 Err(TypeError::UntrackedTransfer)
             }

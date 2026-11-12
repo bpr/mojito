@@ -153,9 +153,7 @@ pub(in crate::checker) fn immutable_origin_cast(
     if field != "cast_from" {
         return None;
     }
-    let ExprKind::TypeApply { name, .. } = &applied.kind else {
-        return None;
-    };
+    let (name, _) = applied.bracket_application()?;
     if name != "Origin" {
         return None;
     }

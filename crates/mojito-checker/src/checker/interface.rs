@@ -307,15 +307,13 @@ impl InstalledInterfaces {
             .binary_search_by(|(alias, _)| alias.as_str().cmp(name))
             .ok()?;
         let alias = &aliases[position].1;
-        let ExprKind::TypeApply { name, args } = &alias.value.kind else {
-            return None;
-        };
+        let (name, args) = alias.value.bracket_application()?;
         let binders: Vec<&str> = alias.decls.iter().map(ParamDecl::name).collect();
         let args = args
             .iter()
             .map(|argument| alias_binder_hole(argument, &binders))
             .collect();
-        Some((name.clone(), args))
+        Some((name.to_string(), args))
     }
 
     /// The parents the reached trait `name` declares, decoding its

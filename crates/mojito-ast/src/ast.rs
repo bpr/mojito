@@ -87,12 +87,13 @@ pub fn canonical_destructor_name(name: &str) -> &str {
     }
 }
 
-/// The compile-time arguments a subscript's index spells: one per element
-/// of a tuple index, none for the empty subscript `f[]`, else the index
-/// itself.
+/// The compile-time arguments a subscript's index spells.
+///
+/// None for the empty subscript `f[]`, else the index itself. A parenthesized tuple
+/// (`G[(1, 2)]`) is one operand, as upstream's `SubscriptNode` reads it;
+/// several operands parse as a `MultiIndex`.
 pub fn subscript_param_args(index: &Expr) -> Vec<ParamArg> {
     match &index.kind {
-        ExprKind::TupleLit(elements) => elements.iter().map(subscript_param_arg).collect(),
         ExprKind::EmptySubscript => Vec::new(),
         _ => vec![subscript_param_arg(index)],
     }
@@ -119,6 +120,25 @@ pub fn subscript_param_arg(index: &Expr) -> ParamArg {
     match &index.kind {
         ExprKind::TypeValue(ty) => ParamArg::Type(ty.clone()),
         _ => ParamArg::Value(index.clone()),
+    }
+}
+
+/// One compile-time argument as the subscript operand that spells it.
+///
+/// The inverse of [`subscript_param_arg`]: a type argument becomes a
+/// `TypeValue` index at `span`, a named one a keyword operand. `None` for a
+/// named argument whose value is itself named.
+pub fn subscript_arg(argument: ParamArg, span: Span) -> Option<SubscriptArg> {
+    let index = |argument: ParamArg| match argument {
+        ParamArg::Value(value) => Some(value),
+        ParamArg::Type(ty) => Some(Expr::new(ExprKind::TypeValue(ty), span)),
+        ParamArg::Named { .. } => None,
+    };
+    match argument {
+        ParamArg::Named { name, value } => {
+            index(*value).map(|value| SubscriptArg::Keyword { name, value })
+        }
+        argument => index(argument).map(SubscriptArg::Index),
     }
 }
 
@@ -2010,14 +2030,10 @@ impl Expr {
                 Some(Type::Named(name.clone(), Vec::new()))
             }
             ExprKind::TypeApply { name, args } => Some(Type::Named(name.clone(), args.clone())),
-            ExprKind::Index { object, index }
-                if let ExprKind::Identifier(name) = &object.kind
-                    && !name.chars().next()?.is_lowercase() =>
+            _ if let Some((name, args)) = self.bracket_application()
+                && !name.chars().next()?.is_lowercase() =>
             {
-                Some(Type::Named(
-                    name.clone(),
-                    vec![ParamArg::Value((**index).clone())],
-                ))
+                Some(Type::Named(name.to_string(), args.into_owned()))
             }
             ExprKind::Member { object, field } => Some(match object.type_spelling()? {
                 Type::SelfType => Type::SelfParam(field.clone()),

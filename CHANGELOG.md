@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The checker and compile-time passes read a bracket after a name
+  (`G[3]`, `pred[a, b]`, `S[k=v]`) as the same parameter application
+  whether it parsed as `TypeApply`, `Index`, or `MultiIndex`, classifying
+  its base as upstream's `SubscriptNode` does: a type parameter's default
+  `G[3]` now prints the pin's `1`, and a bracket after a runtime local
+  holding a function value is a subscript the pin also rejects. A
+  parenthesized tuple in a bracket is one operand, as at the pin, so
+  `G[(1, 2)]` over two `Int` parameters is now rejected (R1513).
+
 - A variadic (`*args`, `**kwargs`) or reference-returning closure's
   storage now declares the `__call__` every closure's storage declares, its
   witness forwarding the collectors and the reference result, so

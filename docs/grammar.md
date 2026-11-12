@@ -1145,7 +1145,7 @@ Notes:
   other value it is a subscript. A bracket over a capitalized name holding
   several operands or a keyword operand, and one holding an operand that
   parses as a `type` (a scalar name, `Self`, `None`, `def(...)`), still
-  parse as the parameter application `TypeApply` (roadmap R1513, R1514).
+  parse as the parameter application `TypeApply` (roadmap R1514).
   Over a member of a type (`S[Int].Of[Bool]`, `P.plus[1, 2]`,
   `P.plus[a=1]`), whose base is a capitalized name, `Self`, a parameter
   application, or a member chain of one, the brackets are a subscript too,

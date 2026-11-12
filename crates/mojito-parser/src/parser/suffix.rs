@@ -568,21 +568,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok(self.node(ExprKind::TypeApply { name, args }, start));
         }
         let span = (start, self.last_span.1);
-        let index = |argument: mojito_ast::ast::ParamArg| match argument {
-            mojito_ast::ast::ParamArg::Value(value) => Ok(value),
-            mojito_ast::ast::ParamArg::Type(ty) => Ok(Expr::new(ExprKind::TypeValue(ty), span)),
-            mojito_ast::ast::ParamArg::Named { .. } => Err(ParseError::UnexpectedToken(
-                Token::RBracket,
-                "a keyword argument takes one compile-time value".to_string(),
-            )),
-        };
         let indices = args
             .into_iter()
-            .map(|argument| match argument {
-                mojito_ast::ast::ParamArg::Named { name, value } => {
-                    index(*value).map(|value| SubscriptArg::Keyword { name, value })
-                }
-                argument => index(argument).map(SubscriptArg::Index),
+            .map(|argument| {
+                mojito_ast::ast::subscript_arg(argument, span).ok_or_else(|| {
+                    ParseError::UnexpectedToken(
+                        Token::RBracket,
+                        "a keyword argument takes one compile-time value".to_string(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let kind = match <[_; 1]>::try_from(indices) {

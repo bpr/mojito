@@ -485,15 +485,7 @@ fn own_simd_alias(aliases: &HashMap<&str, &Expr>, name: &str) -> Option<Vec<Para
             ExprKind::Identifier(next) if supplied.is_empty() => {
                 value = aliases.get(next.as_str())?;
             }
-            // One bracket argument parses as a subscript (`Scalar[DType.int8]`).
-            ExprKind::Index { object, index } if supplied.is_empty() => {
-                let ExprKind::Identifier(applied) = &object.kind else {
-                    return None;
-                };
-                value = aliases.get(applied.as_str())?;
-                supplied = vec![ParamArg::Value((**index).clone())];
-            }
-            ExprKind::TypeApply { name, args } => {
+            _ if let Some((name, args)) = value.bracket_application() => {
                 let mut supplied_args = supplied.into_iter();
                 let mut filled: Vec<ParamArg> = args
                     .iter()
@@ -511,7 +503,7 @@ fn own_simd_alias(aliases: &HashMap<&str, &Expr>, name: &str) -> Option<Vec<Para
                     let positional = simd_positional_args(args)?;
                     return simd_source_dims(&positional).map(|_| positional);
                 }
-                value = aliases.get(name.as_str())?;
+                value = aliases.get(name)?;
                 supplied = args;
             }
             _ => return None,

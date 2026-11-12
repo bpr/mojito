@@ -24,6 +24,7 @@
 
 use mojito_ast::ast::{
     Expr, ExprKind, InfixOp, ParamArg, PrefixOp, Stmt, StmtKind, Type, TypeParam, WithItem,
+    subscript_param_args,
 };
 pub use mojito_symbol::symbol::mangle;
 use mojito_types::types::TyKind;
@@ -223,7 +224,7 @@ pub(super) fn pack_element_alias(
     match &object.kind {
         ExprKind::Identifier(base) if is_pack(base) => Some((
             name.clone(),
-            Type::Named(base.clone(), vec![ParamArg::Value((**index).clone())]),
+            Type::Named(base.clone(), subscript_param_args(index)),
         )),
         ExprKind::Member { object, field }
             if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
@@ -453,7 +454,7 @@ fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
         ParamArg::Value(value)
             if matches!(
                 value.kind,
-                ExprKind::TypeApply { .. } | ExprKind::Index { .. }
+                ExprKind::TypeApply { .. } | ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
             ) =>
         {
             ct_param_source_type(&value.type_spelling()?)

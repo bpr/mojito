@@ -1711,6 +1711,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
 }
 
 fn retype_expr(e: &mut Expr, subs: TypeSubs) {
+    retype_bracket_head(e, subs);
     match &mut e.kind {
         ExprKind::Identifier(_) => {}
         ExprKind::Spread(value) => retype_expr(value, subs),
@@ -1937,6 +1938,64 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
     let mut merged = head_args;
     merged.append(args);
     *args = merged;
+}
+
+/// [`retype_head`] for a bracket the parser left a subscript (`T[3]`,
+/// `T[a, k=b]`) over a dropped binding: the base becomes the concrete
+/// type's head, and its own arguments lead the operands.
+fn retype_bracket_head(e: &mut Expr, subs: TypeSubs) {
+    use mojito_ast::ast::SubscriptArg;
+    let span = e.span;
+    let (ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }) = &mut e.kind else {
+        return;
+    };
+    let ExprKind::Identifier(name) = &object.kind else {
+        return;
+    };
+    let Some(Type::Named(head, head_args)) = subs(name) else {
+        return;
+    };
+    let Some(mut operands) = head_args
+        .into_iter()
+        .map(|argument| mojito_ast::ast::subscript_arg(argument, span))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    object.kind = ExprKind::Identifier(head);
+    if operands.is_empty() {
+        return;
+    }
+    let object = match std::mem::replace(&mut e.kind, ExprKind::None) {
+        ExprKind::Index { object, index } => {
+            if !matches!(index.kind, ExprKind::EmptySubscript) {
+                operands.push(SubscriptArg::Index(*index));
+            }
+            object
+        }
+        ExprKind::MultiIndex { object, args } => {
+            operands.extend(args);
+            object
+        }
+        other => {
+            e.kind = other;
+            return;
+        }
+    };
+    e.kind = match <[_; 1]>::try_from(operands) {
+        Ok([SubscriptArg::Index(index)]) => ExprKind::Index {
+            object,
+            index: Box::new(index),
+        },
+        Ok(operands) => ExprKind::MultiIndex {
+            object,
+            args: operands.into(),
+        },
+        Err(operands) => ExprKind::MultiIndex {
+            object,
+            args: operands,
+        },
+    };
 }
 
 fn retype_exprs(exprs: &mut [Expr], subs: TypeSubs) {

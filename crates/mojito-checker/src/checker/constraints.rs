@@ -724,12 +724,12 @@ impl Checker {
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
         let template = match (&body.kind, source_ty) {
-            (ExprKind::TypeApply { name, args }, _) => {
-                self.applied_type(name, args).map(|(template, attributes)| {
+            _ if let Some((name, args)) = self.parameter_application(body) => self
+                .applied_type(name, &args)
+                .map(|(template, attributes)| {
                     self.record_bracket_attributes(body.source_span(), attributes);
                     template
-                })
-            }
+                }),
             // A function type with its own binders (`def[dtype: DType,
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
@@ -3105,26 +3105,15 @@ impl Checker {
     /// type the instance closes, and `False` for any other closed type.
     /// `None` for any other expression.
     fn trivial_predicate_value(&self, expr: &Expr) -> Option<Result<ParamExpr, TypeError>> {
-        let name = match &expr.kind {
-            ExprKind::TypeApply { name, .. } => name,
-            ExprKind::Index { object, .. } => match &object.kind {
-                ExprKind::Identifier(name) => name,
-                _ => return None,
-            },
-            _ => return None,
-        };
+        let (name, args) = expr.bracket_application()?;
         let kind = mojito_types::types::trivial_predicate_name(name)
             .filter(|_| self.lookup(name).is_none())?;
-        let subject = match &expr.kind {
-            ExprKind::TypeApply { args, .. } => match args.as_slice() {
-                [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_anno(ty).map(Some),
-                [mojito_ast::ast::ParamArg::Value(value)] => self.comptime_type_operand(value),
-                _ => Err(TypeError::Unsupported(format!(
-                    "{name}[T] takes exactly one type argument"
-                ))),
-            },
-            ExprKind::Index { index, .. } => self.comptime_type_operand(index),
-            _ => return None,
+        let subject = match &*args {
+            [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_anno(ty).map(Some),
+            [mojito_ast::ast::ParamArg::Value(value)] => self.comptime_type_operand(value),
+            _ => Err(TypeError::Unsupported(format!(
+                "{name}[T] takes exactly one type argument"
+            ))),
         };
         let context = &self.param_context;
         Some(subject.and_then(|ty| {
@@ -4966,27 +4955,16 @@ impl Checker {
     }
 
     /// Recognize a predicate-alias application expression (`MyPred[T]`,
-    /// spelled as a type application or as bracket indexing, with a tuple
-    /// index carrying multiple arguments), returning the alias name and its
-    /// arguments. `None` when the expression is not an application of a
+    /// any bracket application over its name), returning the alias name and
+    /// its arguments. `None` when the expression is not an application of a
     /// registered predicate alias.
     pub(super) fn predicate_alias_application<'e>(
         &self,
         expr: &'e Expr,
     ) -> Option<(&'e str, Vec<mojito_ast::ast::ParamArg>)> {
-        match &expr.kind {
-            ExprKind::TypeApply { name, args } if self.predicate_alias(name).is_some() => {
-                Some((name, args.clone()))
-            }
-            ExprKind::Index { object, index } => {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    return None;
-                };
-                self.predicate_alias(name)?;
-                Some((name, subscript_param_args(index)))
-            }
-            _ => None,
-        }
+        let (name, args) = expr.bracket_application()?;
+        self.predicate_alias(name)?;
+        Some((name, args.into_owned()))
     }
 
     /// The Bool a predicate-alias application read as a value denotes
@@ -6524,8 +6502,13 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
         ExprKind::Identifier(name) if name == "Self" => Ok(SourceType::SelfType),
         ExprKind::Identifier(name) => Ok(SourceType::Named(name.clone(), Vec::new())),
         // A bracketed attribute is a compile-time value, whatever its type.
-        ExprKind::TypeApply { name, .. } if name == "__mlir_attr" => Err(unsupported_assoc_body()),
-        ExprKind::TypeApply { name, args } => Ok(SourceType::Named(name.clone(), args.clone())),
+        _ if let Some((name, args)) = value.bracket_application() => {
+            if name == "__mlir_attr" {
+                Err(unsupported_assoc_body())
+            } else {
+                Ok(SourceType::Named(name.to_string(), args.into_owned()))
+            }
+        }
         // A subscript of the struct's own member or parameter
         // (`Self.values[idx]`, `Self.Get[0]`).
         ExprKind::Index { object, index }
@@ -6545,11 +6528,6 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
                 base: Box::new(SourceType::Value(object.clone())),
                 index: index.clone(),
             })
-        }
-        // A type application such as `List[T]` parses as a subscript over the
-        // type's name; recover the parameter-argument list from the index.
-        ExprKind::Index { object, index } if let ExprKind::Identifier(name) = &object.kind => {
-            Ok(SourceType::Named(name.clone(), subscript_param_args(index)))
         }
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
             Ok(SourceType::SelfParam(field.clone()))

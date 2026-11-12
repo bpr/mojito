@@ -521,13 +521,7 @@ impl Checker {
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         use mojito_ast::ast::ParamArg;
         let alias = self.comptime_aliases.get(name)?;
-        let ExprKind::TypeApply {
-            name: callee,
-            args: applied,
-        } = &alias.value.kind
-        else {
-            return None;
-        };
+        let (callee, applied) = alias.value.bracket_application()?;
         let unbound = mojito_ast::call::bracket_unbound_slots(&alias.decls, param_args).ok()?;
         let keywords = mojito_ast::call::bracket_keywords(&param_args[..unbound.listed]);
         let slots = mojito_ast::call::match_parameter_slots(&alias.decls, &keywords).ok()?;
@@ -598,7 +592,7 @@ impl Checker {
                 ),
             })
             .collect();
-        (applied_binders == alias.decls.len()).then(|| (callee.clone(), param_args))
+        (applied_binders == alias.decls.len()).then(|| (callee.to_string(), param_args))
     }
 
     /// The spelling of the type `object` names when it applies a generic
