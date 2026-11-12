@@ -703,7 +703,7 @@ impl Checker {
         };
         let arguments = arguments
             .into_iter()
-            .zip(info.decls.iter().map(Some).chain(std::iter::repeat(None)))
+            .zip(info.decls().iter().map(Some).chain(std::iter::repeat(None)))
             .map(|(argument, decl)| match decl {
                 Some(decl) if mojito_ast::call::CompileTimeParam::infer_only(decl) => {
                     mojito_ast::ast::ParamArg::Named {
@@ -995,7 +995,7 @@ impl Checker {
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         use mojito_ast::ast::ParamArg;
         let (target, arguments) = ty.kind().as_non_simd_struct()?;
-        let decls = &self.structs.get(target)?.decls;
+        let decls = &self.structs.get(target)?.decls();
         let raw = decls.iter().any(|decl| {
             matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
                 if matches!(ty.kind(), TyKind::ParamList(_)))

@@ -504,13 +504,15 @@ impl Checker {
         if self.structs.contains_key(name) || self.traits.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
-        let decls = match self.classify_params(name, type_params) {
+        let decls = match self.classify_param_list(name, type_params) {
             Ok(decls) => decls,
             Err(error) => {
                 let Some(without) = self.deferred_defaults(type_params) else {
                     return Err(error);
                 };
-                let decls = self.classify_params(name, &without).map_err(|_| error)?;
+                let decls = self
+                    .classify_param_list(name, &without)
+                    .map_err(|_| error)?;
                 self.shells_awaiting_defaults.push(name.to_string());
                 decls
             }
@@ -547,7 +549,7 @@ impl Checker {
         self.structs.insert(
             name.to_string(),
             StructInfo {
-                decls,
+                params: decls,
                 source_params: type_params.to_vec(),
                 module: mojito_module::module::declaring_module_path(
                     name,
@@ -618,7 +620,7 @@ impl Checker {
         if pending.is_empty() {
             return Ok(());
         }
-        let decls = info.decls.clone();
+        let decls = info.decls().into_owned();
         for (trait_name, condition) in pending {
             match self.in_param_scope(&decls, |this| this.compile_condition(&decls, &condition)) {
                 Ok(compiled) => {
@@ -681,7 +683,7 @@ impl Checker {
             else {
                 continue;
             };
-            let decls = match self.classify_params(&name, declaration.type_params) {
+            let decls = match self.classify_param_list(&name, declaration.type_params) {
                 Ok(decls) => decls,
                 Err(error) if report => return Err(error),
                 Err(_) => {
@@ -697,7 +699,7 @@ impl Checker {
                 decls.clone(),
             );
             if let Some(info) = self.structs.get_mut(&name) {
-                info.decls = decls;
+                info.params = decls;
             }
         }
         Ok(())
@@ -718,7 +720,7 @@ impl Checker {
                 "struct '{name}' was not registered before member resolution"
             ))
         })?;
-        let decls = info.decls.clone();
+        let decls = info.decls().into_owned();
         let self_ty = Self::struct_instance_type(name, info.self_arguments());
         let saved = SavedStructScope {
             type_params: std::mem::replace(
@@ -783,8 +785,8 @@ impl Checker {
                         "struct '{name}' was not registered before applying its where clauses"
                     ))
                 })?
-                .decls
-                .clone();
+                .decls()
+                .into_owned();
             let has_constraint_binder = decls.last().is_some();
             for condition in declaration.where_clauses {
                 let constraint =
@@ -796,20 +798,15 @@ impl Checker {
                     .structs
                     .get_mut(name)
                     .expect("struct existence checked above");
-                if let Some(last) = info.decls.last_mut() {
-                    match last {
-                        ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. } => {
-                            constraints.push(constraint);
-                        }
-                    }
+                if let Some(constraints) = ParamDecl::clause_constraints(&mut info.params) {
+                    constraints.push(constraint);
                 }
             }
             let updated_decls = self
                 .structs
                 .get(name)
                 .expect("struct existence checked above")
-                .decls
+                .params
                 .clone();
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Struct {
@@ -1675,7 +1672,7 @@ impl Checker {
             let Some(info) = checker.structs.get(current_name) else {
                 return Ok(());
             };
-            let subst = struct_subst(&info.decls, args);
+            let subst = struct_subst(&info.decls(), args);
             for (_, field_ty) in info.fields.clone() {
                 visit_field(checker, root, &substitute(&field_ty, &subst), visiting)?;
             }
@@ -2108,8 +2105,8 @@ impl Checker {
                     // Copyable proof strong enough to change a method ABI.
                     return false;
                 };
-                let arguments = positional_pack_arguments(&info.decls, arguments);
-                let environment = ConstraintEnvironment::declared(&info.decls, &arguments);
+                let arguments = positional_pack_arguments(&info.decls(), arguments);
+                let environment = ConstraintEnvironment::declared(&info.decls(), &arguments);
                 if let Some(methods) = info.methods.get("__copyinit__") {
                     // A declared copy initializer suppresses the fieldwise copy
                     // path. Its method availability is therefore the real
@@ -2274,8 +2271,8 @@ impl Checker {
                 let Ok(condition) = condition.compiled() else {
                     return false;
                 };
-                let args = positional_pack_arguments(&info.decls, args);
-                let environment = ConstraintEnvironment::declared(&info.decls, &args);
+                let args = positional_pack_arguments(&info.decls(), args);
+                let environment = ConstraintEnvironment::declared(&info.decls(), &args);
                 self.eval_constraint_under_assumption(condition, &environment, assumption, visiting)
             })
         });
@@ -2820,7 +2817,7 @@ impl Checker {
     ) -> Option<Vec<GenericConstraint>> {
         let always = || vec![GenericConstraint::Bool(true)];
         let trivial = mojito_types::types::trivial_predicate_name(required);
-        if info.decls.is_empty() {
+        if info.decls().is_empty() {
             let self_ty = Ty::new(TyKind::Struct(name.to_string(), Vec::new()));
             let holds = trivial.map_or_else(
                 || self.conforms_to(&self_ty, required),
@@ -2830,7 +2827,7 @@ impl Checker {
         }
         let self_ty = Ty::new(TyKind::Struct(
             name.to_string(),
-            params_as_args(&info.decls),
+            params_as_args(&info.decls()),
         ));
         if mojito_types::types::uninit_storage_element(&self_ty).is_some() {
             return None;
@@ -3030,8 +3027,8 @@ impl Checker {
         };
         // A sole variadic parameter binds every positional argument as one
         // pack.
-        let arguments = positional_pack_arguments(&info.decls, args);
-        let environment = ConstraintEnvironment::declared(&info.decls, &arguments);
+        let arguments = positional_pack_arguments(&info.decls(), args);
+        let environment = ConstraintEnvironment::declared(&info.decls(), &arguments);
         match self.constraint_verdict(condition, &environment) {
             Ok(ConstraintVerdict::Proven) => Conformance::Proven,
             Ok(ConstraintVerdict::Residual(proposition))
@@ -4219,7 +4216,7 @@ impl Checker {
         match &default.kind {
             ExprKind::Identifier(name) => match decls.iter().find(|decl| decl.name() == name) {
                 Some(ParamDecl::Value { .. }) => true,
-                Some(ParamDecl::Type { .. }) => false,
+                Some(ParamDecl::Type { .. } | ParamDecl::Origin { .. }) => false,
                 None => self.folded_constant(default).is_some(),
             },
             ExprKind::Prefix(_, operand) => self.parameter_default_shape(operand, decls),

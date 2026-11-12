@@ -1060,6 +1060,7 @@ fn drop_arguments(
                 defaulted.visit(default);
                 defaulted.visit(callable_default);
             }
+            ParamDecl::Origin { .. } => {}
         }
     }
     let dropped: Vec<usize> = decls
@@ -1445,6 +1446,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                     self.ty(ty);
                     self.visit(constraints);
                 }
+                ParamDecl::Origin { .. } => {}
             }
         }
         self.layout = layout;

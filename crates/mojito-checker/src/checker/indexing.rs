@@ -1685,7 +1685,7 @@ impl Checker {
                     && self.conforms_to(ty, "Indexer") =>
             {
                 let info = self.structs.get(name)?;
-                let substitution = struct_subst(&info.decls, arguments);
+                let substitution = struct_subst(&info.decls(), arguments);
                 let methods = info.methods.get("__mlir_index__")?;
                 let selected = methods.iter().find(|method| {
                     method.has_self
@@ -1768,7 +1768,7 @@ impl Checker {
         let Some(signatures) = info.methods.get(method) else {
             return Ok(());
         };
-        let substitution = struct_subst(&info.decls, arguments);
+        let substitution = struct_subst(&info.decls(), arguments);
         let mut accepts_source = false;
         let mut accepts_int = false;
         for signature in signatures.iter().filter(|signature| signature.has_self) {
@@ -2167,7 +2167,7 @@ impl Checker {
             _ => match ty.kind() {
                 struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                     self.structs.get(name).is_some_and(|info| {
-                        info.decls.iter().any(|decl| decl.name() == field)
+                        info.decls().iter().any(|decl| decl.name() == field)
                             && !info.fields.iter().any(|(name, _)| name == field)
                     })
                 }
@@ -2436,9 +2436,9 @@ impl Checker {
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
-        let substitution = struct_subst(&info.decls, arguments);
+        let substitution = struct_subst(&info.decls(), arguments);
         let struct_arguments =
-            super::comptime_validation::positional_pack_arguments(&info.decls, arguments);
+            super::comptime_validation::positional_pack_arguments(&info.decls(), arguments);
         let mut viable = Vec::new();
         for signature in constructors.iter().filter(|signature| {
             signature.decls.is_empty()
@@ -2455,7 +2455,7 @@ impl Checker {
                     .all(|(required, name)| !required || name == "__slice_literal__")
         }) {
             let mut environment = ConstraintEnvironment::declared(&signature.decls, &[]);
-            environment.bind_declared(&info.decls, &struct_arguments);
+            environment.bind_declared(&info.decls(), &struct_arguments);
             if signature.availability.iter().any(|constraint| {
                 self.validate_constraint_in_environment(name, constraint, &environment)
                     .is_err()

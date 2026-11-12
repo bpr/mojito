@@ -16,7 +16,7 @@ use mojito_types::param_expr::{MetaTy, PackQuery, ParamExpr, ParamKind};
 use mojito_types::types::TyKind;
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, FuncTy, GenericConstraint, GenericFuncTy,
-    PackPredicateRef, ParamDecl, TrivialLifecycle, Ty, TyArg,
+    OriginMutability, PackPredicateRef, ParamDecl, TrivialLifecycle, Ty, TyArg,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -2557,6 +2557,31 @@ fn param_decl(value: &ParamDecl) -> String {
                 ("constraints", list(constraints.iter().map(constraint))),
             ],
         ),
+        ParamDecl::Origin {
+            id,
+            name,
+            origin,
+            mutability,
+            infer_only,
+        } => record(
+            "origin_binder",
+            &[
+                ("owner", quote(&id.owner)),
+                ("slot", id.slot.to_string()),
+                ("name", symbol(name)),
+                ("origin", origin.0.to_string()),
+                ("mutability", origin_mutability(mutability)),
+                ("infer_only", infer_only.to_string()),
+            ],
+        ),
+    }
+}
+
+fn origin_mutability(value: &OriginMutability) -> String {
+    match value {
+        OriginMutability::Fixed(mutable) => positional("mut_fixed", &mutable.to_string()),
+        OriginMutability::Binder(binder) => positional("mut_binder", &binder_ref(binder)),
+        OriginMutability::Set => "origin_set".into(),
     }
 }
 

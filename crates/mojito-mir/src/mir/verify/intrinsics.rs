@@ -222,6 +222,12 @@ pub(super) fn generic_argument_maps(
             // Origins erase from the runtime ABI, so they contribute no entry to
             // the type/value argument maps used for generic instantiation.
             (_, TyArg::Origin(_)) => {}
+            (ParamDecl::Origin { .. }, _) => {
+                return Err(format!(
+                    "origin parameter '{}' retains a type or value argument",
+                    declaration.name()
+                ));
+            }
         }
     }
     Ok(GenericArgumentMaps { types, values })

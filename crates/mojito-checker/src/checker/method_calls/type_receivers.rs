@@ -311,7 +311,8 @@ impl Checker {
             }
         };
         let info = self.structs.get(&owner)?;
-        let parametric = !info.decls.is_empty() || !matches!(object.kind, ExprKind::Identifier(_));
+        let parametric =
+            !info.decls().is_empty() || !matches!(object.kind, ExprKind::Identifier(_));
         (info.methods.contains_key(method)
             || self.fieldwise_initializer_sig(&owner, method).is_some())
         .then_some((owner, parametric))
@@ -452,7 +453,7 @@ impl Checker {
         // bare name then denotes the instance it was solved at (`T` in
         // `T.answer()` is `T[3]`), which lowering hands the elaborator.
         // Non-parametric statics keep the established path below.
-        if !info.decls.is_empty() && signatures.iter().any(|sig| !sig.has_self) {
+        if !info.decls().is_empty() && signatures.iter().any(|sig| !sig.has_self) {
             let (ty, receiver) =
                 self.infer_struct_static_call(span.clone(), sname, (&[], None), method, call)?;
             self.record_static_receiver(object, sname, &receiver);
@@ -502,7 +503,7 @@ impl Checker {
                 continue;
             };
             if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls, &[])
+                self.method_constraint_result(sig, &method_arguments, &info.decls(), &[])
             {
                 if single_candidate
                     && availability_failure.is_none()
@@ -694,7 +695,7 @@ impl Checker {
         let unbound = self
             .structs
             .get(owner)
-            .and_then(|info| info.decls.first())
+            .and_then(|info| info.argument_binders().next())
             .map_or_else(String::new, |decl| {
                 format!(": parameter '{}' is not bound", decl.name())
             });

@@ -2873,6 +2873,75 @@ fn trait_types_and_trait_parameter_bounds_round_trip() {
     }
 }
 
+/// Schema 1.186 declares an origin binder in place, with the mutability
+/// its `mut=` names: a sibling `Bool` binder, a fixed value, or an
+/// `OriginSet`.
+#[test]
+fn origin_binders_round_trip() {
+    let owner = "$test:f";
+    let decls = vec![
+        int_binder(owner, 0, "mut", true),
+        ParamDecl::Origin {
+            id: ParamId::new(owner, 1),
+            name: "o".into(),
+            origin: OriginParamId(1),
+            mutability: mojito_types::types::OriginMutability::Binder(
+                mojito_types::param_expr::ParamRef {
+                    id: ParamId::new(owner, 0),
+                    name: "mut".into(),
+                },
+            ),
+            infer_only: false,
+        },
+        ParamDecl::Origin {
+            id: ParamId::new(owner, 2),
+            name: "fixed".into(),
+            origin: OriginParamId(2),
+            mutability: mojito_types::types::OriginMutability::Fixed(true),
+            infer_only: false,
+        },
+        ParamDecl::Origin {
+            id: ParamId::new(owner, 3),
+            name: "env".into(),
+            origin: OriginParamId(3),
+            mutability: mojito_types::types::OriginMutability::Set,
+            infer_only: false,
+        },
+    ];
+    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: decls.clone(),
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Ty::none(),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![generic.into()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("origin_binder {"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    match (parsed.program.functions[0].1.reg_types[&0]).kind() {
+        TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
+        other => panic!("expected a generic function type, read {other}"),
+    }
+}
+
 /// Schema 1.34 carries the static address of a parameter list's elements,
 /// the list a template's parameter or an instance's closed tuple.
 #[test]

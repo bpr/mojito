@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.185
+# Mojito Textual MIR Format, Version 1.186
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.185 is implemented end to end for inspection and loading: canonical
+Version 1.186 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.185
+mojito-mir 1.186
 ```
 
-The writer emits 1.185. The reader accepts 1.0 through 1.185; *Schema 1.0*
+The writer emits 1.186. The reader accepts 1.0 through 1.186; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1165,6 +1165,16 @@ literal records how the `None` it passes as `__slice_literal__` reaches
 the marker's `NoneType` parameter (`CheckedSliceLiteral::marker`), as an
 omitted operand's already did (R2097). The MIR text is unchanged.
 
+Schema 1.186 adds the parameter declaration `origin_binder`, upstream's
+origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) declared in place in
+its list (R761). The check's struct parameter list holds one per origin
+parameter, its `mut=` binder an ordinary infer-only `value_param`, and
+every binder's `slot` is its declared position, origin parameters counted.
+The lists MIR lowers (a struct row's `param_decls`, a function's) are still
+their argument views, without the origin binders, until instances and calls
+bind origins in declared order. The package format moves to
+`mojito-package 212`.
+
 Schema 1.185 withdraws the compile-time value `ct_marker` (an elaborator
 classification of a name: `marker_local`, `marker_type`,
 `marker_tuple_origin`, `marker_applied`), which no compiler phase has
@@ -2058,7 +2068,13 @@ is `!kgen.param_list<AnyType>`, a list of types) and is compile-time only, as
 `ParamDecl` is
 `type_param { owner, slot, name, bounds, trait_param, callable_bound, default, infer_only, variadic, constraints }`
 or
-`value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`.
+`value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`
+or (schema 1.186)
+`origin_binder { owner, slot, name, origin, mutability, infer_only }`,
+an origin parameter whose `origin` is the source index an
+`origin_param(int)` names it by and whose `mutability` is
+`mut_fixed(bool)`, `mut_binder(binder { owner, slot, name })` (the sibling
+`Bool` binder its `mut=` names), or `origin_set`.
 A variadic `value_param`'s `type` is the raw list `param_list(T)` the pack
 binds (schema 1.113), and each value it binds has the element type `T`.
 Callable defaults use `default_symbol`, `default_parameter`, or

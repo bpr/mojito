@@ -234,7 +234,7 @@ impl Checker {
             && let [(_, field)] = info.fields.as_slice()
             && self.is_trivial_register_passable(&translated)
         {
-            translated = substitute(field, &struct_subst(&info.decls, args));
+            translated = substitute(field, &struct_subst(&info.decls(), args));
         }
         translated
     }

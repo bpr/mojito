@@ -247,7 +247,7 @@ impl Checker {
                 };
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls, targs)
+                self.method_constraint_result(sig, &method_arguments, &info.decls(), targs)
             {
                 // A candidate the arguments would have
                 // selected reports its failed availability
@@ -306,7 +306,10 @@ impl Checker {
                             ),
                             &[
                                 (&sig.decls, &method_arguments),
-                                (&info.decls, &positional_pack_arguments(&info.decls, targs)),
+                                (
+                                    &info.decls(),
+                                    &positional_pack_arguments(&info.decls(), targs),
+                                ),
                             ],
                         ),
                         &sig.decls,

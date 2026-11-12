@@ -2801,6 +2801,41 @@ pub enum ParamDecl {
         variadic: bool,
         constraints: Vec<GenericConstraint>,
     },
+    /// An origin parameter `o: Origin[mut=m]` or `o: OriginSet`, declared in
+    /// place like any other parameter, as upstream's list declares it.
+    Origin {
+        /// The binder's identity: its declaration and slot.
+        id: ParamId,
+        name: String,
+        /// The [`Origin::Param`](crate::origin::Origin::Param) id a signature
+        /// names this binder by: its index in the source list.
+        origin: crate::origin::OriginParamId,
+        mutability: OriginMutability,
+        infer_only: bool,
+    },
+}
+
+/// The mutability an origin parameter declares (`Origin[mut=...]`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum OriginMutability {
+    /// `Origin[mut=True]` or `Origin[mut=False]` (`MutOrigin`, `ImmOrigin`).
+    Fixed(bool),
+    /// `Origin[mut=m]` over the `Bool` binder `m`.
+    Binder(ParamRef),
+    /// An `OriginSet`, the origins a capturing callable's environment holds.
+    Set,
+}
+
+impl fmt::Display for OriginMutability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed(fixed) => {
+                write!(f, "Origin[mut={}]", if *fixed { "True" } else { "False" })
+            }
+            Self::Binder(binder) => write!(f, "Origin[mut={}]", binder.name),
+            Self::Set => write!(f, "OriginSet"),
+        }
+    }
 }
 
 /// Symbolic default for a compile-time callable-value parameter.
@@ -3139,13 +3174,62 @@ impl fmt::Display for ConstraintOperand {
 impl ParamDecl {
     pub fn name(&self) -> &str {
         match self {
-            Self::Type { name, .. } | Self::Value { name, .. } => name,
+            Self::Type { name, .. } | Self::Value { name, .. } | Self::Origin { name, .. } => name,
         }
     }
 
     pub const fn id(&self) -> &ParamId {
         match self {
-            Self::Type { id, .. } | Self::Value { id, .. } => id,
+            Self::Type { id, .. } | Self::Value { id, .. } | Self::Origin { id, .. } => id,
+        }
+    }
+
+    /// Whether this is an origin binder ([`Self::Origin`]).
+    pub const fn is_origin(&self) -> bool {
+        matches!(self, Self::Origin { .. })
+    }
+
+    /// Whether this is the `Bool` binder a sibling origin binder among
+    /// `decls` names as its mutability (`mut: Bool, //, o: Origin[mut=mut]`).
+    pub fn is_origin_mutability_binder(&self, decls: &[Self]) -> bool {
+        matches!(self, Self::Value { .. })
+            && decls.iter().any(|decl| {
+                matches!(decl, Self::Origin {
+                    mutability: OriginMutability::Binder(binder),
+                    ..
+                } if binder.id == *self.id())
+            })
+    }
+
+    /// Whether an instance or a call binds this binder by its position in
+    /// the argument list: a type or value binder that is not an origin's
+    /// mutability. Instances carry their origins as a tail after these, and
+    /// calls infer them from places, until both bind the whole list in
+    /// declared order.
+    pub fn is_argument_binder(&self, decls: &[Self]) -> bool {
+        !self.is_origin() && !self.is_origin_mutability_binder(decls)
+    }
+
+    /// The binders of `decls` an instance or a call binds positionally
+    /// ([`Self::is_argument_binder`]), in declared order.
+    pub fn argument_binders(decls: &[Self]) -> impl Iterator<Item = &Self> + '_ {
+        decls
+            .iter()
+            .filter(move |decl| decl.is_argument_binder(decls))
+    }
+
+    /// [`Self::argument_binders`], owned.
+    pub fn argument_decls(decls: &[Self]) -> Vec<Self> {
+        Self::argument_binders(decls).cloned().collect()
+    }
+
+    /// [`Self::argument_binders`] as a list, borrowing `decls` when every
+    /// binder is one.
+    pub fn argument_view(decls: &[Self]) -> std::borrow::Cow<'_, [Self]> {
+        if decls.iter().all(|decl| decl.is_argument_binder(decls)) {
+            std::borrow::Cow::Borrowed(decls)
+        } else {
+            std::borrow::Cow::Owned(Self::argument_decls(decls))
         }
     }
 
@@ -3167,20 +3251,55 @@ impl ParamDecl {
                     *default = default.bind(scopes);
                 }
             }
+            Self::Origin {
+                mutability: OriginMutability::Binder(binder),
+                ..
+            } => *binder = bind_reference(binder, scopes),
+            Self::Origin { .. } => {}
         }
         bound
+    }
+
+    /// The `where` clauses this binder carries; an origin binder carries
+    /// none.
+    pub fn constraints(&self) -> &[GenericConstraint] {
+        match self {
+            Self::Type { constraints, .. } | Self::Value { constraints, .. } => constraints,
+            Self::Origin { .. } => &[],
+        }
+    }
+
+    /// The constraints a trailing `where` clause of the declaration `decls`
+    /// declare attaches to: its last argument binder's
+    /// ([`Self::is_argument_binder`]). `None` when it declares none.
+    pub fn clause_constraints(decls: &mut [Self]) -> Option<&mut Vec<GenericConstraint>> {
+        let last = decls
+            .iter()
+            .rposition(|decl| decl.is_argument_binder(decls))?;
+        decls[last].constraints_mut()
+    }
+
+    /// [`Self::constraints`], mutable; `None` for an origin binder.
+    pub const fn constraints_mut(&mut self) -> Option<&mut Vec<GenericConstraint>> {
+        match self {
+            Self::Type { constraints, .. } | Self::Value { constraints, .. } => Some(constraints),
+            Self::Origin { .. } => None,
+        }
     }
 
     /// The meta-type a reference to this binder has: a value binder's
     /// declared type's, which for a pack's visible binder (`*values: T`) is
     /// its `ParameterList` and for its implicit `values.values` the raw
     /// list, as for a raw-list binder (`values: KGENParamList[T]`); a type
-    /// binder's `Type`, or a type list for a type pack.
+    /// binder's `Type`, or a type list for a type pack. A signature names
+    /// an origin binder by its [`Origin::Param`](crate::origin::Origin)
+    /// id, never by a reference, so its meta-type, an opaque compile-time
+    /// entity's, is `Type`'s.
     pub fn binder_meta(&self) -> MetaTy {
         match self {
             Self::Value { ty, .. } => MetaTy::value(ty.clone()),
             Self::Type { variadic: true, .. } => MetaTy::type_list(),
-            Self::Type { .. } => MetaTy::Type,
+            Self::Type { .. } | Self::Origin { .. } => MetaTy::Type,
         }
     }
 
@@ -3426,6 +3545,7 @@ impl ParamDecl {
                 _ => ty,
             }),
             Self::Value { ty, .. } => Some(ty),
+            Self::Origin { .. } => None,
             Self::Type { .. } => None,
         }
     }
@@ -3448,7 +3568,7 @@ impl ParamDecl {
                 callable_default.is_some()
                     || (self.binds_callables() && !self.is_value_pack() && !self.is_pack_list())
             }
-            Self::Type { .. } => false,
+            Self::Type { .. } | Self::Origin { .. } => false,
         }
     }
 
@@ -3481,7 +3601,7 @@ impl ParamDecl {
         let name = self.name().trim_start_matches('*');
         match self {
             Self::Type { variadic: true, .. } => name.strip_suffix(".values").unwrap_or(name),
-            Self::Type { .. } | Self::Value { .. } => name,
+            Self::Type { .. } | Self::Value { .. } | Self::Origin { .. } => name,
         }
     }
 
@@ -3502,7 +3622,9 @@ impl ParamDecl {
     pub fn named(&self, name: &str) -> Self {
         let mut named = self.clone();
         match &mut named {
-            Self::Type { name: own, .. } | Self::Value { name: own, .. } => {
+            Self::Type { name: own, .. }
+            | Self::Value { name: own, .. }
+            | Self::Origin { name: own, .. } => {
                 *own = name.to_string();
             }
         }
@@ -3538,6 +3660,7 @@ impl ParamDecl {
                 }
                 .into(),
             ),
+            Self::Origin { origin, .. } => TyArg::Origin(crate::origin::Origin::Param(*origin)),
             Self::Value { .. } if let Some(value) = self.pack_value() => TyArg::Val(value),
             Self::Value { .. } => TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
                 self.id().clone(),
@@ -3573,13 +3696,16 @@ impl mojito_ast::call::CompileTimeParam for ParamDecl {
 
     fn infer_only(&self) -> bool {
         match self {
-            Self::Type { infer_only, .. } | Self::Value { infer_only, .. } => *infer_only,
+            Self::Type { infer_only, .. }
+            | Self::Value { infer_only, .. }
+            | Self::Origin { infer_only, .. } => *infer_only,
         }
     }
 
     fn variadic(&self) -> bool {
         match self {
             Self::Type { variadic, .. } | Self::Value { variadic, .. } => *variadic,
+            Self::Origin { .. } => false,
         }
     }
 }
@@ -4089,6 +4215,9 @@ pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt
             ParamDecl::Value { name, ty, .. } => {
                 write!(f, "{name}: {}", decl.value_element_ty().unwrap_or(ty))?;
             }
+            ParamDecl::Origin {
+                name, mutability, ..
+            } => write!(f, "{name}: {mutability}")?,
         }
     }
     write!(f, "]")
@@ -4865,20 +4994,12 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         };
         let strip = |decl: &ParamDecl| {
             let mut decl = decl.clone();
-            match &mut decl {
-                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.clear();
-                }
+            if let Some(constraints) = decl.constraints_mut() {
+                constraints.clear();
             }
             decl
         };
-        let constraints_of = |decl: &ParamDecl| -> Vec<GenericConstraint> {
-            match decl {
-                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.clone()
-                }
-            }
-        };
+        let constraints_of = |decl: &ParamDecl| decl.constraints().to_vec();
         let structural = actual_decls.len() == contract_decls.len()
             && actual_decls
                 .iter()
@@ -5177,6 +5298,39 @@ pub fn canonical_generic_signature(
                     constraints: identity_constraints(constraints),
                 }
             }
+            ParamDecl::Origin {
+                id,
+                name: _,
+                origin,
+                mutability,
+                infer_only: _,
+            } => {
+                let canonical_name = format!("${index}");
+                let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
+                binders.insert(
+                    id.clone(),
+                    ParamRef {
+                        id: canonical_id.clone(),
+                        name: canonical_name.as_str().into(),
+                    },
+                );
+                let mutability = match mutability {
+                    OriginMutability::Binder(binder) => OriginMutability::Binder(
+                        binders
+                            .get(&binder.id)
+                            .cloned()
+                            .unwrap_or_else(|| binder.clone()),
+                    ),
+                    fixed => fixed.clone(),
+                };
+                ParamDecl::Origin {
+                    id: canonical_id,
+                    name: canonical_name,
+                    origin: *origin,
+                    mutability,
+                    infer_only: false,
+                }
+            }
         })
         .collect();
     let canonical_params = params
@@ -5190,17 +5344,16 @@ pub fn canonical_generic_signature(
     // names the contract does not bind (an enclosing declaration's
     // parameters) stay as-is and correctly distinguish contracts.
     let mut canonical_decls: Vec<ParamDecl> = canonical_decls;
-    for decl in &mut canonical_decls {
-        match decl {
-            ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                *constraints = constraints
-                    .iter()
-                    .map(|constraint| {
-                        rename_constraint_parameters(constraint, &binders, &subst, &value_slots)
-                    })
-                    .collect();
-            }
-        }
+    for constraints in canonical_decls
+        .iter_mut()
+        .filter_map(ParamDecl::constraints_mut)
+    {
+        *constraints = constraints
+            .iter()
+            .map(|constraint| {
+                rename_constraint_parameters(constraint, &binders, &subst, &value_slots)
+            })
+            .collect();
     }
     (canonical_decls, canonical_params)
 }
@@ -5530,6 +5683,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                         variadic: *variadic,
                         constraints: constraints.clone(),
                     },
+                    ParamDecl::Origin { .. } => declaration.clone(),
                 })
                 .collect();
             TyKind::GenericFunc(Box::new(GenericFuncTy {
@@ -5561,7 +5715,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                         }
                         declaration
                     }
-                    ParamDecl::Type { .. } => declaration.clone(),
+                    ParamDecl::Type { .. } | ParamDecl::Origin { .. } => declaration.clone(),
                 })
                 .collect();
             Ty::generator(params, substitute(&generator.result, &nested))
@@ -6354,10 +6508,12 @@ pub fn is_symbolic(ty: &Ty) -> bool {
                     _ => false,
                 })
             };
-            generator.params.iter().any(|decl| match decl {
-                ParamDecl::Value { ty, .. } => free(ty),
-                ParamDecl::Type { .. } => false,
-            }) || free(&generator.result)
+            generator
+                .params
+                .iter()
+                .filter_map(ParamDecl::value_element_ty)
+                .any(free)
+                || free(&generator.result)
         }
         TyKind::Overload(types)
         | TyKind::Tuple(types)
@@ -6863,6 +7019,7 @@ pub fn rewrite_decl(
             variadic: *variadic,
             constraints: constraints.clone(),
         },
+        ParamDecl::Origin { .. } => decl.clone(),
     })
 }
 
@@ -7204,8 +7361,7 @@ fn write_callable(
     write!(f, " -> {ret}")?;
     if let Some(decls) = decls {
         for decl in decls {
-            let (ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. }) = decl;
-            for constraint in constraints {
+            for constraint in decl.constraints() {
                 write!(f, " where {constraint}")?;
             }
         }
@@ -7552,6 +7708,11 @@ fn insert_pack(
             },
             visible,
         ),
+        origin @ ParamDecl::Origin { .. } => {
+            moved.insert(at, origin);
+            *decls = moved;
+            return renumbered;
+        }
     };
     let (list, ty) = list_and_ty(list, &bindings);
     moved.insert(at, visible.with_value_type(ty));
@@ -7618,6 +7779,15 @@ fn reown_parameters(
                     }
                     (id, constraints)
                 }
+                ParamDecl::Origin { id, mutability, .. } => {
+                    if let OriginMutability::Binder(binder) = mutability
+                        && let Some(reowned) = binders.get(&binder.id)
+                    {
+                        *binder = reowned.clone();
+                    }
+                    *id = binders[id].id.clone();
+                    return decl;
+                }
             };
             *id = binders[id].id.clone();
             *constraints = constraints
@@ -7668,6 +7838,7 @@ fn bind_reowned(bindings: &mut ParamBindings, decl: &ParamDecl, reowned: &ParamR
             );
             None
         }
+        ParamDecl::Origin { .. } => None,
     }
 }
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2126**.
+Next free ID: **R2129**.
 
 ## Ordered Work
 
@@ -10210,32 +10210,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R761 `ParamDecl` has no origin kind, so the check drops every
-  `Origin` and `OriginSet` parameter from a declaration's parameter list,
-  where upstream's list holds them in declared order**
+- [ ] **R2126 A function's, method's, or callable type's parameter list
+  leaves out its origin binders, where upstream's declares them in place**
 
-  `classify_params` (`checker/declarations.rs`) skips each origin
-  parameter and its infer-only `mut` binder, for functions and structs
-  alike, so `ParamDecl` has only `Type` and `Value`.
-  - The lever: add an origin `ParamDecl` kind, emitted in place, with
-    slots numbered by declared position; callers wanting only type and
-    value binders filter on the kind.
-  - Watch for: `ParamId` slots shift for every declaration with an origin
-    parameter, as do `bind_reference` and the package type section, so
-    bump the package format.
-  - Check whether R242 and R726 stem from the dropped binders; unverified.
-  - Found while landing R631 (2026-10-13).
-  - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
-    Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
-    the enclosing struct"), where the pin reads it. The bundled `Span` has
-    no `write_repr_to` for it, so `repr(Span(xs))` is `Writable`'s
-    synthesized default (`Span[SIMD[DType.int, 1], origin#2](_data=...,
-    _size=Int(2))`) where the pin prints `Span[mut=True, SIMD[DType.int,
-    1]]([Int(1), Int(2)])`.
-  - The struct row's `origin_params` (MIR text 1.168) stands in for the
-    origin kinds a struct's `param_decls` lacks; R762 retires it.
+  `Checker::classify_params` (`checker/declarations.rs`) returns the
+  argument view of `classify_param_list`, so `GenericFuncTy::decls`,
+  `MethodSig::decls`, and a function's or method's `GenericSite` hold no
+  `ParamDecl::Origin` and no `mut=` binder; only a struct's list does (R761).
+  - The lever: store `classify_param_list` there, and have every consumer
+    that aligns binders with arguments read
+    `ParamDecl::argument_binders`, as `StructInfo::decls` does.
+  - Watch for: `decls.is_empty()` decides whether a function is generic
+    (`baked_decl_count`, `decls_are_concrete`, `statements.rs`), so a
+    function whose only parameters are origins must stay a `Func`.
+  - Watch for: `resolve_explicit_use_params` already reads the view, but
+    about seventy checker functions take a `decls` beside its arguments.
+  - Keep the MIR handoff on the view (R2127).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2127 The parameter lists MIR lowers are argument views without
+  the origin binders the check declares**
+
+  MIR's struct row (`param_decls`), an initializer's struct prefix, and
+  `closure_uses`' struct scope take `ParamDecl::argument_decls` of the
+  struct's `GenericSite` (`mir.rs`), and the package interface keeps a
+  struct's own list beside its lowered row
+  (`DeclarationInterface::project`).
+  - The lever: lower the whole list, and have each positional consumer
+    below the check read `ParamDecl::argument_binders`:
+    `native/mono/{specializer,unify}.rs`, `mir/verify/{subscripts,
+    intrinsics,scope,calls}.rs`, `mir/param_uses.rs`,
+    `mir/call_defaults.rs`, `mir::matched_parameter_arguments`.
+  - Done when the interface projects every struct row again and MIR text
+    writes an `origin_binder` record for each declared origin.
+  - Depends on R2126.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2128 A function's origin mutability binder has no value in its
+  body**
+
+  `return mut` over `def g[mut: Bool, //, o: Origin[mut=mut]](x:
+  Pointer[Int, o]) -> Bool` is rejected ("Undefined variable 'mut'"),
+  where the pin prints `True`.
+  - A call infers the origin from its argument's place but binds the
+    `mut=` binder no attribute, so no specialization has its value.
+  - The lever: the call records the inferred origin's mutability as the
+    binder's parameter attribute, by its declaration (R2124), and the body
+    declares the binder like any value binder (`scopes.rs` skips it).
+  - Depends on R2124, R2126.
+  - Model: Opus, Not Planned.
 
 - [ ] **R762 A struct instance's origin arguments are a tail after its
   type and value arguments, numbered by source position, where upstream's
@@ -10267,8 +10291,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     arguments) carries no tail, so `StructDeclaration::associated_type`
     leaves a template naming `Self.o` open there, where upstream's
     `Self` carries every parameter.
+  - The instance's prefix also lacks the `mut=` binder's `Bool`
+    argument, which upstream's carries in place (`Span[mut=True, T, o]`).
+  - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
+    Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
+    the enclosing struct"), where the pin reads it.
+  - Probe: `repr(Span(xs))` fails ("vm: Pointer has no method
+    'write_repr_to'"), where the pin prints `Span[mut=True, SIMD[DType.int,
+    1]]([Int(1), Int(2)])`: the bundled `Span` cannot spell its `mut`.
   - Found while landing R631 (2026-10-13).
-  - Depends on R761.
+  - Depends on R2127.
   - Model: Fable, Not Planned.
 
 - [ ] **R763 The checker keeps a struct's parameter syntax to validate
@@ -12677,13 +12709,6 @@ residue found inside a task moves to the task that owns its fix.
     use-after-free.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R242 `Span[mut=True, T, _]` fails origin inference**
-
-  Problem: a parameter typed `Span[mut=True, T, _]` fails origin inference.
-  - Workaround: spell an `[origin: Origin[mut=True]]` binder.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R243 `range` is invisible in `std.string`**
 

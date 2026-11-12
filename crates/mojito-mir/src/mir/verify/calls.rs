@@ -567,7 +567,7 @@ pub(super) fn validate_dependent_bindings_in(
                         .iter()
                         .map(|declaration| match declaration {
                             ParamDecl::Value { ty, .. } => Some(ty.clone()),
-                            ParamDecl::Type { .. } => None,
+                            ParamDecl::Type { .. } | ParamDecl::Origin { .. } => None,
                         })
                         .collect(),
                 );
@@ -590,6 +590,7 @@ pub(super) fn validate_dependent_bindings_in(
                                 walk(ty, &signature_scope, frames)?;
                                 signature_scope.insert(name.trim_start_matches('*').to_string());
                             }
+                            ParamDecl::Origin { .. } => {}
                         }
                     }
                     for parameter in params {

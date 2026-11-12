@@ -475,13 +475,8 @@ impl Checker {
                 let mut unconstrained = prepared;
                 unconstrained.update(|kind| {
                     if let Some(GenericFuncTy { decls, .. }) = kind.as_generic_func_mut() {
-                        for decl in decls {
-                            match decl {
-                                ParamDecl::Type { constraints, .. }
-                                | ParamDecl::Value { constraints, .. } => {
-                                    constraints.clear();
-                                }
-                            }
+                        for constraints in decls.iter_mut().filter_map(ParamDecl::constraints_mut) {
+                            constraints.clear();
                         }
                     }
                 });
@@ -893,7 +888,7 @@ impl Checker {
                     let (struct_name, _) = ty.kind().as_non_simd_struct()?;
                     self.structs
                         .get(struct_name)
-                        .map(|info| declares(&info.decls))
+                        .map(|info| declares(&info.decls()))
                 })
                 .unwrap_or(false),
         }

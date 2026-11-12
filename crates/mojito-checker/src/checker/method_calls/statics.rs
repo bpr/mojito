@@ -144,13 +144,13 @@ impl Checker {
             Some(instance.clone())
         } else if struct_targs.is_empty() {
             // A bare parametric struct's arguments are the receiver's own.
-            info.decls
+            info.decls()
                 .is_empty()
                 .then(|| Self::struct_instance_type(sname, Vec::new()))
         } else {
             let partitioned =
                 self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
-            self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
+            self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])
                 .ok()
                 .map(|bound| {
                     if let Some(application) = application {
@@ -255,7 +255,7 @@ impl Checker {
             arguments,
             attributes,
             ..
-        } = self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])?;
+        } = self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])?;
         let receiver = StaticReceiver {
             arguments,
             attributes: partitioned.brackets.scatter(attributes),
@@ -340,7 +340,7 @@ impl Checker {
             let bound = match self.static_struct_arguments(
                 sname,
                 method,
-                &info.decls,
+                &info.decls(),
                 sig,
                 (forwarded, receiver),
                 args,
@@ -390,7 +390,7 @@ impl Checker {
             };
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls, tyargs)
+                self.method_constraint_result(sig, &method_arguments, &info.decls(), tyargs)
             {
                 if single_candidate
                     && availability_failure.is_none()

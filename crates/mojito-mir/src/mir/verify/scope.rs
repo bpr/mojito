@@ -510,6 +510,7 @@ impl ScopeCx<'_> {
                     }
                 }
                 ParamDecl::Value { ty, .. } => self.walk_in(role, ty, nested),
+                ParamDecl::Origin { .. } => {}
             }
         }
         mark
@@ -607,7 +608,7 @@ impl ScopeCx<'_> {
                                         |ty| decl.with_value_type(ty).binder_meta(),
                                     ),
                             ),
-                            ParamDecl::Type { .. } => None,
+                            ParamDecl::Type { .. } | ParamDecl::Origin { .. } => None,
                         })
                         .map(|expected| expected.substitute(&types));
                     self.value(role, value, expected.as_ref(), nested);

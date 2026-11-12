@@ -69,6 +69,7 @@ pub(super) fn bound_argument(
             .cloned()
             .or_else(|| decl.pack_value())
             .map(InstanceArg::Value),
+        ParamDecl::Origin { .. } => None,
     }
     .ok_or_else(|| MonoError {
         kind: MonoErrorKind::Unsupported,
@@ -214,8 +215,8 @@ pub(super) fn bind_explicit_value_arguments(
                 }
             }
             // A type argument is compile-time data on the call, bound from
-            // its instantiated arguments.
-            ParamDecl::Type { .. } => {}
+            // its instantiated arguments; an origin erases.
+            ParamDecl::Type { .. } | ParamDecl::Origin { .. } => {}
         }
     }
     // A value pack binds the list of its positional arguments to its

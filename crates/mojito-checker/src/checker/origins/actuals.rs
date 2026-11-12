@@ -359,7 +359,7 @@ impl Checker {
                 continue;
             };
             if let Some(argument @ TyArg::Origin(_)) =
-                arguments.get_mut(info.decls.len() + position)
+                arguments.get_mut(info.decls().len() + position)
             {
                 *argument = TyArg::Origin(origin.clone());
             }

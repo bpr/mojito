@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's checked parameter list declares its origin parameters in
+  place, as upstream's does: `ParamDecl::Origin` names each `Origin` or
+  `OriginSet` parameter, its `mut=` binder is an ordinary infer-only
+  `Bool` binder, and every binder's slot is its declared position. Code
+  that aligns binders with arguments reads the argument view
+  (`ParamDecl::argument_binders`), which every function list and every
+  list MIR lowers still is. MIR text moves to schema 1.186
+  (`origin_binder`) and the package format to 212 (R761). R242's
+  `Span[mut=True, T, _]` parameter already infers its origin, as the pin
+  does, so its entry is withdrawn.
 - Every bracket is one subscript node, classified by its base, as
   upstream's `SubscriptNode` is: the checker and the elaborator spell a
   type's application as the subscript the parser builds, and a bracket

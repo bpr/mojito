@@ -1121,7 +1121,11 @@ impl DeclarationInterface {
             if methods.is_some() {
                 info.methods = MethodTable::default();
             }
-            info.decls = Vec::new();
+            // The lowered declaration's list is the argument view: a row
+            // declaring origin binders keeps its own.
+            if info.argument_binders().count() == info.params.len() {
+                info.params = Vec::new();
+            }
             info.fields = Vec::new();
             info.fieldwise_init = false;
             info.explicit_destroy_message = None;
@@ -1204,7 +1208,9 @@ impl DeclarationInterface {
                 .iter_mut()
                 .find(|(owner, _)| *owner == name)
                 .ok_or_else(|| format!("struct `{name}` has no row"))?;
-            info.decls.clone_from(&declaration.param_decls);
+            if info.params.is_empty() {
+                info.params.clone_from(&declaration.param_decls);
+            }
             info.fields.clone_from(&declaration.fields);
             info.fieldwise_init = declaration.fieldwise_init;
             info.explicit_destructors
@@ -1227,7 +1233,7 @@ impl DeclarationInterface {
                                 function.lowered_name
                             )
                         })?;
-                let sig = residue.sig(method, qualifier, info.decls.len(), function);
+                let sig = residue.sig(method, qualifier, info.decls().len(), function);
                 info.methods
                     .entry(method.to_string())
                     .or_default()
@@ -1401,7 +1407,7 @@ fn struct_projection_differs(
     [
         (
             "parameters",
-            same_bytes(&info.decls, &declaration.param_decls),
+            same_bytes(&info.decls(), &declaration.param_decls),
         ),
         ("fields", same_bytes(&info.fields, &declaration.fields)),
         (
@@ -1548,7 +1554,7 @@ fn project_methods(
                 return Ok(None);
             };
             let declaration = &lowered.functions[function];
-            if let Some(fact) = method_projection_differs(method, &info.decls, sig, declaration) {
+            if let Some(fact) = method_projection_differs(method, &info.decls(), sig, declaration) {
                 return Err(format!(
                     "the lowered declaration of method `{lowered_name}` says other than its \
                      check of its {fact}"

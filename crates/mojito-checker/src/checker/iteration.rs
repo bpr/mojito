@@ -707,7 +707,7 @@ impl Checker {
         if !signature.has_self || !signature.params.is_empty() {
             return None;
         }
-        let receiver_subst = struct_subst(&info.decls, receiver_arguments);
+        let receiver_subst = struct_subst(&info.decls(), receiver_arguments);
         let params = signature
             .params
             .iter()
@@ -742,7 +742,7 @@ impl Checker {
         if !self.method_constraints_apply(
             signature,
             &method_arguments,
-            &info.decls,
+            &info.decls(),
             receiver_arguments,
         ) {
             return None;
@@ -750,7 +750,7 @@ impl Checker {
         // A receiver's value parameter is not a type substitution, so a lane
         // it keys (`Scalar[Self.dtype]` on a range) closes only under its
         // value environment, exactly as an ordinary call's result does.
-        let values = DependentValues::own(&self.param_context, &info.decls, receiver_arguments);
+        let values = DependentValues::own(&self.param_context, &info.decls(), receiver_arguments);
         let instantiate = |ty: &Ty| {
             let substituted = substitute(&substitute(ty, &receiver_subst), &method_subst);
             self.resolve_dependent_ty(&substituted, &values)

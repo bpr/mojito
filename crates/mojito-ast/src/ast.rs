@@ -387,12 +387,11 @@ impl TypeParam {
     }
 
     /// This parameter's binder slot among `siblings`, its own list: its
-    /// position once the erased origin parameters are skipped.
+    /// declared position, origin parameters counted.
     pub fn binder_slot(&self, siblings: &[Self]) -> usize {
         siblings
             .iter()
             .take_while(|sibling| sibling.name != self.name)
-            .filter(|sibling| !sibling.is_erased_origin_param(siblings))
             .count()
     }
 

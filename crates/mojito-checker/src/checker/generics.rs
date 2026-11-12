@@ -207,7 +207,7 @@ pub(super) fn unify(
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
 pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    let expanded = expand_bound_pack(ty, &info.decls, targs);
+    let expanded = expand_bound_pack(ty, &info.decls(), targs);
     // The receiver's origin tail binds the struct's own origin binders in
     // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
     // parameter), so a member instantiated on `P[origin_of(xs)]` names that
@@ -219,8 +219,8 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
     substitute_assoc(
         &bound,
         &AssocBindings {
-            types: struct_subst(&info.decls, targs),
-            values: solved_value_bindings(&info.decls, targs),
+            types: struct_subst(&info.decls(), targs),
+            values: solved_value_bindings(&info.decls(), targs),
             ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         },
@@ -237,7 +237,7 @@ pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]
     let TyKind::Param { binder, .. } = ty.kind() else {
         return substitute_at(ty, info, targs);
     };
-    let Some(declared) = info.decls.iter().find_map(|decl| match decl {
+    let Some(declared) = info.params.iter().find_map(|decl| match decl {
         ParamDecl::Type {
             id,
             bounds,
@@ -257,7 +257,7 @@ pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]
             });
         }
     };
-    if let Some((_, mut elements)) = bound_pack_elements(&info.decls, targs) {
+    if let Some((_, mut elements)) = bound_pack_elements(&info.decls(), targs) {
         if let [element] = elements.as_mut_slice() {
             retyped(element);
         }
@@ -1381,8 +1381,8 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Option<Vec<TyArg>> {
         let info = self.structs.get(template)?;
-        let bakeable = !info.decls.is_empty()
-            && info.decls.iter().all(|decl| {
+        let bakeable = !info.decls().is_empty()
+            && info.decls().iter().all(|decl| {
                 matches!(
                     decl,
                     ParamDecl::Type {
@@ -1395,7 +1395,7 @@ impl Checker {
                     }
                 )
             })
-            && info.decls.len() == arguments.len()
+            && info.decls().len() == arguments.len()
             && !info.source_params.iter().any(|parameter| {
                 matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
                     || parameter.is_origin_mutability_binder(&info.source_params)
@@ -1706,11 +1706,11 @@ impl Checker {
         {
             return None;
         }
-        let owner_values = owner_value_bindings(&info.decls, targs);
-        let pack = positional_pack_arguments(&info.decls, targs);
+        let owner_values = owner_value_bindings(&info.decls(), targs);
+        let pack = positional_pack_arguments(&info.decls(), targs);
         let mut rewrite = CloseElements {
             checker: self,
-            decls: &info.decls,
+            decls: &info.decls(),
             pack: &pack,
             closed: false,
         };
@@ -1757,6 +1757,7 @@ impl Checker {
                         *ty = at_receiver;
                     }
                 }
+                ParamDecl::Origin { .. } => {}
             }
         }
         (rewrite.closed || retyped).then_some(closed)

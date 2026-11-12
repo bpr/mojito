@@ -65,9 +65,9 @@ use mojito_types::param_expr::{
     ParamOp, ParamRef, UNBOUND_BINDER_PREFIX,
 };
 use mojito_types::types::{
-    CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,
-    SimdWidth, Ty, TyArg, TySubst, array_element, array_parts, array_type, contains_infer,
-    dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
+    CallableDefault, ConstraintOperand, DependentType, GenericConstraint, OriginMutability,
+    ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TySubst, array_element, array_parts, array_type,
+    contains_infer, dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
     scalar_simd_dtype, set_element, set_type, simd_slots, tuple_elements,
     tuple_type as nominal_tuple_type,
 };
@@ -1673,7 +1673,10 @@ impl Checker {
             struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let info = self.structs.get(name)?;
                 let contract = info.callable_conformance.as_ref()?;
-                Some(substitute(contract, &struct_subst(&info.decls, arguments)))
+                Some(substitute(
+                    contract,
+                    &struct_subst(&info.decls(), arguments),
+                ))
             }
             // A generic function has a callable identity only for a matching
             // generic anonymous contract. `callable_bound_accepts` rejects it
@@ -1918,8 +1921,8 @@ impl Checker {
         }) else {
             return Vec::new();
         };
-        let arguments = comptime_validation::positional_pack_arguments(&info.decls, arguments);
-        arguments[..info.decls.len().min(arguments.len())]
+        let arguments = comptime_validation::positional_pack_arguments(&info.decls(), arguments);
+        arguments[..info.decls().len().min(arguments.len())]
             .iter()
             .cloned()
             .chain(own_arguments)
@@ -1947,14 +1950,14 @@ impl Checker {
         };
         // The declared binders form the argument prefix; an origin tail may
         // follow it.
-        if args.len() < info.decls.len() {
+        if args.len() < info.decls().len() {
             return Ok(None);
         }
-        let subst = struct_subst(&info.decls, args);
+        let subst = struct_subst(&info.decls(), args);
         // The value binders (`SIMD`'s `dtype` and `length`) bind too, so a
         // parameter spelled over them (`Scalar[Self.dtype]`) is the target's.
         let bindings =
-            mojito_types::types::struct_argument_bindings(&self.param_context, &info.decls, args);
+            mojito_types::types::struct_argument_bindings(&self.param_context, &info.decls(), args);
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
@@ -2707,10 +2710,11 @@ impl SignatureDefault {
 /// The checked signature of a struct, kept in the checker's registry.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct StructInfo {
-    /// Compile-time parameters (type and value); empty for a non-generic struct.
-    decls: Vec<ParamDecl>,
+    /// Compile-time parameters in declared order, origin binders and their
+    /// mutability binders among them; empty for a non-generic struct.
+    params: Vec<ParamDecl>,
     /// Raw source parameter list as declared, including Origin/OriginSet
-    /// parameters and their `mut=` Bool binders, which `decls` erases.
+    /// parameters and their `mut=` Bool binders.
     /// Direct applications consult it to accept, validate, and erase explicit
     /// origin arguments (`EntryIter[K, V, some_origin]`).
     source_params: Vec<mojito_ast::ast::TypeParam>,
@@ -2785,6 +2789,18 @@ struct StructInfo {
 }
 
 impl StructInfo {
+    /// The parameters an instance binds by position, in declared order
+    /// ([`ParamDecl::argument_binders`]): an instance carries its origins
+    /// as a tail after them instead.
+    fn decls(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::argument_view(&self.params)
+    }
+
+    /// [`Self::decls`], borrowed binder by binder.
+    fn argument_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::argument_binders(&self.params)
+    }
+
     /// Whether the typed `fields` have arrived: a struct's members resolve
     /// before its fields, so a reflection query read while they do has no
     /// field table to answer from yet.
@@ -2808,13 +2824,13 @@ impl StructInfo {
     /// The arguments of the struct's own `Self` type: each declared parameter
     /// as itself, then each origin slot as its own binder.
     fn self_arguments(&self) -> Vec<TyArg> {
-        self_struct_arguments(&self.decls, &self.source_params)
+        self_struct_arguments(&self.decls(), &self.source_params)
     }
 
     /// The origin tail of an instance's arguments (empty for an erased
     /// spelling that carries none).
     fn origin_tail<'a>(&self, arguments: &'a [TyArg]) -> &'a [TyArg] {
-        arguments.get(self.decls.len()..).unwrap_or_default()
+        arguments.get(self.decls().len()..).unwrap_or_default()
     }
 
     /// The binder-to-origin map an instance's tail binds, for substituting
@@ -2869,7 +2885,7 @@ fn explicit_destroy_types(
         .own()
         .iter()
         .filter_map(|(name, info)| {
-            let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls)));
+            let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls())));
             (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),

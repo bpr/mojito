@@ -1579,7 +1579,7 @@ impl<'a> Specializer<'a> {
             .iter()
             .zip(args)
             .map(|(decl, arg)| match decl {
-                ParamDecl::Type { .. } => Ok(None),
+                ParamDecl::Type { .. } | ParamDecl::Origin { .. } => Ok(None),
                 ParamDecl::Value { .. } if removed.contains(decl.id()) => {
                     Ok(self.argument_value(template, arg, bindings).ok().flatten())
                 }
@@ -1673,6 +1673,7 @@ impl<'a> Specializer<'a> {
                     }
                     instance_bindings.values.insert(binder, value);
                 }
+                ParamDecl::Origin { .. } => {}
             }
         }
         let name = self.enqueue(function, instance_bindings, arguments)?;
@@ -2630,6 +2631,7 @@ impl<'a> Specializer<'a> {
                         .get(&binder)
                         .cloned()
                         .map(InstanceArg::Value),
+                    ParamDecl::Origin { .. } => None,
                 };
                 argument.ok_or_else(|| {
                     self.error(

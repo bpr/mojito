@@ -108,7 +108,7 @@ pub(super) fn classify_ct_param(
 /// it: the declaration `owner` names — its template, so a `$` clone shares
 /// its template's binders; an overloaded method's is the symbol the check
 /// spelled from its typed signature — and the binder's
-/// slot among its siblings, erased origin parameters skipped.
+/// declared slot among its siblings.
 pub(super) fn elaborated_binder(
     tp: &TypeParam,
     siblings: &[TypeParam],

@@ -801,13 +801,13 @@ impl Checker {
         let decls = self
             .structs
             .get(name)
-            .map(|info| info.decls.as_slice())
+            .map(|info| info.decls().into_owned())
             .unwrap_or_default();
-        for ((binder, argument), decl) in own.iter().zip(arguments.iter()).zip(decls) {
+        for ((binder, argument), decl) in own.iter().zip(arguments.iter()).zip(&decls) {
             if argument == binder {
                 continue;
             }
-            if mentioned_binder(argument, decls).is_some() {
+            if mentioned_binder(argument, &decls).is_some() {
                 return Err(TypeError::InvalidReceiver(format!(
                     "cannot use Self parameter '{argument}' in constructor whose result defines \
                      it to '{}'",
@@ -828,7 +828,25 @@ impl Checker {
     /// `owner` names the declaration whose binders these are
     /// ([`binder_owner`]/[`Self::method_binder_owner`]); a default may reference the
     /// value parameters declared before it.
+    ///
+    /// This is the argument view of the list ([`ParamDecl::argument_binders`]):
+    /// a function, method, alias, or callable type's list leaves out its origin
+    /// binders until its calls bind them in declared order. Each binder keeps
+    /// the slot of its declared position ([`Self::classify_param_list`]).
     pub(super) fn classify_params(
+        &mut self,
+        owner: &str,
+        tps: &[mojito_ast::ast::TypeParam],
+    ) -> Result<Vec<ParamDecl>, TypeError> {
+        self.classify_param_list(owner, tps)
+            .map(|decls| ParamDecl::argument_decls(&decls))
+    }
+
+    /// [`Self::classify_params`]'s whole list, in declared order: each
+    /// `Origin`/`OriginSet` parameter a [`ParamDecl::Origin`] and the `Bool`
+    /// binding one's `mut=` an infer-only value binder, as upstream declares
+    /// them. A `where` clause names only the argument binders.
+    pub(super) fn classify_param_list(
         &mut self,
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
@@ -837,9 +855,13 @@ impl Checker {
         let classified = self.classify_params_in_scope(owner, tps);
         self.tparams.pop();
         classified.map(|decls| {
+            let arguments = ParamDecl::argument_decls(&decls);
             decls
                 .iter()
-                .map(|decl| decl.bind_references(&[&decls]))
+                .map(|decl| {
+                    let scope: &[ParamDecl] = if decl.is_origin() { &decls } else { &arguments };
+                    decl.bind_references(&[scope])
+                })
                 .collect()
         })
     }
@@ -855,7 +877,7 @@ impl Checker {
         // slot; every reference to it carries this identity.
         let binder_owner = binder_owner(owner);
         let binder_id = |slot: usize| ParamId::new(&binder_owner, slot);
-        for tp in tps {
+        for (index, tp) in tps.iter().enumerate() {
             if let Some(scope) = self.vparams.last_mut() {
                 *scope = value_scope(&decls);
             }
@@ -868,16 +890,18 @@ impl Checker {
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
             }
-            // Origin and OriginSet parameters are semantic-only and erased before
-            // runtime generic argument binding. `Origin` participates in ref
-            // signatures; `OriginSet` names a capturing callable's environment.
-            // Both are inferred from places/callable values rather than occupying
-            // a source-visible value-parameter slot. An infer-only `Bool` that
-            // binds a sibling origin parameter's `mut=` erases with it.
-            if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+            // An `Origin` or `OriginSet` parameter is declared in place, as
+            // upstream declares it, and so is the infer-only `Bool` binding
+            // a sibling origin's `mut=`, an ordinary value binder. Instances
+            // and calls infer both from places rather than binding them by
+            // position ([`ParamDecl::is_argument_binder`]).
+            if let Some(origin) = origin_param_decl(tp, index, binder_id(decls.len())) {
+                decls.push(origin);
                 continue;
             }
             if tp.is_origin_mutability_binder(tps) {
+                let decl = self.value_param_decl(tp, binder_id(decls.len()), Ty::bool())?;
+                decls.push(decl);
                 continue;
             }
             if let Some(value_type) = &tp.value_type {
@@ -1306,7 +1330,7 @@ impl Checker {
         let mut decls = self.classify_params(owner, type_params)?;
         // A trailing `where` clause constrains the contract's own `def[...]`
         // parameters; with none declared there is nothing to constrain.
-        if !where_clauses.is_empty() && decls.is_empty() {
+        if !where_clauses.is_empty() && ParamDecl::argument_binders(&decls).next().is_none() {
             return Err(TypeError::Unsupported(
                 "a function-type 'where' clause requires a def[...] parameter list".to_string(),
             ));
@@ -1340,14 +1364,14 @@ impl Checker {
         self.tparams.pop();
         let checked = checked?;
         for constraint in compiled? {
-            match decls
-                .last_mut()
-                .expect("non-empty: clauses with empty decls rejected above")
-            {
-                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.push(constraint);
-                }
-            }
+            ParamDecl::clause_constraints(&mut decls)
+                .ok_or_else(|| {
+                    TypeError::Unsupported(
+                        "a function-type 'where' clause requires a def[...] parameter list"
+                            .to_string(),
+                    )
+                })?
+                .push(constraint);
         }
 
         if decls.is_empty() {
@@ -2714,7 +2738,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        let decls = &self.structs.get(name)?.decls;
+        let decls = &self.structs.get(name)?.decls();
         Self::inferred_construction_pack(name, decls, param_args)?;
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
@@ -2849,7 +2873,7 @@ impl Checker {
                 )
                 .is_ok()
                     && self
-                        .method_constraint_result(sig, &[], &info.decls, arguments)
+                        .method_constraint_result(sig, &[], &info.decls(), arguments)
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
@@ -3069,7 +3093,7 @@ impl Checker {
         // parameters are solved by unifying `__init__`'s parameter types against the
         // argument types — exactly as the fieldwise path unifies field types.
         if let Some(sigs) = info.methods.get("__init__") {
-            if info.decls.is_empty() {
+            if info.decls().is_empty() {
                 // A bracket on a struct without parameters is the pin's
                 // "unexpected parameter".
                 self.resolve_use_params(name, &[], param_args, &[], &[])?;
@@ -3286,7 +3310,7 @@ impl Checker {
             {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
-                let decls = info.decls.clone();
+                let decls = info.decls().into_owned();
                 let explicit = self.explicit_type_args(name, &decls, param_args)?;
                 let arg_tys = args
                     .iter()
@@ -3453,7 +3477,7 @@ impl Checker {
                 )?;
                 return Ok(constructed);
             }
-            let decls = info.decls.clone();
+            let decls = info.decls().into_owned();
             let explicit = self.explicit_type_args(name, &decls, param_args)?;
             let overloaded = sigs.len() > 1;
             let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
@@ -3971,7 +3995,7 @@ impl Checker {
             ordered = fieldwise_arguments(name, info, args, kwargs)?;
             ordered.as_slice()
         };
-        let decls = info.decls.clone();
+        let decls = info.decls().into_owned();
         let explicit = self.explicit_type_args(name, &decls, param_args)?;
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
         if field_tys.len() != args.len() {
@@ -4181,6 +4205,7 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
+        let decls = &*ParamDecl::argument_view(decls);
         let mut subst: TySubst = TySubst::new();
         if decls.is_empty() {
             if !param_args.is_empty() {
@@ -4300,6 +4325,7 @@ impl Checker {
             let typed =
                 with_earlier_arguments(typed.as_ref().unwrap_or(decl), decls, &tyargs).or(typed);
             match typed.as_ref().unwrap_or(decl) {
+                ParamDecl::Origin { .. } => {}
                 ParamDecl::Value {
                     name: pname,
                     default,
@@ -4539,8 +4565,7 @@ impl Checker {
                 let (declared, _) = self
                     .structs
                     .get(mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner))?
-                    .decls
-                    .iter()
+                    .argument_binders()
                     .zip(arguments.iter())
                     .find(|(_, argument)| mentioned_binder(argument, own).is_some())?;
                 let parameter = declared.name().trim_start_matches('*');
@@ -4822,7 +4847,7 @@ impl Checker {
             let resolve = || {
                 self.resolve_struct_use_args(
                     name,
-                    &info.decls,
+                    &info.decls(),
                     &info.source_params,
                     param_args,
                     &[],
@@ -4832,13 +4857,13 @@ impl Checker {
             // The instance's origin tail is the one the bracket's origin
             // arguments bound (`W[Self.o](copy=self)`).
             let with_tail = |mut arguments: Vec<TyArg>| {
-                arguments.truncate(info.decls.len());
+                arguments.truncate(info.decls().len());
                 arguments.extend(partitioned.tail_arguments());
                 Self::struct_instance_type(name, arguments)
             };
             let instance = match constructed {
                 Some(instance) => Some(instance.clone()),
-                None if param_args.is_empty() && info.decls.is_empty() => {
+                None if param_args.is_empty() && info.decls().is_empty() => {
                     Some(with_tail(Vec::new()))
                 }
                 None if param_args.is_empty() => None,
@@ -4882,7 +4907,7 @@ impl Checker {
         }
         let sig = sig.expect("explicit copy constructor was resolved");
         let params = sig.params.clone();
-        let decls = info.decls.clone();
+        let decls = info.decls().into_owned();
         let arg_ty = self.infer(&kwargs[0].value)?;
         self.record_read_temporary_argument(&kwargs[0].value);
         let BoundParameters {
@@ -5132,7 +5157,7 @@ impl Checker {
         let unregistered = || {
             TypeError::InvariantViolation(format!("refined initializer of unregistered '{name}'"))
         };
-        let decls = &self.structs.get(name).ok_or_else(unregistered)?.decls;
+        let decls = &self.structs.get(name).ok_or_else(unregistered)?.decls();
         let instance = self.self_instance_ty(name).ok_or_else(unregistered)?;
         let binders = mojito_types::types::nominal_parts(&instance)
             .map(|(_, arguments)| arguments.into_owned())
@@ -5499,6 +5524,42 @@ fn fieldwise_arguments(
             ArgSlot::Default => None,
         })
         .collect())
+}
+
+/// The origin binder `tp`, the parameter at `index` of its source list,
+/// declares (`o: Origin[mut=m]`, `o: OriginSet`) at the identity `id`;
+/// `None` for any other parameter.
+fn origin_param_decl(
+    tp: &mojito_ast::ast::TypeParam,
+    index: usize,
+    id: ParamId,
+) -> Option<ParamDecl> {
+    let mutability = match tp.bounds.as_slice() {
+        [only] if only == "OriginSet" => OriginMutability::Set,
+        [only] if only == "Origin" => match tp.origin_mutability.as_ref().map(|expr| &expr.kind) {
+            Some(ExprKind::Bool(fixed)) => OriginMutability::Fixed(*fixed),
+            Some(ExprKind::Identifier(binder)) => {
+                OriginMutability::Binder(ParamRef::unbound(binder))
+            }
+            // A binder of the enclosing declaration (`mut=Self.mut`).
+            Some(ExprKind::Member { object, field })
+                if let ExprKind::Identifier(base) = &object.kind =>
+            {
+                OriginMutability::Binder(ParamRef::unbound(&format!("{base}.{field}")))
+            }
+            // A mutability left to inference, spelled as upstream spells
+            // an unbound parameter.
+            _ => OriginMutability::Binder(ParamRef::unbound("_")),
+        },
+        _ => return None,
+    };
+    Some(ParamDecl::Origin {
+        id,
+        name: tp.name.clone(),
+        origin: mojito_types::origin::OriginParamId(u32::try_from(index).unwrap_or(u32::MAX)),
+        mutability,
+        infer_only: tp.infer_only,
+    })
 }
 
 /// The `TyKind::Param` of the earlier, non-variadic type binder `name` names in a

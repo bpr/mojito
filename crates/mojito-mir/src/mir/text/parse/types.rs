@@ -4,7 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
-use mojito_types::types::{FuncTy, GenericFuncTy};
+use mojito_types::types::{FuncTy, GenericFuncTy, OriginMutability};
 
 impl Decoder {
     pub(super) fn ty(&mut self, value: &Value) -> Option<Ty> {
@@ -487,11 +487,53 @@ impl Decoder {
                 }
                 Some(vec![self.declared(decl)])
             }
+            // Schema 1.186: an origin binder, declared in place.
+            "origin_binder" => {
+                let name = self.req(value, fields, "name", Self::symbol)?;
+                let origin = self.req(value, fields, "origin", Self::uint32)?;
+                let mutability = self.req(value, fields, "mutability", Self::origin_mutability)?;
+                let infer_only = self.req(value, fields, "infer_only", Self::boolean)?;
+                self.unknown(
+                    fields,
+                    &[
+                        "owner",
+                        "slot",
+                        "name",
+                        "origin",
+                        "mutability",
+                        "infer_only",
+                    ],
+                );
+                let id = self.binder_id(value, fields, &name)?;
+                Some(vec![self.declared(ParamDecl::Origin {
+                    id,
+                    name,
+                    origin: OriginParamId(origin),
+                    mutability,
+                    infer_only,
+                })])
+            }
             other => {
                 self.error(
                     value.span,
                     format!("unknown parameter declaration `{other}`"),
                 );
+                None
+            }
+        }
+    }
+
+    fn origin_mutability(&mut self, value: &Value) -> Option<OriginMutability> {
+        match &value.kind {
+            ValueKind::Atom(tag) if tag == "origin_set" => Some(OriginMutability::Set),
+            ValueKind::Positional(tag, inner) if tag == "mut_fixed" => {
+                self.boolean(inner).map(OriginMutability::Fixed)
+            }
+            ValueKind::Positional(tag, inner) if tag == "mut_binder" => {
+                self.binder_ref(inner).map(OriginMutability::Binder)
+            }
+            _ => {
+                self.error(value.span, "expected an origin mutability");
                 None
             }
         }

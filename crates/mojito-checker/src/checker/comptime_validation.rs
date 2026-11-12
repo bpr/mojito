@@ -326,12 +326,12 @@ impl ApplicableFunction {
         let receiver = self
             .takes_self()
             .then(|| Some(("self", Some(owner?.clone()), false)));
-        let mut slots = signature
-            .decls
-            .iter()
+        let mut slots = ParamDecl::argument_binders(&signature.decls)
             .map(|decl| match decl {
                 ParamDecl::Value { name, ty, .. } => Some((name.as_str(), Some(ty.clone()), false)),
-                ParamDecl::Type { name, .. } => Some((name.as_str(), None, false)),
+                ParamDecl::Type { name, .. } | ParamDecl::Origin { name, .. } => {
+                    Some((name.as_str(), None, false))
+                }
             })
             .chain(receiver)
             .chain(self.params.iter().map(|param| {
@@ -417,10 +417,10 @@ impl ApplicableFunction {
                 SlotType::Declared(_, ty) => ty.as_ref(),
                 _ => None,
             });
-        let decl_types = signature.decls.iter().filter_map(|decl| match decl {
-            ParamDecl::Value { ty, .. } => Some(ty),
-            ParamDecl::Type { .. } => None,
-        });
+        let decl_types = signature
+            .decls
+            .iter()
+            .filter_map(ParamDecl::value_element_ty);
         for ty in signature
             .result
             .iter()
@@ -3442,10 +3442,13 @@ impl Checker {
                 let Some(info) = self.structs.get(template_name(owner)) else {
                     return BuiltinFold::Unbound;
                 };
-                let decls = &info.decls;
+                let decls = info.decls().into_owned();
                 let declared =
-                    mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
-                if self.bind_declared(&mut bindings, decls, &declared).is_err() {
+                    mojito_types::types::declared_pack_arguments(owner, &decls, instance_args);
+                if self
+                    .bind_declared(&mut bindings, &decls, &declared)
+                    .is_err()
+                {
                     return BuiltinFold::Unbound;
                 }
                 Some((decls, declared))
@@ -3537,9 +3540,9 @@ impl Checker {
             Some(struct_ty)
                 if let Some((owner, instance_args)) = struct_ty.as_non_simd_struct() =>
             {
-                let decls = &self.structs.get(template_name(owner))?.decls;
+                let decls = self.structs.get(template_name(owner))?.decls().into_owned();
                 let declared =
-                    mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
+                    mojito_types::types::declared_pack_arguments(owner, &decls, instance_args);
                 Some((decls, declared))
             }
             _ => None,
@@ -3721,12 +3724,10 @@ impl Checker {
         }
         // Its own value parameters typed by its struct's (`*values:
         // Self.element_type`) are typed at the instance.
-        let decls: Vec<ParamDecl> = signature
-            .decls
-            .iter()
+        let decls: Vec<ParamDecl> = ParamDecl::argument_binders(&signature.decls)
             .map(|decl| match decl {
                 ParamDecl::Value { ty, .. } => decl.with_value_type(at_owner(ty)),
-                ParamDecl::Type { .. } => decl.clone(),
+                ParamDecl::Type { .. } | ParamDecl::Origin { .. } => decl.clone(),
             })
             .collect();
         let bound = self
@@ -3835,8 +3836,8 @@ impl Checker {
                     &[
                         (&decls, &bound.arguments),
                         (
-                            &info.decls,
-                            &positional_pack_arguments(&info.decls, &instance_args),
+                            &info.decls(),
+                            &positional_pack_arguments(&info.decls(), &instance_args),
                         ),
                     ],
                 )
@@ -4203,7 +4204,7 @@ impl Checker {
                 args.is_empty()
                     && self.structs.get(name).is_some_and(|info| {
                         info.fieldwise_init
-                            && info.decls.is_empty()
+                            && info.decls().is_empty()
                             && !info.fields.is_empty()
                             && info.fields.iter().all(|(_, ty)| leaf(ty))
                     })
@@ -5097,7 +5098,7 @@ impl Checker {
                 } if !decl.binds_callables() => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
-                ParamDecl::Value { .. } => None,
+                ParamDecl::Value { .. } | ParamDecl::Origin { .. } => None,
             })
             .collect();
         for (level, types) in self.tparams.iter().enumerate() {

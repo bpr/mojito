@@ -99,10 +99,10 @@ impl Checker {
         decls.iter().try_for_each(|decl| match decl {
             // A pack's list binder is read through its visible binder's type.
             ParamDecl::Value { .. } if decl.is_pack_list() => Ok(()),
-            ParamDecl::Value { name, ty, .. } => {
+            ParamDecl::Value { name, ty, .. } if decl.is_argument_binder(decls) => {
                 self.declare_value_parameter(name.trim_start_matches('*'), ty.clone())
             }
-            ParamDecl::Type { .. } => Ok(()),
+            ParamDecl::Value { .. } | ParamDecl::Type { .. } | ParamDecl::Origin { .. } => Ok(()),
         })
     }
 

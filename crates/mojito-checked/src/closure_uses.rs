@@ -405,7 +405,8 @@ impl CheckedProgram {
                 module: module.clone(),
                 declaration: declaration.to_string(),
             })
-            .unwrap_or(&[])
+            .map(ParamDecl::argument_decls)
+            .unwrap_or_default()
         };
         match unit {
             LoweringUnit::Function { root } | LoweringUnit::TraitMember { root, .. } => {

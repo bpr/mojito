@@ -29,8 +29,10 @@ impl Checker {
         let mut conformers: Vec<String> = self
             .structs_declaring(method)
             .filter(|(name, info)| {
-                let implementation =
-                    Ty::new(TyKind::Struct((*name).clone(), params_as_args(&info.decls)));
+                let implementation = Ty::new(TyKind::Struct(
+                    (*name).clone(),
+                    params_as_args(&info.decls()),
+                ));
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))
@@ -40,7 +42,7 @@ impl Checker {
                 if signatures.len() == 1 {
                     return vec![format!("{name}.{method}")];
                 }
-                let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls)));
+                let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls())));
                 signatures
                     .iter()
                     .map(|signature| method_lowered_name(name, method, signature, Some(&self_ty)))

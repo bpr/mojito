@@ -79,6 +79,8 @@ impl Decoder {
             |split| ParamId::new(&id.owner, split.pack + 1),
         );
         let (list, visible) = match decl {
+            // A legacy artifact predates origin binders.
+            origin @ ParamDecl::Origin { .. } => return vec![origin],
             ParamDecl::Value {
                 ty,
                 name,

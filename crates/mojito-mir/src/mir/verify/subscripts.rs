@@ -772,7 +772,16 @@ pub(super) fn verify_param_arguments(
                     ));
                 }
             }
-            (mojito_types::types::ParamDecl::Type { .. }, None) => {}
+            (
+                mojito_types::types::ParamDecl::Type { .. }
+                | mojito_types::types::ParamDecl::Origin { .. },
+                None,
+            ) => {}
+            (mojito_types::types::ParamDecl::Origin { name, .. }, Some(_)) => {
+                errors.push(format!(
+                    "{prefix}: origin parameter '{name}' carries a runtime register"
+                ));
+            }
         }
     }
     for (index, declaration) in declarations.iter().enumerate() {

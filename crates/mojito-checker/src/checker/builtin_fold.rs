@@ -929,7 +929,7 @@ impl Checker {
         }
         let (owner, arguments) = mojito_types::types::nominal_parts(&refined)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
-        let decls = &self.structs.get(owner)?.decls;
+        let decls = &self.structs.get(owner)?.decls();
         let fields = mojito_types::types::struct_field_types(decls, &arguments, &declared)?;
         Some((refined.clone(), fields.into_owned()))
     }
@@ -1039,6 +1039,7 @@ impl Checker {
                 }
                 ParamDecl::Type { .. } => super::annotations::type_parameter(slot)
                     .map(|ty| self.param_context.type_shape(ty)),
+                ParamDecl::Origin { .. } => None,
             })
             .collect::<Option<_>>()?;
         if !self.enclosing_type_params.is_empty() {
@@ -1523,7 +1524,7 @@ fn early_return() -> TypeError {
 const fn slot_ty(slot: &ParamDecl) -> Option<&Ty> {
     match slot {
         ParamDecl::Value { ty, .. } => Some(ty),
-        ParamDecl::Type { .. } => None,
+        ParamDecl::Type { .. } | ParamDecl::Origin { .. } => None,
     }
 }
 

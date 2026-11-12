@@ -2176,7 +2176,18 @@ every compile-time fact crosses the check as a parameter expression, as
 upstream's sema hands its elaborator parameter expressions alone.
 
 `ParamDecl::Value` retains its declared checked type and optional compile-time
-default, a `ParamExpr`. The shared `CtValue` model carries integers, booleans,
+default, a `ParamExpr`. `ParamDecl::Origin` is an origin parameter (`o:
+Origin[mut=m]`, `o: OriginSet`) declared in place, as upstream's list
+declares it, its `OriginMutability` naming the sibling `Bool` binder its
+`mut=` binds, a fixed value, or a set. Every binder's `ParamId` slot is its
+declared position, origin parameters counted. A struct's list in the check
+(`StructInfo::params`, the struct's `GenericSite`) holds the origin binders;
+every other list (`Checker::classify_params`) and every list MIR lowers is
+its argument view (`ParamDecl::argument_binders`), which leaves out the
+origin binders and their `mut=` binders, because an instance carries its
+origins as a tail and a call infers them from places. Code that aligns a
+declaration's binders with its arguments reads that view
+(`StructInfo::decls`). The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
 reflection handles. The check and the elaborator below MIR fold through
 `param_expr::fold`.

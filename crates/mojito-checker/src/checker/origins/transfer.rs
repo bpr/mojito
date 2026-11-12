@@ -854,7 +854,7 @@ impl Checker {
             .or_else(|| self.infer(receiver).ok())?;
         let (name, arguments) = receiver.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
-        Some(struct_subst(&info.decls, arguments))
+        Some(struct_subst(&info.decls(), arguments))
     }
 }
 

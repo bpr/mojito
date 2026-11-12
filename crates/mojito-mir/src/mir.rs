@@ -1138,8 +1138,9 @@ pub fn lower_unit(
                         module: node.module.clone(),
                         declaration: declaration.name.clone(),
                     })
-                    .unwrap_or(&[]);
-                lower_fieldwise_constructor(declaration, parameters, functions, declarations);
+                    .map(ParamDecl::argument_decls)
+                    .unwrap_or_default();
+                lower_fieldwise_constructor(declaration, &parameters, functions, declarations);
             }
         }
         // A trait's requirements have no body (`...`); each default is
@@ -1170,9 +1171,10 @@ pub fn lower_unit(
                         module: node.module.clone(),
                         declaration: declaration.name.clone(),
                     })
-                    .unwrap_or(&[]);
+                    .map(ParamDecl::argument_decls)
+                    .unwrap_or_default();
                 lower_synthesized_member(
-                    (&declaration.name, parameters),
+                    (&declaration.name, &parameters),
                     &fields,
                     member,
                     functions,
@@ -1889,13 +1891,14 @@ fn struct_declaration(
             .collect(),
         mut_self_methods,
         fieldwise_init: *fieldwise_init,
+        // The argument view: an instance carries its origins as a tail.
         param_decls: checked
             .generic_parameters_at(&GenericSite::Struct {
                 module: s.module.clone(),
                 declaration: name.clone(),
             })
-            .unwrap_or(&[])
-            .to_vec(),
+            .map(ParamDecl::argument_decls)
+            .unwrap_or_default(),
         origin_params: checked
             .struct_origin_params()
             .get(name)
@@ -2264,15 +2267,17 @@ fn lower_struct_member<P: DeclaredParam>(
                 module: module.clone(),
                 declaration: name.to_string(),
             })
-            .unwrap_or(&[]);
-        param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
+            .map(ParamDecl::argument_decls)
+            .unwrap_or_default();
+        param_decls = struct_decls.into_iter().chain(param_decls).collect();
     }
     let struct_parameters = checked
         .generic_parameters_at(&GenericSite::Struct {
             module,
             declaration: name.to_string(),
         })
-        .unwrap_or(&[]);
+        .map(ParamDecl::argument_decls)
+        .unwrap_or_default();
     let enclosing_binders =
         EnclosingBinders::of(struct_parameters.iter().chain(&signature.parameters));
     let defaults = regular
@@ -2370,7 +2375,7 @@ fn lower_struct_member<P: DeclaredParam>(
     let mut refp: Vec<bool> = Vec::new();
     if m.has_self {
         names.push("self".to_string());
-        ptys.push(self_receiver_ty(name, struct_parameters));
+        ptys.push(self_receiver_ty(name, &struct_parameters));
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));
@@ -5687,8 +5692,8 @@ impl EnclosingBinders {
                 }
                 // A value pack, and its list binder, has no frame local; a
                 // thunk reads it through the parameter constants it binds. A
-                // pack of callables is one too.
-                ParamDecl::Value { .. } => {}
+                // pack of callables is one too. An origin has no value.
+                ParamDecl::Value { .. } | ParamDecl::Origin { .. } => {}
             }
             binders.declarations.push(declaration.clone());
         }

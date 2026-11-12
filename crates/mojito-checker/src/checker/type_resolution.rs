@@ -1403,7 +1403,7 @@ impl Checker {
             {
                 return Err(TypeError::NotConcrete(shown));
             }
-            let decls = info.decls.clone();
+            let decls = info.decls().into_owned();
             let source_params = info.source_params.clone();
             let BoundParameters {
                 arguments,
@@ -2402,7 +2402,7 @@ impl Checker {
                 member: name.clone(),
             });
         };
-        let substitution = struct_subst(&info.decls, arguments);
+        let substitution = struct_subst(&info.decls(), arguments);
         values
             .iter()
             .map(|value| match value {
@@ -2762,17 +2762,17 @@ impl Checker {
         // struct: substitute the application's arguments into its template.
         if let Some(member) = info.parameterized_associated.get(name) {
             let member = member.clone();
-            let decls = info.decls.clone();
+            let decls = info.decls().into_owned();
             return self.resolve_parameterized_member(base, name, &member, &decls, targs, args);
         }
         // A type parameter of the struct is a member of its application
         // (`List[Int].T`).
         if args.is_empty()
             && let Some(TyArg::Ty(argument)) = info
-                .decls
+                .decls()
                 .iter()
                 .position(|decl| decl.name() == name)
-                .and_then(|index| ParamDecl::source_argument(&info.decls, targs, index))
+                .and_then(|index| ParamDecl::source_argument(&info.decls(), targs, index))
         {
             return Ok(argument.clone());
         }
@@ -2784,7 +2784,7 @@ impl Checker {
                 member: name.to_string(),
             })?;
         if let Some(constraints) = info.associated_constraints.get(name) {
-            let environment = ConstraintEnvironment::declared(&info.decls, targs);
+            let environment = ConstraintEnvironment::declared(&info.decls(), targs);
             if !environment.arguments().any(tyarg_is_symbolic) {
                 for constraint in constraints {
                     self.validate_constraint_in_environment(
@@ -3289,6 +3289,12 @@ impl Checker {
     ) -> Result<BoundArgument, TypeError> {
         use mojito_ast::ast::ParamArg;
         match decl {
+            // An origin is inferred from a place, never bound by a bracket
+            // argument until instances and calls carry their origins in
+            // declared order.
+            ParamDecl::Origin { name, .. } => Err(TypeError::Unsupported(format!(
+                "an explicit argument for the origin parameter '{name}'"
+            ))),
             // A trait is a type in KGEN, so `!kgen.type` binds one
             // (`_MLIR.KGENParamListType[Tr]`, `k[Copyable]()`).
             ParamDecl::Type { bounds, .. }
@@ -3830,7 +3836,7 @@ impl Checker {
     /// parameter, when the collection is linked with one.
     fn default_hasher_argument(&self, collection: &str) -> Option<Ty> {
         let info = self.structs.get(collection)?;
-        match info.decls.last()? {
+        match info.decls().last()? {
             ParamDecl::Type {
                 bounds,
                 default: Some(default),
@@ -4711,7 +4717,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        (!info.decls.is_empty())
+        (!info.decls().is_empty())
             .then(|| TyKind::Struct(name.to_string(), info.self_arguments()).into())
     }
 
@@ -4728,7 +4734,7 @@ impl Checker {
             return Ok(());
         };
         let mut search = BinderSearch {
-            decls: &info.decls,
+            decls: &info.decls(),
             found: None,
         };
         // The search never fails; the rebuilt value is discarded.
@@ -4863,7 +4869,7 @@ impl Checker {
         }
         let name = mojito_types::types::SIMD_TYPE_NAME;
         let info = &self.structs[name];
-        let decls = info.decls.clone();
+        let decls = info.decls().into_owned();
         let source_params = info.source_params.clone();
         let BoundParameters {
             arguments,

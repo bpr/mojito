@@ -3939,12 +3939,8 @@ impl Checker {
         let clauses = compiled.clone();
         for constraint in compiled {
             self.guaranteed_facts(&constraint, &mut function_assumptions);
-            if let Some(last) = decls.last_mut() {
-                match last {
-                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                        constraints.push(constraint);
-                    }
-                }
+            if let Some(constraints) = ParamDecl::clause_constraints(&mut decls) {
+                constraints.push(constraint);
             } else if type_params.is_empty() {
                 self.validate_declaration_constraint(name, &constraint)?;
             } else {
@@ -4264,7 +4260,7 @@ impl Checker {
         self.structs.insert(
             name.clone(),
             super::StructInfo {
-                decls: Vec::new(),
+                params: Vec::new(),
                 source_params,
                 module: site.source.clone().unwrap_or_default(),
                 conforms,
@@ -4446,16 +4442,12 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()
         })?;
         for constraint in compiled {
-            let Some(last) = decls.last_mut() else {
+            let Some(constraints) = ParamDecl::clause_constraints(&mut decls) else {
                 return Err(TypeError::Unsupported(
                     "a where clause requires compile-time parameters".to_string(),
                 ));
             };
-            match last {
-                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.push(constraint);
-                }
-            }
+            constraints.push(constraint);
         }
         // A body is a type expression, a Bool proposition (a predicate
         // alias), or a compile-time value expression. Some Bool bodies parse

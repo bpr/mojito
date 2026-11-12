@@ -251,7 +251,7 @@ pub(super) fn type_parameter(decl: &ParamDecl) -> Option<Ty> {
             }
             .into(),
         ),
-        ParamDecl::Value { .. } => None,
+        ParamDecl::Value { .. } | ParamDecl::Origin { .. } => None,
     }
 }
 

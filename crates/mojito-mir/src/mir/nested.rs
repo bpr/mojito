@@ -435,6 +435,7 @@ impl StorageBinders {
                         self.move_constraint(constraint);
                     }
                 }
+                ParamDecl::Origin { .. } => {}
             }
         }
     }

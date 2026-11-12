@@ -10267,3 +10267,50 @@ fn rejects_bare_struct_callable_parameter() {
         assert_eq!(e, TypeError::UnqualifiedStructParam("f".into()));
     }
 }
+
+#[test]
+fn struct_param_list_declares_origin_binders_in_place() {
+    // The struct's list holds its origin and that origin's `mut` binder in
+    // declared order, each at the slot of its position, as upstream's
+    // declares them; an instance still binds only `n` by position.
+    let source = "struct W[mut: Bool, //, origin: Origin[mut=mut], n: Int]:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def get(self) -> Int:\n        return Self.n + self.x\n\ndef main():\n    var a = 1\n    print(W[origin_of(a), 4](3).get())\n";
+    let checked = checked_source_with_std(source, "origin_binders.mojo").expect("check");
+    let module = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Struct { name, .. } if name == "W" => {
+                Some(statement.module.clone())
+            }
+            _ => None,
+        })
+        .expect("W");
+    let decls = checked
+        .checked()
+        .generic_parameters_at(&mojito::checked::GenericSite::Struct {
+            module,
+            declaration: "W".to_string(),
+        })
+        .expect("W's binders");
+    let [
+        mutability @ mojito::types::ParamDecl::Value {
+            infer_only: true, ..
+        },
+        mojito::types::ParamDecl::Origin {
+            id,
+            origin,
+            mutability: mojito::types::OriginMutability::Binder(binder),
+            ..
+        },
+        n @ mojito::types::ParamDecl::Value { .. },
+    ] = decls
+    else {
+        panic!("mut, origin, n in declared order: {decls:?}");
+    };
+    assert_eq!(binder.id, *mutability.id());
+    assert_eq!((id.slot, origin.0, n.id().slot), (1, 1, 2));
+    let arguments: Vec<&str> = mojito::types::ParamDecl::argument_binders(decls)
+        .map(mojito::types::ParamDecl::name)
+        .collect();
+    assert_eq!(arguments, ["n"]);
+}

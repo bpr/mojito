@@ -3157,6 +3157,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the metatype (`verify/concrete.rs`).
 - The elaborator classifies the binder by `any_trait_source_type`
   (`mojito-comptime`, `comptime.rs`).
+- An origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) is a
+  `ParamDecl::Origin` (`mojito-types`, `types.rs`) declared in place, its
+  `mut=` binder an infer-only `ParamDecl::Value`.
+  `Checker::classify_param_list` (`declarations.rs`, through
+  `origin_param_decl`) classifies the whole list, which a struct keeps
+  (`StructInfo::params`, its `GenericSite::Struct`);
+  `Checker::classify_params` returns its argument view
+  (`ParamDecl::{argument_binders, argument_decls, argument_view}`), as
+  `StructInfo::decls` and MIR lowering's struct rows do. A `where` clause
+  attaches to the last argument binder (`ParamDecl::clause_constraints`).
+  A package's struct row keeps its own list when it differs from the
+  lowered row (`DeclarationInterface::project`, `interface.rs`). MIR text
+  spells the binder `origin_binder` (schema 1.186).
 - A type binder bounded by a trait-valued sibling (`T: Tr`, `*Ts: Tr`) is a
   `ParamDecl::Type` whose `trait_param` names that sibling (upstream's
   `ParamType`) and whose `bounds` hold the sibling's declared set, the

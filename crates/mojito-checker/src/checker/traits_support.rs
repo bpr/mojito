@@ -76,13 +76,16 @@ pub(super) fn rebind_slots(
 ) -> GenericConstraint {
     let context = ParamContext::detached();
     let mut renamed = mojito_types::param_expr::ParamBindings::new();
-    for (slot, target) in to.iter().enumerate() {
+    for target in to {
         renamed.bind(
-            ParamId::new(from_owner, slot),
+            ParamId::new(from_owner, target.id().slot),
             context.decl_ref(target.id().clone(), target.name(), target.binder_meta()),
         );
     }
-    let binder = |reference: &ParamRef| match to.get(reference.id.slot) {
+    let binder = |reference: &ParamRef| match to
+        .iter()
+        .find(|target| target.id().slot == reference.id.slot)
+    {
         Some(target) if *reference.id.owner == *from_owner => ParamRef {
             id: target.id().clone(),
             name: target.name().into(),
