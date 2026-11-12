@@ -947,6 +947,7 @@ impl Checker {
             AliasBody::Value(body) => body.clone(),
             AliasBody::Predicate(_) => alias.predicate_value.clone()?,
             AliasBody::Type(ty) => self.param_context.type_shape(ty.clone()),
+            AliasBody::Generator => return None,
         };
         self.generator_constant(alias.decls.clone(), body).ok()
     }
@@ -5015,7 +5016,7 @@ impl Checker {
         let alias = self.comptime_aliases.get(name)?;
         match &alias.body {
             AliasBody::Predicate(constraint) => Some((&alias.decls, constraint)),
-            AliasBody::Type(_) | AliasBody::Value(_) => None,
+            AliasBody::Type(_) | AliasBody::Value(_) | AliasBody::Generator => None,
         }
     }
 

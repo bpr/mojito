@@ -5131,22 +5131,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2138 A module alias of a struct that leaves an infer-only
-  parameter unbound is rejected**
-
-  `comptime O = Org` over `struct Org[mut: Bool, //]` fails with "cannot
-  infer type parameter 'mut' of 'Org' from the arguments", where the pin
-  accepts it.
-  - The check binds an alias's value as an application that must solve
-    every parameter. Upstream keeps the alias as the struct with its
-    infer-only parameter open.
-  - Probe: `comptime O = Origin`, then `def f[o: O](ref[o] x: Int)`, prints
-    `3` at the pin for `f(n)` with `n = 3`. Once the alias checks,
-    `fold_origin_alias_bounds` already folds the bare `Origin`.
-  - Found while landing R2113 (2026-11-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1478 A type comparison read as a value over a pack element at a
   `comptime for` index is not folded per iteration**
 
@@ -5847,32 +5831,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Upstream binds the open slots on the type itself, never in the alias
     body's scope: a struct type with open slots that an application fills.
   - Found while landing R296 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1746 A `comptime` alias of an unapplied parametric struct is
-  not that struct's generator**
-
-  `comptime Q = P` over `struct P[n: Int]` is rejected at its declaration
-  with "cannot infer type parameter 'n' of 'P' from the arguments", where
-  the pin binds `Q` to the unapplied `P`, applicable as `Q[2]` and `Q[_]`.
-  - The alias's body is read as a value of `P`, so a struct whose
-    parameters cannot be inferred fails there.
-  - A struct whose parameters are all infer-only binds, but as the
-    struct with no parameters: the bundled `comptime StringSlice =
-    StringSpan` applied as `StringSlice[_]` or
-    `StringSlice[ImmStaticOrigin]` is rejected with "type
-    '__module$std$string$StringSlice' expects 0 type argument(s), got 1".
-  - Probe: `def f(x: Q[_])` and `def g(x: Q[2])` over `comptime Q = P`,
-    called with `P[2]()`, print `2 2`, here and at the pin.
-  - Probe: `def f(x: StringSlice[_])` called with `StaticString("a")`
-    prints `a`.
-  - Probe: the bundled `String.__radd__` takes upstream's `other:
-    StringSlice[_]` (`stdlib/std/string.mojo`), where it now takes the
-    bare `StringSlice`.
-  - Probe: the bundled `VariadicPack._write_to` cannot spell upstream's
-    `start: StringSlice[O1]` (with R1926).
-  - Found while landing R1653 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11225,6 +11183,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     pin prints `7`. So does `comptime f = inner` over a nested `def`.
   - Probe: a local `comptime S = Org` over `struct Org[mut: Bool, //]`
     takes the same route and fails the same way, where the pin accepts it.
+  - Probe: a local `comptime Q = P` over `struct P[n: Int]`, then
+    `print(Q[4]().n)`, takes the same route and fails the same way, where
+    the pin prints `4`; the module alias runs.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

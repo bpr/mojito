@@ -25,6 +25,9 @@ use super::*;
 /// spelled bare stands for its struct with its holes. A module alias with
 /// compile-time parameters spelled bare (`comptime Lane[dt: DType] =
 /// SIMD[dt, 1]`, `x: Lane`) leaves each one unbound, as a bare struct does.
+/// A module alias of an unapplied struct (`comptime StringSlice =
+/// StringSpan`) is that struct's generator, so its application is the
+/// struct's.
 /// The struct is the program's own or the `installed` package's, whose
 /// declared parameters give each binder its type, with the struct's earlier
 /// parameters read as their arguments. The binders follow the declaration's own infer-only
@@ -52,6 +55,9 @@ struct Declared<'a> {
     /// Each module alias whose body applies a struct with a hole, as the
     /// struct and its arguments.
     partial_aliases: HashMap<String, (String, Vec<ParamArg>)>,
+    /// Each module alias whose body names a struct unapplied (`comptime Q
+    /// = P`), as the struct whose generator it is.
+    generator_aliases: HashMap<String, String>,
     installed: Option<&'a InstalledInterfaces>,
 }
 
@@ -62,6 +68,7 @@ impl<'a> Declared<'a> {
             parametric_aliases: HashMap::new(),
             others: HashSet::new(),
             partial_aliases: HashMap::new(),
+            generator_aliases: HashMap::new(),
             installed,
         };
         for statement in program {
@@ -84,6 +91,13 @@ impl<'a> Declared<'a> {
                         declared
                             .partial_aliases
                             .insert(name.clone(), (applied.to_string(), args.into_owned()));
+                    }
+                    if let ExprKind::Identifier(applied) = &value.kind
+                        && type_params.is_empty()
+                    {
+                        declared
+                            .generator_aliases
+                            .insert(name.clone(), applied.clone());
                     }
                     if !type_params.is_empty() {
                         declared
@@ -111,6 +125,19 @@ impl<'a> Declared<'a> {
             return None;
         }
         self.installed?.struct_parameters(name)
+    }
+
+    /// The struct whose generator the alias `name` names: the program's own
+    /// module alias, or, unless another declaration of the program hides
+    /// it, the `installed` package's (`comptime StringSlice = StringSpan`).
+    fn generator_alias(&self, name: &str) -> Option<String> {
+        if let Some(applied) = self.generator_aliases.get(name) {
+            return Some(applied.clone());
+        }
+        if self.structs.contains_key(name) || self.others.contains(name) {
+            return None;
+        }
+        self.installed?.generator_alias(name).map(str::to_string)
     }
 
     /// The struct and arguments the partial alias `name` applies: the
@@ -208,6 +235,8 @@ impl<'a> Declared<'a> {
         if in_scope.contains(name) {
             return None;
         }
+        let generator = self.generator_alias(name);
+        let name = generator.as_ref().unwrap_or(name);
         let alias = self
             .partial_alias(name)
             .and_then(|(applied, alias_args)| Some((applied, fill_holes(&alias_args, args)?)));

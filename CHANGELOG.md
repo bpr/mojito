@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A module `comptime` over an unapplied parametric struct (`comptime Q =
+  P` over `struct P[n: Int]`) names the struct's generator, as at the
+  pin, so `Q[2]`, `Q[_]`, and the bundled `StringSlice[_]` and
+  `StringSlice[ImmStaticOrigin]` are the struct's applications where
+  Mojito rejected the alias or the application; the bundled
+  `String.__radd__` takes upstream's `StringSlice[_]`. A struct whose
+  open parameters are origins binds too, so `comptime S = Span` and
+  `comptime O = Origin` work where Mojito rejected them (R1746, R2138).
 - A type binder, a trait, a trait-valued binder, or a `&` composition read
   as an expression is a value of its metatype, as at the pin: `_ = T` and
   `_ = Tr` run, `var y = T` is "dynamic type values not permitted yet", and

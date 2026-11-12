@@ -293,6 +293,17 @@ impl InstalledInterfaces {
         }
     }
 
+    /// The struct whose generator the reached module's alias `name` names
+    /// unapplied (`comptime StringSlice = StringSpan`), decoding its
+    /// declaration's record on first use.
+    pub fn generator_alias(&self, name: &str) -> Option<&str> {
+        let aliases = &self.declaration(Table::Aliases, name)?.aliases;
+        let position = aliases
+            .binary_search_by(|(alias, _)| alias.as_str().cmp(name))
+            .ok()?;
+        aliases[position].1.generator.as_deref()
+    }
+
     /// The struct and bracket arguments the reached module's alias `name`
     /// applies, its own parameters spelled as the `_` holes they leave
     /// unbound: `comptime Scalar = SIMD[_, length=1]`, which its check

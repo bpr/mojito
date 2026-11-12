@@ -3083,6 +3083,11 @@ impl Checker {
         alias: &ComptimeAlias,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, DeclaredAttributes), TypeError> {
+        if let Some(generator) = alias.generator.as_deref()
+            && (!args.is_empty() || matches!(alias.body, AliasBody::Generator))
+        {
+            return self.applied_type_at_depth(generator, args);
+        }
         let template = match &alias.body {
             AliasBody::Type(template) => template,
             AliasBody::Predicate(_) => {
@@ -3093,6 +3098,11 @@ impl Checker {
             AliasBody::Value(_) => {
                 return Err(TypeError::Unsupported(format!(
                     "'{name}' is a value comptime alias, not a type"
+                )));
+            }
+            AliasBody::Generator => {
+                return Err(TypeError::InvariantViolation(format!(
+                    "generator alias '{name}' names no struct"
                 )));
             }
         };

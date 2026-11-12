@@ -3101,6 +3101,11 @@ struct ComptimeAlias {
     /// the body of the generator the alias read unapplied is
     /// ([`Checker::alias_generator`]). `None` for any other alias.
     predicate_value: Option<ParamExpr>,
+    /// The struct whose generator the alias names unapplied (`comptime
+    /// StringSlice = StringSpan`): an application of the alias is that
+    /// struct's application, as at the pin, where the alias's value is the
+    /// struct's generator. `None` for any other alias.
+    generator: Option<String>,
 }
 
 /// The `@implicit` converting constructor selected for one conversion.
@@ -3135,6 +3140,11 @@ enum AliasBody {
     Type(Ty),
     Predicate(Box<GenericConstraint>),
     Value(ParamExpr),
+    /// A parametric struct's generator with no type the alias's own
+    /// parameters can template (`comptime S = Span`, whose open parameters
+    /// include an origin): every read is the struct's
+    /// ([`ComptimeAlias::generator`]).
+    Generator,
 }
 
 /// The body of a [`ParameterizedMember`]: upstream's generator over the

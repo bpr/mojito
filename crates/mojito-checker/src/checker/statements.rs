@@ -4459,7 +4459,21 @@ impl Checker {
         {
             return Err(mismatch);
         }
-        let generator = self.partially_bound_generator(type_params, value)?;
+        // An unapplied parametric struct (`comptime Q = P`) names its
+        // generator: the alias binds every parameter as `P[...]` does.
+        let generator_struct = self.unapplied_parametric_struct(type_params, value);
+        let every_unbound = generator_struct.as_deref().and_then(|struct_name| {
+            mojito_ast::ast::named_subscript(
+                struct_name,
+                &[mojito_ast::ast::ParamArg::Value(Expr::new(
+                    ExprKind::Identifier("...".to_string()),
+                    value.span,
+                ))],
+                value.span,
+            )
+        });
+        let generator =
+            self.partially_bound_generator(type_params, every_unbound.as_ref().unwrap_or(value))?;
         let (type_params, value) = generator
             .as_ref()
             .map_or((type_params, value), |(params, body)| {
@@ -4521,52 +4535,67 @@ impl Checker {
         // accepts. A body that is not a proposition is a value, lowered to
         // its template over the alias's binders, as is any body a value
         // annotation declares.
-        let body = match (super::constraints::assoc_body_source_type(value), &declared) {
-            // A `Bool` annotation admits a proposition as well as a value.
-            (_, Some(declared)) => match self.lower_parametric_value(&decls, value, Some(declared))
-            {
-                Ok(body) => AliasBody::Value(body),
-                Err(error) => match self.compile_predicate_alias_body(&decls, value) {
-                    Ok(constraint) if declared.kind().is_bool() => {
-                        AliasBody::Predicate(Box::new(constraint))
+        let body = (|| -> Result<AliasBody, TypeError> {
+            Ok(
+                match (super::constraints::assoc_body_source_type(value), &declared) {
+                    // A `Bool` annotation admits a proposition as well as a value.
+                    (_, Some(declared)) => {
+                        match self.lower_parametric_value(&decls, value, Some(declared)) {
+                            Ok(body) => AliasBody::Value(body),
+                            Err(error) => match self.compile_predicate_alias_body(&decls, value) {
+                                Ok(constraint) if declared.kind().is_bool() => {
+                                    AliasBody::Predicate(Box::new(constraint))
+                                }
+                                _ => return Err(error),
+                            },
+                        }
                     }
-                    _ => return Err(error),
-                },
-            },
-            (Ok(source_ty), None) => {
-                match self.lower_parameterized_member(
-                    name,
-                    &decls,
-                    type_scope(&decls),
-                    type_params,
-                    value,
-                    &source_ty,
-                ) {
-                    Ok(template) => AliasBody::Type(template),
-                    // A type-shaped body over a pack (`Ts.length`, `vs[0]`)
-                    // may still be a proposition or a value.
-                    Err(type_error) => match self.compile_predicate_alias_body(&decls, value) {
+                    (Ok(source_ty), None) => {
+                        match self.lower_parameterized_member(
+                            name,
+                            &decls,
+                            type_scope(&decls),
+                            type_params,
+                            value,
+                            &source_ty,
+                        ) {
+                            Ok(template) => AliasBody::Type(template),
+                            // A type-shaped body over a pack (`Ts.length`, `vs[0]`)
+                            // may still be a proposition or a value.
+                            Err(type_error) => {
+                                match self.compile_predicate_alias_body(&decls, value) {
+                                    Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
+                                    Err(_) => AliasBody::Value(
+                                        self.lower_parametric_value(&decls, value, None)
+                                            .map_err(|_| type_error)?,
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                    (Err(_), None) => match self.compile_predicate_alias_body(&decls, value) {
                         Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
-                        Err(_) => AliasBody::Value(
-                            self.lower_parametric_value(&decls, value, None)
-                                .map_err(|_| type_error)?,
-                        ),
+                        Err(predicate_error) => {
+                            match self.lower_parametric_value(&decls, value, None) {
+                                Ok(body) => AliasBody::Value(body),
+                                Err(error)
+                                    if matches!(&predicate_error, TypeError::Unsupported(message)
+                                if message.starts_with("a generic comptime alias must be defined by")) =>
+                                {
+                                    return Err(error);
+                                }
+                                Err(_) => return Err(predicate_error),
+                            }
+                        }
                     },
-                }
-            }
-            (Err(_), None) => match self.compile_predicate_alias_body(&decls, value) {
-                Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
-                Err(predicate_error) => match self.lower_parametric_value(&decls, value, None) {
-                    Ok(body) => AliasBody::Value(body),
-                    Err(error)
-                        if matches!(&predicate_error, TypeError::Unsupported(message)
-                            if message.starts_with("a generic comptime alias must be defined by")) =>
-                    {
-                        return Err(error);
-                    }
-                    Err(_) => return Err(predicate_error),
                 },
-            },
+            )
+        })();
+        // A struct no bracket list can leave open as a generator alias (its
+        // open parameters are origins) is the struct's generator alone.
+        let body = match body {
+            Err(_) if generator.is_none() && generator_struct.is_some() => AliasBody::Generator,
+            body => body?,
         };
         let predicate_value = matches!(body, AliasBody::Predicate(_))
             .then(|| {
@@ -4581,9 +4610,28 @@ impl Checker {
                 body,
                 value: value.clone(),
                 predicate_value,
+                generator: generator_struct,
             },
         );
         Ok(())
+    }
+
+    /// The parametric struct `value` names unapplied, when it is the whole
+    /// body of a parameter-free alias.
+    fn unapplied_parametric_struct(
+        &self,
+        type_params: &[mojito_ast::ast::TypeParam],
+        value: &Expr,
+    ) -> Option<String> {
+        let ExprKind::Identifier(name) = &value.kind else {
+            return None;
+        };
+        (type_params.is_empty()
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|info| !info.source_params.is_empty()))
+        .then(|| name.clone())
     }
 }
 

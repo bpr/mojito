@@ -871,9 +871,7 @@ struct String(
     def __add__(self, other: StringSlice) -> String:
         return Self._add(self.as_bytes(), other.as_bytes())
 
-    # Upstream's `other` is a `StringSlice[_]`; an application through the
-    # `StringSlice` alias is rejected here (R1746).
-    def __radd__(self, other: StringSlice) -> String:
+    def __radd__(self, other: StringSlice[_]) -> String:
         return Self._add(other.as_bytes(), self.as_bytes())
 
     def __iadd__(mut self, other: StringSpan):

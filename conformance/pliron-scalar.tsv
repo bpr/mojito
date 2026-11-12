@@ -147,6 +147,7 @@ assets/ok/compile_time_string_types.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_destructuring_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_generic.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_alias_struct_generator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_value_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_value_parametric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_annotated_implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
