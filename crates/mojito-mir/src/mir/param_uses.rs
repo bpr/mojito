@@ -49,7 +49,9 @@
 //! analysis kept, and all of them when that is not at hand.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
-use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
+use crate::mir::verify::{
+    instruction_operand_regs, instruction_places_mut, instruction_result_regs,
+};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirSubscriptArg, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
@@ -1610,37 +1612,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             | MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::Try { .. } => {}
-            MirInstr::MethodCall {
-                recv_place,
-                arg_places,
-                kwarg_places,
-                ..
-            } => {
-                let mut dispatched = instruction.clone();
-                if let MirInstr::MethodCall {
-                    recv_place,
-                    arg_places,
-                    kwarg_places,
-                    ..
-                } = &mut dispatched
-                {
-                    *recv_place = None;
-                    for place in arg_places.iter_mut().chain(kwarg_places.iter_mut()) {
-                        *place = None;
-                    }
-                }
-                self.dispatching_instruction(function, &dispatched);
-                for place in recv_place
-                    .as_deref()
-                    .into_iter()
-                    .chain(arg_places.iter().chain(kwarg_places).flatten())
-                {
-                    match &place.ty {
-                        Some(ty) => self.ty(ty),
-                        None => self.visit(place),
-                    }
-                }
-            }
             _ => self.dispatching_instruction(function, instruction),
         }
     }
@@ -1798,8 +1769,22 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
 
     /// The reads of an instruction that may run a member of a struct it
     /// names: the instruction and every type of its registers and slots.
+    /// A place only addresses the value it passes, so of each place only
+    /// the type it designates (the projected value's, whose member runs) is
+    /// read whole, and the slots it is rooted at are no read; its root and
+    /// projections read their layout with the body.
     fn dispatching_instruction(&mut self, function: &MirFunction, instruction: &MirInstr) {
-        self.visit(instruction);
+        let mut dispatched = instruction.clone();
+        let mut addressed = Vec::new();
+        for place in instruction_places_mut(&mut dispatched) {
+            addressed.extend([Some(place.root), place.through]);
+            let place = std::mem::replace(place, MirPlace::root(place.root, None));
+            match &place.ty {
+                Some(ty) => self.ty(ty),
+                None => self.visit(&place),
+            }
+        }
+        self.visit(&dispatched);
         let mut registers = Vec::new();
         instruction_operand_regs(instruction, &mut registers);
         instruction_result_regs(instruction, &mut registers);
@@ -1808,7 +1793,13 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 self.ty(ty);
             }
         }
-        for slot in instruction_slots(instruction) {
+        let mut slots = instruction_slots(instruction);
+        for slot in addressed.into_iter().flatten() {
+            if let Some(position) = slots.iter().position(|named| *named == slot) {
+                slots.swap_remove(position);
+            }
+        }
+        for slot in slots {
             if let Some(ty) = function.var_tys.get(&slot) {
                 self.ty(ty);
             }

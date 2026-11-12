@@ -98,36 +98,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1279 A generic struct with a `String` field does not compile:
-  `inline-parametric` leaves its copy constructor reading the struct's
-  parameter**
-
-  `struct S[n: Int](Copyable, Movable)` holding `var s: String`, only
-  built and printed in `main`, stops with "after pre-elaboration pass
-  `inline-parametric`: MIR function 'S.__copyinit__' removes parameter
-  slot 0 of `S`, which it reads", where the pin runs it. It still fails
-  after R1283 and R1278 reworked copy and constructor synthesis
-  (2026-10-26), and `MOJITO_PRE_ELABORATION=0` runs it.
-  - `remove-unused-params` removes `n` from the synthesized
-    `S.__copyinit__` (`$v1.s` loaded, `String.__copyinit__` called), which
-    reads none of it.
-  - Inlining `String.__copyinit__` splices places rooted at the bare
-    receiver type `S` with no arguments.
-  - The parameter-use walker (`unread_parameters_of`,
-    `mir/param_uses.rs`) then counts `n` as read: its `serialize_seq`
-    arm takes a bare self spelling with no struct arguments as
-    `LayoutReads::All`, every slot.
-  - Recipe: `MOJITO_PRE_ELABORATION=0 mojito emit-mir` the program, then
-    `mojito opt --pass remove-unused-params --pass inline-parametric` over
-    the text reproduces it.
-  - Probes: the same over `T: AnyType`, an `@always_inline("nodebug")`
-    written copy constructor (which also names `S.copy`), and
-    `S[n](copy=c)` in a generic `dup[n]` (which also names `dup`).
-  - A `Movable`-only `S` runs.
-  - Found while landing R1050 (2026-10-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1291 A method call returning no reference runs its callee on the
   host stack, so recursion through a method overflows where upstream's
   interpreter pushes a frame for every call**

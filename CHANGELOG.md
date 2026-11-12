@@ -306,6 +306,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic struct holding a `String` whose parameter its layout never
+  reads (`struct S[n: Int](Copyable, Movable)` with `var s: String`) now
+  compiles and runs as at the pin, instead of failing the verifier after
+  `inline-parametric` with "removes parameter slot 0 of `S`, which it
+  reads": the parameter-use walk reads only the designated type of a
+  subscript's places, not their bare `Self` root, as it already did for a
+  method call's (R1279,
+  `assets/ok/generic_struct_string_field_copy.mojo`).
 - A caught error of a struct with no fields, raised after
   `inline-parametric` and `mem-2-reg` promote its empty `__init__`'s
   `out self` to `uninitmem`, prints its value on the VM as on native and
