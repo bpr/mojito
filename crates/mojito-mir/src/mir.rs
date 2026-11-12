@@ -3632,30 +3632,6 @@ impl<'a> Flatten<'a> {
         self.read_c(receiver, call_results::CValue::Slot(slot))
     }
 
-    /// The contract of the parameterized accessor call a type-keyed subscript
-    /// (`v[Int]` on the self-hosted `Variant`) stands for: the checker
-    /// selected the `__getitem_param__` clone at the subscript itself, so it
-    /// lowers as that clone's method call on the subscript base with no
-    /// runtime arguments. `None` for every other subscript.
-    fn type_keyed_accessor_call(
-        &self,
-        expression: Node<'a>,
-    ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        let CheckedOp::Index { index, .. } = expression.op() else {
-            return None;
-        };
-        // The index names a type, never a runtime value (the Int-keyed
-        // dependent accessors of a variadic struct index by a checked Int).
-        let type_index = self.checked.expression(*index).is_some_and(|index| {
-            matches!(index.op, CheckedOp::TypeValue { .. }) || index.ty.is_none()
-        });
-        let contract = expression.call_contract()?;
-        (type_index
-            && contract.arguments.is_empty()
-            && contract.target.contains(".__getitem_param__"))
-        .then_some(contract)
-    }
-
     /// Peel container slots that themselves store reference handles until one
     /// read through the returned handle yields `target`. This distinguishes
     /// writing a `List[ref T]` element's referent from replacing the stored

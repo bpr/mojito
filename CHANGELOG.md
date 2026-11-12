@@ -377,6 +377,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type-keyed subscript (`v[Int]` on the bundled `Variant`) is a
+  subscript op whose key is the attribute the check bound as its
+  accessor's compile-time argument, as upstream's
+  `v.__getitem_param__[Int]()` carries it, rather than an index node MIR
+  recognised by its missing type; MIR lowers it by the op, with
+  unchanged output (R754).
 - `inline-parametric`'s second run prices a program callee it splices
   after the earlier round cleaned it as that cleaned body, as the pin's
   second `InlineParametric` splices it, rather than at the first run's

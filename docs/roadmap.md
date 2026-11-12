@@ -10094,24 +10094,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R754 A type-keyed subscript's type is an index node, where
-  upstream's is the accessor call's parameter attribute**
-
-  `v[Int]` on the bundled `Variant`/`Tuple` keeps `Int` as the
-  `CheckedOp::Index` index node, and MIR recognises it by its missing type.
-  - Site: `type_keyed_accessor_call` (`mir.rs`), used by
-    `expr_access.rs` and `lower_stmt.rs`.
-  - The check already binds the index as the accessor's type argument
-    (`indexing.rs`, a synthesised `ParamArg::Value`), so it records a
-    `NodeFacts::argument_attribute` at the index.
-  - The lever: the checked op for a type-keyed subscript carries that
-    attribute, as upstream's `__getitem__[T]()` call does, and MIR decides
-    by the op.
-  - Done when `type_keyed_accessor_call` reads no `ty.is_none()`.
-  - Found while landing R658 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R756 Value-shaped bracket arguments carry two attribute facts that
   can disagree**
 
@@ -11238,6 +11220,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     where upstream's `_DefaultVariantStorage` writes in place through
     `unsafe_ptr[T]().unsafe_write(init_with=)` and destroys through
     `unsafe_ptr[T]().unsafe_deinit_pointee_with(deinit_func)`.
+  - Probe (from R754): a projection of the intrinsic storage by type
+    (`self._storage[T]`, the `VariantProject` adjustment) keeps `T` as the
+    `CheckedOp::Index` index node, where the bundled `Variant`'s
+    `v[T]` now carries it as its accessor's attribute, as a call to the
+    library struct's `__getitem_param__[T]` would.
   - Found while landing `enum` (2026-10-25).
   - Depends on R1392 (`pop` ops in `__mlir_op`), R221
     (`Pointer.unsafe_bitcast`), and R1316 (`!kgen.pointer` values).

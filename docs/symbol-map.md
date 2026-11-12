@@ -402,9 +402,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `deinit_with` call their callable in the body, as upstream's do, so a
   closure's `__call__` is an ordinary call), and `type_keyed_projection`
   routes a `v[T]` subscript to the struct's type-keyed
-  `__getitem_param__[T]` accessor in value and place positions (the
-  `type_keyed_accessor_call` lowering in MIR, which reads the subscript's
-  index node). `check_lambda` runs a lambda
+  `__getitem_param__[T]` accessor in value and place positions: the
+  checked builder's `subscript_key` makes `T` the `CheckedOp::Index` key
+  as the accessor's attribute, and MIR's `Node::type_keyed_accessor_call`
+  decides by that op (`type_keyed_accessor_read` lowers the read). `check_lambda` runs a lambda
   expression's hidden definition through `check_def` during statement-root
   registration and caches the finalized function-value type under the
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/

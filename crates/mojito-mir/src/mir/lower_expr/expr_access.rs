@@ -294,6 +294,44 @@ impl<'a> Flatten<'a> {
         self.variant_payload_read(e, place)
     }
 
+    /// Read type-keyed subscript node `e`, `object[T]`: the accessor call
+    /// `contract` selected (`v.__getitem_param__[T]()`) on `object`, with no
+    /// run-time arguments.
+    pub(super) fn type_keyed_accessor_read(
+        &mut self,
+        e: Node<'a>,
+        object: Node<'a>,
+        contract: mojito_checked::checked::CheckedCallContract,
+    ) -> Reg {
+        let (recv, recv_place) = self.lower_method_receiver(e, object);
+        let dest = self.fresh(e.location(), None);
+        self.emit_interior_invalidations(object, None);
+        let raises = self.call_raises(e, e.raises());
+        self.emit(MirInstr::MethodCall {
+            dest,
+            recv,
+            method: "__getitem_param__".to_string(),
+            resolved: Some(contract.target),
+            raises,
+            reference_result: contract.reference_result.map(Box::new),
+            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: recv_place.map(Box::new),
+            recv_writes: e.receiver_writes(),
+            receiver_convention: e.receiver_convention(object),
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: self.call_capture_accesses(e),
+            param_arg_regs: Vec::new(),
+            param_decls: contract.param_decls,
+            instantiated_args: e.instantiated_args(),
+            spread: None,
+            refined_bound: contract.refined_bound.map(MirRefinedBound::boxed),
+        });
+        dest
+    }
+
     /// Read subscript node `e`, `object[index]`.
     pub(super) fn index_expr(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {
         // An indexed reference-bearing aggregate element is a storage
@@ -328,35 +366,6 @@ impl<'a> Flatten<'a> {
             let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
-        }
-        if let Some(contract) = self.type_keyed_accessor_call(e) {
-            let (recv, recv_place) = self.lower_method_receiver(e, object);
-            let dest = self.fresh(e.location(), None);
-            self.emit_interior_invalidations(object, None);
-            let raises = self.call_raises(e, e.raises());
-            self.emit(MirInstr::MethodCall {
-                dest,
-                recv,
-                method: "__getitem_param__".to_string(),
-                resolved: Some(contract.target),
-                raises,
-                reference_result: contract.reference_result.map(Box::new),
-                result_adapter: contract.result_adapter.map(MirResultAdapter::new),
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                recv_place: recv_place.map(Box::new),
-                recv_writes: e.receiver_writes(),
-                receiver_convention: e.receiver_convention(object),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: self.call_capture_accesses(e),
-                param_arg_regs: Vec::new(),
-                param_decls: contract.param_decls,
-                instantiated_args: e.instantiated_args(),
-                spread: None,
-                refined_bound: contract.refined_bound.map(MirRefinedBound::boxed),
-            });
-            return dest;
         }
         let has_call = e.call_contract().is_some();
         if !has_call && let Some(d) = self.storage_element_read(e, object) {

@@ -639,9 +639,14 @@ impl Lower {
                             SemanticAdjustment::VariantProject { index, .. } => Some(index.clone()),
                             _ => None,
                         });
-                let kind = match variant_index {
-                    Some(index) => HirPlaceProjectionKind::Variant(index),
-                    None => HirPlaceProjectionKind::Index(*index),
+                // A type-keyed accessor's key is an attribute: its place is
+                // the accessor's reference result, never a projection.
+                let kind = match (variant_index, index) {
+                    (Some(index), _) => HirPlaceProjectionKind::Variant(index),
+                    (None, mojito_checked::checked::CheckedParamArg::Value(index)) => {
+                        HirPlaceProjectionKind::Index(*index)
+                    }
+                    (None, _) => return None,
                 };
                 place.projections.push(HirPlaceProjection {
                     kind,

@@ -1537,9 +1537,13 @@ pub enum CheckedOp {
         args: Vec<CheckedNodeId>,
         kwargs: Vec<CheckedKwArg>,
     },
+    /// A subscript. Its key is the run-time index node, or, for a
+    /// type-keyed subscript (`v[Int]` on the bundled `Variant`), the
+    /// attribute the check bound as its accessor's compile-time argument,
+    /// as upstream's `v.__getitem_param__[Int]()` carries it.
     Index {
         object: CheckedNodeId,
-        index: CheckedNodeId,
+        index: CheckedParamArg,
     },
     TypeApply {
         name: String,
@@ -1625,11 +1629,11 @@ impl CheckedOp {
             | Self::Named {
                 target: left,
                 value: right,
-            }
-            | Self::Index {
-                object: left,
-                index: right,
             } => operands.extend([*left, *right]),
+            Self::Index { object, index } => {
+                operands.push(*object);
+                index.operands(&mut operands);
+            }
             Self::Call {
                 param_args,
                 args,
@@ -1781,6 +1785,10 @@ impl CheckedOp {
                     argument.reached(&mut nodes);
                 }
             }
+            Self::Index { object, index } => {
+                nodes.push(*object);
+                index.reached(&mut nodes);
+            }
             _ => nodes = self.operands(),
         }
         nodes
@@ -1839,10 +1847,13 @@ impl CheckedOp {
                 let left = map.expression(*left);
                 Self::Infix(*op, left, map.expression(*right))
             }
-            Self::Index { object, index } => Self::Index {
-                object: map.expression(*object),
-                index: map.expression(*index),
-            },
+            Self::Index { object, index } => {
+                let object = map.expression(*object);
+                Self::Index {
+                    object,
+                    index: index.map_operands(map),
+                }
+            }
             Self::Call {
                 name,
                 param_args: arguments,
@@ -6047,10 +6058,13 @@ impl<'a> ArenaBuilder<'a> {
                 let left = self.expr(left);
                 CheckedOp::Infix(*op, left, self.expr(right))
             }
-            ExprKind::Index { object, index } => CheckedOp::Index {
-                object: self.expr(object),
-                index: self.expr(index),
-            },
+            ExprKind::Index { object, index } => {
+                let object = self.expr(object);
+                CheckedOp::Index {
+                    object,
+                    index: self.subscript_key(expression, index),
+                }
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -6257,6 +6271,36 @@ impl<'a> ArenaBuilder<'a> {
                 self.param_arg(argument, attribute)
             })
             .collect()
+    }
+
+    /// The key of subscript `expression`, `index`: the attribute the
+    /// check bound when the subscript is a type-keyed accessor call
+    /// (`v[Int]`, upstream's `v.__getitem_param__[Int]()`, whose one
+    /// bracket argument it recorded at the subscript), else the index's
+    /// node.
+    fn subscript_key(&mut self, expression: &Expr, index: &Expr) -> CheckedParamArg {
+        let facts = self.facts(&expression.source_span());
+        let attribute = facts
+            .selected_call
+            .as_deref()
+            .filter(|contract| {
+                contract.arguments.is_empty() && contract.target.contains(".__getitem_param__")
+            })
+            .and(facts.parameter_attributes.as_deref())
+            .and_then(|attributes| match attributes {
+                [Some(attribute)] => Some(attribute.clone()),
+                _ => None,
+            });
+        match (&index.kind, attribute) {
+            (ExprKind::TypeValue(ty), attribute @ Some(_)) => {
+                self.param_arg(&ParamArg::Type(ty.clone()), attribute)
+            }
+            (_, attribute @ Some(_)) => CheckedParamArg::Attribute {
+                value: attribute,
+                applications: self.expression_applications(index),
+            },
+            (_, None) => CheckedParamArg::Value(self.expr(index)),
+        }
     }
 
     fn param_arg(

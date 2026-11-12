@@ -734,6 +734,9 @@ impl<'a> Flatten<'a> {
             CheckedOp::Index { .. } if variant_projection(node.checked) => {
                 self.variant_project_index(node, node.object()?)
             }
+            CheckedOp::Index { .. } if let Some(contract) = node.type_keyed_accessor_call() => {
+                self.type_keyed_accessor_read(node, node.object()?, contract)
+            }
             CheckedOp::Index { .. } => self.index_expr(node, node.object()?, node.index()?),
             // Slice `object[lower:upper:step]` → the selected `__getitem__`'s
             // result.

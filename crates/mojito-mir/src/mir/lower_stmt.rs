@@ -606,14 +606,20 @@ impl<'a> Flatten<'a> {
                 }
                 p
             }
+            // A type-keyed projection (`v[Int]` on the self-hosted
+            // `Variant`): the accessor call's reference result is the place.
+            (CheckedOp::Index { .. }, Some(_))
+                if e.type_keyed_accessor_call().is_some()
+                    && let Some(place) = self.materialize_reference_result_place(e) =>
+            {
+                place
+            }
             (CheckedOp::Index { .. }, Some(object)) if let Some(index) = e.index() => {
-                // A type-keyed projection (`v[Int]` on the self-hosted
-                // `Variant`), or a `Tuple` element the checker resolved to
-                // its compile-time-index accessor (`t[0]`, upstream's
+                // A `Tuple` element the checker resolved to its
+                // compile-time-index accessor (`t[0]`, upstream's
                 // `__getitem_param__` returning `ref` into storage): the
                 // accessor call's reference result is the place.
-                if (self.type_keyed_accessor_call(e).is_some()
-                    || e.element_accessor_call().is_some())
+                if e.element_accessor_call().is_some()
                     && let Some(place) = self.materialize_reference_result_place(e)
                 {
                     return place;

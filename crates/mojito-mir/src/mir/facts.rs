@@ -713,6 +713,26 @@ impl<'a> Node<'a> {
             .cloned()
     }
 
+    /// The contract of the parameterized accessor call a type-keyed subscript
+    /// (`v[Int]` on the self-hosted `Variant`) stands for: its key is the
+    /// accessor's compile-time attribute, as upstream's
+    /// `v.__getitem_param__[Int]()` call carries it, so it lowers as that
+    /// clone's method call on the subscript base with no runtime arguments.
+    /// `None` for every other subscript.
+    pub(super) fn type_keyed_accessor_call(
+        self,
+    ) -> Option<mojito_checked::checked::CheckedCallContract> {
+        matches!(
+            self.op(),
+            CheckedOp::Index {
+                index: mojito_checked::checked::CheckedParamArg::Attribute { .. },
+                ..
+            }
+        )
+        .then(|| self.call_contract())
+        .flatten()
+    }
+
     /// The compile-time-index accessor call a nominal subscript resolved to
     /// (`t[0]` on a `Tuple`, `__getitem_param__[0]`), whose `ref` result
     /// into the element is the subscript's place.

@@ -85,10 +85,11 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// The index of a subscript.
+    /// The run-time index of a subscript; a type-keyed subscript, whose
+    /// key is its accessor's attribute, has none.
     pub(super) fn index(self) -> Option<Self> {
         match self.op() {
-            CheckedOp::Index { index, .. } => self.operand_of(*index),
+            CheckedOp::Index { index, .. } => self.param_value(index),
             _ => None,
         }
     }
