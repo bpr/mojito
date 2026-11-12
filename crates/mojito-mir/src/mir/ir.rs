@@ -675,11 +675,8 @@ pub fn count_register_reads(block: &mut MirBlock, reads: &mut [u32]) {
 }
 
 /// Each supplied compile-time argument with a run-time register paired
-/// with the declaration it fills, and that register.
-///
-/// Positional arguments skip the inferred-only declarations
-/// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
-/// checker's binder does; an argument matching no declaration is dropped.
+/// with the declaration it fills, and that register, by
+/// [`supplied_parameter_arguments`]' binding.
 pub fn matched_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
@@ -695,52 +692,26 @@ pub fn matched_parameter_arguments<'a>(
 }
 
 /// Each supplied compile-time argument paired with the declaration it
-/// fills, a closed value or type argument with no register included, by
-/// [`matched_parameter_arguments`]' binding.
+/// fills, a closed value or type argument with no register included.
+///
+/// The list binds as its source bracket did, by
+/// [`mojito_ast::call::bind_parameter_slots`]: positional arguments skip
+/// the infer-only declarations (`hash[T: Hashable, //, HasherType]` binds
+/// `HasherType` first), then keywords bind by name. An argument binding no
+/// declaration (an erased origin argument) is dropped.
 pub fn supplied_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
 ) -> Vec<(&'a ParamDecl, &'a MirParamArg)> {
-    let explicit: Vec<&ParamDecl> = decls
+    let keywords: Vec<Option<&str>> = arguments
         .iter()
-        .filter(|declaration| {
-            !matches!(
-                declaration,
-                ParamDecl::Type {
-                    infer_only: true,
-                    ..
-                } | ParamDecl::Value {
-                    infer_only: true,
-                    ..
-                }
-            )
-        })
+        .map(|argument| argument.name.as_deref())
         .collect();
-    let mut positional = 0;
-    let mut supplied = Vec::new();
-    for argument in arguments {
-        let declaration = if let Some(name) = &argument.name {
-            decls.iter().find(|declaration| declaration.name() == name)
-        } else {
-            let declaration = explicit.get(positional).copied();
-            // A type or value pack takes every positional argument from its
-            // slot on.
-            if !matches!(
-                declaration,
-                Some(
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                )
-            ) {
-                positional += 1;
-            }
-            declaration
-        };
-        if let Some(declaration) = declaration {
-            supplied.push((declaration, argument));
-        }
-    }
-    supplied
+    mojito_ast::call::bind_parameter_slots(decls, &keywords)
+        .into_iter()
+        .zip(arguments)
+        .filter_map(|(slot, argument)| Some((&decls[slot.ok()?], argument)))
+        .collect()
 }
 
 /// Every register an instruction defines or reads, mutably.

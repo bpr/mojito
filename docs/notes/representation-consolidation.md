@@ -221,7 +221,7 @@ R1411 and R1413 under *Entries outside the gaps*.
   - `Self` and associated reads: R513, R436, R415.
   - Checker arms: R1199, R332, R1220, R448.
   - Domain: R480, R396, R1197.
-  - Constructions: R1175.
+  - Constructions: R1175 (landed).
   - Spelling: R388 and R398.
   - Library-side folds: R231, R197, and R198.
 - Gap H also unblocks most of the reflection block below.

@@ -368,6 +368,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time bracket list now binds by the one rule in `call.rs`
+  everywhere: the checker's callable-argument origin tracking and MIR's
+  parameter-argument pairing and verifier read the per-argument
+  `mojito_ast::call::bind_parameter_slots` instead of their own copies, so
+  a positional argument no longer skips a keyword-filled slot in the
+  verifier, which the pin rejects (R1175).
 - Recursion through a method runs at any depth on the VM, as through a
   free function: every method call on a declared struct's value is a
   pushed frame, its `mut self` receiver a handle into the caller and its

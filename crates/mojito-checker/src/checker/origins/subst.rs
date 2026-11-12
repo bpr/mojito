@@ -804,44 +804,37 @@ pub(in crate::checker) fn translate_call_through(
     Ok(translated)
 }
 
-/// The name supplied for a callable value parameter at a call site: matched
-/// positionally over the callee's declarations, or by keyword. `None` for a
-/// defaulted, unnamed, or unmatched argument (permissive).
+/// The name supplied for a callable value parameter at a call site, the
+/// bracket list bound to the callee's declarations as the check binds it
+/// ([`mojito_ast::call::bind_parameter_slots`]). `None` for a defaulted,
+/// unnamed, unbound (`_`, `...`), or unmatched argument (permissive).
 pub(in crate::checker) fn callable_value_argument(
     decls: &[mojito_types::types::ParamDecl],
     decl_name: &str,
     param_args: &[mojito_ast::ast::ParamArg],
 ) -> Option<String> {
     use mojito_ast::ast::ParamArg;
-    pub(super) fn argument_name(argument: &ParamArg) -> Option<String> {
-        match argument {
-            ParamArg::Type(mojito_ast::ast::Type::Named(name, arguments))
-                if arguments.is_empty() =>
-            {
-                Some(name.clone())
-            }
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => Some(name.clone()),
-            _ => None,
-        }
+    let index = decls.iter().position(|decl| decl.name() == decl_name)?;
+    let keywords = mojito_ast::call::bracket_keywords(param_args);
+    let argument = mojito_ast::call::bind_parameter_slots(decls, &keywords)
+        .into_iter()
+        .zip(param_args)
+        .find_map(|(slot, argument)| (slot == Ok(index)).then_some(argument))?;
+    let argument = match argument {
+        ParamArg::Named { value, .. } => value.as_ref(),
+        positional => positional,
+    };
+    if mojito_ast::call::unbound_marker(argument).is_some() {
+        return None;
     }
-    let mut positional = param_args
-        .iter()
-        .filter(|argument| !matches!(argument, ParamArg::Named { .. }));
-    for decl in decls {
-        let supplied = param_args.iter().find_map(|argument| match argument {
-            ParamArg::Named { name, value } if name == decl.name() => Some(value.as_ref()),
-            _ => None,
-        });
-        let argument = match supplied {
-            Some(argument) => Some(argument),
-            None => positional.next(),
-        };
-        if decl.name() == decl_name {
-            return argument.and_then(argument_name);
+    match argument {
+        ParamArg::Type(mojito_ast::ast::Type::Named(name, arguments)) if arguments.is_empty() => {
+            Some(name.clone())
         }
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => Some(name.clone()),
+        _ => None,
     }
-    None
 }

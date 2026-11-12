@@ -6099,24 +6099,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1175 Compile-time bracket binding is re-implemented outside `call.rs`**
-
-  Problem: four sites bind a bracket list to a declaration's parameters by
-  their own rule instead of `mojito_ast::call::match_parameter_slots`, the
-  pin's rule the checker's `bracket_bindings` uses.
-  - `callable_value_argument` (`checker/origins/subst.rs`) binds positional
-    arguments over infer-only binders, and skips a keyword-filled slot.
-  - `applied_arguments` (`checker/comptime_validation.rs`) pairs a binder
-    with the argument at its raw position.
-  - `mir::supplied_parameter_arguments` (`mir/ir.rs`) is a separate copy.
-  - `verify_param_arguments` (`mir/verify/subscripts.rs`) lets a
-    positional argument skip a keyword-filled slot, which the pin rejects.
-  - MIR lists carry erased origin arguments with no value, which the MIR
-    adapters must keep aligned.
-  - Found while landing R449 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R451 The elaborator classifies a value parameter whose type it cannot read as a type parameter**
 
   Problem: `classify_ct_param` (`comptime/params.rs`) makes `v` in `def

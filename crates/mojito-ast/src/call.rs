@@ -332,52 +332,85 @@ pub fn effective_keyword_only_index<P: DeclaredParam>(
 /// that is not infer-only; a pack takes every positional argument from its
 /// slot on. Each keyword then binds its parameter by name, an infer-only one
 /// included. Where a keyword is written plays no part, so `C[b=2, 1]` binds
-/// `1` to `a`.
+/// `1` to `a`. The first positional mismatch is reported before any keyword
+/// one.
 pub fn match_parameter_slots<P: CompileTimeParam>(
     params: &[P],
     keywords: &[Option<&str>],
 ) -> Result<Vec<usize>, ParamMatchError> {
-    let mut slots = vec![None; keywords.len()];
+    let bound = bind_parameter_slots(params, keywords);
+    let mut positional_first = bound
+        .iter()
+        .zip(keywords)
+        .filter(|(_, keyword)| keyword.is_none())
+        .chain(
+            bound
+                .iter()
+                .zip(keywords)
+                .filter(|(_, keyword)| keyword.is_some()),
+        );
+    if let Some(error) = positional_first.find_map(|(slot, _)| slot.as_ref().err()) {
+        return Err(error.clone());
+    }
+    Ok(bound.into_iter().flatten().collect())
+}
+
+/// Per bracket argument, the parameter it binds by
+/// [`match_parameter_slots`]' rule, or why it binds none.
+///
+/// A consumer that tolerates an argument binding nothing (a lowered list's
+/// erased origin argument) reads each result on its own; one argument's
+/// mismatch leaves every other binding as the rule makes it.
+pub fn bind_parameter_slots<P: CompileTimeParam>(
+    params: &[P],
+    keywords: &[Option<&str>],
+) -> Vec<Result<usize, ParamMatchError>> {
+    let expected = params.iter().filter(|param| !param.infer_only()).count();
     let mut filled = vec![false; params.len()];
     let mut next = 0;
     let mut skipped_infer_only = false;
-    for (slot, _) in slots
-        .iter_mut()
+    let positional: Vec<Option<Result<usize, ParamMatchError>>> = keywords
+        .iter()
+        .map(|keyword| {
+            if keyword.is_some() {
+                return None;
+            }
+            while params.get(next).is_some_and(CompileTimeParam::infer_only) {
+                skipped_infer_only = true;
+                next += 1;
+            }
+            let Some(param) = params.get(next) else {
+                return Some(Err(ParamMatchError::UnexpectedParameter {
+                    skipped_infer_only,
+                    expected,
+                    got: keywords.len(),
+                }));
+            };
+            let index = next;
+            filled[index] = true;
+            next += usize::from(!param.variadic());
+            Some(Ok(index))
+        })
+        .collect();
+    positional
+        .into_iter()
         .zip(keywords)
-        .filter(|(_, keyword)| keyword.is_none())
-    {
-        while params.get(next).is_some_and(CompileTimeParam::infer_only) {
-            skipped_infer_only = true;
-            next += 1;
-        }
-        let Some(param) = params.get(next) else {
-            return Err(ParamMatchError::UnexpectedParameter {
-                skipped_infer_only,
-                expected: params.iter().filter(|param| !param.infer_only()).count(),
-                got: keywords.len(),
-            });
-        };
-        *slot = Some(next);
-        filled[next] = true;
-        if !param.variadic() {
-            next += 1;
-        }
-    }
-    for (slot, keyword) in slots.iter_mut().zip(keywords) {
-        let Some(keyword) = keyword else {
-            continue;
-        };
-        let index = params
-            .iter()
-            .position(|param| param.keyword() == *keyword)
-            .ok_or_else(|| ParamMatchError::UnknownKeyword((*keyword).to_string()))?;
-        if filled[index] {
-            return Err(ParamMatchError::UnexpectedKeyword((*keyword).to_string()));
-        }
-        filled[index] = true;
-        *slot = Some(index);
-    }
-    Ok(slots.into_iter().flatten().collect())
+        .map(|(slot, keyword)| {
+            slot.unwrap_or_else(|| {
+                let keyword = keyword.unwrap_or_default();
+                match params.iter().position(|param| param.keyword() == keyword) {
+                    None => Err(ParamMatchError::UnknownKeyword(keyword.to_string())),
+                    Some(index) if filled[index] => {
+                        Err(ParamMatchError::UnexpectedKeyword(keyword.to_string()))
+                    }
+                    Some(index) => {
+                        filled[index] = true;
+                        Ok(index)
+                    }
+                }
+            })
+        })
+        .collect()
 }
 
 /// How a bracket argument leaves a parameter unbound: a `_` its own slot,
@@ -565,6 +598,33 @@ mod tests {
         assert_eq!(
             match_parameter_slots(&params, &[Some("z")]),
             Err(ParamMatchError::UnknownKeyword("z".to_string()))
+        );
+    }
+
+    #[test]
+    fn match_parameter_slots_rejects_a_keyword_for_a_positionally_filled_slot() {
+        let params = [Param("a", false, false), Param("b", false, false)];
+        assert_eq!(
+            match_parameter_slots(&params, &[Some("a"), None]),
+            Err(ParamMatchError::UnexpectedKeyword("a".to_string()))
+        );
+    }
+
+    #[test]
+    fn bind_parameter_slots_keeps_each_binding_beside_an_unmatched_argument() {
+        let params = [Param("T", true, false), Param("a", false, false)];
+        assert_eq!(
+            bind_parameter_slots(&params, &[None, Some("o"), Some("T"), None]),
+            vec![
+                Ok(1),
+                Err(ParamMatchError::UnknownKeyword("o".to_string())),
+                Ok(0),
+                Err(ParamMatchError::UnexpectedParameter {
+                    skipped_infer_only: true,
+                    expected: 1,
+                    got: 4,
+                }),
+            ]
         );
     }
 

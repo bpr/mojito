@@ -650,10 +650,13 @@ pub(super) fn verify_subscript_call(
 }
 
 /// Check the source-order MIR representation against a declaration-order
-/// generic ABI. Keyword names select their declaration directly; positional
-/// entries skip infer-only declarations. A type argument occupies a slot but
-/// has no register, while every supplied value argument must carry a register
-/// compatible with its declared checked type.
+/// generic ABI, bound as its source bracket was
+/// ([`mojito_ast::call::bind_parameter_slots`]): positional entries fill the
+/// declarations that are not infer-only, in order, then keyword names select
+/// theirs, so a keyword naming a positionally filled slot is rejected. A
+/// type argument occupies a slot but has no register, while every supplied
+/// value argument must carry a register compatible with its declared checked
+/// type.
 /// A value slot's register is absent only where the call's `instantiated`
 /// arguments carry the closed value it was folded to, and a value parameter
 /// the call leaves to inference has no slot at all: the call carries each
@@ -686,7 +689,7 @@ pub(super) fn verify_param_arguments(
         }
         return;
     }
-    // A type or value pack takes every positional argument from its slot on.
+    // A type or value pack, whose arguments each bind one element.
     let pack = |index: usize| {
         matches!(
             declarations[index],
@@ -701,51 +704,32 @@ pub(super) fn verify_param_arguments(
     }
     bindings.bind_value_arguments(&context, declarations, instantiated);
     let mut occupied = vec![false; declarations.len()];
-    let mut next_positional = 0;
-    for argument in arguments {
-        let index = if let Some(name) = &argument.name {
-            declarations
-                .iter()
-                .position(|declaration| declaration.name().trim_start_matches('*') == name.as_str())
-        } else {
-            while declarations
-                .get(next_positional)
-                .is_some_and(|declaration| {
-                    (occupied[next_positional] && !pack(next_positional))
-                        || match declaration {
-                            mojito_types::types::ParamDecl::Type { infer_only, .. }
-                            | mojito_types::types::ParamDecl::Value { infer_only, .. } => {
-                                *infer_only
-                            }
-                        }
-                })
-            {
-                next_positional += 1;
-            }
-            let index = (next_positional < declarations.len()).then_some(next_positional);
-            next_positional += usize::from(index.is_some_and(|index| !pack(index)));
-            index
-        };
-        let Some(index) = index else {
-            // An erased argument keeps its slot for alignment but binds
-            // nothing: positionally past the declarations, or named, it is an
-            // explicit origin argument, which is not a parameter declaration
-            // at all.
-            if argument.value.is_none() {
+    let keywords: Vec<Option<&str>> = arguments
+        .iter()
+        .map(|argument| argument.name.as_deref())
+        .collect();
+    let slots = mojito_ast::call::bind_parameter_slots(declarations, &keywords);
+    for (argument, slot) in arguments.iter().zip(slots) {
+        let index = match slot {
+            Ok(index) => index,
+            Err(mojito_ast::call::ParamMatchError::UnexpectedKeyword(name)) => {
+                errors.push(format!(
+                    "{prefix}: compile-time parameter '{name}' is supplied more than once"
+                ));
                 continue;
             }
-            errors.push(format!(
-                "{prefix}: compile-time argument does not match a parameter declaration"
-            ));
-            continue;
+            // An erased argument keeps its slot for alignment but binds
+            // nothing: positionally past the declarations, or named, it is
+            // an explicit origin argument, which is not a parameter
+            // declaration at all.
+            Err(_) if argument.value.is_none() => continue,
+            Err(_) => {
+                errors.push(format!(
+                    "{prefix}: compile-time argument does not match a parameter declaration"
+                ));
+                continue;
+            }
         };
-        if occupied[index] && !pack(index) {
-            errors.push(format!(
-                "{prefix}: compile-time parameter '{}' is supplied more than once",
-                declarations[index].name()
-            ));
-            continue;
-        }
         occupied[index] = true;
         match (&declarations[index], argument.value) {
             // A type argument is compile-time data on the call: it has no
