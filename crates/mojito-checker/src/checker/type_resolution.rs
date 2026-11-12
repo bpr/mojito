@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::BracketBound as BoundAttribute;
 use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind, is_simd_length};
@@ -251,20 +252,13 @@ pub(super) fn dtype_attribute(
     )
 }
 
-/// A bracket argument's attribute at its position in the source bracket
-/// ([`BracketAttributes`]).
-#[derive(Clone, Debug)]
-pub(super) struct BoundAttribute {
-    pub(super) position: usize,
-    pub(super) attribute: Option<TyArg>,
-}
-
 /// What a declared-parameter binder bound each bracket argument to, keyed
 /// by declaration as upstream's binder fills the op's parameter list: per
 /// declared parameter, in declaration order, the attributes of the bracket
 /// arguments bound to it (none for an omitted or inferred one, one per
 /// element for a pack), each at its source position, which the checked
-/// node's source-ordered fact still reads ([`Self::source_order`]).
+/// call's node-building reads to build its declared parameters
+/// ([`mojito_checked::checked::CheckedParameter`]).
 #[derive(Clone, Debug, Default)]
 pub(super) struct DeclaredAttributes(Vec<Vec<BoundAttribute>>);
 
@@ -314,22 +308,15 @@ impl DeclaredAttributes {
         self
     }
 
-    /// The attributes laid out by source position, as
-    /// [`mojito_checked::checked::NodeFacts::parameter_attributes`] records
-    /// them.
+    /// The binding the checked node records
+    /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]).
+    pub(super) fn binding(&self) -> mojito_checked::checked::BracketBinding {
+        mojito_checked::checked::BracketBinding(self.0.clone())
+    }
+
+    /// The attributes laid out by source position.
     pub(super) fn source_order(&self) -> BracketAttributes {
-        let len = self
-            .0
-            .iter()
-            .flatten()
-            .map(|bound| bound.position + 1)
-            .max()
-            .unwrap_or(0);
-        let mut attributes = vec![None; len];
-        for bound in self.0.iter().flatten() {
-            attributes[bound.position].clone_from(&bound.attribute);
-        }
-        attributes
+        self.binding().source_order()
     }
 
     /// The source-ordered `attributes` a compiler builtin's binder bound
@@ -488,13 +475,17 @@ pub(super) struct PartitionedStructArgs {
     pub(super) tail: Vec<mojito_types::origin::Origin>,
     /// The source position of each `forwarded` argument.
     positions: Vec<usize>,
-    /// The arguments kept back from the binder, each bound in its declared
-    /// slot of the struct's whole list: an origin argument to its
-    /// attribute, an origin's `mut=` binder to none.
+    /// The arguments kept back from the binder, each bound in its source
+    /// parameter's slot, which [`Self::declared`] maps to the checked
+    /// list's: an origin argument to its attribute, an origin's `mut=`
+    /// binder to none.
     kept: DeclaredAttributes,
-    /// The declared slot of each binder the origin-erased binder binds
+    /// The slots of the struct's checked list (`StructInfo::params`), which
+    /// declares a pack's implicit list binder the source list does not
+    /// spell: per source parameter, its declared slot, and the declared
+    /// slot of each binder the origin-erased binder binds
     /// ([`ParamDecl::argument_binders`]), in order.
-    binders: Vec<usize>,
+    slots: StructSlots,
 }
 
 impl PartitionedStructArgs {
@@ -508,16 +499,30 @@ impl PartitionedStructArgs {
     /// binder's declared slot, beside the kept-back origin arguments in
     /// theirs.
     pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
-        let mut declared = self.kept.clone();
+        let mut declared = DeclaredAttributes::default();
+        for (source, slot) in self.kept.0.iter().enumerate() {
+            let index = self.slots.source.get(source).copied().unwrap_or(source);
+            for attribute in slot {
+                declared.bind(index, attribute.position, attribute.attribute.clone());
+            }
+        }
         let bound = bound.relocated(&self.positions);
         for (index, slot) in bound.0.into_iter().enumerate() {
-            let index = self.binders.get(index).copied().unwrap_or(index);
+            let index = self.slots.binders.get(index).copied().unwrap_or(index);
             for attribute in slot {
                 declared.bind(index, attribute.position, attribute.attribute);
             }
         }
         declared
     }
+}
+
+/// Where a struct's source parameters and its argument binders sit in its
+/// checked parameter list ([`PartitionedStructArgs::slots`]).
+#[derive(Clone, Default)]
+pub(super) struct StructSlots {
+    source: Vec<usize>,
+    binders: Vec<usize>,
 }
 
 impl Checker {
@@ -2146,7 +2151,7 @@ impl Checker {
         let slot_id = |param: &mojito_ast::ast::TypeParam| {
             mojito_types::origin::OriginParamId(declared_slot(source_params, param) as u32)
         };
-        let binders = argument_binder_slots(source_params);
+        let slots = self.struct_slots(name, source_params);
         let explicit: Vec<&mojito_ast::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
@@ -2168,7 +2173,7 @@ impl Checker {
             forwarded: args.to_vec(),
             positions: (0..args.len()).collect(),
             kept: DeclaredAttributes::default(),
-            binders: binders.clone(),
+            slots: slots.clone(),
             explicit_origins: Vec::new(),
             tail: vec![Origin::Unbound; origin_slots],
         };
@@ -2299,7 +2304,7 @@ impl Checker {
                 tail,
                 positions,
                 kept,
-                binders,
+                slots,
             });
         }
         // Keyword spellings: extract named origin arguments wherever they
@@ -2368,8 +2373,56 @@ impl Checker {
             tail,
             positions,
             kept,
-            binders,
+            slots,
         })
+    }
+
+    /// Where struct `name`'s `source_params` and its argument binders sit
+    /// in its checked parameter list, which inserts a pack's implicit list
+    /// binder (`Ts.values`) the source list does not spell: a source
+    /// parameter's slot is its declaration's of the same name.
+    fn struct_slots(
+        &self,
+        name: &str,
+        source_params: &[mojito_ast::ast::TypeParam],
+    ) -> StructSlots {
+        let Some(params) = self
+            .structs
+            .get(name)
+            .map(|info| &info.params)
+            .filter(|params| !params.is_empty())
+        else {
+            return StructSlots {
+                source: (0..source_params.len()).collect(),
+                binders: source_params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, param)| {
+                        !super::is_origin_type_param(param)
+                            && !param.is_origin_mutability_binder(source_params)
+                    })
+                    .map(|(index, _)| index)
+                    .collect(),
+            };
+        };
+        StructSlots {
+            source: source_params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    params
+                        .iter()
+                        .position(|decl| decl.name() == param.name)
+                        .unwrap_or(index)
+                })
+                .collect(),
+            binders: params
+                .iter()
+                .enumerate()
+                .filter(|(_, decl)| decl.is_argument_binder(params))
+                .map(|(index, _)| index)
+                .collect(),
+        }
     }
 
     /// Resolve a return annotation: explicit origin slots must be applied
@@ -3816,45 +3869,49 @@ impl Checker {
         }
     }
 
-    /// Record the attributes a declared-parameter binder bound the
-    /// application at `span`'s bracket arguments to, laid out by source
-    /// position, as the checked node's arguments read them: nothing when
-    /// every argument is a run-time value.
+    /// Record the binding a declared-parameter binder bound the
+    /// application at `span`'s bracket arguments to, keyed by declaration,
+    /// as the checked call's parameters read it. One of run-time values
+    /// alone keeps a binding another binder already recorded there.
     pub(super) fn record_declared_attributes(
         &self,
         span: SourceSpan,
         attributes: &DeclaredAttributes,
     ) {
-        let attributes = attributes.source_order();
-        if attributes.iter().all(Option::is_none) {
+        let binding = attributes.binding();
+        if binding.0.iter().all(Vec::is_empty)
+            || (binding.is_runtime()
+                && self.has_fact(&span, |facts| facts.parameter_attributes.is_some()))
+        {
             return;
         }
-        self.record_at(span).parameter_attributes = Some(attributes);
+        self.record_at(span).parameter_attributes = Some(binding);
     }
 
-    /// Record, beside the attributes the application at `span` already
-    /// recorded, the closed values `folded` carries for its value-shaped
-    /// bracket arguments: the instantiation solved them, so the call carries
-    /// them as parameter attributes, as upstream's op does.
+    /// Record, in the binding the application at `span` already recorded,
+    /// the closed values `folded` carries for its value-shaped bracket
+    /// arguments: the instantiation solved them, so the call carries them
+    /// as parameter attributes, as upstream's op does.
     pub(super) fn record_folded_bracket_attributes(
         &self,
         span: &SourceSpan,
         folded: &DeclaredAttributes,
     ) {
-        let folded = folded.source_order();
-        if folded.iter().all(Option::is_none) {
+        let folded = folded.binding();
+        if folded.is_runtime() {
             return;
         }
-        let mut attributes = self.recorded_bracket_attributes(span);
-        if attributes.len() < folded.len() {
-            attributes.resize(folded.len(), None);
-        }
-        for (slot, attribute) in attributes.iter_mut().zip(folded) {
-            if attribute.is_some() {
-                *slot = attribute;
+        let mut binding = self
+            .fact(span, |facts| facts.parameter_attributes.as_ref())
+            .unwrap_or_default();
+        for (index, slot) in folded.0.into_iter().enumerate() {
+            for bound in slot {
+                if bound.attribute.is_some() {
+                    binding.set(index, bound.position, bound.attribute);
+                }
             }
         }
-        self.record_at(span.clone()).parameter_attributes = Some(attributes);
+        self.record_at(span.clone()).parameter_attributes = Some(binding);
     }
 
     /// Resolve the type in value position `expr`, `ty`, recording the type
@@ -5729,20 +5786,6 @@ fn declared_slot(
         .iter()
         .position(|candidate| candidate.name == param.name)
         .expect("a partitioned parameter comes from the source list")
-}
-
-/// The declared slots of the binders a struct application binds
-/// positionally — neither an origin nor an origin's `mut=` binder — in
-/// order, as [`ParamDecl::argument_binders`] reads the checked list.
-fn argument_binder_slots(source_params: &[mojito_ast::ast::TypeParam]) -> Vec<usize> {
-    source_params
-        .iter()
-        .enumerate()
-        .filter(|(_, param)| {
-            !super::is_origin_type_param(param) && !param.is_origin_mutability_binder(source_params)
-        })
-        .map(|(index, _)| index)
-        .collect()
 }
 
 /// Check a keyword argument binding the `mut` binder of an origin slot:

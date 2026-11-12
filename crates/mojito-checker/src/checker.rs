@@ -1468,6 +1468,7 @@ impl Checker {
     /// empty when every argument is a run-time value.
     fn recorded_bracket_attributes(&self, span: &SourceSpan) -> Vec<Option<TyArg>> {
         self.fact(span, |facts| facts.parameter_attributes.as_ref())
+            .map(|binding| binding.source_order())
             .unwrap_or_default()
     }
 

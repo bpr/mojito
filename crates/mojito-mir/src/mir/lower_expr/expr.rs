@@ -922,7 +922,7 @@ impl<'a> Flatten<'a> {
         if name == "materialize"
             && args.is_empty()
             && keywordless
-            && let [argument @ CheckedParamArg::Value(_)] = param_args
+            && let [argument @ CheckedParamArg::Value(_)] = param_args.as_slice()
             && let Some(operand) = node.param_value(argument)
         {
             return self.crossing_operand(operand);

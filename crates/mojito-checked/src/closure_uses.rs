@@ -867,14 +867,14 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
                     CheckedOp::TypeValue { ty: Some(ty), .. } => types.push(ty.clone()),
                     _ => {}
                 }
-                let param_args = match &expression.op {
+                let param_args: Vec<&CheckedParamArg> = match &expression.op {
                     CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => {
-                        param_args.as_slice()
+                        crate::checked::bracket_arguments(param_args).collect()
                     }
-                    CheckedOp::Index { index, .. } => std::slice::from_ref(index),
-                    _ => &[],
+                    CheckedOp::Index { index, .. } => vec![index],
+                    _ => Vec::new(),
                 };
-                for argument in param_args.iter().filter_map(attribute) {
+                for argument in param_args.into_iter().filter_map(attribute) {
                     match argument {
                         TyArg::Ty(ty) | TyArg::Val(CtValue::Type(ty)) => {
                             types.push(ty.clone());

@@ -1502,15 +1502,21 @@ pub enum CheckedOp {
     },
     Prefix(PrefixOp, CheckedNodeId),
     Infix(InfixOp, CheckedNodeId, CheckedNodeId),
+    /// A call by name. `param_args` holds one entry per declared
+    /// compile-time parameter of the callee, in declaration order, as
+    /// upstream's op carries one attribute per declared parameter
+    /// ([`CheckedParameter`]).
     Call {
         name: String,
-        param_args: Vec<CheckedParamArg>,
+        param_args: Vec<CheckedParameter>,
         args: Vec<CheckedNodeId>,
         kwargs: Vec<CheckedKwArg>,
     },
+    /// A call of a callee expression, its `param_args` as a
+    /// [`CheckedOp::Call`]'s.
     Invoke {
         callee: CheckedNodeId,
-        param_args: Vec<CheckedParamArg>,
+        param_args: Vec<CheckedParameter>,
         args: Vec<CheckedNodeId>,
         kwargs: Vec<CheckedKwArg>,
     },
@@ -1623,7 +1629,7 @@ impl CheckedOp {
                 kwargs: keywords,
                 ..
             } => {
-                for argument in param_args {
+                for argument in bracket_arguments(param_args) {
                     argument.operands(&mut operands);
                 }
                 operands.extend(args);
@@ -1636,7 +1642,7 @@ impl CheckedOp {
                 kwargs: keywords,
             } => {
                 operands.push(*callee);
-                for argument in param_args {
+                for argument in bracket_arguments(param_args) {
                     argument.operands(&mut operands);
                 }
                 operands.extend(args);
@@ -1752,7 +1758,7 @@ impl CheckedOp {
                 if let Self::Invoke { callee, .. } = self {
                     nodes.push(*callee);
                 }
-                for argument in param_args {
+                for argument in bracket_arguments(param_args) {
                     argument.reached(&mut nodes);
                 }
                 nodes.extend(args);
@@ -1786,10 +1792,16 @@ impl CheckedOp {
                 })
                 .collect()
         };
-        let param_args = |map: &mut dyn NodeMap, arguments: &[CheckedParamArg]| {
-            arguments
+        let param_args = |map: &mut dyn NodeMap, parameters: &[CheckedParameter]| {
+            parameters
                 .iter()
-                .map(|argument| argument.map_operands(map))
+                .map(|parameter| CheckedParameter {
+                    arguments: parameter
+                        .arguments
+                        .iter()
+                        .map(|argument| argument.map_operands(map))
+                        .collect(),
+                })
                 .collect()
         };
         match self {
@@ -2056,6 +2068,103 @@ impl CheckedParamArg {
             },
         }
     }
+}
+
+/// One declared compile-time parameter of a checked call.
+///
+/// Upstream's call op holds one attribute per declared parameter; this
+/// holds the bracket arguments the call's binder bound to it, none for an
+/// omitted or inferred parameter and one per element for a pack. A call's
+/// list is in its callee's declaration order; an origin argument of a
+/// function, whose list declares no origin binder, follows the declared
+/// parameters, and so does a bracket argument the check bound to no
+/// declaration (an element invocation's re-dispatched subscript operands,
+/// `objs[0](3)`).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CheckedParameter {
+    pub arguments: Vec<CheckedParamArg>,
+}
+
+/// Every bracket argument of a call's declared `parameters`, in
+/// declaration order.
+pub fn bracket_arguments(
+    parameters: &[CheckedParameter],
+) -> impl Iterator<Item = &CheckedParamArg> {
+    parameters.iter().flat_map(|parameter| &parameter.arguments)
+}
+
+/// What the binder of a call or type application bound its bracket
+/// arguments to, keyed by declaration.
+///
+/// As upstream's binder fills the op's parameter list: per declared
+/// parameter, in declaration order, each bracket argument bound to it
+/// ([`BracketBound`]).
+#[derive(Debug, Clone, Default)]
+pub struct BracketBinding(pub Vec<Vec<BracketBound>>);
+
+impl BracketBinding {
+    /// The attributes laid out by the bracket arguments' source positions,
+    /// `None` for a run-time value and for a position bound to nothing.
+    pub fn source_order(&self) -> Vec<Option<mojito_types::types::TyArg>> {
+        let len = self
+            .0
+            .iter()
+            .flatten()
+            .map(|bound| bound.position + 1)
+            .max()
+            .unwrap_or(0);
+        let mut attributes = vec![None; len];
+        for bound in self.0.iter().flatten() {
+            attributes[bound.position].clone_from(&bound.attribute);
+        }
+        attributes
+    }
+
+    /// Whether no argument bound to an attribute: each is a run-time value.
+    pub fn is_runtime(&self) -> bool {
+        self.0
+            .iter()
+            .flatten()
+            .all(|bound| bound.attribute.is_none())
+    }
+
+    /// Set the attribute of the argument at source `position`, bound in
+    /// declared slot `index` when no slot holds it yet.
+    pub fn set(
+        &mut self,
+        index: usize,
+        position: usize,
+        attribute: Option<mojito_types::types::TyArg>,
+    ) {
+        if let Some(bound) = self
+            .0
+            .iter_mut()
+            .flatten()
+            .find(|bound| bound.position == position)
+        {
+            bound.attribute = attribute;
+            return;
+        }
+        if self.0.len() <= index {
+            self.0.resize(index + 1, Vec::new());
+        }
+        self.0[index].push(BracketBound {
+            position,
+            attribute,
+        });
+    }
+}
+
+/// One bracket argument a binder bound to a declared parameter.
+///
+/// It holds where the argument sits in the source bracket, which only the
+/// check's own node-building reads, and its attribute
+/// ([`CheckedParamArg::Attribute`]), `None` for a run-time value, which is
+/// a node of its own.
+#[derive(Debug, Clone)]
+pub struct BracketBound {
+    pub position: usize,
+    pub attribute: Option<mojito_types::types::TyArg>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -6216,25 +6325,44 @@ impl<'a> ArenaBuilder<'a> {
             .collect()
     }
 
-    /// The bracket arguments of `expression`. An argument the check
-    /// resolved to an attribute — a type-shaped one, or a value-shaped one
-    /// it bound to a type or an origin — is the attribute it recorded at
-    /// its position ([`NodeFacts::parameter_attributes`]), and builds the
-    /// nodes of its lifted applications only.
-    fn param_args(&mut self, expression: &Expr, arguments: &[ParamArg]) -> Vec<CheckedParamArg> {
-        let attributes = self
+    /// The compile-time parameters of call `expression`, one per declared
+    /// parameter, from the binding its binder recorded
+    /// ([`NodeFacts::parameter_attributes`]). An argument the check resolved
+    /// to an attribute — a type-shaped one, or a value-shaped one it bound
+    /// to a type, an origin, or a closed value — is that attribute, and
+    /// builds the nodes of its lifted applications only. An argument bound
+    /// to no declaration is a parameter of its own after the declared ones
+    /// ([`CheckedParameter`]).
+    fn param_args(&mut self, expression: &Expr, arguments: &[ParamArg]) -> Vec<CheckedParameter> {
+        let binding = self
             .facts(&expression.source_span())
             .parameter_attributes
-            .as_deref()
-            .unwrap_or_default();
-        arguments
-            .iter()
-            .enumerate()
-            .map(|(position, argument)| {
-                let attribute = attributes.get(position).cloned().flatten();
-                self.param_arg(argument, attribute)
-            })
-            .collect()
+            .as_ref();
+        let mut placed = vec![false; arguments.len()];
+        let mut parameters = Vec::new();
+        for slot in binding.map_or(&[][..], |binding| &binding.0) {
+            let mut parameter = CheckedParameter::default();
+            for bound in slot {
+                let Some(argument) = arguments.get(bound.position) else {
+                    continue;
+                };
+                if std::mem::replace(&mut placed[bound.position], true) {
+                    continue;
+                }
+                parameter
+                    .arguments
+                    .push(self.param_arg(argument, bound.attribute.clone()));
+            }
+            parameters.push(parameter);
+        }
+        for (argument, placed) in arguments.iter().zip(placed) {
+            if !placed {
+                parameters.push(CheckedParameter {
+                    arguments: vec![self.param_arg(argument, None)],
+                });
+            }
+        }
+        parameters
     }
 
     /// The key of subscript `expression`, `index`: the attribute the
@@ -6250,8 +6378,8 @@ impl<'a> ArenaBuilder<'a> {
             .filter(|contract| {
                 contract.arguments.is_empty() && contract.target.contains(".__getitem_param__")
             })
-            .and(facts.parameter_attributes.as_deref())
-            .and_then(|attributes| match attributes {
+            .and(facts.parameter_attributes.as_ref())
+            .and_then(|binding| match binding.source_order().as_slice() {
                 [Some(attribute)] => Some(attribute.clone()),
                 _ => None,
             });
@@ -7362,13 +7490,13 @@ node_facts! {
         /// parameter value and message
         /// ([`SemanticAdjustment::InstanceAssertion`]).
         instance_assertions: Vec<(mojito_types::param_expr::ParamExpr, String)>,
-        /// What each bracket argument of a call or type application
-        /// resolved to, in source order: `Some` for a type-shaped one or a
-        /// value-shaped one the check bound to a type, an origin, or a raw
-        /// parameter list (`*ParameterList[...]()`)
-        /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one
-        /// that is a run-time value, which is a node of its own.
-        parameter_attributes: Vec<Option<mojito_types::types::TyArg>>,
+        /// What the binder of a call or type application bound each bracket
+        /// argument to, keyed by declaration: an attribute for a
+        /// type-shaped one or a value-shaped one the check bound to a type,
+        /// an origin, a closed value, or a raw parameter list
+        /// (`*ParameterList[...]()`) ([`CheckedParamArg::Attribute`]),
+        /// none for a run-time value, which is a node of its own.
+        parameter_attributes: BracketBinding,
         /// The type a type in value position resolved to.
         type_operand: Ty,
         /// The dunder each link of a chained comparison selected, in link

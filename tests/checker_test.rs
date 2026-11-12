@@ -3825,11 +3825,55 @@ fn value_shaped_origin_argument_is_an_attribute() {
     );
 }
 
-/// The bracket arguments of every checked call of `callee`.
-fn bracket_arguments(
+#[test]
+fn checked_call_holds_one_parameter_per_declaration() {
+    // The checked call carries its bracket arguments per declared
+    // parameter, in declaration order, as upstream's op holds one attribute
+    // per declaration: keywords written out of order land in their
+    // declarations' slots, an omitted one is an empty slot, and a pack
+    // holds each of its elements, after its inferred list binder
+    // (`Ts.values`).
+    let source = "def g[a: Int, b: Int = 4, c: Int = 5]() -> Int:\n    return a + b + c\n\ndef p[*Ts: AnyType, n: Int = 1]() -> Int:\n    return n\n\ndef main():\n    print(g[c=3, a=1]())\n    print(p[Int, Bool, n=2]())\n";
+    let checked = checked_with_std(source).expect("check");
+    let named = |parameter: &mojito::checked::CheckedParameter| -> Vec<String> {
+        parameter
+            .arguments
+            .iter()
+            .map(|argument| match argument {
+                mojito::checked::CheckedParamArg::Named { name, .. } => name.clone(),
+                _ => String::new(),
+            })
+            .collect()
+    };
+    let g = declared_parameters(&checked, "g");
+    let [g] = g.as_slice() else {
+        panic!("{g:#?}");
+    };
+    assert_eq!(
+        g.iter().map(named).collect::<Vec<_>>(),
+        [vec!["a".to_string()], vec![], vec!["c".to_string()]],
+        "{g:#?}"
+    );
+    let p = declared_parameters(&checked, "p");
+    let [p] = p.as_slice() else {
+        panic!("{p:#?}");
+    };
+    assert_eq!(
+        p.iter().map(named).collect::<Vec<_>>(),
+        [
+            vec![],
+            vec![String::new(), String::new()],
+            vec!["n".to_string()]
+        ],
+        "{p:#?}"
+    );
+}
+
+/// The declared compile-time parameters of every checked call of `callee`.
+fn declared_parameters(
     checked: &mojito::checked::CheckedProgram,
     callee: &str,
-) -> Vec<Vec<mojito::checked::CheckedParamArg>> {
+) -> Vec<Vec<mojito::checked::CheckedParameter>> {
     checked
         .expressions()
         .iter()
@@ -3838,6 +3882,22 @@ fn bracket_arguments(
                 name, param_args, ..
             } if name == callee => Some(param_args.clone()),
             _ => None,
+        })
+        .collect()
+}
+
+/// The bracket arguments of every checked call of `callee`, in the order
+/// of the parameters they bind.
+fn bracket_arguments(
+    checked: &mojito::checked::CheckedProgram,
+    callee: &str,
+) -> Vec<Vec<mojito::checked::CheckedParamArg>> {
+    declared_parameters(checked, callee)
+        .iter()
+        .map(|parameters| {
+            mojito::checked::bracket_arguments(parameters)
+                .cloned()
+                .collect()
         })
         .collect()
 }

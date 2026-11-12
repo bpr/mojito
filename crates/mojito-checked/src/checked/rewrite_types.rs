@@ -18,9 +18,9 @@ use super::{
     CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedDeclaration, CheckedDef,
     CheckedDefaultWrapper, CheckedElementInvocation, CheckedExpr, CheckedField,
     CheckedIterationBinding, CheckedIteratorCall, CheckedMethod, CheckedOp, CheckedParamArg,
-    CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral, CheckedStmt,
-    CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack, CheckedTables,
-    CheckedTarget, CheckedTargetKind, CheckedTupleUnpackElement, ComptimeIteration,
+    CheckedParameter, CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral,
+    CheckedStmt, CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack,
+    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTupleUnpackElement, ComptimeIteration,
     ConformanceFacts, ConversionMaterialization, DeclarationEffect, EffectFacts,
     GenericInstantiation, IterationProtocol, MethodInstantiation, OmittedSliceOperand,
     ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
@@ -915,6 +915,13 @@ impl RewriteTypes for CheckedOp {
             | Self::MultiIndex { object: _, args: _ }
             | Self::TString { parts: _, raw: _ } => {}
         }
+    }
+}
+
+impl RewriteTypes for CheckedParameter {
+    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
+        let Self { arguments } = self;
+        arguments.rewrite_types(rewrite);
     }
 }
 

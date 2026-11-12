@@ -5729,9 +5729,8 @@ impl EnclosingBinders {
                 CheckedParamArg::Value(_) => None,
             }
         }
-        let attributes_mention = |arguments: &[CheckedParamArg]| {
+        let attributes_mention = |arguments: &mut dyn Iterator<Item = &CheckedParamArg>| {
             arguments
-                .iter()
                 .filter_map(attribute)
                 .any(|argument| match argument {
                     TyArg::Ty(ty) => self.mentioned_in(ty),
@@ -5770,9 +5769,9 @@ impl EnclosingBinders {
                     true
                 }
                 CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => {
-                    attributes_mention(param_args)
+                    attributes_mention(&mut mojito_checked::checked::bracket_arguments(param_args))
                 }
-                CheckedOp::Index { index, .. } => attributes_mention(std::slice::from_ref(index)),
+                CheckedOp::Index { index, .. } => attributes_mention(&mut std::iter::once(index)),
                 _ => false,
             };
             WalkResult::Advance

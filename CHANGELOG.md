@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A checked call holds its bracket arguments per declared parameter, in
+  the callee's declaration order, as upstream's call op holds one
+  attribute per declared parameter (`CheckedParameter`): a keyword
+  argument sits in its declaration's slot wherever it was written, and an
+  omitted one is an empty slot. A struct application's arguments now key
+  by the struct's checked list, which declares a pack's list binder the
+  source list does not spell, so `VariadicPack[..., is_owned, *Ts]` keys
+  `*Ts` to its own slot rather than `is_owned`'s (R2120).
 - A compiler builtin's binder keys each bracket argument's attribute by
   the parameter upstream's library declares for it, as a declared
   binder does: `external_call`, `reflect[T]`, the builtin collection,

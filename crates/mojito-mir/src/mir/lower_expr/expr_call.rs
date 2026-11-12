@@ -947,7 +947,7 @@ impl<'a> Flatten<'a> {
             .next()
             .map(|mut element| {
                 if let (None, Some(CheckedParamArg::Value(index))) =
-                    (&element.expr, call.param_args().first())
+                    (&element.expr, call.param_args().first().copied())
                 {
                     element.expr = self.value_binder_node(*index);
                 }
@@ -1021,7 +1021,7 @@ fn parameterized_method_decls(node: &CheckedExpr) -> Option<&[ParamDecl]> {
 /// subscript operands.
 fn element_indices(call: Node<'_>) -> Vec<Node<'_>> {
     call.param_args()
-        .iter()
+        .into_iter()
         .filter_map(|argument| match argument {
             CheckedParamArg::Value(value) => call.operand_of(*value),
             _ => None,

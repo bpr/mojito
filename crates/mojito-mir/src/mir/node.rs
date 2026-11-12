@@ -142,11 +142,14 @@ impl<'a> Node<'a> {
             .or_else(|| self.args().first().copied())
     }
 
-    /// The compile-time arguments of a call or invocation.
-    pub(super) fn param_args(self) -> &'a [CheckedParamArg] {
+    /// The compile-time arguments of a call or invocation, in the order
+    /// of the parameters they bind ([`mojito_checked::checked::CheckedParameter`]).
+    pub(super) fn param_args(self) -> Vec<&'a CheckedParamArg> {
         match self.op() {
-            CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => param_args,
-            _ => &[],
+            CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => {
+                mojito_checked::checked::bracket_arguments(param_args).collect()
+            }
+            _ => Vec::new(),
         }
     }
 

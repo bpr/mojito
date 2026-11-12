@@ -1165,6 +1165,11 @@ literal records how the `None` it passes as `__slice_literal__` reaches
 the marker's `NoneType` parameter (`CheckedSliceLiteral::marker`), as an
 omitted operand's already did (R2097). The MIR text is unchanged.
 
+The package format moves to `mojito-package 213` when a checked call
+holds its bracket arguments per declared parameter, in declaration order
+(`CheckedParameter`), as upstream's call op holds one attribute per
+declared parameter (R2120). The MIR text is unchanged.
+
 Schema 1.186 adds the parameter declaration `origin_binder`, upstream's
 origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) declared in place in
 its list (R761). The check's struct parameter list holds one per origin

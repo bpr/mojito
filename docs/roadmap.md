@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2131**.
+Next free ID: **R2132**.
 
 ## Ordered Work
 
@@ -10103,29 +10103,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2129.
   - Model: Opus, Not Planned.
 
-- [ ] **R2120 A checked call's bracket arguments follow the source
-  bracket, where upstream's op carries one attribute per declared
-  parameter**
+- [ ] **R2131 A bracket a checker rule types keeps one parameter per
+  argument, where upstream's op binds each to its callee's declaration**
 
-  `NodeFacts::parameter_attributes` and `CheckedOp::Call`/`Invoke`'s
-  `param_args` list the bracket arguments as written, and the checker's
-  binders' `DeclaredAttributes` are laid out in source order where they
-  are recorded.
-  - Upstream's call op carries the bound parameter list in declaration
-    order, with defaults filled in.
-  - The lever: `resolve_use_params` returns each attribute per declared
-    parameter beside `BoundParameters::arguments`, and the checked call
-    carries that list, each slot named by its declaration.
-  - A closed value-shaped argument is already the call's attribute
-    (`folded_parameter_attributes`); only its keying is left.
-  - Done when `CheckedOp::Call` and `Invoke` name no bracket argument by
-    its source position.
-  - Found while landing R659 (2026-10-13).
-  - Not landable alone (attempted 2026-11-12): about thirty binders
-    record source-ordered attributes, origin arguments have no
-    declaration to be named by (R761), and builtins declare no parameter
-    list (R2125).
-  - Depends on R756, R761, R2124, R2125.
+  `ArenaBuilder::param_args` (`mojito-checked`) builds a call's
+  `CheckedParameter`s from the binding its binder recorded, and a bracket
+  no declared-parameter binder binds records none, so each of its
+  arguments becomes a parameter of its own, in source order.
+  - Upstream binds each through the callee's declared list, as any call.
+  - Probe: `ptr.unsafe_mut_cast[True]()` and
+    `p.unsafe_origin_cast[origin_of(self)]()`, typed by
+    `checker/method_calls/builtin_types.rs`.
+  - Probe: `Ts.all_conforms_to[Writable]()` and `Self.Ts.all[...]()`,
+    TypeList vocabulary typed in `checker/constraints.rs` (R1182).
+  - Probe: `r.field_ref[i](this)` (`checker/reflection.rs`),
+    `materialize[names[i]]()`, and an element invocation (`Self.Ts[i]()`,
+    `objs[0](3)`).
+  - Probe: a call in a `comptime` member's body, `_max_finite[Self.dtype]()`
+    (`SIMD.MAX_FINITE`) and `_get_kgen_string[s]()` (`StringLiteral._from`).
+  - Not a gap: an `__mlir_op`'s bracket is its op's named attributes, which
+    upstream keys by name, not by a declared list.
+  - The lever: each rule records its binding through
+    `record_declared_attributes`, keyed by the bundled declaration's list.
+  - Done when only an `__mlir_op` builds a parameter per argument.
+  - Found while landing R2120 (2026-11-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2121 A subscript call contract names its bracket operands by
@@ -10144,11 +10146,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2120.
   - Model: Opus, Not Planned.
 
-- [ ] **R2122 MIR's compile-time argument list follows the source
-  bracket, re-aligned by each consumer**
+- [ ] **R2122 MIR's compile-time argument list names no declaration, so
+  each consumer re-aligns it**
 
-  `Flatten::param_arg_regs_folding` lowers `MirParamArg`s in bracket
-  order, and `supplied_parameter_arguments` / `matched_parameter_arguments`
+  `Flatten::param_arg_regs_folding` flattens the checked call's
+  per-declaration list into `MirParamArg`s, each positional or keyword as
+  written, and `supplied_parameter_arguments` / `matched_parameter_arguments`
   (`mir/ir.rs`) bind them to declarations again, positionally, in MIR
   (`inferred_param_args`, `param_uses.rs`), analysis (`unused_params.rs`),
   and the elaborator (`mono/unify.rs`).

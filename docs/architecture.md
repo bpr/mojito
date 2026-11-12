@@ -1237,13 +1237,14 @@ names it (`CheckedOp::TypeValue`, `CheckedParamArg::Attribute`,
 `CheckedStmtOp::VarDecl`'s `applications`), apart from its operands. A type
 operand of an op is never the annotation as written: as upstream's call op
 carries each bracket argument as the parameter attribute its check produced,
-the check records the `TyArg` of each bracket argument that is not a
-run-time value at the occurrence (`NodeFacts::parameter_attributes`) as the
-binder that resolved the bracket list returns it, once: a declared-parameter
+the check records at the occurrence what the binder that resolved the
+bracket list bound each argument to, keyed by declaration, once
+(`NodeFacts::parameter_attributes`, a `BracketBinding`): a declared-parameter
 binder answers its attributes keyed by declaration (`DeclaredAttributes` on
 `resolve_use_params`'s `BoundParameters`, each at its source position), a
 struct application placing each origin argument the partition kept back in
-its declared slot (`PartitionedStructArgs::declared`) and an explicit
+its declared slot of the struct's checked list, which also declares a pack's
+implicit list binder (`PartitionedStructArgs::declared`), and an explicit
 specialization appending its origin arguments after the declared slots
 (`CallableSpecialization::declared`); a compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
@@ -1252,8 +1253,16 @@ one-type-argument trait tests) keys its arguments the same way, by the
 upstream parameter list a `BuiltinParam` table spells
 (`DeclaredAttributes::of_builtin`, binding as `call.rs`'s
 `match_parameter_slots` does); and the route holding the occurrence records
-it through `Checker::record_declared_attributes`, which lays the keyed list
-out by source position. A type-shaped argument's
+it through `Checker::record_declared_attributes`. The checked call holds
+that list as upstream's call op holds one attribute per declared parameter:
+`CheckedOp::Call`/`Invoke`'s `param_args` are `CheckedParameter`s in the
+callee's declaration order, each holding the arguments bound to it (none for
+an omitted or inferred parameter, one per element for a pack), and name no
+argument by its source position; only a bracket no declared-parameter binder
+binds (a compiler rule's) is a parameter per argument after the declared
+ones. MIR lowers the arguments in that order (`bracket_arguments`), which
+binds as the source bracket did, since positional arguments fill declared
+slots in order. A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),
