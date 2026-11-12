@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2115**.
+Next free ID: **R2116**.
 
 ## Ordered Work
 
@@ -4816,33 +4816,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1511 A scalar type name in a bracket is a type by its spelling**
-
-  `peek_starts_type` (`parser/types.rs`) sends `Int`, `UInt`, `Bool`,
-  `StringLiteral`, `Float64`, and the sized aliases (`UInt8`) to
-  `parse_type`, where upstream parses every bracket operand as one
-  expression and sema classifies it.
-  - Dropping the sized aliases alone breaks `UnsafePointer[UInt8]`
-    declaration identity (14 corpus fixtures,
-    `String.__init__$ov$UnsafePointer$UInt8$kw$unsafe_from_utf8_ptr`).
-  - Dropping all five names also changes five diagnostics
-    (`convert[Int]` into a `DType` slot, `objs[Int](3)`,
-    `UnsafePointer[Int].alloc`, `g[Int]()` into a trait binder, `k[Int]()`
-    into `!kgen.type`) and stops `var element: M.Of[Int]()[0]` parsing.
-  - The lever: `symbol::ast_raw` spells a bare type operand as the type it
-    names, excluding `_`/`...`, binders, `Int` constants, and `DType`
-    members (measured 0 corpus diffs while planning R1370); naming every
-    declaration from its resolved signature (R1770) is the full fix.
-  - Probe: `materialize[Int8.MAX]()` and `materialize[Int32.dtype]()`
-    print `127` and `int32` at the pin. Mojito parses the operand as a
-    type path (`ParamArg::Type(Assoc)`), so
-    `Checker::infer_template_materialize` reports
-    "materialize[...]() takes one compile-time value"; through
-    `comptime x = Int8.MAX` it runs.
-  - Found while landing R1370 (2026-10-27).
-  - Depends on R1514, for the single-operand `Index` forms.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1512 `Self`, `Self.T`, and `None` in a bracket are types by their
   spelling**
 
@@ -9269,6 +9242,33 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: the program above, and `byte_length()` of the result, `3` here
     and `0` at the pin.
   - Found while landing R1973 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2115 A type name read as a run-time value is an undefined
+  variable**
+
+  A bare type name in a run-time position (`f(Int)`, `objs[Int]`) reports
+  "Undefined variable 'Int'", where upstream types the name as its
+  metatype value (`AnyStruct[Int]`) and the call's overload resolution
+  rejects it.
+  - Cause: `Checker::infer`'s `Identifier` arm (`checker/inference.rs`)
+    looks the name up only as a binding, a raw list, or a type-list
+    binding, and falls back to `TypeError::UndefinedVariable`.
+  - Lever: a name `denotes_type_value` accepts infers as its metatype, so
+    `value_coerces` and overload selection reject it with the pin's
+    messages, as `type_value_mismatch` already words a compile-time slot's.
+  - Probe: `print(f(Int))` over `def f(x: Int) -> Int` reports at the pin
+    "value passed to 'x' cannot be converted from type value 'Int' to an
+    instance of 'Int'; did you mean to instantiate 'Int'?".
+  - Probe: `objs[Int](3)` and `objs[Int]` over a `List` report "no
+    matching method in call to '__getitem__'" at the pin;
+    `assets/type_error/element_call_type_brackets_reject.mojo` expects
+    the "Undefined variable 'Int'" Mojito gives today, so restore its
+    `# expect:` to the pin's message.
+  - Probe: `objs[Doubler](3)` over a user struct reports the same
+    "Undefined variable 'Doubler'".
+  - Found while landing R1511 (2026-11-11).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

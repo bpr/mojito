@@ -1,4 +1,4 @@
-# expect: only for runtime index arguments
+# expect: Undefined variable 'Int'
 # Only runtime-value brackets dispatch the bare element call. A type argument
 # in the brackets of an indexable runtime value is neither a subscript nor
 # parameter application (a value takes no compile-time parameters), so the

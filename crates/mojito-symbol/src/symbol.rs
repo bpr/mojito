@@ -1680,16 +1680,20 @@ fn ast_raw(
     type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
-    // A bracket operand parses as an expression; an application among a
-    // type's arguments (`List[Pair[Int]]`) spells as the type it names.
+    // A bracket operand parses as an expression; a name or an application
+    // among a type's arguments (`List[Int]`, `List[Pair[Int]]`) spells as
+    // the type it names.
     if let Type::Named(name, args) = ty
-        && args
-            .iter()
-            .any(|arg| matches!(spelled_type_argument(arg), Cow::Owned(_)))
+        && args.iter().any(|arg| {
+            matches!(
+                spelled_type_operand(arg, type_bounds, comptimes),
+                Cow::Owned(_)
+            )
+        })
     {
         let args = args
             .iter()
-            .map(|arg| spelled_type_argument(arg).into_owned())
+            .map(|arg| spelled_type_operand(arg, type_bounds, comptimes).into_owned())
             .collect();
         return ast_raw(
             &Type::Named(name.clone(), args),
@@ -1909,6 +1913,29 @@ fn mlir_simd_annotation(args: &[ParamArg]) -> Option<Type> {
     Some(Type::Named("SIMD".to_string(), vec![dtype, length]))
 }
 
+/// A bracket operand as the type argument it spells: a bare name that is
+/// no binder of `scope`, module `Int` constant, or origin (`Int`, `UInt8`,
+/// `Pair`) as the type it names, and an application as
+/// [`spelled_type_argument`] spells it; any other argument unchanged.
+fn spelled_type_operand<'a>(
+    arg: &'a ParamArg,
+    scope: &HashMap<String, BinderSpelling>,
+    comptimes: &dyn ModuleNames,
+) -> Cow<'a, ParamArg> {
+    match arg {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) if !scope.contains_key(name)
+            && comptimes.constant(name).is_none()
+            && !syntactic_origin_argument(arg, scope) =>
+        {
+            Cow::Owned(ParamArg::Type(Type::Named(name.clone(), Vec::new())))
+        }
+        _ => spelled_type_argument(arg),
+    }
+}
+
 /// A value operand that applies a type (`Pair[Int]`, `Box[1]`) as the type
 /// argument it spells; any other argument unchanged. A bare name keeps its
 /// value spelling.
@@ -2070,7 +2097,7 @@ fn argument_display(
     comptimes: &dyn ModuleNames,
     scope: &HashMap<String, BinderSpelling>,
 ) -> String {
-    match spelled_type_argument(argument).as_ref() {
+    match spelled_type_operand(argument, scope, comptimes).as_ref() {
         ParamArg::Type(ty) => annotation_display(ty, comptimes, scope),
         ParamArg::Value(value) => value_display(value, comptimes, scope),
         ParamArg::Named { name, value } => {

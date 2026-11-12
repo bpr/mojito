@@ -2902,8 +2902,17 @@ impl Checker {
         {
             return self.ct_param(CtValue::Type(self_ty.clone()));
         }
+        // A module alias declared but not yet registered is an unknown type
+        // for now, which the declaration passes wait out.
         self.ty_value_from_name(name, &[])?
-            .ok_or_else(|| TypeError::NotComptime(name.to_string()))
+            .ok_or_else(|| {
+                if self.declared_aliases.contains(name) && !self.comptime_aliases.contains_key(name)
+                {
+                    TypeError::UnknownType(name.to_string())
+                } else {
+                    TypeError::NotComptime(name.to_string())
+                }
+            })
             .and_then(|ty| self.ct_param(ty))
     }
 

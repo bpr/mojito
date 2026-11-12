@@ -3417,6 +3417,23 @@ impl Checker {
                              argument yet: '{applied}'"
                         )));
                     }
+                    // A type bound to a value slot is its metatype there, which
+                    // converts to no value type, as at the pin.
+                    if let CtValue::Type(bound) = &value
+                        && let Some(error) = self.type_value_mismatch(bound.clone(), ty)
+                    {
+                        return Err(match error {
+                            TypeError::MetatypeConversion { found, expected } => {
+                                TypeError::ParamValueType {
+                                    callee: decl.id().owner.to_string(),
+                                    param: name.clone(),
+                                    expected,
+                                    found,
+                                }
+                            }
+                            error => error,
+                        });
+                    }
                     let actual = self
                         .member_value_type(expr)
                         .or_else(|| self.ct_value_ty(&value, ty))
@@ -4400,6 +4417,11 @@ impl Checker {
             }
             found => Err(mismatch(match (&value, found) {
                 (CtValue::IntLiteral(literal), _) => format!("IntLiteral[{literal}]"),
+                // A type's value is its metatype.
+                (CtValue::Type(ty), _) => match ty.kind() {
+                    TyKind::Param { bounds, .. } => self.binder_metatype(bounds),
+                    _ => format!("AnyStruct[{ty}]"),
+                },
                 (_, Some(ty)) => ty.to_string(),
                 (value, None) => value.to_string(),
             })),

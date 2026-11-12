@@ -547,12 +547,13 @@ parses it, whatever the capitalization of the name it starts with:
 `Pair[Int]`, `L[1]`, `L[0] * 2`, and `Ts[0] == Int` are all expressions, and
 the checker decides whether each denotes a type or a value. An operand is a
 `type` only where the type grammar alone spells it: a function type
-`def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
-`Bool`, `Float64`, and the sized aliases such as `UInt8`),
-`Self` and its members, and `None` still parse as a `type` there (a scalar
-name as a `NAME` type), a divergence (roadmap R1511, R1512). Followed by `(`, `Int`, `UInt`, `Bool`,
-`StringLiteral`, `Float64`, and `Self` open the construction expression they
-start (`Int(3)`, `HookFor[Self()]`), a value operand.
+`def(...)`, a `ref` type, and a `*` pack. The scalar names are expressions
+like any other name (`List[Int]`, `materialize[Int8.MAX]()`). `Self` and its
+members, and `None`, still parse as a `type` there, a divergence (roadmap
+R1512); followed by `(`, `Self` opens the construction expression it starts
+(`HookFor[Self()]`), a value operand. A member's one bracket operand in a
+type (`M.Of[Int]`, `M.Buf[3]`) is the subscript the checker classifies, and
+the member's application when a call follows (`M.Of[Int]()[0]`).
 
 A **spread** argument `'*' typelist_expr` supplies a whole argument list from
 a type list. Its operand is a pack (`*Ts`, or a struct's own `*Self.Ts`), or

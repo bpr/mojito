@@ -809,16 +809,14 @@ fn parses_generic_def_with_type_param_signature() {
 
 #[test]
 fn parses_parameterized_type_annotation() {
-    // `Pair[Int]` in a `var` annotation carries its type argument.
+    // `Pair[Int]` in a `var` annotation carries its bracket operand, one
+    // expression the checker classifies.
     let stmts = parse("var p: Pair[Int] = q\n");
     match &stmts[0].kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => {
             assert_eq!(
                 *ty,
-                Type::Named(
-                    "Pair".into(),
-                    vec![ParamArg::Type(Type::Named("Int".into(), vec![]))]
-                )
+                Type::Named("Pair".into(), vec![ParamArg::Value(*ident("Int"))])
             );
         }
         other => panic!("expected a var decl, got {other:?}"),
@@ -1072,26 +1070,30 @@ fn parses_a_member_application_in_type_position() {
         name: name.into(),
         args,
     };
+    // A member's one bracket operand is the subscript the checker
+    // classifies, a type (`Int`) or a value (`3`) alike.
     assert_eq!(
         type_params[0].value_type,
-        Some(assoc(
-            Type::Named("_MLIR".into(), vec![]),
-            "KGENParamListType",
-            vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
-        ))
+        Some(Type::IndexedProjection {
+            base: Box::new(assoc(
+                Type::Named("_MLIR".into(), vec![]),
+                "KGENParamListType",
+                vec![],
+            )),
+            index: ident("Int"),
+        })
     );
     assert_eq!(
         params[0].ty,
-        assoc(
-            Type::Named(
-                "S".into(),
-                vec![ParamArg::Type(Type::Named("Int".into(), vec![]))]
-            ),
-            "Of",
-            vec![ParamArg::Type(Type::Named("Bool".into(), vec![]))],
-        )
+        Type::IndexedProjection {
+            base: Box::new(assoc(
+                Type::Named("S".into(), vec![ParamArg::Value(*ident("Int"))]),
+                "Of",
+                vec![],
+            )),
+            index: ident("Bool"),
+        }
     );
-    // A single value index stays the subscript the checker reads either way.
     assert_eq!(
         params[1].ty,
         Type::IndexedProjection {
@@ -1106,7 +1108,7 @@ fn parses_a_member_application_in_type_position() {
         if matches!(base.as_ref(), Type::Value(value)
             if matches!(&value.kind, ExprKind::Invoke { callee, param_args, args, .. }
                 if args.is_empty()
-                    && param_args == &[ParamArg::Type(Type::Named("Int".into(), vec![]))]
+                    && param_args == &[ParamArg::Value(*ident("Int"))]
                     && matches!(&callee.kind, ExprKind::Member { field, .. } if field == "Of")))));
 }
 

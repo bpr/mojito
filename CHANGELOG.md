@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A scalar type name in a bracket (`Int`, `Bool`, `StringLiteral`,
+  `UInt8`) parses as one expression like any other operand, as upstream's
+  `parseSubscriptSuffix` does, and the checker classifies it.
+  `materialize[Int8.MAX]()` and `materialize[Int32.dtype]()` now print
+  `127` and `int32` as at the pin, a type bound to a `DType` slot reports
+  the pin's `AnyStruct[Int]` metatype mismatch, and a declaration spells a
+  bare type operand as the type it names (R1511).
 - The parser builds every bracket not followed by a call as one subscript
   node, `Index` or `MultiIndex`, whatever its base or operands, as
   upstream's `SubscriptNode`. The checker classifies it by its base, and a

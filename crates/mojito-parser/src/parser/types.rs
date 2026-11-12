@@ -131,9 +131,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     _ => None,
                 };
+                // A member's bracket list a call follows is its application
+                // (`M.Of[Int]()`), whatever its one operand parsed as.
+                let applied = matches!(self.peek_token()?, Some(Token::LParen))
+                    && matches!(&ty, Type::Assoc { args, .. } if args.is_empty());
                 let index = match (&rematerialized, arguments.as_slice(), &mut ty) {
                     (Some(expression), ..) => expression,
-                    (None, [mojito_ast::ast::ParamArg::Value(index)], _) => index,
+                    (None, [mojito_ast::ast::ParamArg::Value(index)], _) if !applied => index,
                     // A parameterized member applied to its bracket list
                     // (`S[Int].Of[Bool]`, `M.Pair[1, 2]`).
                     (None, _, Type::Assoc { args, .. }) if args.is_empty() => {
@@ -455,9 +459,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses a single parameter argument. An operand only the type grammar
     /// spells (a function type, `ref`, a `*` pack) is a `Type`, as are, for
-    /// now, a scalar keyword, `None`, and `Self`. Every other operand is one
-    /// expression (`Foo[Int]`, `L[0] * 2`), which the checker classifies as a
-    /// type or a value by what it denotes.
+    /// now, `None` and `Self`. Every other operand is one expression (`Int`,
+    /// `Foo[Int]`, `L[0] * 2`), which the checker classifies as a type or a
+    /// value by what it denotes.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
         // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
@@ -483,23 +487,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         if self.peek_starts_type()? {
             let start = self.peek_start();
-            let ty = match self.peek_token()? {
-                Some(Token::Identifier(id)) if is_scalar_alias_name(id) => {
-                    let id = id.clone();
-                    self.next_token()?;
-                    // A scalar construction is the first atom of a value
-                    // expression (`Int(4).__mlir_index__()`).
-                    if matches!(self.peek_token()?, Some(Token::LParen)) {
-                        let atom = Expr::new(ExprKind::Identifier(id), (start, self.last_span.1));
-                        return Ok(ParamArg::Value(
-                            self.parse_expression_from(atom, Precedence::Lowest)?,
-                        ));
-                    }
-                    let named = self.parse_named_type(id, start)?;
-                    self.parse_type_assoc_tail(named, start)?
-                }
-                _ => self.parse_type()?,
-            };
+            let ty = self.parse_type()?;
             // Upstream reads `ref[o]` here as an expression followed by a stray
             // type: an origin-bearing reference is never a type argument.
             if matches!(
@@ -619,14 +607,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(ParamArg::Value(self.parse_expression(Precedence::Lowest)?))
     }
 
-    /// Whether the next token unambiguously begins a *type* (a scalar keyword,
-    /// `None`, `Self`, a function type, or Mojito's reference-type extension) —
-    /// used to classify a parameter argument.
+    /// Whether the next token begins an operand the type grammar parses
+    /// (`None`, `Self`, a function type, `ref`, or a `*` pack) — used to
+    /// classify a parameter argument.
     pub(super) fn peek_starts_type(&mut self) -> Result<bool, ParseError> {
         Ok(match self.peek_token()? {
             Some(Token::None | Token::Def | Token::Star) => true,
             Some(Token::Identifier(id)) => {
-                matches!(id.as_str(), "StringLiteral" | "Self" | "ref") || is_scalar_alias_name(id)
+                matches!(id.as_str(), "Self" | "ref")
             }
             _ => false,
         })
@@ -873,11 +861,4 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     // --- Expressions (Pratt parser) ---
-}
-
-/// A prelude scalar name (`Bool`, `Int`, `Float64`, `UInt8`), which a bracket
-/// operand still parses as a type (roadmap R1511).
-fn is_scalar_alias_name(id: &str) -> bool {
-    matches!(id, "Bool" | "Int" | "UInt" | "Float64")
-        || mojito_ast::ast::Dtype::from_scalar_alias(id).is_some()
 }
