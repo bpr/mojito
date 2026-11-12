@@ -4467,7 +4467,7 @@ impl Checker {
                 [(_, argument)],
             ) = (decl, arguments.as_slice())
                 && mojito_ast::call::unbound_marker(argument).is_none()
-                && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?
+                && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?.value
             {
                 explicit.insert(id.clone(), ty);
             }
@@ -5799,11 +5799,7 @@ impl Checker {
                     // The spread construction is compile-time only: the
                     // list it binds is its attribute.
                     attributes[*position] = match argument {
-                        mojito_ast::ast::ParamArg::Value(spread) => {
-                            self.record_at(spread.source_span()).argument_attribute =
-                                Some(value.clone());
-                            Some(value.clone())
-                        }
+                        mojito_ast::ast::ParamArg::Value(_) => Some(value.clone()),
                         _ => bracket_attribute(argument, &value),
                     };
                     bind_pack(
@@ -5841,8 +5837,8 @@ impl Checker {
                         continue;
                     }
                     let resolved = self.resolve_param_arg(element, argument)?;
-                    attributes[position] = self.bound_bracket_attribute(argument, &resolved);
-                    values.push(resolved.ct_value().ok_or_else(|| {
+                    attributes[position] = resolved.bracket_attribute(argument);
+                    values.push(resolved.value.ct_value().ok_or_else(|| {
                         TypeError::Unsupported(
                             "an origin argument cannot bind a type or value parameter".to_string(),
                         )
@@ -5885,8 +5881,8 @@ impl Checker {
             }
             let tyarg = if let Some((position, argument)) = arguments.first() {
                 let resolved = self.resolve_param_arg(decl, argument)?;
-                attributes[*position] = self.bound_bracket_attribute(argument, &resolved);
-                resolved
+                attributes[*position] = resolved.bracket_attribute(argument);
+                resolved.value
             } else if let Some(solved) = trait_solutions.get(decl.id()) {
                 TyArg::Val(solved.clone())
             } else if let ParamDecl::Value { name: pname, .. } = decl

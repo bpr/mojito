@@ -1250,8 +1250,14 @@ it (`Checker::record_bracket_attributes`). A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
 it bound to (`List[String]`, `Pointer[Int, origin_of(x)]`, `size_of[T]`),
-which `resolve_param_arg` and origin binding also record at the argument
-(`NodeFacts::argument_attribute`); a type in value position records its
+or the compile-time value binding made of it (a converted constructor
+application, a `SIMDLength`'s lane count, a generator, a trait, a closed raw
+value list), which `resolve_param_arg` answers beside the value it bound
+(`BoundArgument`). The call carries the attribute once, as upstream's op
+does: the checker's own readers (`runtime_param_arg_expressions`, which
+types the bracket arguments still evaluated at run time, and the method call
+contract's `checked_parameter_arguments`) read the call's attributes, never
+a fact at the argument; a type in value position records its
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a

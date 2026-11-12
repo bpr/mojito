@@ -996,12 +996,10 @@ impl Checker {
             let parameter = &signature.source[index];
             if let Some(origin_index) = parameter.origin {
                 let origin = self.explicit_origin_argument(&value)?;
-                let attribute = TyArg::Origin(origin.clone());
-                if let ParamArg::Value(expression) = &value {
-                    self.record_at(expression.source_span()).argument_attribute =
-                        Some(attribute.clone());
-                }
-                forwarded.keep(position, bracket_attribute(&value, &attribute));
+                forwarded.keep(
+                    position,
+                    bracket_attribute(&value, &TyArg::Origin(origin.clone())),
+                );
                 origins[origin_index] = Some(origin);
             } else if parameter.ordinary {
                 forwarded.forward(position);

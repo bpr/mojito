@@ -107,7 +107,7 @@ impl Checker {
         match name {
             _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
-                self.type_runtime_param_args(param_args)?;
+                self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
                 Ok(constructed)
             }
             "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
@@ -1137,11 +1137,15 @@ impl Checker {
                             args,
                             kwargs,
                         )?;
-                        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes));
+                        self.record_bracket_attributes(
+                            span.clone(),
+                            forwarded.scatter(attributes.clone()),
+                        );
                         self.record_call_environment_effects(
                             span.clone(),
                             &prepared,
                             &ordinary_param_args,
+                            &attributes,
                             args,
                             kwargs,
                         )?;
@@ -1293,7 +1297,7 @@ impl Checker {
         }
         let (ret, _, error, bool_bindings, _, attributes) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
-        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes));
+        self.record_bracket_attributes(span.clone(), forwarded.scatter(attributes.clone()));
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
@@ -1340,6 +1344,7 @@ impl Checker {
             span.clone(),
             &ty,
             &ordinary_param_args,
+            &attributes,
             args,
             kwargs,
         )?;
@@ -1531,7 +1536,7 @@ impl Checker {
             let effect_key = target.as_deref().unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(receiver), args, &span, &TySubst::new())?;
         }
-        self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
+        self.record_call_environment_effects(span.clone(), &callable, &[], &[], args, kwargs)?;
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ElementInvocation(Box::new(
                 mojito_checked::checked::CheckedElementInvocation {

@@ -489,7 +489,7 @@ impl Checker {
             .map(|index| candidate_struct_args.swap_remove(index))
             .unwrap_or_default();
         self.record_bracket_attributes(span.clone(), selected.bracket_attributes.clone());
-        self.type_runtime_param_args(param_args)?;
+        self.type_runtime_param_args(param_args, &selected.bracket_attributes)?;
         if parameterized_syntax {
             self.record_at(span.clone()).parameterized_method_call =
                 Some(selected.param_decls.clone());

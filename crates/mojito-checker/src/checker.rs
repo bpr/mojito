@@ -1410,6 +1410,7 @@ impl Checker {
         span: SourceSpan,
         callable: &Ty,
         param_args: &[mojito_ast::ast::ParamArg],
+        attributes: &[Option<TyArg>],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<(), TypeError> {
@@ -1427,7 +1428,7 @@ impl Checker {
         };
         let mut types = Vec::with_capacity(1 + param_args.len() + args.len() + kwargs.len());
         types.push(callable.clone());
-        for expression in self.runtime_param_arg_expressions(param_args) {
+        for expression in runtime_param_arg_expressions(param_args, attributes) {
             // A bracket argument is a compile-time position.
             let _position = self.comptime_position();
             types.push(checked_argument_type(expression)?);
@@ -1445,13 +1446,16 @@ impl Checker {
     /// Type every bracket argument a call still evaluates at run time
     /// (`Counter[1 + Self.n](i)` in a generic body), so its lowering reads
     /// checked facts. One the call already typed keeps its contextual type.
+    /// `attributes` are what the call's binder bound each argument to
+    /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]).
     fn type_runtime_param_args(
         &self,
         param_args: &[mojito_ast::ast::ParamArg],
+        attributes: &[Option<TyArg>],
     ) -> Result<(), TypeError> {
         // A bracket argument is a compile-time position.
         let _position = self.comptime_position();
-        for expression in self.runtime_param_arg_expressions(param_args) {
+        for expression in runtime_param_arg_expressions(param_args, attributes) {
             if !self.has_fact(&expression.source_span(), |facts| facts.ty.is_some()) {
                 self.infer(expression)?;
             }
@@ -1459,39 +1463,12 @@ impl Checker {
         Ok(())
     }
 
-    /// The value expressions among `param_args` that binding left as runtime
-    /// values. A bare type argument (`hash[MyHasher](x)`) is a value
-    /// expression syntactically; binding already resolved it as a type and
-    /// recorded it as an attribute, so it is not one of them.
-    fn runtime_param_arg_expressions<'a>(
-        &self,
-        param_args: &'a [mojito_ast::ast::ParamArg],
-    ) -> Vec<&'a Expr> {
-        let records = self.node_facts.borrow();
-        param_args
-            .iter()
-            .filter(|argument| {
-                let argument = match argument {
-                    mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
-                    positional => positional,
-                };
-                mojito_ast::call::unbound_marker(argument).is_none()
-            })
-            .filter_map(|argument| match argument {
-                mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                    mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                    mojito_ast::ast::ParamArg::Type(_)
-                    | mojito_ast::ast::ParamArg::Named { .. } => None,
-                },
-                mojito_ast::ast::ParamArg::Type(_) => None,
-            })
-            .filter(|expression| {
-                records
-                    .get(&expression.source_span())
-                    .is_none_or(|facts| facts.argument_attribute.is_none())
-            })
-            .collect()
+    /// The bracket attributes the call at `span` recorded
+    /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]),
+    /// empty when every argument is a run-time value.
+    fn recorded_bracket_attributes(&self, span: &SourceSpan) -> Vec<Option<TyArg>> {
+        self.fact(span, |facts| facts.parameter_attributes.as_ref())
+            .unwrap_or_default()
     }
 
     fn declared_error(
@@ -2855,6 +2832,31 @@ impl StructInfo {
             })
             .collect()
     }
+}
+
+/// The value expressions among `param_args` that binding left as runtime
+/// values: those with no attribute among `attributes`, the call's
+/// parameter attributes in source order. A bare type argument
+/// (`hash[MyHasher](x)`) is a value expression syntactically; binding
+/// resolved it as a type, the call's attribute, so it is not one of them.
+fn runtime_param_arg_expressions<'a>(
+    param_args: &'a [mojito_ast::ast::ParamArg],
+    attributes: &[Option<TyArg>],
+) -> Vec<&'a Expr> {
+    param_args
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| attributes.get(*position).is_none_or(Option::is_none))
+        .map(|(_, argument)| match argument {
+            mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
+            positional => positional,
+        })
+        .filter(|argument| mojito_ast::call::unbound_marker(argument).is_none())
+        .filter_map(|argument| match argument {
+            mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
+            mojito_ast::ast::ParamArg::Type(_) | mojito_ast::ast::ParamArg::Named { .. } => None,
+        })
+        .collect()
 }
 
 /// The explicit-destruction obligations a checked program's own structs

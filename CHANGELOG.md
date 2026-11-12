@@ -377,6 +377,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value-shaped bracket argument's attribute (a type, an origin, a
+  converted constructor application, a lane count, a generator, a trait,
+  a raw value list) is carried once, by its call, as upstream's op carries
+  it: binding answers it beside the value it bound, and the check types
+  run-time bracket arguments and builds a method call's compile-time
+  operands from the call's attributes. The second copy recorded at the
+  argument, which the leaf type binders never wrote, is gone; the
+  corpus MIR is unchanged (R756).
 - A type-keyed subscript (`v[Int]` on the bundled `Variant`) is a
   subscript op whose key is the attribute the check bound as its
   accessor's compile-time argument, as upstream's

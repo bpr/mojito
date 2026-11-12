@@ -6058,12 +6058,15 @@ impl Judge<'_> {
 }
 
 /// Whether a bracket attribute has no slot value at run time: an origin,
-/// a trait (`g[Copyable]()`), a type list (`L[Ts.values]()`), or a KGEN
-/// string (`g["None".value]()`), which the instantiated arguments carry.
+/// a trait (`g[Copyable]()`), a type list (`L[Ts.values]()`), a closed raw
+/// value list (`ParameterList[vs.values]()`), or a KGEN string
+/// (`g["None".value]()`), which the instantiated arguments carry.
 fn attribute_has_no_runtime_form(value: Option<&TyArg>) -> bool {
     match value {
         Some(TyArg::Origin(_)) => true,
-        Some(TyArg::Val(value)) => value.is_compile_time_only(),
+        Some(TyArg::Val(value)) => {
+            value.is_compile_time_only() || matches!(value, CtValue::Tuple(_))
+        }
         _ => false,
     }
 }

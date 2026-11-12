@@ -10094,25 +10094,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R756 Value-shaped bracket arguments carry two attribute facts that
-  can disagree**
-
-  A value-shaped argument binding resolves to a type or an origin is
-  recorded twice: in the call's `NodeFacts::parameter_attributes` and at
-  the argument (`NodeFacts::argument_attribute`).
-  - The leaf binders (`_unqualified_type_name[T]`, the
-    builtin collection, tuple, pointer, and `Variant` argument types,
-    `TypeList.of`) record only the first, so the two disagree there.
-  - Upstream's op carries the attribute once, on the call.
-  - The lever: `runtime_param_arg_expressions` (`checker.rs`) and
-    `checked_parameter_arguments` (`call_contract.rs`) read the call's
-    `parameter_attributes`, and `argument_attribute` is deleted.
-  - Done when `NodeFacts::argument_attribute` is gone and the corpus MIR
-    is unchanged.
-  - Found while landing R659 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R755 The check still resolves some explicit bracket arguments more
   than once while binding**
 

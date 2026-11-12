@@ -7415,10 +7415,6 @@ node_facts! {
         /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one
         /// that is a run-time value, which is a node of its own.
         parameter_attributes: Vec<Option<mojito_types::types::TyArg>>,
-        /// The type, origin, or raw parameter list a value-shaped bracket
-        /// argument resolved to when the check bound it, which the call's
-        /// `parameter_attributes` carries in its place.
-        argument_attribute: mojito_types::types::TyArg,
         /// The type a type in value position resolved to.
         type_operand: Ty,
         /// The dunder each link of a chained comparison selected, in link

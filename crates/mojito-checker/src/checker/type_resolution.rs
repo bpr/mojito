@@ -38,6 +38,40 @@ pub(super) struct BoundParameters {
     pub(super) attributes: BracketAttributes,
 }
 
+/// What [`Checker::resolve_param_arg`] bound one bracket argument to: its
+/// value, and whether binding made a value-shaped argument an attribute
+/// beyond what [`bracket_attribute`] reads off the value (a converted
+/// constructor application, a `SIMDLength`'s lane count, a generator, a
+/// trait, a display's literal application, a closed raw value list).
+pub(super) struct BoundArgument {
+    pub(super) value: TyArg,
+    attribute: bool,
+}
+
+impl BoundArgument {
+    /// The attribute `argument` carries, bound as `self`.
+    pub(super) fn bracket_attribute(&self, argument: &mojito_ast::ast::ParamArg) -> Option<TyArg> {
+        bracket_attribute(argument, &self.value)
+            .or_else(|| self.attribute.then(|| self.value.clone()))
+    }
+
+    const fn attribute(value: TyArg) -> Self {
+        Self {
+            value,
+            attribute: true,
+        }
+    }
+}
+
+impl From<TyArg> for BoundArgument {
+    fn from(value: TyArg) -> Self {
+        Self {
+            value,
+            attribute: false,
+        }
+    }
+}
+
 /// The value parameters a use binds, for [`Checker::resolve_dependent_ty`]:
 /// replacement bindings, plus each bound list as it was bound, which a pack
 /// element selects from whether or not its types are closed. A callee's own
@@ -410,12 +444,9 @@ impl Checker {
                 found: generator.meta().to_string(),
             });
         }
-        let argument = TyArg::Val(self.converted_generator(generator, expected)?.into_value());
-        // A generator argument is an attribute, never a runtime value.
-        if let ParamArg::Value(expr) = arg {
-            self.record_at(expr.source_span()).argument_attribute = Some(argument.clone());
-        }
-        Ok(argument)
+        Ok(TyArg::Val(
+            self.converted_generator(generator, expected)?.into_value(),
+        ))
     }
 
     /// A constant generator converted to the generator type `expected`, as
@@ -2285,18 +2316,12 @@ impl Checker {
             value = inner;
         }
         let attribute = TyArg::Origin(origin);
-        match value {
-            mojito_ast::ast::ParamArg::Value(expression) => {
-                let recorded =
-                    self.strict_storage_annotation.get() == super::StorageStrictness::Off;
-                if recorded {
-                    self.record_at(expression.source_span()).argument_attribute =
-                        Some(attribute.clone());
-                }
-                Ok(recorded.then_some(attribute))
-            }
-            _ => Ok(Some(attribute)),
-        }
+        Ok(match value {
+            mojito_ast::ast::ParamArg::Value(_) => (self.strict_storage_annotation.get()
+                == super::StorageStrictness::Off)
+                .then_some(attribute),
+            _ => Some(attribute),
+        })
     }
 
     /// Resolve the type-valued sequence at the base of an indexed type
@@ -3234,7 +3259,7 @@ impl Checker {
         &self,
         decl: &ParamDecl,
         arg: &mojito_ast::ast::ParamArg,
-    ) -> Result<TyArg, TypeError> {
+    ) -> Result<BoundArgument, TypeError> {
         use mojito_ast::ast::ParamArg;
         match decl {
             // A trait is a type in KGEN, so `!kgen.type` binds one
@@ -3243,21 +3268,13 @@ impl Checker {
                 if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES)
                     && let Some(ty) = self.trait_type_arg(arg) =>
             {
-                let ty = ty?;
-                if let ParamArg::Value(expr) = arg {
-                    self.record_at(expr.source_span()).argument_attribute =
-                        Some(TyArg::Ty(ty.clone()));
-                }
-                Ok(TyArg::Ty(ty))
+                Ok(TyArg::Ty(ty?).into())
             }
             ParamDecl::Type { name, bounds, .. } => {
                 // A bare or parameterized type argument the parser encoded as a
-                // value expression records the type as its attribute, only
-                // once the argument resolves and satisfies its bounds: an
-                // overload probe that rejects this declaration leaves no fact
-                // behind for the declaration that wins.
-                let (ty, value_span) = match arg {
-                    ParamArg::Type(t) => (self.ty_from_anno(t)?, None),
+                // value expression binds the type, which is its attribute.
+                let ty = match arg {
+                    ParamArg::Type(t) => self.ty_from_anno(t)?,
                     // A reflected field type (`reflect[Q].field_at[0].T`,
                     // or a name bound to one) is an `AnyType` value, which
                     // binds only a binder that asks nothing more of it.
@@ -3275,15 +3292,14 @@ impl Checker {
                                 ),
                             });
                         }
-                        (reflected?, Some(expression.source_span()))
+                        reflected?
                     }
                     // Any other expression is the type it denotes, built by
                     // the one builder; once it resolves it is the call's
                     // parameter attribute, never a runtime value.
-                    ParamArg::Value(expression) => (
-                        self.denoted_type(expression, &format!("type parameter '{name}'"))?,
-                        Some(expression.source_span()),
-                    ),
+                    ParamArg::Value(expression) => {
+                        self.denoted_type(expression, &format!("type parameter '{name}'"))?
+                    }
                     ParamArg::Named { value, .. } => {
                         return self.resolve_param_arg(decl, value);
                     }
@@ -3298,17 +3314,14 @@ impl Checker {
                         });
                     }
                 }
-                if let Some(span) = value_span {
-                    self.record_at(span).argument_attribute = Some(TyArg::Ty(ty.clone()));
-                }
-                Ok(TyArg::Ty(ty))
+                Ok(TyArg::Ty(ty).into())
             }
-            ParamDecl::Value { ty, .. } if let TyKind::AnyTrait(bound) = ty.kind() => {
-                self.resolve_trait_param_arg(decl, bound, arg)
-            }
-            ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::Generator(_)) => {
-                self.resolve_generator_param_arg(decl, ty, arg)
-            }
+            ParamDecl::Value { ty, .. } if let TyKind::AnyTrait(bound) = ty.kind() => self
+                .resolve_trait_param_arg(decl, bound, arg)
+                .map(BoundArgument::attribute),
+            ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::Generator(_)) => self
+                .resolve_generator_param_arg(decl, ty, arg)
+                .map(BoundArgument::attribute),
             // A leading-dot argument (`f[.bool]()`) names a member of the
             // parameter's declared type, as upstream resolves it against
             // the parameter's type.
@@ -3343,7 +3356,9 @@ impl Checker {
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
-                        return self.resolve_callable_param_arg(decl, name, ty, expr);
+                        return self
+                            .resolve_callable_param_arg(decl, name, ty, expr)
+                            .map(Into::into);
                     }
                     // Source validation types before the elaborator folds a
                     // value argument it alone can evaluate (a vector
@@ -3381,14 +3396,13 @@ impl Checker {
                         .flatten();
                     let value = match display {
                         Some(display) => {
-                            return Ok(self.applied_display_argument(expr, applied(display)?));
+                            return Ok(applied_display_argument(applied(display)?));
                         }
                         None => match self.eval_associated_ct(expr) {
                             Ok(value) if ty.kind().is_non_simd_struct() => {
                                 match self.aggregate_application(&value, ty) {
                                     Some(aggregate) => {
-                                        return Ok(self
-                                            .applied_display_argument(expr, applied(aggregate)?));
+                                        return Ok(applied_display_argument(applied(aggregate)?));
                                     }
                                     None => value,
                                 }
@@ -3470,8 +3484,7 @@ impl Checker {
                         let lanes = lanes?;
                         let lanes =
                             TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
-                        self.record_at(expr.source_span()).argument_attribute = Some(lanes.clone());
-                        return Ok(lanes);
+                        return Ok(BoundArgument::attribute(lanes));
                     } else if !coerces(&actual, ty) {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
@@ -3491,7 +3504,7 @@ impl Checker {
                             })?;
                         let (Some(application), Some(slot)) = (converted, slot) else {
                             if let Some(length) = self.unregistered_simd_length(&value, ty) {
-                                return Ok(TyArg::Val(length));
+                                return Ok(TyArg::Val(length).into());
                             }
                             return Err(TypeError::TypeMismatch {
                                 expected: ty.to_string(),
@@ -3502,30 +3515,29 @@ impl Checker {
                         self.record_literal_materializations(expr, &source, &slot)?;
                         // The converted value is the constructor's call node,
                         // never the argument expression's run-time value.
-                        let converted = TyArg::Val(CtValue::Expr(application));
-                        self.record_at(expr.source_span()).argument_attribute =
-                            Some(converted.clone());
-                        return Ok(converted);
+                        return Ok(BoundArgument::attribute(TyArg::Val(CtValue::Expr(
+                            application,
+                        ))));
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
                     // A type list (`Ts.values`), a closed raw list of
                     // values, or a KGEN string has no run-time form.
                     let closed_value_list = matches!(&value, CtValue::Tuple(elements)
                         if !elements.iter().any(|element| matches!(element, CtValue::Type(_))));
-                    if value.is_compile_time_only()
-                        || (closed_value_list && matches!(ty.kind(), TyKind::ParamList(_)))
-                    {
-                        self.record_at(expr.source_span()).argument_attribute =
-                            Some(TyArg::Val(value.clone()));
-                    }
+                    let attribute = value.is_compile_time_only()
+                        || (closed_value_list && matches!(ty.kind(), TyKind::ParamList(_)));
+                    let bound = |value| BoundArgument {
+                        value: TyArg::Val(value),
+                        attribute,
+                    };
                     // A symbolic enclosing-scope parameter stays symbolic here;
                     // specialization bakes it out like the callable case above.
                     if matches!(value, CtValue::Expr(_)) {
-                        return Ok(TyArg::Val(value));
+                        return Ok(bound(value));
                     }
                     let rendered = value.to_string();
                     if let Some(value) = value.materialize_as(ty) {
-                        return Ok(TyArg::Val(value));
+                        return Ok(bound(value));
                     }
                     // A literal at a vector whose dtype is still symbolic
                     // (`Scalar[dtype]`) is its declared literal initializer's
@@ -3533,7 +3545,7 @@ impl Checker {
                     self.implicit_parameter_application(&actual, ty, |slot| {
                         self.applied_argument(expr, slot)
                     })?
-                    .map(|application| TyArg::Val(CtValue::Expr(application)))
+                    .map(|application| bound(CtValue::Expr(application)))
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: ty.to_string(),
                         found: rendered,
@@ -3554,7 +3566,7 @@ impl Checker {
                         .ct_value_ty(&value, ty)
                         .filter(|actual| !coerces(actual, ty))
                     else {
-                        return Ok(TyArg::Val(value));
+                        return Ok(TyArg::Val(value).into());
                     };
                     if let Some(lanes) = self.simd_length_lanes(
                         &actual,
@@ -3567,12 +3579,13 @@ impl Checker {
                         let lanes = lanes?;
                         return Ok(TyArg::Val(
                             lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int),
-                        ));
+                        )
+                        .into());
                     }
                     self.implicit_parameter_application(&actual, ty, |slot| {
                         self.applied_value(value, slot)
                     })?
-                    .map(|application| TyArg::Val(CtValue::Expr(application)))
+                    .map(|application| TyArg::Val(CtValue::Expr(application)).into())
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: ty.to_string(),
                         found: actual.to_string(),
@@ -3598,37 +3611,6 @@ impl Checker {
                 ParamArg::Named { value, .. } => self.resolve_param_arg(decl, value),
             },
         }
-    }
-
-    /// The attribute bracket argument `argument` carries once
-    /// [`Self::resolve_param_arg`] bound it to `bound`
-    /// ([`bracket_attribute`]): a value argument an `@implicit` constructor
-    /// converted is the constructor's application it recorded, the one
-    /// struct-valued application recorded as an argument's attribute, and
-    /// a `SIMDLength` at an `Int` slot is its lane count, upstream's folded
-    /// `SIMD.__init__(SIMDLength)`, never the binder's own register.
-    pub(super) fn bound_bracket_attribute(
-        &self,
-        argument: &mojito_ast::ast::ParamArg,
-        bound: &TyArg,
-    ) -> Option<TyArg> {
-        use mojito_ast::ast::ParamArg;
-        bracket_attribute(argument, bound).or_else(|| match argument {
-            ParamArg::Named { value, .. } => self.bound_bracket_attribute(value, bound),
-            ParamArg::Value(expr) => self
-                .node_facts
-                .borrow()
-                .get(&expr.source_span())
-                .and_then(|facts| facts.argument_attribute.clone())
-                .filter(|attribute| {
-                    attribute == bound
-                        && matches!(attribute, TyArg::Val(CtValue::Expr(application))
-                        if application.meta().as_value().is_some_and(|ty| {
-                            ty.is_non_simd_struct()
-                        }) || mojito_types::types::simd_length_of_image(application).is_some())
-                }),
-            ParamArg::Type(_) => None,
-        })
     }
 
     /// Record what each bracket argument of the application at `span`
@@ -4351,15 +4333,6 @@ impl Checker {
         ))
     }
 
-    /// The bracket argument `expr`, a display or a module display constant,
-    /// as its literal constructor's application: the parameter value MIR
-    /// reads, never the display's run-time value.
-    fn applied_display_argument(&self, expr: &Expr, application: ParamExpr) -> TyArg {
-        let applied = TyArg::Val(CtValue::Expr(application));
-        self.record_at(expr.source_span()).argument_attribute = Some(applied.clone());
-        applied
-    }
-
     /// Resolve the argument of a trait-valued parameter whose type is
     /// `AnyTrait[bound]`: a trait or a composition refining every trait of
     /// `bound`, or a trait-valued binder in scope (`f[Tr]()`, `W[Self.Tr]`)
@@ -4412,10 +4385,6 @@ impl Checker {
         match self.ct_value_ty(&value, &Ty::error()) {
             Some(ref ty) if let TyKind::AnyTrait(traits) = ty.kind() => {
                 if self.traits_satisfy(traits, bound) {
-                    if let ParamArg::Value(expr) = arg {
-                        self.record_at(expr.source_span()).argument_attribute =
-                            Some(TyArg::Val(value.clone()));
-                    }
                     Ok(TyArg::Val(value))
                 } else {
                     Err(mismatch(ty.to_string()))
@@ -5574,4 +5543,11 @@ fn is_hole_argument(arg: &mojito_ast::ast::ParamArg) -> bool {
         mojito_ast::ast::ParamArg::Named { value, .. } => is_hole_argument(value),
         _ => false,
     }
+}
+
+/// The bracket argument a display or a module display constant spells, as
+/// its literal constructor's application: the parameter value MIR reads,
+/// never the display's run-time value.
+const fn applied_display_argument(application: ParamExpr) -> BoundArgument {
+    BoundArgument::attribute(TyArg::Val(CtValue::Expr(application)))
 }

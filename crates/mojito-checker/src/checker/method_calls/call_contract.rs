@@ -54,10 +54,11 @@ impl Checker {
         // and a closure's own `__call__` runs it, as a call through it does.
         let called_closure =
             (method == "__call__" && is_closure_storage(obj_ty)).then(|| obj_ty.clone());
+        let attributes = self.recorded_bracket_attributes(span);
         let argument_types = called_closure
             .into_iter()
             .chain(
-                self.runtime_param_arg_expressions(param_args)
+                super::super::runtime_param_arg_expressions(param_args, &attributes)
                     .into_iter()
                     .chain(args)
                     .chain(kwargs.iter().map(|argument| &argument.value))
@@ -67,7 +68,7 @@ impl Checker {
             )
             .collect::<Vec<_>>();
         let captures = self.call_capture_effects(&argument_types);
-        let parameter_arguments = self.checked_parameter_arguments(param_args);
+        let parameter_arguments = checked_parameter_arguments(param_args, &attributes);
         if reference_result.is_none() && !captures.is_empty() {
             self.record_capture_accesses(span.clone(), &captures);
         }
@@ -140,39 +141,6 @@ impl Checker {
             }),
             None => false,
         }
-    }
-
-    /// The call's explicit compile-time arguments, each value argument naming
-    /// its operand position unless the argument is erased.
-    fn checked_parameter_arguments(
-        &self,
-        param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Vec<mojito_checked::checked::CheckedCallParameterArgument> {
-        param_args
-            .iter()
-            .enumerate()
-            .filter_map(|(position, argument)| {
-                let (name, argument) = match argument {
-                    mojito_ast::ast::ParamArg::Named { name, value } => {
-                        (Some(name.clone()), value.as_ref())
-                    }
-                    argument => (None, argument),
-                };
-                let operand = match argument {
-                    mojito_ast::ast::ParamArg::Type(_) => None,
-                    mojito_ast::ast::ParamArg::Value(expression) => {
-                        if self.has_fact(&expression.source_span(), |facts| {
-                            facts.argument_attribute.is_some()
-                        }) {
-                            return None;
-                        }
-                        Some(position)
-                    }
-                    mojito_ast::ast::ParamArg::Named { .. } => unreachable!(),
-                };
-                Some(mojito_checked::checked::CheckedCallParameterArgument { name, operand })
-            })
-            .collect()
     }
 
     /// A method whose non-consuming receiver hands back a ref-field
@@ -311,4 +279,38 @@ fn checked_call_arguments(
         );
     }
     arguments
+}
+
+/// The call's explicit compile-time arguments, each value argument naming
+/// its operand position, and a value argument that bound to an attribute
+/// among `attributes` (the call's parameter attributes, in source order)
+/// left out.
+fn checked_parameter_arguments(
+    param_args: &[mojito_ast::ast::ParamArg],
+    attributes: &[Option<TyArg>],
+) -> Vec<mojito_checked::checked::CheckedCallParameterArgument> {
+    param_args
+        .iter()
+        .enumerate()
+        .filter_map(|(position, argument)| {
+            let (name, argument) = match argument {
+                mojito_ast::ast::ParamArg::Named { name, value } => {
+                    (Some(name.clone()), value.as_ref())
+                }
+                argument => (None, argument),
+            };
+            let operand = match argument {
+                mojito_ast::ast::ParamArg::Type(_) => None,
+                mojito_ast::ast::ParamArg::Value(_)
+                    if attributes.get(position).is_some_and(Option::is_some) =>
+                {
+                    return None;
+                }
+                mojito_ast::ast::ParamArg::Value(_) | mojito_ast::ast::ParamArg::Named { .. } => {
+                    Some(position)
+                }
+            };
+            Some(mojito_checked::checked::CheckedCallParameterArgument { name, operand })
+        })
+        .collect()
 }
