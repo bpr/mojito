@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2167**.
+Next free ID: **R2168**.
 
 ## Ordered Work
 
@@ -73,16 +73,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2160 With the pre-elaboration pipeline off, `SIMD.deinterleave`
-  cannot fold its `SIMDLength` quotient**
+- [ ] **R2167 With the pre-elaboration pipeline off, nothing promotes
+  an inlined constructor's slot, so a native `immarg` operand is a load**
 
   With `MOJITO_PRE_ELABORATION=0`,
-  `assets/ok/simd_slice_insert_split_interleave.mojo` fails with "in
-  `SIMD.deinterleave`: '(SIMDLength(2) / SIMDLength(2, 2))' is not a
-  compile-time constant here", where the pin and the default pipeline
-  run it.
-  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
-  - Found by the 2026-11-13 overnight gate.
+  `assets/ok/simd_slice_insert_split_interleave.mojo` runs on the VM but
+  fails LLVM verification natively ("immarg operand has non-immediate
+  parameter"), where the pin and the default pipeline run it.
+  - `SIMD.insert` passes `Int64(offset)` to `llvm.vector.insert`; only
+    `MANDATORY_PIPELINE` (`always-inline`) runs after elaboration, so the
+    inlined constructor's result stays a stack slot and reaches the
+    intrinsic as a `load`.
+  - Upstream's LLVM lowering always sees the immediate: decide which
+    promotion (`mem-2-reg`, `canonicalize`) the driver owes at every
+    setting, as R2158 made `@always_inline` mandatory, and run it.
+  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0` and
+    `--backend pliron`.
+  - Found while landing R2160.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -511,6 +511,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The elaborator freezes a struct construction whose fields have all
+  folded to the struct constant it is, as upstream folds one to its struct
+  attribute: `SIMD.deinterleave` at width 2 now runs with the
+  pre-elaboration pipeline off, where elaboration reported
+  `SIMDLength(2) / 2` was not a compile-time constant (R2160).
 - A generator type owns its binders by position, as upstream's
   `!kgen.generator` input parameters do, so a partial application's type
   (`Add[1, _]`) and the annotation `__generator_type[b: Int] Int` are one

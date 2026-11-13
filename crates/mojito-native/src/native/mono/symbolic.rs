@@ -533,6 +533,11 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
     if let Some(error) = layout_failure {
         return Err(error);
     }
+    // A construction whose fields all closed is the struct constant it
+    // freezes to, as upstream folds one to its struct attribute.
+    if let Some(frozen) = replaced.frozen_struct() {
+        return Ok(frozen);
+    }
     replaced.require_constant().map_err(|error| {
         let free = replaced.free_parameters();
         // A read of an erased argument fails the instance, as no later
