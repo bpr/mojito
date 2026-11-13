@@ -2964,6 +2964,15 @@ impl Checker {
             }
             _ => return None,
         };
+        // The construction's run-time type is the same for every candidate:
+        // typing it once keeps a nested construction's check linear in its
+        // depth.
+        let run_time_type = std::cell::OnceCell::new();
+        let run_time_type = || {
+            run_time_type
+                .get_or_init(|| self.run_time_type(expr))
+                .clone()
+        };
         let mut selected = self
             .applicable_functions
             .get(&name)?
@@ -2978,7 +2987,7 @@ impl Checker {
                 let (instance, param_args) = match (function.constructs(), function.on_instance) {
                     (true, true) if let Some(struct_args) = &explicit_initializer => (
                         if struct_args.is_empty() {
-                            self.run_time_type(expr)
+                            run_time_type()
                         } else {
                             self.ty_from_anno(&SourceType::Named(name.clone(), struct_args.clone()))
                                 .ok()
@@ -2994,7 +3003,7 @@ impl Checker {
                         spelled
                             .or(instance.as_ref())
                             .cloned()
-                            .or_else(|| self.run_time_type(expr)),
+                            .or_else(run_time_type),
                         param_args,
                     ),
                     _ => (instance.clone(), param_args),

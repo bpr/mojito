@@ -511,6 +511,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Checking a nest of numeric constructions no longer costs time
+  exponential in its depth: `Int(Int(Int(Int(Int(Int(1))))))` and
+  `Float64(Float16(Float64(0.1)))` check in a fraction of a second, where
+  each level multiplied the check by about ten. A construction's arguments
+  are typed once while its `__init__` overloads are ranked, as upstream
+  emits each argument once, and the builtin-fold check types the
+  construction once rather than once per overload. The std package checks
+  in half the time (R2162).
 - A `comptime for` over a value pack (`total[1, 2, 3]()` summing
   `comptime for value in values`) and a `ref self` method called on a
   constructed value inside a lifted compile-time expression run with the

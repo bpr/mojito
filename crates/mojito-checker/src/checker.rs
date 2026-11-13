@@ -341,6 +341,7 @@ fn check_program_carrying(
     Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
 }
 
+mod argument_memo;
 mod body_carry;
 mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
@@ -639,6 +640,9 @@ pub struct Checker {
     /// [`Self::run_time_overload`]), which applies none of them again
     /// meanwhile.
     instance_inferences: RefCell<HashSet<SourceSpan>>,
+    /// The expressions typed while an overload set is ranked
+    /// ([`Self::with_argument_memo`]).
+    argument_memo: RefCell<argument_memo::ArgumentMemo>,
     /// Whether the compile-time value being built is only probed for an
     /// exact literal ([`Self::exact_literal_value`]), whose failure no one
     /// reads: a shape no arm builds fails without typing it again to say
@@ -1114,6 +1118,7 @@ impl Checker {
             installed: None,
             lifting_positions: std::rc::Rc::default(),
             instance_inferences: RefCell::new(HashSet::new()),
+            argument_memo: RefCell::default(),
             probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),

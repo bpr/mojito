@@ -821,6 +821,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `call_inference.rs`'s `TyKind::Overload` loop and `generics.rs`'s
   overloaded callable-value branch; each re-runs the selected candidate
   outside the probe.
+- `checker/argument_memo.rs` owns `Checker::with_argument_memo`: while a
+  construction's `__init__` overloads are ranked
+  (`declarations.rs`'s `infer_construction_of`), `Checker::infer` types
+  each expression once per compile-time, lifting, and literal-probe
+  position (`memoized_infer`), as upstream emits each argument once. A
+  probe forgets the entries typed under it (`roll_back_argument_memo`),
+  since it undid their facts.
 - `checker/comptime_validation.rs` owns the check of compile-time control
   flow in the one check (and which callables a compile-time call applies:
   `ApplicableShape::applicable` skips erased origin binders and admits

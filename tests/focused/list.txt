@@ -30,7 +30,7 @@ fixture assets/runtime_error/pliron_trap_pow_negative.mojo
 fixture assets/ok/generator_runtime_value.mojo
 # R2160: fixture assets/ok/simd_slice_insert_split_interleave.mojo
 fixture assets/ok/writable_trait_library.mojo
-# R2162: fixture assets/ok/float16_semantics.mojo
+fixture assets/ok/float16_semantics.mojo
 fixture assets/ok/indexer_normalization.mojo
 # R2157: test evaluator_test power_and_true_division
 # R2164: test comptime_test a_type_member_is_read_through_a_module_alias_and_a_construction

@@ -2525,7 +2525,11 @@ journals what a write displaces while a probe is open, and closing it
 restores those values and truncates the log, so a losing candidate leaves
 neither a fact nor a logged key, and only the selected candidate's re-run
 writes for good. A probe costs what the candidate writes, and probes
-nest. Every
+nest. While a construction ranks its `__init__` overloads, an
+expression is typed once (`checker/argument_memo.rs`), as upstream emits
+each argument before ranking, so a nest of constructions checks in time
+linear in its depth; a probe forgets the types it typed along with their
+facts. Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
 keys written), so a site — a module-level `def` or a struct method —

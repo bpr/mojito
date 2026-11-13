@@ -471,6 +471,10 @@ impl Checker {
     }
 
     pub(super) fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        self.memoized_infer(expr, || self.infer_unmemoized(expr))
+    }
+
+    fn infer_unmemoized(&self, expr: &Expr) -> Result<Ty, TypeError> {
         if let Some(literal) = self.slice_literal_type(expr) {
             return Ok(literal);
         }

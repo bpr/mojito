@@ -3076,8 +3076,23 @@ impl Checker {
     /// alias spells it without brackets (`Int32(x)` is `SIMD[DType.int32,
     /// 1](x)`): the instance binds the struct's parameters as an argument
     /// does, before the overloads are matched.
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_construction_of(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        constructed: Option<&Ty>,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        self.with_argument_memo(|| {
+            self.infer_construction_ranked(span, name, constructed, param_args, args, kwargs)
+        })
+    }
+
+    /// [`Self::infer_construction_of`] inside its argument memo.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    fn infer_construction_ranked(
         &self,
         span: &SourceSpan,
         name: &str,

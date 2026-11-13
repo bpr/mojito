@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2168**.
+Next free ID: **R2169**.
 
 ## Ordered Work
 
@@ -4542,24 +4542,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2162 Checking nested numeric constructors costs time
-  exponential in the nesting depth**
+- [ ] **R2168 Checking nested calls of an overloaded free function costs
+  time exponential in the nesting depth**
 
-  `var x = Int(Int(Int(1)))` takes about 35 s of checker CPU in a debug
-  build, and each further level multiplies it by roughly ten:
-  `print(Float64(0.1))` checks in 0.1 s, two levels in 2 s, three in
-  24 s, four in over 500 s. `String(String(String(1)))` checks at once.
-  - The likely cause is overload resolution re-inferring the whole
-    argument subtree once per candidate of each enclosing constructor,
-    as the numeric types' many `__init__` overloads make the probe
-    fan out at every level.
-  - Lever: memoize a probed argument's inference per candidate
-    parameter type, or infer the argument once before probing.
-  - `assets/ok/float16_semantics.mojo` (`Float64(Float16(Float64(0.1)))`)
-    takes over 120 s under load, so `scripts/sweep-assets-mojo` times it
-    out and reports it as a Mojito rejection (2026-11-13 overnight gate).
-  - The cost predates 2026-11-12: `12d481486` checks the three-level
-    probe in the same CPU time.
+  Each candidate of a free-function overload set is checked inside a
+  probe (`call_inference.rs`'s `probe_overload_candidates`), so every
+  candidate re-types the whole argument subtree. Upstream emits each
+  argument once and ranks the candidates over the typed values.
+  - The argument memo (`checker/argument_memo.rs`) covers constructions
+    only: a probe forgets the entries typed under it, since it undid
+    their facts, so a probed candidate gains nothing from it.
+  - Lever: type the arguments once outside the probes, keeping their
+    facts, then probe each candidate against the typed arguments.
+  - Probe: four `def f` overloads (`Int`, `Float64`, `String`, `Bool`)
+    and `print(f(f(f(f(f(f(1)))))))` checks in 12 s in a debug build;
+    three levels check in 0.06 s.
+  - Found while landing R2162 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
