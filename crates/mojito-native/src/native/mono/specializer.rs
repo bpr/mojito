@@ -2929,6 +2929,10 @@ impl<'a> Specializer<'a> {
                     };
                 }
             }
+            if let Some(folded) = folded_literal_operator(instruction, &function.reg_types) {
+                *instruction = folded;
+                continue;
+            }
             // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
             // calls its dunder (`__neg__`/`__invert__`); `not` arrives
             // already converted through `Bool(x)` by MIR.
@@ -4750,6 +4754,44 @@ fn names_instance_of(arg: &ParamExpr, owner: &str) -> bool {
 /// Whether an operator on a receiver of `ty` calls its declared dunder: a
 /// struct's, a `SIMD`, a `StringLiteral`, and a numeric literal
 /// application's included.
+/// The constant an operator over numeric literals is, when its result's
+/// type carries a closed literal value: upstream's literal dunders are
+/// `@always_inline("builtin")`, which its parser inlines into a body the
+/// result type alone defines, so the elaborator writes the result as the
+/// value its type holds, whichever passes ran before it.
+fn folded_literal_operator(
+    instruction: &MirInstr,
+    reg_types: &HashMap<u32, Ty>,
+) -> Option<MirInstr> {
+    let (dest, operands) = match instruction {
+        MirInstr::BinOp {
+            dest,
+            a,
+            b,
+            raises: None,
+            ..
+        } => (*dest, vec![*a, *b]),
+        MirInstr::UnOp {
+            dest,
+            a,
+            raises: None,
+            ..
+        } => (*dest, vec![*a]),
+        _ => return None,
+    };
+    let literal = |reg: &Reg| reg_types.get(&reg.0).is_some_and(Ty::is_numeric_literal);
+    if !operands.iter().all(literal) {
+        return None;
+    }
+    let ty = reg_types.get(&dest.0)?.kind();
+    let k = ty
+        .int_literal_value()
+        .cloned()
+        .map(Const::IntLiteral)
+        .or_else(|| ty.float_literal_value().cloned().map(Const::FloatLiteral))?;
+    Some(MirInstr::Const { dest, k })
+}
+
 fn declared_operator_receiver(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(..))
 }

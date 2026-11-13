@@ -452,6 +452,12 @@ impl VmBackend {
                 (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {
                     self.heap_read(allocation, offset, *index as i64)?
                 }
+                // A single-pointee `Pointer` whose value is a heap pointer
+                // (an `OwnedPointer`'s `unsafe_ptr()`) dereferences its one
+                // element.
+                (RefProjection::Deref, Value::Pointer { allocation, offset }) => {
+                    self.heap_read(allocation, offset, 0)?
+                }
                 (RefProjection::Index(index), Value::Struct { name, fields, .. })
                     if name == "List" || name.ends_with("$List") =>
                 {
@@ -521,11 +527,17 @@ impl VmBackend {
         let mut value = root.clone();
         for (position, segment) in projection.iter().enumerate() {
             match (segment, value) {
-                (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {
+                (
+                    segment @ (RefProjection::Index(_) | RefProjection::Deref),
+                    Value::Pointer { allocation, offset },
+                ) => {
                     return Ok(Some(ReferencePointerBoundary {
                         allocation,
                         offset,
-                        index: *index,
+                        index: match segment {
+                            RefProjection::Index(index) => *index,
+                            _ => 0,
+                        },
                         suffix: &projection[position + 1..],
                     }));
                 }
@@ -914,6 +926,7 @@ pub(super) fn navigate_reference_step<'a>(
             .find(|(field, _)| field == name)
             .map(|(_, value)| value),
         (RefProjection::Index(index), Value::Tuple(items)) => items.get(*index),
+        (RefProjection::Deref, Value::Pointer { .. }) => None,
         (RefProjection::Deref, value) => Some(value),
         (
             RefProjection::Variant(expected),

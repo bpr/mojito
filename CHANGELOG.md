@@ -511,6 +511,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A literal operator whose result type carries its value is folded to that
+  constant by the elaborator, as upstream's parser inlines the
+  `@always_inline("builtin")` literal dunders, so `1 / 4`, `1 + 2.5`, and
+  `-x` over an `IntLiteral[_]` run with the pre-elaboration pipeline off and
+  in module-scope snippets, where the VM reported "unknown method
+  'IntLiteral.__truediv__'" or elaboration could not resolve `$value_rhs`.
+  The VM's single-pointee dereference of a heap pointer now reaches its
+  element, so a non-inlined `mut self` method on `p.unsafe_ptr()[]` of an
+  `OwnedPointer` mutates the pointee instead of failing (R2157).
+
 - A `Bool` converted to a `Scalar[DType.bool]` is the declared `@implicit
   SIMD.__init__(Bool)` call wherever it converts, as at the pin, so `mask ==
   True`, `mask.__eq__(True)`, and `mask & b` run with the pre-elaboration

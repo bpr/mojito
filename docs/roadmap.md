@@ -56,35 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R2157 With the pre-elaboration pipeline off, a literal operator
-  or a `Pointer` operator the pipeline folds reaches the VM as a method
-  call it cannot run**
-
-  With `MOJITO_PRE_ELABORATION=0`, `1 / 4` fails with "vm: unknown
-  method 'IntLiteral.__truediv__'", where the pin and the default pipeline
-  print the quotient.
-  - Same family: "in `IntLiteral.__add__`: monomorphization cannot
-    resolve parameter `$value_rhs`" for a literal-and-float-literal sum,
-    and "vm: Pointer has no method '__add__'" for pointer arithmetic.
-  - Upstream folds `@always_inline("builtin")` bodies as part of
-    elaboration, never as an optional pass, so no pipeline setting
-    reaches a run-time call of one.
-  - Lever: run the builtin folds (and the inlining they need) as a
-    mandatory step of elaboration, so the pipeline-off path keeps them.
-  - Probes, each with `MOJITO_PRE_ELABORATION=0`:
-    `assets/ok/pliron_int_truediv.mojo`, `comptime_int_truediv.mojo`,
-    `simd_truediv_dunders.mojo`, `float_literal_reflected_dunders.mojo`,
-    `literal_operator_dunders.mojo`, and `owned_pointer_api.mojo`. Their
-    `pre_elaboration::*` corpus trials fail until this lands.
-  - Module-scope snippet code (`Compiler::with_snippet_module_scope`) meets
-    the same gap with the pipeline on: `evaluator_test`'s
-    `literals_coerce_at_runtime`, `power_and_true_division`, and
-    `round_rounds_to_nearest` fail with the `IntLiteral.__truediv__`
-    error.
-  - Found by the 2026-11-13 overnight gate.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2158 With the pre-elaboration pipeline off, a call location
   reports the callee's own line, where the pin reports the caller's**
 
@@ -100,6 +71,13 @@ which names the upstream pass each one follows. Each is measured by the
     `stdlib/std/reflection/location.mojo`.
   - Lever: make `@always_inline` inlining mandatory, as upstream's is,
     rather than a pre-elaboration pass.
+  - The native backend meets the same gap: with the pipeline off,
+    `--backend pliron` on `print(3)` fails with "unsupported constructor
+    result `NoneType`" in `_write_int`, and on
+    `assets/ok/pliron_int_truediv.mojo` with "unsupported constructor
+    result `IntLiteral[-2]`" in `IntLiteral.__sub__`, since a builtin
+    `__init__` or dunder of a zero-size result stays a call the backend
+    cannot lower.
   - Found by the 2026-11-13 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
