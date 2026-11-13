@@ -9309,31 +9309,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2067 A static call whose only candidate fails generic
-  instantiation reports its struct as having no such member**
-
-  `S.f[k]()` over `@staticmethod def f[n: Int]()` and a run-time `k`
-  fails with "'S' value has no attribute 'f'", where the pin reports "invalid call
-  to 'f': cannot use a dynamic value in a parameter list".
-  - Cause: `Checker::infer_struct_name_call`
-    (`checker/method_calls/type_receivers.rs`) drops a candidate whose
-    `instantiate_method_generics` fails, and with none left the call falls
-    back to reading the struct's name as a value, its `AnyStruct`
-    metatype, which reports "'S' value has no attribute 'f'".
-  - Lever: keep the rejected candidate's error and report it when no
-    candidate survives.
-  - Probe: a `comptime` binding the check does not lift, passed to
-    `_FormatUtils.format_to_comptime[…]`, reports "Undefined variable
-    '__module$std$string$_FormatUtils'".
-  - Probe: `var y = DType.int8` then `SIMD[y, 1](3)` reports "cannot
-    infer type parameter 'dtype' of 'SIMD'" from the constructor's
-    inference, where the pin reports "cannot use a dynamic value in a
-    parameter list"; `assets/type_error/dtype_dynamic_parameter_rejected.mojo`
-    fails its `# expect:` at `b0747f9ea`.
-  - Found while landing R1973 (2026-11-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2070 A compile-time `and` or `or` over `Bool`s commutes, where
   the pin's is a selection**
 

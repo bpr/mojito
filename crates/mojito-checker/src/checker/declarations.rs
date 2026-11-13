@@ -3661,17 +3661,19 @@ impl Checker {
                     ),
                 });
                 // A value spelled where the struct takes a type
-                // (`Tuple[Int, Tuple[3]]()`) is wrong whichever constructor
+                // (`Tuple[Int, Tuple[3]]()`), or a run-time value in its
+                // brackets (`SIMD[y, 1](3)`), is wrong whichever constructor
                 // the arguments select.
-                if let Err(
-                    error @ TypeError::TypeMismatch {
-                        expected, found, ..
-                    },
-                ) = &resolved_use
-                    && expected == "a type"
-                    && found == "a value"
-                {
-                    return Err(error.clone());
+                match &resolved_use {
+                    Err(
+                        error @ TypeError::TypeMismatch {
+                            expected, found, ..
+                        },
+                    ) if expected == "a type" && found == "a value" => {
+                        return Err(error.clone());
+                    }
+                    Err(error @ TypeError::DynamicParameterValue) => return Err(error.clone()),
+                    _ => {}
                 }
                 if let Err(error) = &resolved_use
                     && (sig.refined_self.is_some()
@@ -5267,9 +5269,15 @@ impl Checker {
                     .map(|(_, arguments)| arguments.iter().cloned().map(Some).collect())
             })
         } else {
-            self.resolve_partial_use_params(name, decls, param_args)
-                .ok()
-                .map(|(arguments, _)| arguments)
+            match self.resolve_partial_use_params(name, decls, param_args) {
+                Ok((arguments, _)) => Some(arguments),
+                // A run-time value spelled in the brackets is wrong whichever
+                // constructor the arguments select.
+                Err(TypeError::DynamicParameterValue) => {
+                    return Err(TypeError::DynamicParameterValue);
+                }
+                Err(_) => None,
+            }
         };
         let masked_known = |arguments: &[TyArg], known: &[Option<TyArg>]| -> Ty {
             TyKind::Struct(

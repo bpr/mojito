@@ -511,6 +511,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A plain struct's static call that no candidate binds reports why, as
+  at the pin: `S.f[k]()` over `@staticmethod def f[n: Int]()` and a
+  run-time `k` reports "cannot use a dynamic value in a parameter list",
+  on a parametric struct's static too (`S[1].f[k]()`, or `S.f[k]()`
+  before `S`'s own parameters are inferred), and an overload set none of whose statics matches reports that no
+  overload matches, where both reported "'S' value has no attribute 'f'".
+  `SIMD[y, 1](3)` over a run-time `DType` reports the same dynamic-value
+  error, where it reported that `dtype` could not be inferred (R2067).
 - A module-scope `comptime` reads a type member through a static
   member's construction again: `comptime Through: Hooks = S.current().H`
   over a parametric `S` resolves `current` through `S`'s unbound generator,

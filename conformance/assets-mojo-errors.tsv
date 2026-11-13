@@ -1050,6 +1050,7 @@ assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;M
 assets/type_error/span_parameter_display_element_mismatch.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'mut'
 assets/type_error/span_ref_binding_register_passable.mojo	compile-reject	agree	error: value of type 'Span[Int, origin_of(values["element"])]' doesn't have a memory origin in 'ref' binding
 assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/static_method_dynamic_parameter.mojo	compile-reject	agree	error: invalid call to 'f': cannot use a dynamic value in a parameter list
 assets/type_error/staticmethod_instance_call_self.mojo	compile-reject	agree	error: invalid call to 'total': missing required argument: 'self'
 assets/type_error/static_origin_local.mojo	compile-reject	agree	error: invalid call to 'observe_static': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/static_pointer_alloc_removed.mojo	compile-reject	agree	error: 'Pointer[Int, _]' value has no attribute 'alloc'

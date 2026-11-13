@@ -347,7 +347,26 @@ impl Checker {
                 kwargs,
             ) {
                 Ok(bound) => bound,
-                Err(error) if single_candidate => return Err(error),
+                // The call's own parameter list binds first: a run-time
+                // value in it is the error, before the receiver's
+                // inference, as at the pin.
+                Err(error) if single_candidate => {
+                    return Err(
+                        match self.instantiate_method_generics(
+                            &format!("{sname}.{method}"),
+                            sig,
+                            &sig.params,
+                            sig.variadic.as_ref(),
+                            sig.kw_variadic.as_ref(),
+                            param_args,
+                            args,
+                            kwargs,
+                        ) {
+                            Err(dynamic @ TypeError::DynamicParameterValue) => dynamic,
+                            _ => error,
+                        },
+                    );
+                }
                 Err(_) => continue,
             };
             let tyargs = &bound.arguments;
@@ -368,26 +387,23 @@ impl Checker {
             // Self.n + 1]`) reads the receiver's argument, as a method
             // call's does.
             let at_receiver = self.method_decls_at_receiver(sig, info, tyargs);
-            let Ok((
-                params,
-                variadic,
-                kw_variadic,
-                method_subst,
-                method_arguments,
-                bracket_attributes,
-            )) = self.instantiate_method_generics(
-                &format!("{sname}.{method}"),
-                at_receiver.as_ref().unwrap_or(sig),
-                &receiver_params,
-                receiver_variadic.as_ref(),
-                receiver_kw_variadic.as_ref(),
-                param_args,
-                args,
-                kwargs,
-            )
-            else {
-                continue;
-            };
+            // The sole candidate's failed instantiation is the call's
+            // diagnostic, as at the pin.
+            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
+                match self.instantiate_method_generics(
+                    &format!("{sname}.{method}"),
+                    at_receiver.as_ref().unwrap_or(sig),
+                    &receiver_params,
+                    receiver_variadic.as_ref(),
+                    receiver_kw_variadic.as_ref(),
+                    param_args,
+                    args,
+                    kwargs,
+                ) {
+                    Ok(instantiation) => instantiation,
+                    Err(error) if single_candidate => return Err(error),
+                    Err(_) => continue,
+                };
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), tyargs)

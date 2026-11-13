@@ -484,30 +484,32 @@ impl Checker {
         let mut matches = Vec::new();
         let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
         let mut availability_failure = None;
+        // The sole static's failed instantiation is the call's diagnostic,
+        // as at the pin.
+        let mut rejection = None;
         // Preserve established overload diagnostics: a retained constraint
         // message replaces `NoMatch` only when this is the sole callable shape.
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
-            let Ok((
-                params,
-                variadic,
-                kw_variadic,
-                method_subst,
-                method_arguments,
-                bracket_attributes,
-            )) = self.instantiate_method_generics(
-                &format!("{sname}.{method}"),
-                sig,
-                &sig.params,
-                sig.variadic.as_ref(),
-                sig.kw_variadic.as_ref(),
-                param_args,
-                args,
-                kwargs,
-            )
-            else {
-                continue;
-            };
+            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
+                match self.instantiate_method_generics(
+                    &format!("{sname}.{method}"),
+                    sig,
+                    &sig.params,
+                    sig.variadic.as_ref(),
+                    sig.kw_variadic.as_ref(),
+                    param_args,
+                    args,
+                    kwargs,
+                ) {
+                    Ok(instantiation) => instantiation,
+                    Err(error) => {
+                        if single_candidate {
+                            rejection = Some(error);
+                        }
+                        continue;
+                    }
+                };
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), &[])
             {
@@ -660,7 +662,16 @@ impl Checker {
                 reason: message,
             });
         }
-        Ok(None)
+        // A name that also spells instance methods keeps the instance
+        // reading; an all-static overload set none of whose candidates
+        // binds rejects the call, as at the pin.
+        if signatures.iter().any(|sig| sig.has_self) {
+            return Ok(None);
+        }
+        Err(rejection.unwrap_or_else(|| TypeError::BadCall {
+            func: format!("{sname}.{method}"),
+            reason: "no overload matches the supplied arguments".to_string(),
+        }))
     }
 
     /// The arguments of the instance of the parametric struct `owner` a
