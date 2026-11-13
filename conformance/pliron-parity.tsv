@@ -520,6 +520,7 @@ assets/ok/implicit_conversion_in_application.mojo	main	exe-differential	sanitize
 assets/ok/implicit_conversion_own_parameters.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/implicit_copy_last_use_forwards.mojo	main	exe-differential	sanitized
+assets/ok/implicit_copy_var_receiver_owned_once.mojo	main	exe-differential	sanitized
 assets/ok/implicit_value_parameter_conversion.mojo	main	exe-differential	sanitized
 assets/ok/imported_alias_in_generic_method.mojo	main	exe-differential	sanitized
 assets/ok/index_list.mojo	main	exe-differential	sanitized

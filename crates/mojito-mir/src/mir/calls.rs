@@ -1644,6 +1644,9 @@ impl<'a> Flatten<'a> {
         receiver: Node<'a>,
         copied: bool,
     ) -> (Reg, Option<MirPlace>) {
+        let deinit = call.call_contract().is_some_and(|contract| {
+            contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Deinit)
+        });
         if copied
             && matches!(receiver.checked.op, CheckedOp::Identifier(_))
             && !receiver.is_fresh_temporary()
@@ -1662,16 +1665,16 @@ impl<'a> Flatten<'a> {
                 let ty = self.f.reg_types.get(&value.0).cloned();
                 return match ty {
                     Some(ty) if ty.kind().is_non_simd_struct() => {
-                        self.consumed_copy(receiver, value, ty)
+                        self.consumed_copy(receiver, value, ty, deinit)
                     }
                     _ => (value, None),
                 };
             }
-            return self.copy_consuming_receiver(receiver, value, None);
+            return self.copy_consuming_receiver(receiver, value, None, deinit);
         }
         let (value, place) = self.lower_method_receiver(call, receiver);
         if copied {
-            return self.copy_consuming_receiver(receiver, value, place.as_ref());
+            return self.copy_consuming_receiver(receiver, value, place.as_ref(), deinit);
         }
         // A register-passable receiver the method reads is passed by
         // value, as upstream passes a `read self` whose type is not

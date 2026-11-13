@@ -946,14 +946,21 @@ impl<'a> Flatten<'a> {
         self.call_expr(node, name)
     }
 
-    /// Walrus `name := value`, its name node `node`: bind the name's slot
+    /// Walrus `name := value`, its name node `target`: bind the name's slot
     /// and yield the value.
-    fn walrus(&mut self, value: Node<'a>, node: &CheckedExpr, name: &str) -> Reg {
+    fn walrus(&mut self, value: Node<'a>, target: &CheckedExpr, name: &str) -> Reg {
+        let location = value.location();
         let value = self.expr(value);
-        let var = self.var(&self.spelling(node, name));
+        let var = self.var(&self.spelling(target, name));
+        // The stored value takes the variable's type, as an assignment's
+        // does; the walrus still yields its right-hand side.
+        let stored = match self.var_types.get(&var).cloned() {
+            Some(var_ty) => self.materialize_register(value, &var_ty, location),
+            None => value,
+        };
         self.emit(MirInstr::DefVar {
             var,
-            src: value,
+            src: stored,
             binding_ty: None,
             in_place: false,
         });

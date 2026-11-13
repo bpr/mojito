@@ -1867,7 +1867,9 @@ fn lane_arithmetic_over_storages_is_the_vector_operator() {
                 context.op(op, &[v.clone(), w.clone()]).expect("vectors"),
             );
         }
-        let negated = context.op(ParamOp::Neg, &[x.clone()]).expect("a storage");
+        let negated = context
+            .op(ParamOp::Neg, std::slice::from_ref(&x))
+            .expect("a storage");
         assert_eq!(
             from_storage(&context, &negated, &v),
             context.neg(&v).expect("a vector")
@@ -1961,7 +1963,7 @@ fn bool_operators_canonicalize_in_both_bool_domains() {
     });
     for ([b, c, d], domain) in [
         (bools.clone(), BoolDomain::Bool),
-        (storages.clone(), BoolDomain::Storage),
+        (storages, BoolDomain::Storage),
     ] {
         let op = |op, operands: &[ParamExpr]| context.op(op, operands).expect("Bool operands");
         let truth = |value| context.bool_constant(domain, value).expect("a constant");
@@ -2023,7 +2025,7 @@ fn bool_storage_extract_and_create_are_inverse() {
         .expect("&");
     let inverted = context.not(&b).expect("not");
     let selected = context
-        .op(ParamOp::Cond, &[c.clone(), b.clone(), d.clone()])
+        .op(ParamOp::Cond, &[c.clone(), b.clone(), d])
         .expect("cond");
     let connective = context.infix(InfixOp::And, &b, &c).expect("and");
     for value in [&b, &and, &inverted, &selected, &connective] {

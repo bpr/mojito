@@ -997,7 +997,7 @@ assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: fu
 assets/type_error/simd_element_intable_struct.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_int_narrowing.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_element_list_generic_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/simd_element_list_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tag[SIMD(Int32(3), Int32(3), __list_literal__=NoneType(None))]' value to 'Tag[SIMD(Int32(3))]'
+assets/type_error/simd_element_list_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tag[SIMD(Int32(3), Int32(3), __list_literal__=NoneType(None))]' value to 'Tag[SIMD[.int32, 2](3)]'
 assets/type_error/simd_element_wider_float.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_fill_non_bool_mask.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed

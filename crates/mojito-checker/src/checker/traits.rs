@@ -2530,12 +2530,20 @@ impl Checker {
             CtValue::KgenTarget(_) => Some(TyKind::KgenTarget.into()),
             CtValue::PopArray { .. } => value.pop_array_type(),
             CtValue::Generator(generator) => Some(generator.ty()),
-            // A function symbol holds no signature: it has the callable
+            // A function symbol holds no signature: a bare one has the type
+            // of the function it names, so a slot's open binders solve from
+            // it (`map[inc]` binds `ResultType`), and any other the callable
             // type of the slot it binds.
-            CtValue::FuncSymbol(_) => {
-                matches!(self_ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-                    .then(|| self_ty.clone())
-            }
+            CtValue::FuncSymbol(function) => function
+                .is_bare()
+                .then(|| self.lookup(&function.symbol))
+                .flatten()
+                .filter(|ty| matches!(ty.kind(), TyKind::Func(_)))
+                .cloned()
+                .or_else(|| {
+                    matches!(self_ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                        .then(|| self_ty.clone())
+                }),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,
                 lanes.len() as i64,

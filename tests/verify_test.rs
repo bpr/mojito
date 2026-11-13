@@ -139,7 +139,7 @@ fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
 /// order.
 fn leaf_instructions_mut(block: &mut MirBlock) -> Vec<&mut MirInstr> {
     let mut leaves = Vec::new();
-    for instruction in block.instrs.iter_mut() {
+    for instruction in &mut block.instrs {
         if mojito::mir::instruction_regions(instruction).is_empty() {
             leaves.push(instruction);
         } else {
@@ -1364,6 +1364,7 @@ fn verifier_rejects_an_undeclared_lifted_closure_target() {
                 dest: Reg(0),
                 function: "missing$nested".to_string(),
                 captures: Vec::new(),
+                arguments: Vec::new(),
             }],
             MirTerm::Return(None),
         ),
@@ -1637,7 +1638,7 @@ fn verifier_checks_compile_time_arguments_under_the_call_and_receiver_arguments(
     );
 
     for (_, function) in &mut free.functions {
-        for instr in function.body.instrs.iter_mut() {
+        for instr in &mut function.body.instrs {
             if let MirInstr::Call {
                 func,
                 instantiated_args,
@@ -2997,15 +2998,15 @@ fn loop_region(body: MirBlock) -> MirInstr {
 }
 
 /// One block running `instrs` and ending in `term`, as a region.
-fn region(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+const fn region(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
     block(instrs, term)
 }
 
-fn yields(instrs: Vec<MirInstr>) -> MirBlock {
+const fn yields(instrs: Vec<MirInstr>) -> MirBlock {
     region(instrs, MirTerm::Yield(Vec::new()))
 }
 
-fn breaks(instrs: Vec<MirInstr>) -> MirBlock {
+const fn breaks(instrs: Vec<MirInstr>) -> MirBlock {
     region(
         instrs,
         MirTerm::Break {

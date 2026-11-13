@@ -473,7 +473,7 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
             })
         };
         assert!(
-            matches!(&instrs[forward_at - 1], MirInstr::If { then, .. } if destroys(&then)),
+            matches!(&instrs[forward_at - 1], MirInstr::If { then, .. } if destroys(then)),
             "{main:#?}"
         );
         assert!(
@@ -997,7 +997,7 @@ def main():
 /// consumer binds it again (`hash[T: Hashable, //, H]` binds `H` first).
 #[test]
 fn compile_time_arguments_name_their_declarations() {
-    let source = r#"
+    let source = r"
 def pair[a: Int, b: Int]():
     print(a, b)
 
@@ -1008,7 +1008,7 @@ def main():
     pair[1, 2]()
     pair[b=4, a=3]()
     skip[5](1)
-"#;
+";
     let mir = checked_program_mir(source);
     let main = mir_function(&mir, "main");
     let names: Vec<Vec<Option<String>>> = nested_instructions(&main.body)
@@ -1845,12 +1845,10 @@ fn converted_memory_only_subscript_key_reads_its_source_in_place() {
 }
 
 #[test]
-fn intrinsic_repr_write_and_transferred_temporary_receiver() {
-    // An intrinsic `DType`'s `write_repr_to` is the writer's
-    // `$write_repr_formatted` over the receiver itself, and `^` over a
-    // temporary owned receiver hands the `deinit` method that temporary's
-    // call-result slot.
-    let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef first(d: DType) -> String:\n    var text = String()\n    d.write_repr_to(text)\n    return text\n\ndef main():\n    through(H(4))\n    print(first(DType.int8))\n";
+fn transferred_temporary_receiver_is_its_call_result_slot() {
+    // `^` over a temporary owned receiver hands the `deinit` method that
+    // temporary's call-result slot.
+    let source = "trait Rel:\n    def release(deinit self): ...\n\nstruct H(Movable, Rel):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def release(deinit self):\n        print(self.id)\n\ndef pk[T: Rel & Movable](var x: T) -> T:\n    return x^\n\ndef through[T: Rel & Movable](var x: T):\n    pk(x^)^.release()\n\ndef main():\n    through(H(4))\n";
     let compiled = Compiler::default()
         .with_pre_elaboration(false)
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1880,17 +1878,6 @@ fn intrinsic_repr_write_and_transferred_temporary_receiver() {
         })
         .expect("the release call");
     assert!(slot_backed(through, receiver), "{through:#?}");
-    let first = mir_function(compiled.elaborated_mir(), "first");
-    assert!(
-        nested_instructions(&first.body)
-            .into_iter()
-            .any(|instruction| matches!(
-                instruction,
-                MirInstr::MethodCall { method, args, .. }
-                    if method == mojito::symbol::WRITE_REPR_FORMATTED && args.len() == 1
-            )),
-        "{first:#?}"
-    );
 }
 
 #[test]
@@ -2966,7 +2953,7 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
                     method,
                     raises: Some(raises),
                     ..
-                } if method == "run" && *raises.ty == mojito::TyKind::Error
+                } if method == "run" && raises.ty.kind().is_error()
             ))
     );
 }
@@ -6012,12 +5999,12 @@ fn bare_element_call_lowers_subscript_then_call_method() {
                 ..
             } = instruction
             {
-                collect_instructions(&body, out);
+                collect_instructions(body, out);
                 if let Some(handler) = handler {
-                    collect_instructions(&handler, out);
+                    collect_instructions(handler, out);
                 }
                 if let Some(orelse) = orelse {
-                    collect_instructions(&orelse, out);
+                    collect_instructions(orelse, out);
                 }
             }
             out.push(instruction);

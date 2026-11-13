@@ -3528,10 +3528,10 @@ fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
     // the call makes each the value expression it is.
     let arguments = |source: &str| {
         let expression = parse_expr(source);
-        expression
-            .bracket_application()
-            .map(|(_, args)| args.into_owned())
-            .unwrap_or_else(|| panic!("expected a bracket application, got {expression:?}"))
+        expression.bracket_application().map_or_else(
+            || panic!("expected a bracket application, got {expression:?}"),
+            |(_, args)| args.into_owned(),
+        )
     };
     let on_self = arguments("SIMD[DType.int32, Self.width()]");
     assert!(

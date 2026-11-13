@@ -3580,19 +3580,21 @@ impl<'a> Flatten<'a> {
         Some(dest)
     }
 
-    /// A `deinit self` call whose receiver the checker satisfied by implicit
-    /// copy: an `ImplicitlyCopyable` nominal receiver runs its copy lifecycle
-    /// (`__init__(copy:)`) into a fresh temporary the callee consumes, so the
-    /// original place keeps its own storage and its ordinary drop. A copy
-    /// owning droppable storage lives in a call-result slot whose place the
-    /// call consumes, as upstream passes the copy's temporary as the
-    /// `DeinitMem` operand. Scalars and other non-nominal values copy by
-    /// plain read.
+    /// A `var self` or `deinit self` call whose receiver the checker
+    /// satisfied by implicit copy: an `ImplicitlyCopyable` nominal receiver
+    /// runs its copy lifecycle (`__init__(copy:)`) into a fresh temporary the
+    /// callee consumes, so the original place keeps its own storage and its
+    /// ordinary drop. Under `deinit`, a copy owning droppable storage lives
+    /// in a call-result slot whose place the call consumes, as upstream
+    /// passes the copy's temporary as the `DeinitMem` operand
+    /// ([`Self::consumed_copy`]). Scalars and other non-nominal values copy
+    /// by plain read.
     fn copy_consuming_receiver(
         &mut self,
         receiver: Node<'a>,
         recv: Reg,
         recv_place: Option<&MirPlace>,
+        deinit: bool,
     ) -> (Reg, Option<MirPlace>) {
         // The copy has its source's exact type — the receiver place's when
         // the register is a place read (the verifier types that register
@@ -3615,22 +3617,25 @@ impl<'a> Flatten<'a> {
                     value: recv,
                     constructor: None,
                 });
-                self.consumed_copy(receiver, copied, ty)
+                self.consumed_copy(receiver, copied, ty, deinit)
             }
             _ => (recv, None),
         }
     }
 
-    /// `copied`, a fresh copy of type `ty` a `deinit` receiver consumes, in
-    /// a call-result slot of its own with the slot's place when it owns
-    /// droppable storage, else in its register.
+    /// `copied`, a fresh copy of type `ty` a consuming receiver takes. A
+    /// `deinit` receiver's copy owning droppable storage is in a call-result
+    /// slot of its own, with the slot's place, which the call consumes; any
+    /// other stays in its register, which a `var` receiver takes as an owned
+    /// argument does, so no slot outlives the call to be destroyed again.
     fn consumed_copy(
         &mut self,
         receiver: Node<'a>,
         copied: Reg,
         ty: Ty,
+        deinit: bool,
     ) -> (Reg, Option<MirPlace>) {
-        if !calls::owns_droppable_storage(&ty) {
+        if !deinit || !calls::owns_droppable_storage(&ty) {
             return (copied, None);
         }
         let slot = self.call_result_slot(copied, ty, true);

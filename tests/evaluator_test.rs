@@ -1083,7 +1083,8 @@ fn reraise_with_transfer_sigil() {
 #[test]
 fn uncaught_raise_is_a_runtime_error() {
     let err = run_err("def main() raises:\n    raise \"unhandled\"\n");
-    assert_eq!(err, RuntimeError::Raised(Value::Error("unhandled".into())));
+    assert!(matches!(err, RuntimeError::Raised(_)), "{err:?}");
+    assert_eq!(err.to_string(), "unhandled error: unhandled");
 }
 
 #[test]
@@ -1091,7 +1092,8 @@ fn uncaught_raise_propagates_across_a_call() {
     let err = run_err(
         "def f() raises -> Int:\n    raise \"from f\"\n    return 0\n\ndef main() raises:\n    var z: Int = f()\n",
     );
-    assert_eq!(err, RuntimeError::Raised(Value::Error("from f".into())));
+    assert!(matches!(err, RuntimeError::Raised(_)), "{err:?}");
+    assert_eq!(err.to_string(), "unhandled error: from f");
 }
 
 // --- print ---

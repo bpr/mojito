@@ -28,4 +28,4 @@ def f[n: Int]():
 
 def main():
     f[2]()
-    f[3]()
+    f[4]()

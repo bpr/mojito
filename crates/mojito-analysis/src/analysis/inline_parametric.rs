@@ -4328,7 +4328,8 @@ fn fold_bound_calls(block: &mut MirBlock, function: &MirFunction) {
 /// Give each indirect call of `block` whose callee the substitution made a
 /// generic callable the callee's own compile-time parameter declarations:
 /// a call through a callable binder named the contract's, which the
-/// call's arguments bind by position as they bind the callee's.
+/// call's arguments bind by position as they bind the callee's, so each
+/// argument takes the name of the callee's declaration at its position.
 fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
     for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
@@ -4337,12 +4338,21 @@ fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
         if let MirInstr::CallIndirect {
             callee,
             param_decls,
+            param_arg_regs,
             ..
         } = instruction
             && let Some(TyKind::GenericFunc(generic)) =
                 function.reg_types.get(&callee.0).map(Ty::kind)
             && generic.decls.len() == param_decls.len()
         {
+            for argument in param_arg_regs.iter_mut() {
+                if let Some(position) = argument.declaration_index(param_decls) {
+                    argument.name = Some(
+                        mojito_ast::call::CompileTimeParam::keyword(&generic.decls[position])
+                            .to_string(),
+                    );
+                }
+            }
             param_decls.clone_from(&generic.decls);
         }
     }

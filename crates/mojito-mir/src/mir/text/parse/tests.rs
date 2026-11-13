@@ -4415,11 +4415,7 @@ fn int_of_index_round_trips_and_upgrades_an_int_typed_cast() {
     let context = ParamContext::detached();
     let i = context.decl_ref(ParamId::new("f", 0), "i", MetaTy::value(Ty::index()));
     let created = context.int_of_index(&i).expect("an index is an Int");
-    let ty: Ty = TyKind::Struct(
-        "Buf".into(),
-        vec![TyArg::Val(CtValue::Expr(created.clone()))],
-    )
-    .into();
+    let ty: Ty = TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(created))]).into();
     let program = program_with(vec![(
         "main".into(),
         function_with(vec![ty.clone()], Vec::new()),
@@ -4525,8 +4521,7 @@ fn a_bare_string_literal_register_type_reads_from_its_const_before_1_174() {
         Some(&Ty::string_literal_of("ab"))
     );
     let error = artifact(bare.as_bytes(), "unit.mir".to_string())
-        .err()
-        .expect("a bare string literal type is rejected at the current minor");
+        .expect_err("a bare string literal type is rejected at the current minor");
     assert!(
         error.diagnostics.iter().any(|diagnostic| diagnostic
             .message
@@ -4564,8 +4559,7 @@ fn a_bare_literal_register_type_reads_from_its_const_before_1_172() {
         Some(&Ty::int_literal_of(&7.into()))
     );
     let error = artifact(bare.as_bytes(), "unit.mir".to_string())
-        .err()
-        .expect("a bare literal type is rejected at the current minor");
+        .expect_err("a bare literal type is rejected at the current minor");
     assert!(
         error.diagnostics.iter().any(|diagnostic| diagnostic
             .message

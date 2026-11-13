@@ -31,12 +31,12 @@ fn instructions(block: &MirBlock) -> Vec<&MirInstr> {
             ..
         } = instruction
         {
-            result.extend(instructions(&body));
+            result.extend(instructions(body));
             if let Some(blocks) = handler {
-                result.extend(instructions(&blocks));
+                result.extend(instructions(blocks));
             }
             if let Some(blocks) = orelse {
-                result.extend(instructions(&blocks));
+                result.extend(instructions(blocks));
             }
         } else {
             result.push(instruction);

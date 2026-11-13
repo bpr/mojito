@@ -2015,7 +2015,7 @@ mod tests {
         }
         functions.sort_by(|left, right| left.lowered_name.cmp(&right.lowered_name));
         let info = StructInfo {
-            decls: Vec::new(),
+            params: Vec::new(),
             source_params: Vec::new(),
             module: String::new(),
             conforms: Vec::new(),
