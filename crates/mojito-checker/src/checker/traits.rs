@@ -371,6 +371,12 @@ impl Checker {
                     (requirement, clauses)
                 }
             };
+            if let CtMemberReq::Value(declared) = &requirement
+                && member.params.is_empty()
+                && let Some(default) = &member.default
+            {
+                self.check_requirement_default(&member.name, default, declared)?;
+            }
             if !constraints.is_empty()
                 && let Some(previous) =
                     ct_constraints.insert(member.name.clone(), constraints.clone())

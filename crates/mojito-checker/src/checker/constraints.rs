@@ -367,27 +367,15 @@ impl Checker {
                 if member.params.is_empty() {
                     // A call is the application of its callee over the
                     // struct's parameters, which each instance evaluates.
-                    // A value of another type converts to the declared one
-                    // (`comptime f: OptionalReg[Int] = None`).
                     let _lifting = self.lifting_position();
                     let mut value = self.eval_associated_ct(&member.value)?;
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
-                        if let CtValue::Type(ty) = &value
-                            && let Some(mismatch) = self.type_value_mismatch(ty.clone(), declared)
-                        {
-                            return Err(mismatch);
-                        }
-                        self.check_raw_list_member(&member.name, &value, declared)?;
-                        if let Some(converted) = self
-                            .param_context
-                            .constant(value.clone())
-                            .ok()
-                            .and_then(|compiled| {
-                                self.converted_parameter_value(&member.value, &compiled, declared)
-                            })
-                        {
-                            value = converted.into_value();
-                        }
+                        value = self.declared_member_value(
+                            &member.name,
+                            &member.value,
+                            value,
+                            declared,
+                        )?;
                     }
                     return Ok::<_, TypeError>((Some(value), None));
                 }
@@ -642,6 +630,65 @@ impl Checker {
         Ok(Some((generator_params, body)))
     }
 
+    /// The value of a `comptime` member whose body `body` evaluated to
+    /// `value`, at its declared value type: a value of another type
+    /// converts to the declared one (`comptime f: OptionalReg[Int] =
+    /// None`), and one that neither has nor converts to it is rejected, as
+    /// at the pin's declaration (`comptime N: Int = True`: "cannot
+    /// implicitly convert 'Bool' value to 'Int'").
+    fn declared_member_value(
+        &self,
+        member: &str,
+        body: &Expr,
+        value: CtValue,
+        declared: &Ty,
+    ) -> Result<CtValue, TypeError> {
+        if let CtValue::Type(ty) = &value
+            && let Some(mismatch) = self.type_value_mismatch(ty.clone(), declared)
+        {
+            return Err(mismatch);
+        }
+        self.check_raw_list_member(member, &value, declared)?;
+        let Ok(compiled) = self.param_context.constant(value.clone()) else {
+            return Ok(value);
+        };
+        if let Some(converted) = self.converted_parameter_value(body, &compiled, declared) {
+            return Ok(converted.into_value());
+        }
+        let Some(found) = compiled.meta().as_value() else {
+            return Ok(value);
+        };
+        // A raw list is `check_raw_list_member`'s; a compile-time string
+        // is the `String` it materializes to.
+        let accepted = matches!(found.kind(), TyKind::ParamList(_))
+            || matches!(declared.kind(), TyKind::ParamList(_))
+            || coerces(found, declared)
+            || mojito_types::types::is_nominal_string(declared)
+                && matches!(compiled.as_constant(), Some(CtValue::Str(_)));
+        if !accepted {
+            return Err(TypeError::TypeMismatch {
+                expected: declared.to_string(),
+                found: found.to_string(),
+                context: format!("comptime member '{member}'"),
+            });
+        }
+        // A literal at a sized scalar type is that scalar's value
+        // (`comptime F: Float64 = 2` is `2.0`); `Int` and `UInt` keep
+        // their host form.
+        let sized_scalar = !declared.kind().is_int() && !declared.kind().is_uint();
+        Ok(mojito_types::types::scalar_simd_dtype(declared.kind())
+            .filter(|_| {
+                sized_scalar && matches!(value, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))
+            })
+            .and_then(|dtype| {
+                Some(CtValue::Simd {
+                    dtype,
+                    lanes: vec![mojito_types::ct::CtLane::from_value(&value, dtype)?],
+                })
+            })
+            .unwrap_or(value))
+    }
+
     /// A raw-list member's body converts to its declared list
     /// (`comptime _types: KGENParamListType[Copyable] = Self.Ts.values`
     /// over `*Ts: AnyType` does not), as at the pin's declaration.
@@ -667,6 +714,25 @@ impl Checker {
             from: actual.to_string(),
             to: declared.to_string(),
         })
+    }
+
+    /// A trait requirement's default converts to its declared value type
+    /// at the trait, as the pin checks it there (`comptime K: Int = "x"`
+    /// is rejected before any conformer takes it). A default that reads
+    /// `Self` does not evaluate here and is checked at each conformer that
+    /// takes it ([`Self::check_struct_associated`]).
+    pub(super) fn check_requirement_default(
+        &self,
+        member: &str,
+        default: &Expr,
+        declared: &Ty,
+    ) -> Result<(), TypeError> {
+        let _lifting = self.lifting_position();
+        let Ok(value) = self.eval_associated_ct(default) else {
+            return Ok(());
+        };
+        self.declared_member_value(member, default, value, declared)
+            .map(drop)
     }
 
     /// The defaulted `comptime` requirements `trait_name` and its parents

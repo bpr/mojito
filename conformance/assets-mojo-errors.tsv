@@ -1073,6 +1073,8 @@ assets/type_error/string_span_return_temporary.mojo	compile-reject	agree	error: 
 assets/type_error/struct_binder_origin_store_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'RefBox[origin_of(other)]' value to 'RefBox[origin]'
 assets/type_error/struct_callable_parameter_identity.mojo	compile-reject	agree	error: invalid call to 'take': value passed to 's' cannot be converted from 'S[comptime #kgen.func.symbol<@struct_callable_parameter_identity::@"eight()">]' to 'S[comptime #kgen.func.symbol<@struct_callable_parameter_identity::@"seven()">]'
 assets/type_error/struct_callable_parameter_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'f'; use 'Self.f' instead
+assets/type_error/struct_comptime_member_index_annotation.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
+assets/type_error/struct_comptime_member_value_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
 assets/type_error/struct_construction_field_unfolded.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, Extent(n, Int(1)).rows]' value to 'SIMD[.int8, n]'
 assets/type_error/struct_construction_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(n, (n + Int(1)))]' value to 'Tagged[Extent((n + Int(1)), n)]'
 assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'
@@ -1101,6 +1103,7 @@ assets/type_error/trait_bound_pack_element.mojo	compile-reject	agree	error: inva
 assets/type_error/trait_bound_type_argument.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'T' has 'Copyable' type, but value has type 'AnyStruct[NC]'
 assets/type_error/trait_comptime_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'AnyTrait[Movable]' value to 'AnyTrait[Copyable]' in comptime initializer
 assets/type_error/trait_comptime_annotation_widens.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
+assets/type_error/trait_comptime_default_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["x"]' value to 'Int'
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/trait_comptime_non_trait_operand.mojo	compile-reject	agree	error: 'AnyTrait[Copyable]' does not implement the '__and__' method
 assets/type_error/trait_default_checked_without_conformer.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'

@@ -532,6 +532,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's annotated `comptime` member checks its body against its
+  annotation, and so does a trait requirement's default, as at the pin:
+  `comptime N: Int = True`, `comptime K: Int = "x"` in a trait, and an
+  `index` attribute under `Int` are rejected at the declaration, where
+  Mojito accepted them or failed at a later read. A literal at a sized
+  scalar annotation is that scalar's value, so `comptime F: Float64 = 2`
+  reads as `2.0` rather than as an `Int` (R1195).
 - A struct application's type member compares as a compile-time type
   operand, as at the pin: `comptime b = S[Int].A == Int` and
   `materialize[V[Int, Bool].A == Int]()` print `True`, where they once

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2170**.
+Next free ID: **R2171**.
 
 ## Ordered Work
 
@@ -5397,29 +5397,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1195 A struct `comptime` member's body is not checked against its
-  annotation**
+- [ ] **R2170 A trait `comptime` default that reads `Self` is not checked
+  at the trait**
 
-  Problem: `comptime N: Int = True` in a struct prints `True` for `S.N`,
-  where the pin rejects it with "cannot implicitly convert 'Bool' value to
-  'Int'".
-  - `check_struct_associated` (`checker/constraints.rs`) evaluates the
-    body and keeps the annotation as the member's type
-    (`StructInfo::associated_value_types`).
-  - It checks only a raw-list body against its annotation
-    (`check_raw_list_member`).
-  - R485 is the local `comptime` sibling, in `checker/statements.rs`.
-  - Probe: a trait requirement's default, `comptime K: Int = "x"`, is
-    accepted at the trait, where the pin rejects it there with "cannot
-    implicitly convert 'StringLiteral["x"]' value to 'Int'"; a conformer
-    taking it fails later with "comptime member 'K' does not match the
-    requirement".
-  - Probe: an `index` body under an `Int` annotation, `comptime n: Int =
-    __mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`, is accepted
-    and fails later at `print(L[Ts.values].n)` (not `Writable`), where the
-    pin rejects the member with "cannot implicitly convert
-    '__mlir_type.index' value to 'Int'".
-  - Found while landing R1184 (2026-10-20).
+  Problem: `comptime K: Int = Self.A > 0` beside `comptime A: Int` in a
+  trait no struct conforms to is accepted, where the pin rejects the trait
+  with "cannot implicitly convert 'Bool' value to 'Int'".
+  - `check_requirement_default` (`checker/constraints.rs`) checks a
+    default at the trait only when it evaluates there.
+  - A default reading `Self` evaluates only at a conformer, through
+    `check_struct_associated`, which rejects it there.
+  - Upstream types the default with `Self` as the trait's archetype, whose
+    members are the requirements' declared types.
+  - The lever: type the default's body over `trait_self_comptime`'s
+    requirements rather than evaluating it.
+  - Found while landing R1195 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

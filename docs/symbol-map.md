@@ -2900,8 +2900,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Box[T.K]`). Bracket binding (`resolve_param_arg`,
   `param_arg_value_ty`) types a member argument by it, so a raw-list
   member solves `TypeList`'s infer-only `Trait`, and
-  `check_struct_associated` rejects a raw-list body its annotation does
-  not convert (`check_raw_list_member`). A raw-list member read through a
+  `check_struct_associated` checks a body against its value annotation
+  (`declared_member_value`: a raw-list body through
+  `check_raw_list_member`, any other converting or rejected as at the
+  pin), and `check_trait` checks a requirement's default that evaluates
+  at the trait the same way (`check_requirement_default`). A raw-list member read through a
   bound has a length (`ParamContext::list_length`), which
   `Specializer::resolve_application` answers per instance in a
   `comptime if`. A requirement's default (`comptime K: Int = 3`,
