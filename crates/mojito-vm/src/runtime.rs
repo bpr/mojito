@@ -88,6 +88,13 @@ pub enum Value {
     /// use-after-move surfaces as a loud runtime error (a defensive check — the
     /// ownership analysis already rejects it statically), and a no-op to drop.
     Moved,
+    /// Upstream's `undef`: the value a take moves out of never-written raw
+    /// storage (`unsafe_uninit_length` slots). It may be moved, stored, and
+    /// dropped (a no-op), and a store of it back into raw storage leaves that
+    /// slot never written, but reading it, directly or through a reference,
+    /// traps. It never sits in a heap slot, which holds [`Self::Moved`] plus
+    /// its never-written mark instead.
+    Undef,
     /// Inline possibly-uninitialized storage (`MaybeUninit`'s field):
     /// `None` is uninitialized, `Some` holds the raw payload. Dropping one is
     /// a no-op regardless of contents — the payload leaks by design, matching
@@ -270,6 +277,7 @@ impl fmt::Display for Value {
             }
             Self::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
             Self::Moved => write!(f, "<moved>"),
+            Self::Undef => write!(f, "<undef>"),
             Self::UninitStorage(None) => write!(f, "<uninit>"),
             Self::UninitStorage(Some(value)) => write!(f, "<uninit-storage {value}>"),
             Self::ComptimeList(items) => {
@@ -382,6 +390,7 @@ pub fn type_name(value: &Value) -> String {
         Value::Pointer { .. } => "Pointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
+        Value::Undef => "<undef>".to_string(),
         Value::UninitStorage(_) => "__UninitStorage".to_string(),
         Value::ComptimeList(_) => "<comptime-list>".to_string(),
         Value::Tuple(items) => {

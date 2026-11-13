@@ -609,7 +609,7 @@ pub(super) fn holds_unboxed(prog: &Prog, value: &Value, ty: Option<&Ty>) -> bool
         return false;
     };
     match value {
-        Value::Moved | Value::None | Value::UninitStorage(_) => false,
+        Value::Moved | Value::Undef | Value::None | Value::UninitStorage(_) => false,
         Value::Struct { name: held, .. } => {
             mojito_types::types::struct_template(held) != mojito_types::types::struct_template(name)
         }
@@ -624,7 +624,12 @@ pub(super) fn holds_unboxed(prog: &Prog, value: &Value, ty: Option<&Ty>) -> bool
 /// is returned as it is.
 pub(super) fn static_struct_value(prog: &Prog, value: Value, ty: Option<&Ty>) -> Value {
     match ty {
-        Some(ty) if !matches!(value, Value::Moved | Value::None | Value::UninitStorage(_)) => {
+        Some(ty)
+            if !matches!(
+                value,
+                Value::Moved | Value::Undef | Value::None | Value::UninitStorage(_)
+            ) =>
+        {
             prog.boxed(erased_instance_value(prog, value, ty), Some(ty))
         }
         _ => value,

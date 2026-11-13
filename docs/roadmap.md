@@ -9351,19 +9351,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2165 Taking a never-written `unsafe_alloc` slot yields `0` on
-  the VM instead of trapping**
-
-  Taking the value out of a never-written `unsafe_alloc[Int]` slot and
-  printing it prints `0`, where the VM used to trap with its uninitialized
-  storage error.
-  - The `vm_test` test
-    `unsafe_uninit_length_slots_are_never_written_until_stored` pins it.
-  - Not bisected.
-  - Found by the 2026-11-13 overnight gate.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.

@@ -120,7 +120,7 @@ accessed; the compact notation omits this analysis-only field.
 | `place.store` | `Store` | Write a value through a place |
 | `place.store_ref` | `StoreRef` | Initialize reference-valued storage with an existing handle |
 | `place.move` | `MovePlace` | Move a value out of a place |
-| `pointer.take` | `PointerStorageTake` | Move an initialized element out of private pointer storage |
+| `pointer.take` | `PointerStorageTake` | Move an initialized element out of private pointer storage; a never-written slot yields `Value::Undef`, whose read traps |
 | `pointer.destroy` | `PointerStorageDestroy` | Destroy an initialized element in private pointer storage |
 
 ### Aggregate construction

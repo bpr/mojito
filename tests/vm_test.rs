@@ -2064,8 +2064,9 @@ fn bare_element_call_raising_getter_propagates_through_try() {
 #[test]
 fn unsafe_uninit_length_slots_are_never_written_until_stored() {
     // A never-written slot in `[0, size)`: reading traps, destroying is a
-    // no-op (an unwritten list drops cleanly), a take yields a tombstone that
-    // traps at its first variable use, and a taken slot still traps.
+    // no-op (an unwritten list drops cleanly), a take yields upstream's
+    // `undef`, which traps where it is read (here through `print`'s argument
+    // reference), and a taken slot still traps.
     let read =
         run("def main():\n    var xs = List[Int](unsafe_uninit_length=2)\n    print(xs[0])\n")
             .unwrap_err();
@@ -2089,7 +2090,10 @@ fn unsafe_uninit_length_slots_are_never_written_until_stored() {
         "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    var x = p.unsafe_take_pointee()\n    print(x)\n",
     )
     .unwrap_err();
-    assert!(escaped.contains("after it was moved"), "{escaped}");
+    assert!(
+        escaped.contains("read of an uninitialized value taken from Pointer storage"),
+        "{escaped}"
+    );
 }
 
 /// A member read on a receiver reached through a *reborrowed* `ref` field

@@ -289,18 +289,21 @@ impl VmBackend {
     }
 
     /// Every heap-slot store: the one place the never-written mark is kept
-    /// in step with the slot. Storing the tombstone itself (a container's
-    /// reallocation forwarding a never-written slot) re-marks the slot.
+    /// in step with the slot. Storing [`Value::Undef`] or the tombstone (a
+    /// container's reallocation forwarding a never-written slot) re-marks
+    /// the slot.
     fn heap_store(&mut self, region: usize, slot: usize, value: Value) {
-        self.heap[region].never_written[slot] = matches!(value, Value::Moved);
-        self.heap[region].slots[slot] = value;
+        let never_written = matches!(value, Value::Moved | Value::Undef);
+        self.heap[region].never_written[slot] = never_written;
+        self.heap[region].slots[slot] = if never_written { Value::Moved } else { value };
     }
 
     /// Move one initialized raw-storage value out, leaving an uninitialized
     /// tombstone. This intentionally bypasses `__moveinit__`: ownership of the
     /// existing value is transferred rather than constructing another value.
-    /// A never-written slot yields the tombstone (so `_realloc` forwards the
-    /// state to the new storage) and becomes a taken slot.
+    /// A never-written slot yields [`Value::Undef`] (so `_realloc` forwards
+    /// the state to the new storage, and a read of the taken value traps)
+    /// and becomes a taken slot.
     fn heap_take(
         &mut self,
         allocation: u64,
@@ -309,7 +312,7 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
-            return Ok(Value::Moved);
+            return Ok(Value::Undef);
         }
         let value = std::mem::replace(&mut self.heap[region].slots[slot], Value::Moved);
         if matches!(value, Value::Moved) {
@@ -1519,6 +1522,14 @@ fn caller_handle_place<'a>(
 /// A `mut`/`ref` parameter whose argument retained no caller place.
 struct MissingCallerPlace;
 
+/// The trap of reading [`Value::Undef`], the value a take moved out of
+/// never-written raw storage.
+fn undef_read() -> RuntimeError {
+    RuntimeError::TypeError(
+        "vm: read of an uninitialized value taken from Pointer storage".to_string(),
+    )
+}
+
 #[derive(Default)]
 struct HeapAllocation {
     slots: Vec<Value>,
@@ -2171,8 +2182,8 @@ mod pointer_storage_tests {
         let Value::Pointer { allocation, offset } = vm.heap_alloc(2, 8).expect("allocation") else {
             panic!("allocation did not return a pointer");
         };
-        // Never written: a read traps, a destroy is a no-op, a take yields the
-        // tombstone once and leaves a taken slot that traps thereafter.
+        // Never written: a read traps, a destroy is a no-op, a take yields
+        // `Undef` once and leaves a taken slot that traps thereafter.
         assert!(vm.heap_read(allocation, offset, 0).is_err());
         vm.heap_destroy(&empty_program(), allocation, offset, 0, None, None)
             .expect("destroying a never-written slot is a no-op");
@@ -2182,13 +2193,13 @@ mod pointer_storage_tests {
         );
         assert!(matches!(
             vm.heap_take(allocation, offset, 1)
-                .expect("take forwards the tombstone"),
-            Value::Moved
+                .expect("take forwards the never-written state"),
+            Value::Undef
         ));
         assert!(vm.heap_take(allocation, offset, 1).is_err());
-        // Storing the tombstone re-marks the slot; storing a value clears it.
+        // Storing `Undef` re-marks the slot; storing a value clears it.
         let (region, slot) = vm.heap_index(allocation, offset, 1).expect("slot");
-        vm.heap_store(region, slot, Value::Moved);
+        vm.heap_store(region, slot, Value::Undef);
         vm.heap_destroy(&empty_program(), allocation, offset, 1, None, None)
             .expect("a forwarded never-written slot destroys as a no-op");
         vm.heap_store(region, slot, Value::Int(3));

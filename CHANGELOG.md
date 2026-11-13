@@ -511,6 +511,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value taken out of never-written raw storage (an `unsafe_alloc` or
+  `List(unsafe_uninit_length=n)` slot) is upstream's `undef` on the VM, and
+  reading it traps, directly, through a reference, or by a field read,
+  where `print` of it printed `0` once `print` read its arguments through
+  references (R2165).
 - An out-of-range element subscript of an `Array`, a `List`, or a `Span`
   aborts with the pin's "index 2 is out of bounds, valid range is 0 to 1",
   where `[1, 2][i]` reported "vm: Pointer access out of bounds" and the

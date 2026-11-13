@@ -34,7 +34,7 @@ fixture assets/ok/float16_semantics.mojo
 fixture assets/ok/indexer_normalization.mojo
 # R2157: test evaluator_test power_and_true_division
 # R2164: test comptime_test a_type_member_is_read_through_a_module_alias_and_a_construction
-# R2165: test vm_test unsafe_uninit_length_slots_are_never_written_until_stored
+test vm_test unsafe_uninit_length_slots_are_never_written_until_stored
 
 # Gate failures (2026-11-13 overnight run)
 fixture assets/ok/std_iter_map.mojo

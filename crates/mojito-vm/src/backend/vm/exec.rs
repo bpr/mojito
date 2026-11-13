@@ -632,6 +632,9 @@ impl VmBackend {
                         "vm: use of variable slot {slot} after it was moved"
                     )));
                 }
+                if matches!(value, Value::Undef) && !mode.moves() {
+                    return Err(undef_read());
+                }
                 regs[dest.0 as usize] = value;
             }
             MirInstr::DefVar { var, src, .. } if prog.error_slots[function].contains(var) => {
@@ -1231,6 +1234,9 @@ impl VmBackend {
             MirInstr::GetField { dest, base, field } => {
                 let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
                 let base = regs[base.0 as usize].clone();
+                if matches!(base, Value::Undef) {
+                    return Err(undef_read());
+                }
                 // A held struct's field is the struct's value.
                 if prog.field_is_whole(base_ty) {
                     regs[dest.0 as usize] = prog.unboxed(base, base_ty);

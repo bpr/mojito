@@ -308,12 +308,14 @@ impl VmBackend {
         } = reference
             && *frame == current.0
         {
-            return self.read_reference_projection(
-                current,
-                current_variables,
-                &current_variables[*slot],
-                projection,
-            );
+            return self
+                .read_reference_projection(
+                    current,
+                    current_variables,
+                    &current_variables[*slot],
+                    projection,
+                )
+                .and_then(defined);
         }
         let Value::Ref {
             frame,
@@ -329,6 +331,7 @@ impl VmBackend {
             RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"))
         })?;
         self.read_reference_projection(current, current_variables, root, projection)
+            .and_then(defined)
     }
 
     pub(super) fn write_reference(
@@ -959,5 +962,14 @@ fn list_storage_pointer(fields: &[(String, Value)]) -> Result<(u64, i64), Runtim
         _ => Err(RuntimeError::TypeError(
             "self-hosted List has no pointer storage".into(),
         )),
+    }
+}
+
+/// `value`, read through a reference, unless it is [`Value::Undef`], whose
+/// read traps.
+fn defined(value: Value) -> Result<Value, RuntimeError> {
+    match value {
+        Value::Undef => Err(undef_read()),
+        value => Ok(value),
     }
 }
