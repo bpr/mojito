@@ -5477,19 +5477,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1199 A trait method's signature cannot read a struct's value
-  member**
-
-  Problem: `def get(self, x: Q[P[Int, Bool].n]) -> Int: ...` in a trait
-  fails with "not a compile-time Int constant: unsupported associated
-  comptime member access", where the pin compiles it.
-  - The same annotation in a struct method or a `def` runs.
-  - The trait's abstract signature evaluates its bracket values without
-    the struct table the other signature paths consult.
-  - Found while landing R1185 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1174 A parameter typed by an imported package struct's
   `!kgen.type` alias is a value parameter**
 

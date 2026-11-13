@@ -4794,8 +4794,10 @@ impl Checker {
 /// Whether `error` is a declaration reading a struct member or constructing
 /// a struct whose members or method signatures have not registered yet.
 fn awaits_struct_declarations(error: &TypeError) -> bool {
-    matches!(error, TypeError::NoSuchAssociatedType { .. })
-        || matches!(error, TypeError::BadCall { reason, .. }
+    matches!(
+        error,
+        TypeError::NoSuchAssociatedType { .. } | TypeError::NoTypeAttribute { .. }
+    ) || matches!(error, TypeError::BadCall { reason, .. }
             if reason == "no '__init__' overload takes no arguments")
 }
 

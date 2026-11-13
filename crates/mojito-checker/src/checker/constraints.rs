@@ -3318,9 +3318,13 @@ impl Checker {
                     func: function.to_string(),
                     reason: "cannot call raising function in type parameter".to_string(),
                 },
-                (None, ExprKind::Member { .. }) => TypeError::NotComptime(
-                    "unsupported associated comptime member access".to_string(),
-                ),
+                (None, ExprKind::Member { object, field }) => self
+                    .undeclared_struct_member(object, field)
+                    .unwrap_or_else(|| {
+                        TypeError::NotComptime(
+                            "unsupported associated comptime member access".to_string(),
+                        )
+                    }),
                 (None, ExprKind::Index { object, .. })
                     if let ExprKind::Identifier(name) = &object.kind =>
                 {
@@ -3330,6 +3334,24 @@ impl Checker {
                     TypeError::NotComptime("not an associated comptime expression".to_string())
                 }
             }
+        })
+    }
+
+    /// The rejection of `object.field` over a declared struct that has no
+    /// member `field` yet: before the struct's members register (a trait's
+    /// signature reading one) it is the read a deferred declaration waits
+    /// on, and after it the member is missing. `None` when `object` names
+    /// no struct or the struct declares `field`.
+    fn undeclared_struct_member(&self, object: &Expr, field: &str) -> Option<TypeError> {
+        let subject = self.member_subject(object)?;
+        let (name, _) = self.nominal_struct(&subject)?;
+        let info = self.structs.get(name)?;
+        let declared = info.associated.contains_key(field)
+            || info.parameterized_associated.contains_key(field)
+            || info.methods.contains_key(field);
+        (!declared).then(|| TypeError::NoTypeAttribute {
+            type_name: subject.to_string(),
+            attribute: field.to_string(),
         })
     }
 

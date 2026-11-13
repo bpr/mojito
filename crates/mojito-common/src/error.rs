@@ -415,8 +415,8 @@ pub enum TypeError {
     /// `Self.T` used where `T` is not a type parameter of the enclosing struct
     /// (or outside any struct).
     UnknownSelfParam(String),
-    /// A member called through a struct type read as a value
-    /// (`Color.nope()`) that the struct does not declare.
+    /// A member called or read through a struct type as a value
+    /// (`Color.nope()`, `P[Int].m`) that the struct does not declare.
     NoTypeAttribute {
         type_name: String,
         attribute: String,

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait method's signature reads a struct's value member, as at the
+  pin: `def get(self, x: Q[P[Int, Bool].n]) -> Int: ...` checks once the
+  module's structs register, where Mojito reported "not a compile-time Int
+  constant: unsupported associated comptime member access"; a value member
+  the struct does not declare reports the pin's "'P[Int, Bool]' value has
+  no attribute 'm'" (R1199).
 - A static method's parameter reading its struct's bound value member runs,
   as at the pin: `struct W[T: Tr]` with `@staticmethod def make(var b:
   Box[Self.T.K])` called as `W[S].make(Box[3]())` binds `T` from the spelled

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1194
+# swept-count	1195
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -1129,6 +1129,7 @@ assets/type_error/trait_parameter_type_argument.mojo	compile-reject	agree	error:
 assets/type_error/trait_parameter_unrefined_trait.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'Tr' has 'AnyTrait[Copyable]' type, but value has type 'AnyTrait[Movable]'
 assets/type_error/trait_parents_rename_generator_param.mojo	compile-reject	agree	error: invalid redefinition of 'M': cannot convert '__generator_type[k: Int] Int' to the other trait's member's type '__generator_type[j: Int] Int'
 assets/type_error/trait_reads_missing_struct_member.mojo	compile-reject	agree	error: 'M' value has no attribute 'Y'
+assets/type_error/trait_reads_missing_struct_value_member.mojo	compile-reject	agree	error: 'P[Int, Bool]' value has no attribute 'm'
 assets/type_error/trait_refined_out_self.mojo	compile-reject	agree	error: 'self' argument must have type 'Self' in trait method declaration, but actually has type 'Int'
 assets/type_error/trait_refinement_parameterizes_type_member.mojo	compile-reject	agree	error: invalid redefinition of 'T': cannot convert 'AnyType' to the other trait's member's type '__generator_type[k: Int] AnyType'
 assets/type_error/trait_refinement_renames_generator_param.mojo	compile-reject	agree	error: invalid redefinition of 'M': cannot convert '__generator_type[k: Int] Int' to the other trait's member's type '__generator_type[j: Int] Int'

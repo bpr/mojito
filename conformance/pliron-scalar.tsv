@@ -1533,6 +1533,7 @@ assets/ok/trait_requirement_docstring.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_indexes_own_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_signature_reads_struct_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_value_member_comptime_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_value_member_through_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_valued_parameter.mojo	-	ineligible	no-scalar-entry-shape
