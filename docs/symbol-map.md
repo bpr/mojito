@@ -3189,6 +3189,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`is_metatype_value`, `mojito-hir`), the `VarDecl` check rejects binding
   one, `infer_infix` reports its missing operator method, and the concrete
   MIR verifier rejects a register of one.
+- A struct type read as an expression (a name or an application) is typed
+  by its struct metatype `TyKind::AnyStruct` (`types.rs`, displayed
+  `AnyStruct[S]`), through `Checker::metatype_of` (`comptime_validation.rs`)
+  from `type_name_metatype` and `infer_impl`'s bracket arm. `Checker::infer`
+  records no fact for one, so a probe typing a type operand leaves nothing
+  behind; a discard or statement records its own
+  (`record_discarded_metatype`). A call argument of a metatype is
+  `TypeError::MetatypeArgument` (`argument_mismatch`, `call_inference.rs`),
+  and a missing member through one `TypeError::NoTypeAttribute`.
 - The parser reads `type_of(...)` as `Type::TypeOf` (`parse_type`, and
   `parse_type_params` for a parameter's value type). The checker's
   `resolve_ty_from_anno_at_depth` (`type_resolution.rs`) maps a trait

@@ -1,7 +1,8 @@
 # A type or a trait read as an expression is a value of its metatype, which
 # has no run-time form: a type binder `T: Copyable` reads as a `Copyable`
 # value, and a trait, a trait-valued binder, or a `&` composition as its
-# `AnyTrait` metatype. A discard of one, or a statement of one, lowers to
+# `AnyTrait` metatype, and a struct type, named or applied, as its
+# `AnyStruct` metatype. A discard of one, or a statement of one, lowers to
 # nothing.
 
 
@@ -20,4 +21,7 @@ def main():
     over_trait[Copyable, Int]()
     _ = Copyable
     _ = Copyable & Hashable
+    _ = Int
+    _ = List[Int]
+    Int
     print("ok")

@@ -2387,6 +2387,7 @@ fn ty_value(ty: &Ty) -> String {
         }
         TyKind::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
         TyKind::ParamList(value) => positional("param_list", &ty_value(value)),
+        TyKind::AnyStruct(value) => positional("any_struct", &ty_value(value)),
         TyKind::AnyTrait(traits) => {
             positional("any_trait", &list(traits.iter().map(|v| symbol(v))))
         }

@@ -102,8 +102,13 @@ impl Checker {
     pub(super) fn place_storage_ty(&self, place: &Expr) -> Option<Ty> {
         match &place.kind {
             ExprKind::Identifier(name) => self.lookup(name).cloned(),
-            // A value pack's member (`vs.values`) reads no storage.
-            ExprKind::Member { object, .. } if self.value_pack_named(object).is_some() => None,
+            // A value pack's member (`vs.values`) reads no storage, nor
+            // does a type's (`UInt.dtype`).
+            ExprKind::Member { object, .. }
+                if self.value_pack_named(object).is_some() || self.denotes_type_value(object) =>
+            {
+                None
+            }
             ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
                 let (name, arguments) = base.kind().as_non_simd_struct()?;
                 let info = self.structs.get(name)?;
@@ -1924,15 +1929,15 @@ impl Checker {
                 field: field.to_string(),
             });
         }
-        // A type name with no member of that name is never read as a value
-        // (`Int32.size`): the pin reports the missing attribute.
+        // A type name with no member of that name reads as its metatype
+        // (`Int32.size`), which has no attribute of that name.
         let obj_ty = match self.infer(object) {
-            Err(TypeError::UndefinedVariable(_))
-                if let Some(subject) = self.member_type_operand(object) =>
-            {
-                return Err(TypeError::NoSuchField {
-                    object_type: subject.to_string(),
-                    field: field.to_string(),
+            Ok(ty) if matches!(ty.kind(), TyKind::AnyStruct(_)) => {
+                return Err(TypeError::NoTypeAttribute {
+                    type_name: self
+                        .member_type_operand(object)
+                        .map_or_else(|| ty.to_string(), |subject| subject.to_string()),
+                    attribute: field.to_string(),
                 });
             }
             inferred => inferred?,

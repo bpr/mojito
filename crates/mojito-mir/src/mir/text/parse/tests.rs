@@ -2594,6 +2594,22 @@ fn trait_metatypes_and_values_round_trip() {
     assert!(text.contains("ct_trait([Hashable, Copyable])"), "{text}");
 }
 
+/// Schema 1.190 spells the struct metatype `any_struct(type)`.
+#[test]
+fn struct_metatype_round_trips() {
+    let ty = Ty::new(TyKind::AnyStruct(Ty::int()));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![MirInstr::ConstructType { dest: Reg(0), ty }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("any_struct(Int)"), "{text}");
+}
+
 /// Schema 1.77 spells upstream's `!kgen.type` metatype `TypeType`, and a
 /// type value of it `ct_type(TypeType)`.
 #[test]

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct type read as a run-time value is a value of its `AnyStruct`
+  metatype, as at the pin: `_ = Int` and `_ = List[Int]` run on the VM and
+  natively, and `f(Int)`, `print(Int)`, `objs[Int]`, and `Int32.size` are
+  rejected with the pin's conversion, conformance, and missing-attribute
+  diagnostics, where Mojito reported "Undefined variable 'Int'" or "a
+  parameterized type is not a value". The MIR text format moves to 1.190,
+  spelling the metatype `any_struct` (R2115).
 - A bracket over a generic `def` read as a value is that specialization:
   `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`, in a plain or
   generic enclosing `def`, and `apply(inner[5], x)` now run on the VM and

@@ -493,7 +493,13 @@ impl Checker {
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty))
             .and_then(|ty| self.reject_runtime_deferred_call(expr, ty));
-        if let Ok(ty) = &result {
+        // A struct read as a value is its metatype, which no run-time
+        // position holds: a probe that types a type operand as an
+        // expression records nothing, and a discard records its own
+        // ([`Self::record_discarded_metatype`]).
+        if let Ok(ty) = &result
+            && !matches!(ty.kind(), TyKind::AnyStruct(_))
+        {
             // A conditional's arms carry their own conversions.
             if is_scalar_simd(ty)
                 && !matches!(expr.kind, ExprKind::IfExpr { .. })
@@ -534,6 +540,15 @@ impl Checker {
             }
         }
         result
+    }
+
+    /// Record the metatype `found` of a struct read as a discarded value
+    /// (`_ = Int`, a statement `Int`), which [`Self::infer`] leaves
+    /// unrecorded: the discard lowers to nothing.
+    pub(super) fn record_discarded_metatype(&self, expr: &Expr, found: &Ty) {
+        if matches!(found.kind(), TyKind::AnyStruct(_)) {
+            self.record_at(expr.source_span()).ty = Some(found.clone());
+        }
     }
 
     /// Type of a reference *handle* in a context that stores or forwards one.
@@ -1381,13 +1396,15 @@ impl Checker {
                 applied
             }
             // A type application read as a runtime value, in whichever
-            // bracket node the parser built it (`pair[1, 2]`, `G[3]`).
+            // bracket node the parser built it (`pair[1, 2]`, `G[3]`), is
+            // its metatype, as a type name is.
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
                 if let Some((name, _)) = expr.bracket_application()
                     && self.lookup(name).is_none()
                     && self.denotes_type_value(expr) =>
             {
-                Err(type_read_as_value(name))
+                self.denoted_type(expr, "a type read as a value")
+                    .map(|ty| self.metatype_of(ty))
             }
             ExprKind::Index { object, index } => {
                 // A subscript base that is itself a reference result
@@ -3289,20 +3306,24 @@ impl Checker {
     /// The metatype of a type binder or a trait named as an expression, as
     /// upstream types the reference: a binder `T: Copyable` reads as a
     /// `Copyable` value, and a trait, a trait constant, or a `&`
-    /// composition of them as its `AnyTrait` metatype. Neither has a
+    /// composition of them as its `AnyTrait` metatype, and any other type
+    /// (`Int`, an alias of one) as its `AnyStruct` metatype. None has a
     /// run-time form: a discard of one lowers to nothing, and any other use
     /// is the metatype's conversion or method diagnostic. `None` when
-    /// `name` is neither.
+    /// `name` denotes no type.
     fn type_name_metatype(&self, expr: &Expr, name: &str) -> Option<Result<Ty, TypeError>> {
         if let Some(value) = self.trait_value(expr) {
             return Some(value.map(|value| TyKind::AnyTrait(value.ty).into()));
         }
-        match self.lookup_tparam(name)?.kind() {
-            TyKind::Param { bounds, .. } => {
-                Some(Ok(TyKind::Trait(self.binder_metatype_traits(bounds)).into()))
-            }
-            _ => None,
+        if let Some(binder) = self.lookup_tparam(name)
+            && matches!(binder.kind(), TyKind::Param { .. })
+        {
+            return Some(Ok(self.metatype_of(binder)));
         }
+        // A read of `_` is of the discard pattern, never the inference hole.
+        (name != "_" && self.denotes_type_value(expr))
+            .then(|| self.denoted_type(expr, "a type read as a value"))
+            .map(|ty| ty.map(|ty| self.metatype_of(ty)))
     }
 
     fn read_through_call_reference(&self, value: &Expr, found: Ty) -> Ty {

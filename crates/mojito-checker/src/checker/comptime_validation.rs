@@ -4306,15 +4306,25 @@ impl Checker {
             return None;
         }
         let ty = self.opaque_element(&ty).unwrap_or(ty);
-        let found = match ty.kind() {
-            TyKind::Param { bounds, .. } => self.binder_metatype(bounds),
-            _ if ty == *expected => return Some(TypeError::TypeAsInstance(ty.to_string())),
-            _ => format!("AnyStruct[{ty}]"),
-        };
+        if !matches!(ty.kind(), TyKind::Param { .. }) && ty == *expected {
+            return Some(TypeError::TypeAsInstance(ty.to_string()));
+        }
         Some(TypeError::MetatypeConversion {
-            found,
+            found: self.metatype_of(ty).to_string(),
             expected: expected.to_string(),
         })
+    }
+
+    /// The metatype of the type `ty` read as a value, as upstream types the
+    /// reference: a type binder's is its trait bound (`AnyType` when
+    /// unbounded), any other type's its `AnyStruct`.
+    pub(super) fn metatype_of(&self, ty: Ty) -> Ty {
+        match ty.kind() {
+            TyKind::Param { bounds, .. } => {
+                TyKind::Trait(self.binder_metatype_traits(bounds)).into()
+            }
+            _ => TyKind::AnyStruct(ty).into(),
+        }
     }
 
     /// The metatype of a type binder bounded by `bounds`, as upstream

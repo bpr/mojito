@@ -1756,11 +1756,7 @@ impl Checker {
             }
             bind_existential(&mut existentials, &params[i], &expected);
             if !self.record_implicit_conversion(arg, &arg_ty, &expected)? {
-                return Err(TypeError::TypeMismatch {
-                    expected: params[i].to_string(),
-                    found: arg_ty.to_string(),
-                    context: format!("argument '{}' to '{}'", names[i], name),
-                });
+                return Err(argument_mismatch(name, &names[i], &params[i], &arg_ty));
             }
             // A deduced existential still ranks as the generic binder it is,
             // below an overload declaring the argument's own type.
@@ -2843,4 +2839,23 @@ fn reject_generic_function_value(
         });
     }
     Ok(())
+}
+
+/// The rejection of an argument of type `found` bound to the parameter
+/// `param` of `callee`, declared `expected`: a type passed as a value is
+/// upstream's metatype conversion failure.
+fn argument_mismatch(callee: &str, param: &str, expected: &Ty, found: &Ty) -> TypeError {
+    if mojito_types::types::is_metatype(found) {
+        return TypeError::MetatypeArgument {
+            callee: callee.to_string(),
+            param: param.to_string(),
+            found: found.to_string(),
+            expected: expected.to_string(),
+        };
+    }
+    TypeError::TypeMismatch {
+        expected: expected.to_string(),
+        found: found.to_string(),
+        context: format!("argument '{param}' to '{callee}'"),
+    }
 }

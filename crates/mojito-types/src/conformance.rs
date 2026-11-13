@@ -298,7 +298,11 @@ pub fn modelled_conformance(
             | TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
-            | TyKind::Generator(_) => false,
+            | TyKind::Generator(_)
+            | TyKind::AnyStruct(_)
+            | TyKind::AnyTrait(_)
+            | TyKind::Trait(_)
+            | TyKind::TypeType => false,
             _ => true,
         },
         "Defaultable" => match ty.kind() {

@@ -1,8 +1,7 @@
-# expect: Undefined variable 'Color'
+# expect: 'Color' value has no attribute 'nope'
 # An unknown member on a successfully resolved base rejects exactly like the
-# spelled form `Color.nope()` (whose diagnostic this shares — Mojito's
-# member-miss falls through to the value path; upstream reports "'Color'
-# value has no attribute 'nope'").
+# spelled form `Color.nope()`: the type read as a value has no attribute of
+# that name, as at the pin.
 @fieldwise_init
 struct Color(Copyable, Movable):
     var value: Int

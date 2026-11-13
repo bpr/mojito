@@ -6518,10 +6518,10 @@ fn unsafe_pointer_typing() {
         err("def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(\"x\")\n"),
         TypeError::TypeMismatch { .. }
     ));
-    // A bare parameterized type is not a value.
+    // A bare parameterized type is a type value, which a `var` cannot hold.
     assert!(matches!(
         err("def main():\n    var x = UnsafePointer[Int]\n    print(1)\n"),
-        TypeError::TypeMismatch { .. }
+        TypeError::DynamicTypeValue(_)
     ));
     // A store must match the pointee type.
     assert!(matches!(

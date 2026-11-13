@@ -5455,6 +5455,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::KgenAddressSimd { width } => width.is_symbolic(),
+        TyKind::AnyStruct(ty) => type_is_symbolic(ty),
         TyKind::None
         | TyKind::Never
         | TyKind::AnyTrait(_)

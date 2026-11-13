@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2156**.
+Next free ID: **R2157**.
 
 ## Ordered Work
 
@@ -4454,6 +4454,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin names the left operand's type and the dunder it lacks; which
     wording it uses when only the reflected dunder exists is unprobed.
   - Probe: an `enum E(Copyable)` with `case a(Int)` and `E.a(1) == E.a(2)`.
+  - Probe: `Int + 1` reports "'AnyStruct[Int]' does not implement the
+    '__add__' method", where the pin looks `__add__` up on `Int` and
+    rejects the type as its `self`: "invalid call to '__add__': value
+    passed to 'self' cannot be converted from type value 'Int' to an
+    instance of 'Int'; did you mean to instantiate 'Int'?".
   - The `# expect:` lines of the `assets/type_error` fixtures that assert
     `is not defined for` move to the pin's words with the fix.
   - Found while landing R1413 (2026-11-10).
@@ -5696,11 +5701,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
     no conformance join over the known traits.
   - Probe: `comptime T = type_of(Int)` runs at the pin (`AnyStruct[Int]`).
-  - Probe: a struct read as a run-time expression, `_ = Int`, `_ = List[Int]`,
-    or `_ = type_of(1)`, runs at the pin and stops with "Undefined variable
-    'Int'" (or "a parameterized type is not a value"): identifier inference
-    (`Checker::type_name_metatype`) gives a type binder and a trait their
-    metatypes, but a struct's has no `Ty`.
+  - Probe: `_ = type_of(1)` runs at the pin and stops with "Undefined
+    variable 'type_of'": a struct read as an expression is its
+    `AnyStruct` metatype (`_ = Int`, `_ = List[Int]` run), but `type_of`
+    read as a run-time expression is no type operand.
   - Probe: `count[MkList]()` over `def count[G: __generator_type[T:
     Copyable] Defaultable]()` and `comptime MkList[T: Copyable] = List[T]`
     binds at the pin, which types `MkList` read unapplied as
@@ -5897,7 +5901,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   of its function type**
 
   `comptime f = four` (or `= twice[3]`) in `struct S`, then `S.f()`,
-  reports "Undefined variable 'S'", where the pin prints the result.
+  reports "'S' value has no attribute 'f'", where the pin prints the
+  result.
   - A member read is the associated-member path, which has no case for a
     `CtValue::FuncSymbol` member: `var x = S.f` reports "cannot copy
     non-Copyable type '_'".
@@ -9282,43 +9287,48 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2115 A type name read as a run-time value is an undefined
-  variable**
+- [ ] **R2156 An overload failure reports Mojito's one line, not the
+  pin's candidate diagnostics**
 
-  A bare type name in a run-time position (`f(Int)`, `objs[Int]`) reports
-  "Undefined variable 'Int'", where upstream types the name as its
-  metatype value (`AnyStruct[Int]`) and the call's overload resolution
-  rejects it.
-  - Cause: `Checker::infer`'s `Identifier` arm (`checker/inference.rs`)
-    looks the name up only as a binding, a raw list, or a type-list
-    binding, and falls back to `TypeError::UndefinedVariable`.
-  - Lever: a name `denotes_type_value` accepts infers as its metatype, so
-    `value_coerces` and overload selection reject it with the pin's
-    messages, as `type_value_mismatch` already words a compile-time slot's.
-  - Probe: `print(f(Int))` over `def f(x: Int) -> Int` reports at the pin
-    "value passed to 'x' cannot be converted from type value 'Int' to an
-    instance of 'Int'; did you mean to instantiate 'Int'?".
-  - Probe: `objs[Int](3)` and `objs[Int]` over a `List` report "no
+  A call no candidate accepts reports "invalid call to 'f': no overload
+  matches the supplied arguments", where the pin says "no matching function
+  in call to 'f'" (or "no matching method in call to 'm'") and notes each
+  candidate's rejection, and a lone method candidate reports its argument's
+  own conversion failure.
+  - Cause: the `OverloadSelect::NoMatch` arms (`infer_call` in
+    `checker/call_inference.rs`, `selected_method` in
+    `checker/method_calls/mc_infer.rs`, and the static and type-receiver
+    paths) build one `TypeError::BadCall` with a fixed reason and drop
+    the per-candidate failures.
+  - Lever: keep each candidate's rejection, report a lone candidate's as
+    the call's error, and word the rest as the pin does.
+  - Probe: `f(Int)` over `def f(x: Int)` and `def f(x: String)` reports
+    "no matching function in call to 'f'" at the pin.
+  - Probe: `objs[Int]` and `objs[Int](3)` over a `List` report "no
     matching method in call to '__getitem__'" at the pin;
-    `assets/type_error/element_call_type_brackets_reject.mojo` expects
-    the "Undefined variable 'Int'" Mojito gives today, so restore its
-    `# expect:` to the pin's message.
-  - Probe: `objs[Doubler](3)` over a user struct reports the same
-    "Undefined variable 'Doubler'".
-  - Found while landing R1511 (2026-11-11).
+    `assets/type_error/element_call_type_brackets_reject.mojo` expects only
+    "call to '__getitem__'" until this lands.
+  - Probe: `s.m(Int)` over a single `def m(self, x: Int)` reports "invalid
+    call to 'm': value passed to 'x' cannot be converted from type value
+    'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?" at
+    the pin.
+  - The `assets/type_error` fixtures that expect "no overload matches"
+    move to the pin's words with the fix.
+  - Found while landing R2115 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2067 A static call whose only candidate fails generic
-  instantiation reports its struct as an undefined variable**
+  instantiation reports its struct as having no such member**
 
   `S.f[k]()` over `@staticmethod def f[n: Int]()` and a run-time `k`
-  fails with "Undefined variable 'S'", where the pin reports "invalid call
+  fails with "'S' value has no attribute 'f'", where the pin reports "invalid call
   to 'f': cannot use a dynamic value in a parameter list".
   - Cause: `Checker::infer_struct_name_call`
     (`checker/method_calls/type_receivers.rs`) drops a candidate whose
     `instantiate_method_generics` fails, and with none left the call falls
-    back to reading the struct's name as a variable.
+    back to reading the struct's name as a value, its `AnyStruct`
+    metatype, which reports "'S' value has no attribute 'f'".
   - Lever: keep the rejected candidate's error and report it when no
     candidate survives.
   - Probe: a `comptime` binding the check does not lift, passed to

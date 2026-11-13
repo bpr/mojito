@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.189
+# Mojito Textual MIR Format, Version 1.190
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.189 is implemented end to end for inspection and loading: canonical
+Version 1.190 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.189
+mojito-mir 1.190
 ```
 
-The writer emits 1.189. The reader accepts 1.0 through 1.189; *Schema 1.0*
+The writer emits 1.190. The reader accepts 1.0 through 1.190; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1176,6 +1176,10 @@ contract holds its compile-time arguments per declared parameter
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
 
+Schema 1.190 adds the type `any_struct(type)`, upstream's struct metatype
+`AnyStruct[S]`, the type of a struct type read as a value (R2115). It is
+compile-time only: no concrete register, slot, or signature holds one.
+
 Schema 1.189 gives `closure.make` an `arguments` list after its
 `captures`: the compile-time arguments a bracket bound to a generic nested
 `def`'s own parameters (`var f = inner[1]`), naming that instance's
@@ -1979,7 +1983,7 @@ struct_type { name, arguments }
 simd { dtype, width }
 kgen_simd { dtype, width }
 kgen_address_simd { width }
-comptime_list(type) param_list(type) any_trait([trait...]) trait_type([trait...])
+comptime_list(type) param_list(type) any_trait([trait...]) any_struct(type) trait_type([trait...])
 tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
@@ -2020,6 +2024,10 @@ register, slot, or signature that holds one.
 `AnyTraitType`, spelled `type_of(Trait)` in source: the type of a trait used
 as a value, over its canonical trait set. Like `param_list`, it types
 compile-time parameter declarations only.
+
+`any_struct(type)` (schema 1.190) is upstream's struct metatype, displayed
+`AnyStruct[S]`: the type of a struct type read as a value (`_ = Int`). It is
+compile-time only, as `any_trait` is; a discard of one lowers to nothing.
 
 `TypeType` (schema 1.77) is upstream's KGEN metatype `!kgen.type`
 (`_MLIR.KGENTypeType`), the type of every type and trait, which the pin prints

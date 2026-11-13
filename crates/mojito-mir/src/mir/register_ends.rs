@@ -734,6 +734,7 @@ pub fn owned_register(ty: &Ty, declarations: &MirDeclarations) -> bool {
         TyKind::Ref(_)
             | TyKind::ParamList(_)
             | TyKind::AnyTrait(_)
+            | TyKind::AnyStruct(_)
             | TyKind::Trait(_)
             | TyKind::TypeType
             | TyKind::Func(_)

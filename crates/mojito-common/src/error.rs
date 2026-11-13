@@ -331,6 +331,17 @@ pub enum TypeError {
     /// A struct type bound where its annotation declares an instance of
     /// that struct (`comptime x: Int = Int`).
     TypeAsInstance(String),
+    /// A type passed where a call declares a run-time value (`f(Int)` over
+    /// `def f(x: Int)`): the type's metatype (`found`, `AnyStruct[S]` or a
+    /// binder's trait bound) converts to no value type, as upstream. When
+    /// `found` is the metatype of `expected` itself, the pin suggests
+    /// instantiating the type.
+    MetatypeArgument {
+        callee: String,
+        param: String,
+        found: String,
+        expected: String,
+    },
     /// An operator applied to operand type(s) it is not defined for.
     BadOperator {
         op: String,
@@ -395,6 +406,12 @@ pub enum TypeError {
     /// `Self.T` used where `T` is not a type parameter of the enclosing struct
     /// (or outside any struct).
     UnknownSelfParam(String),
+    /// A member called through a struct type read as a value
+    /// (`Color.nope()`) that the struct does not declare.
+    NoTypeAttribute {
+        type_name: String,
+        attribute: String,
+    },
     /// A member read (`T.Z`) through a type parameter whose bound requires
     /// no member of that name.
     NoTraitAttribute {
@@ -941,6 +958,27 @@ impl fmt::Display for TypeError {
                     "cannot implicitly convert '{found}' value to '{expected}'"
                 )
             }
+            Self::MetatypeArgument {
+                callee,
+                param,
+                found,
+                expected,
+            } if *found == format!("AnyStruct[{expected}]") => write!(
+                f,
+                "invalid call to '{callee}': value passed to '{param}' cannot be converted from \
+                 type value '{expected}' to an instance of '{expected}'; did you mean to \
+                 instantiate '{expected}'?"
+            ),
+            Self::MetatypeArgument {
+                callee,
+                param,
+                found,
+                expected,
+            } => write!(
+                f,
+                "invalid call to '{callee}': value passed to '{param}' cannot be converted from \
+                 '{found}' to '{expected}'"
+            ),
             Self::TypeAsInstance(ty) => write!(
                 f,
                 "cannot implicitly convert '{ty}' type as a value to an instance of '{ty}'; did \
@@ -1020,9 +1058,13 @@ impl fmt::Display for TypeError {
                 )
             }
             Self::NoTraitAttribute {
-                trait_name,
+                trait_name: type_name,
                 attribute,
-            } => write!(f, "'{trait_name}' value has no attribute '{attribute}'"),
+            }
+            | Self::NoTypeAttribute {
+                type_name,
+                attribute,
+            } => write!(f, "'{type_name}' value has no attribute '{attribute}'"),
             Self::UnknownSelfParam(name) => {
                 write!(
                     f,

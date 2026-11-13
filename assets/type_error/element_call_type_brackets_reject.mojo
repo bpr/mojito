@@ -1,8 +1,8 @@
-# expect: Undefined variable 'Int'
+# expect: call to '__getitem__'
 # Only runtime-value brackets dispatch the bare element call. A type argument
-# in the brackets of an indexable runtime value is neither a subscript nor
-# parameter application (a value takes no compile-time parameters), so the
-# shape is rejected with the residual diagnostic.
+# in the brackets of an indexable runtime value is a subscript by its
+# metatype (`AnyStruct[Int]`), which no `__getitem__` overload accepts; the
+# pin says "no matching method in call to '__getitem__'".
 @fieldwise_init
 struct Doubler(def(Int) -> Int, Copyable):
     var gain: Int

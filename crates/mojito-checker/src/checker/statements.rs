@@ -1750,6 +1750,7 @@ impl Checker {
                 // registers, but introduce no binding and require none.
                 if name == "_" {
                     let found = self.infer(value)?;
+                    self.record_discarded_metatype(value, &found);
                     // A discarded reference result is not read.
                     self.discarded_reference_results
                         .borrow_mut()
@@ -2905,7 +2906,8 @@ impl Checker {
             }
             StmtKind::Expr(expr) => {
                 self.register_named_bindings(expr)?;
-                self.infer(expr)?;
+                let found = self.infer(expr)?;
+                self.record_discarded_metatype(expr, &found);
                 // An expression statement discards its value: a reference
                 // result is not read, so it requires no copy.
                 self.discarded_reference_results

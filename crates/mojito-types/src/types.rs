@@ -702,6 +702,11 @@ pub enum TyKind {
     /// list is the bound's canonical trait set ([`trait_set`]). It is
     /// compile-time only; no runtime register holds one.
     AnyTrait(Vec<String>),
+    /// Upstream's struct metatype, displayed `AnyStruct[S]`: the type of the
+    /// struct type `S` read as a value (`f(Int)`, `objs[Int]`), which
+    /// converts to no value type. It is compile-time only; no runtime
+    /// register holds one.
+    AnyStruct(Ty),
     /// Upstream's `TraitType` (`!lit.trait<@A, @B>`): a trait, or a `&`
     /// composition, used as a type, the type of every type conforming to the
     /// canonical set ([`trait_set`]), displayed `A & B`. It is a raw list's
@@ -3865,6 +3870,7 @@ impl fmt::Display for TyKind {
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
             Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
+            Self::AnyStruct(ty) => write!(f, "AnyStruct[{ty}]"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
@@ -4041,6 +4047,7 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
+        TyKind::AnyStruct(ty) => TyKind::AnyStruct(recur(ty)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size.clone(),
@@ -4123,6 +4130,7 @@ pub fn erase_origins(ty: &Ty) -> Ty {
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
+        TyKind::AnyStruct(ty) => TyKind::AnyStruct(recur(ty)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
@@ -4200,6 +4208,7 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
         }
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
+        TyKind::AnyStruct(ty) => TyKind::AnyStruct(recur(ty)).into(),
         TyKind::Dependent(dependent) => dependent.map_types(recur),
         _ => ty.clone(),
     }
@@ -4666,6 +4675,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
+        (TyKind::AnyStruct(a), TyKind::AnyStruct(b)) => a == b,
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
         (TyKind::TypeType, TyKind::TypeType)
         | (TyKind::KgenString, TyKind::KgenString)
@@ -5569,6 +5579,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
         }
         TyKind::ComptimeList(elem) => TyKind::ComptimeList(substitute(elem, subst)).into(),
         TyKind::ParamList(elem) => TyKind::ParamList(substitute(elem, subst)).into(),
+        TyKind::AnyStruct(ty) => TyKind::AnyStruct(substitute(ty, subst)).into(),
         TyKind::Tuple(elems) => {
             TyKind::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()).into()
         }
@@ -5837,6 +5848,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
         TyKind::ComptimeList(element) => TyKind::ComptimeList(rewrite_ty(element, rewrite)?).into(),
         TyKind::ParamList(element) => TyKind::ParamList(rewrite_ty(element, rewrite)?).into(),
+        TyKind::AnyStruct(ty) => TyKind::AnyStruct(rewrite_ty(ty, rewrite)?).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size.try_map(|size| rewrite.expr(size))?,
@@ -6460,7 +6472,7 @@ pub fn trait_set<I: IntoIterator<Item = String>>(names: I) -> Vec<String> {
 pub fn is_metatype(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::AnyTrait(_) | TyKind::Trait(_) | TyKind::TypeType
+        TyKind::AnyTrait(_) | TyKind::AnyStruct(_) | TyKind::Trait(_) | TyKind::TypeType
     )
 }
 
@@ -6524,6 +6536,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Variant(types) => types.iter().any(is_symbolic),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
@@ -6773,6 +6786,7 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::Struct(_, arguments) => arguments.iter().any(argument_mentions),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
@@ -6844,6 +6858,7 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::Struct(_, arguments) => arguments.iter().any(argument_decorated),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
         | TyKind::VariadicPack(element)
         | TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
@@ -6961,6 +6976,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         }
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
         | TyKind::VariadicPack(element) => element.is_closed(),
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Known(_)) && element.is_closed()

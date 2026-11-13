@@ -60,6 +60,7 @@ impl Decoder {
                 "overload" => TyKind::Overload(self.types(inner)).into(),
                 "comptime_list" => TyKind::ComptimeList(self.ty(inner)?).into(),
                 "param_list" => TyKind::ParamList(self.ty(inner)?).into(),
+                "any_struct" => TyKind::AnyStruct(self.ty(inner)?).into(),
                 "any_trait" => TyKind::AnyTrait(self.strings(inner)).into(),
                 "trait_type" => TyKind::Trait(self.strings(inner)).into(),
                 "tuple" => TyKind::Tuple(self.types(inner)).into(),

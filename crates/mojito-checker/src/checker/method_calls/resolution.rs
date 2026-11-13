@@ -102,6 +102,12 @@ impl Checker {
                 return self.infer_field_invocation(span.clone(), object, &field_ty, args, kwargs);
             }
         }
+        if let TyKind::AnyStruct(ty) = obj_ty.kind() {
+            return Err(TypeError::NoTypeAttribute {
+                type_name: ty.to_string(),
+                attribute: method.to_string(),
+            });
+        }
         Err(TypeError::NoSuchMethod {
             object_type: obj_ty.to_string(),
             method: method.to_string(),
