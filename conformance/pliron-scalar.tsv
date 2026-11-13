@@ -258,6 +258,7 @@ assets/ok/comptime_local_binder_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_display_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_struct_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_local_value_member_annotation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_match_coverage_warnings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_match_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_match_patterns.mojo	-	ineligible	no-scalar-entry-shape

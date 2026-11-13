@@ -4579,6 +4579,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`checker/type_resolution.rs`) asks `applied_type_at_depth` first and
     reads the name as a compile-time value (`value_headed_type`) only
     when no type has that name, so a module type wins over a local value.
+  - Probe: a member read through the local, `var a: w.E = True` over a
+    module `struct w` and `comptime w = W[3]()` (`W` declaring `comptime E
+    = Bool`), reads the module struct's member, since
+    `Checker::member_base` likewise asks the type spelling first.
   - Found while landing R1540 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5368,27 +5372,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1184 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2023 A type annotation does not read a member through a local
-  compile-time value**
-
-  `var a: w.E = True` over `comptime w = W[3]()`, where `W` declares
-  `comptime E = Bool`, fails with "expected a type, found a value", where
-  the pin prints `True`.
-  - The pin types the annotation's base as an expression and reads the
-    member on its type, as a member read through a construction
-    (`W[3]().E`) already does here.
-  - `Checker::member_base` (`checker/type_resolution.rs`) takes a
-    `SourceType::Value` construction or a type, and resolves a bare
-    `SourceType::Named` base as a type, so a local compile-time value's
-    name is no base.
-  - Probe: a parameterized member through a `TypeList` value, `var m:
-    L.__getitem_param__[SIMDLength(0)] = 3` over `comptime L =
-    TypeList.of[Trait=AnyType, Int, Bool]()`, fails with "unknown type
-    'L'", where the pin prints `3`.
-  - Found while landing R1540 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1473 A member read through a construction that takes arguments is
   rejected**

@@ -1164,7 +1164,7 @@ impl Checker {
                             }
                             _ => Ty::self_type(),
                         };
-                        if self.declared_type_member(&base, name) {
+                        if self.declared_member(&base, name) {
                             Some(self.member_application(
                                 &base,
                                 name,
@@ -1358,14 +1358,17 @@ impl Checker {
         {
             return Ok((generator, Some(name)));
         }
-        self.ty_from_anno(base).map(|ty| (ty, None))
+        self.ty_from_anno(base)
+            .or_else(|error| self.value_base_type(base).ok_or(error))
+            .map(|ty| (ty, None))
     }
 
     /// `base.name[args]` over a whole bracket list (`S[Int].Of[Bool]`,
-    /// `M.Pair[1, 2]`). A struct's parameterized type member binds the list
-    /// through the contract an alias application uses (keywords, defaults,
-    /// bounds); an abstract base lowers each argument at its declared
-    /// parameter.
+    /// `M.Pair[1, 2]`). A struct's parameterized member, a type or a value
+    /// denoting one (`TypeList.__getitem_param__[SIMDLength(0)]`), binds the
+    /// list through the contract an alias application uses (keywords,
+    /// defaults, bounds, a value's declared type); an abstract base lowers
+    /// each argument at its declared parameter.
     pub(super) fn member_application(
         &self,
         base_ty: &Ty,
@@ -1377,7 +1380,8 @@ impl Checker {
                 .structs
                 .get(struct_name)
                 .and_then(|info| info.parameterized_associated.get(name))
-            && let MemberTemplate::Type { decls, .. } = &member.template
+            && let MemberTemplate::Type { decls, .. } | MemberTemplate::Value { decls, .. } =
+                &member.template
         {
             // Every parameter binds, an infer-only one (`Trait` of
             // `TypeList.of`) from its keyword or the arguments it types.
@@ -1424,7 +1428,7 @@ impl Checker {
         let infers = self
             .parameterized_assoc_params(&base_ty, name)
             .is_some_and(|params| params.iter().any(|param| param.infer_only));
-        let applied = if infers || self.declared_type_member(&base_ty, name) {
+        let applied = if infers || self.declared_member(&base_ty, name) {
             Some(self.member_application(
                 &base_ty,
                 name,
@@ -1442,11 +1446,11 @@ impl Checker {
             .transpose()
     }
 
-    /// Whether `name` is a concrete struct's parameterized type member
-    /// whose bracket binds against its declared parameters, as a whole
+    /// Whether `name` is a concrete struct's parameterized member whose
+    /// bracket binds against its declared parameters, as a whole
     /// list does: a member with no origin parameter, which the declared
     /// parameters erase.
-    fn declared_type_member(&self, base_ty: &Ty, name: &str) -> bool {
+    fn declared_member(&self, base_ty: &Ty, name: &str) -> bool {
         let Some((struct_name, _)) = self.nominal_struct(base_ty) else {
             return false;
         };
@@ -1454,11 +1458,10 @@ impl Checker {
             .get(struct_name)
             .and_then(|info| info.parameterized_associated.get(name))
             .is_some_and(|member| {
-                matches!(member.template, MemberTemplate::Type { .. })
-                    && !member
-                        .params
-                        .iter()
-                        .any(|param| param.is_erased_origin_param(&member.params))
+                !member
+                    .params
+                    .iter()
+                    .any(|param| param.is_erased_origin_param(&member.params))
             })
     }
 
@@ -5399,6 +5402,27 @@ impl Checker {
             traits.push(trait_name);
         }
         Ok(self.canonical_trait_set(&traits))
+    }
+
+    /// The type of the compile-time value a member read's base spells when
+    /// it names no type (`w.E` over `comptime w = W[3]()`): upstream types
+    /// the base as an expression and reads the member on its type. A local
+    /// `comptime` binding the builder does not inline types as its
+    /// construction (`comptime L = TypeList.of[Trait=AnyType, Int]()`).
+    fn value_base_type(&self, base: &SourceType) -> Option<Ty> {
+        let expr = base.expression_spelling(mojito_common::token::Span::default())?;
+        if let Some(ty) = self
+            .compile_dependent_ct_expr(&expr)
+            .ok()
+            .and_then(|built| built.meta().value_ty())
+        {
+            return Some(ty);
+        }
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return None;
+        };
+        let bound = self.local_comptime_value(name)?;
+        self.compile_time_value_type(bound).ok()
     }
 }
 

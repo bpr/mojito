@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type annotation reads a member through a local compile-time value, as
+  at the pin: `var a: w.E = True` over `comptime w = W[3]()` and `var m:
+  L.__getitem_param__[SIMDLength(0)] = 3` over `comptime L =
+  TypeList.of[Trait=AnyType, Int, Bool]()` run, where Mojito reported
+  "expected a type, found a value" and "unknown type 'L'". A parameterized
+  value member's `SIMDLength` index binds at its declared type, through a
+  construction base too (R2023).
 - A struct's type-valued parameterized `comptime` member applies through
   `Self` in a compile-time expression, as at the pin: `comptime First =
   Self.Get[0]` and `comptime F = Self.E[Self.n]` in a later member, and
