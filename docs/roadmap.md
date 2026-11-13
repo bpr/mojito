@@ -5150,25 +5150,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1484 A struct application's type member is no operand of a
-  compile-time value**
-
-  `comptime b = S[Int].A == Int` over `struct S[T: Movable]` with
-  `comptime A = Int` fails with "unsupported associated comptime member
-  access", where the pin prints `True`.
-  - The one builder (`build_ct`, `checker/constraints.rs`) reads a
-    type-valued operand only as a name, an application, or a type value;
-    its `Member` arms read a value member, and `build_ct_rest` reports the
-    rest.
-  - Reading the member through `comptime_type_operand` there recurses
-    back into `build_ct`; the type member's read needs the type position's
-    resolver (`member_type_operand`) without the builder.
-  - Probe: `materialize[S[Int].A == Int]()`, and over `struct S[*Ts:
-    Movable]` `materialize[S[Int, Bool].A == Int]()` (R207's probe).
-  - Found while landing R1388 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R402 A plain `def`'s `comptime for` over struct elements built by a
   call is rejected**
 

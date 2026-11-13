@@ -511,6 +511,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct application's type member compares as a compile-time type
+  operand, as at the pin: `comptime b = S[Int].A == Int` and
+  `materialize[V[Int, Bool].A == Int]()` print `True`, where they once
+  reported "unsupported associated comptime member access" (R1484).
 - A value taken out of never-written raw storage (an `unsafe_alloc` or
   `List(unsafe_uninit_length=n)` slot) is upstream's `undef` on the VM, and
   reading it traps, directly, through a reference, or by a field read,
