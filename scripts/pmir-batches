@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run the remaining `pmir` batches unattended, checking each before the next.
+"""Run the queued roadmap batches unattended, checking each before the next.
 
 The batches are the `scripts/claude_loop.py` commands in
-`docs/notes/representation-consolidation.md`, in file order: each command is
+`docs/notes/next-batches.md`, in file order: each command is
 one batch, its `--task`/`--only` IDs the batch's entries. An ID no longer on
 the roadmap has landed and is dropped; a batch with none left is skipped.
 
@@ -44,7 +44,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NOTE = ROOT / "docs/notes/representation-consolidation.md"
+NOTE = ROOT / "docs/notes/next-batches.md"
 BASELINE = ROOT / "benchmarks/instantiation.tsv"
 FRESH = ROOT / "target/instantiation.tsv"
 NOISY_FIXTURE = "assets/ok/pointer_tuple_field_write.mojo"

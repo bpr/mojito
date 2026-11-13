@@ -23,7 +23,7 @@ the fast tiers miss a test target that stops compiling:
 ## 1. Generalize the batch script
 
 Today `scripts/pmir-batches` reads its batches from the `claude_loop.py`
-commands in `docs/notes/representation-consolidation.md`. Make one script
+commands in `docs/notes/next-batches.md`. Make one script
 (say `scripts/batches`) that takes its batches from either source:
 
 - `--note PATH`: the `claude_loop.py` commands in a note, one batch each,
@@ -46,7 +46,7 @@ named, durations as hours and minutes, and the task clock parsed from the
 child's line rather than echoed.
 
 Leave `scripts/pmir-batches` as a thin wrapper (`--note
-docs/notes/representation-consolidation.md`), or delete it once nothing
+docs/notes/next-batches.md`), or delete it once nothing
 names it.
 
 ## 2. Add a compile-only step to each batch

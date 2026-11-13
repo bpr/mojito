@@ -31,10 +31,10 @@ too large a first step, so the first stage made the whole architecture as
 Mojo-shaped as it could be without MLIR, with Pliron only as the route to
 LLVM. That stage is now largely done: the check order is upstream's, MIR is
 parametric with `hlcf`-shaped regions, the pre-elaboration pipeline runs
-upstream's passes on generic MIR, the dialect level is library code, and gaps
-E–I of [`docs/notes/representation-consolidation.md`](notes/representation-consolidation.md)
-have landed or have their cores in. With the shape in place, the question of
-a larger role for Pliron is reopened (2026-11-09).
+upstream's passes on generic MIR, the dialect level is library code, and the
+representation gaps the `pmir` track consolidated have landed or have their
+cores in. With the shape in place, the question of a larger role for Pliron
+is reopened (2026-11-09).
 
 The measured obstacle is unchanged: the Stage A1 bridge failed its overhead
 budget on the canonical-text round trip
