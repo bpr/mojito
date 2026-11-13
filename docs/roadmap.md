@@ -5433,24 +5433,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1218 A bound's value member in a struct parameter's type is not
-  answered at the instance**
-
-  Problem: `struct W[T: Tr]` with `var b: Box[Self.T.K]` and an initializer
-  taking one, used as `W[S](Box[3]())`, fails with "type mismatch for
-  argument 1 to 'W.__init__': expected Box[S.K], found Box[3]", where the
-  pin prints `ok`.
-  - The initializer's parameter type at `W[S]` substitutes `T` alone
-    (`substitute_at`, `checker/indexing.rs`), which leaves `S.K`
-    unanswered; it needs `resolve_assoc_ty`, as the instance method
-    parameter paths in `method_calls/` take.
-  - The same type as an instance method's parameter runs.
-  - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
-    K: Int = 3`, and `struct Box[n: Int]`.
-  - Found while landing R1201 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1219 A static method's parameter reading its struct's bound
   value member stops the elaborator**
 

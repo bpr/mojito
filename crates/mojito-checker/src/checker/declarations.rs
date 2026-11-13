@@ -3035,7 +3035,7 @@ impl Checker {
             (None, Some(element)) => element,
             (parameter, _) => parameter?,
         };
-        let pattern = substitute(parameter, struct_subst);
+        let pattern = self.resolve_assoc_ty(&substitute(parameter, struct_subst));
         // A literal element is materialized at its default type, as a
         // written `Error(42)` passes an `Int`.
         let defaulted;
@@ -3732,7 +3732,12 @@ impl Checker {
                                     .enumerate()
                                     .filter(|(index, _)| Some(*index) != forwarded_index)
                                     .map(|(_, (pattern, actual))| {
-                                        (substitute_assoc(pattern, &bindings), actual.clone())
+                                        (
+                                            self.resolve_assoc_ty(&substitute_assoc(
+                                                pattern, &bindings,
+                                            )),
+                                            actual.clone(),
+                                        )
                                     }),
                             )
                         },
@@ -3781,12 +3786,12 @@ impl Checker {
                                 || {
                                     own.apply(
                                         self,
-                                        &substitute_assoc(
+                                        &self.resolve_assoc_ty(&substitute_assoc(
                                             &pointer_origins.substitute(&expand_bound_pack(
                                                 pty, &decls, &tyargs,
                                             )),
                                             &bindings,
-                                        ),
+                                        )),
                                     )
                                 },
                                 Ok,
@@ -4148,10 +4153,10 @@ impl Checker {
         let mut bound = Vec::with_capacity(args.len());
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
             // Origin binders first, as for a constructor's parameters.
-            let expected = substitute_assoc(
+            let expected = self.resolve_assoc_ty(&substitute_assoc(
                 &origin_bindings.substitute(&expand_bound_pack(fty, &decls, &tyargs)),
                 &bindings,
-            );
+            ));
             let contextual;
             let aty = if !mojito_types::types::is_symbolic(fty)
                 || self.type_contains_reference(fty)
@@ -5147,14 +5152,16 @@ impl Checker {
 
     /// A constructor parameter type at an application: type parameters by
     /// `subst`, and the struct's own value binders (`Scalar[Self.dt]`) by
-    /// `values` — to the caller's symbolic `dt` inside a template.
+    /// `values` — to the caller's symbolic `dt` inside a template. A member
+    /// read on a bound parameter (`Box[Self.T.K]`) closes at the bound
+    /// conformer, as an instance method's parameter does.
     fn constructor_parameter_ty(
         &self,
         pty: &Ty,
         subst: &TySubst,
         values: &HashMap<String, CtValue>,
     ) -> Result<Ty, TypeError> {
-        let expected = substitute(pty, subst);
+        let expected = self.resolve_assoc_ty(&substitute(pty, subst));
         if values.is_empty() {
             return Ok(expected);
         }

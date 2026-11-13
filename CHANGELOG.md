@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bound's value member in an initializer's parameter closes at the
+  instance, as at the pin: `struct W[T: Tr]` with `def __init__(out self,
+  b: Box[Self.T.K])` constructs as `W[S](Box[3]())`, positionally, by
+  keyword, fieldwise, and through `@implicit`, where Mojito reported
+  "expected Box[S.K], found Box[3]" (R1218).
 - A parameterized value requirement read in a signature closes at the
   substitution, as at the pin: `def f[T: Tr](x: Box[T.get[0]])` called as
   `f[S](Box[1]())` over `comptime get[idx: Int]: Int = idx + 1` prints `1`,

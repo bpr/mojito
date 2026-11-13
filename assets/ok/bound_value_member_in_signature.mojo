@@ -2,7 +2,8 @@
 # `SIMD[DType.int32, T.K]`) closes at a call with a concrete conformer: in a
 # function's parameter, a method's parameter, and a function's result. A
 # method of a struct bounded the same way reads it through its own parameter
-# (`Box[Self.T.K]`) at a concrete receiver.
+# (`Box[Self.T.K]`) at a concrete receiver, and so does an initializer —
+# written, fieldwise, or `@implicit` — at a concrete instance.
 trait Tr:
     comptime K: Int
 
@@ -52,6 +53,27 @@ struct Holder[T: Tr](Movable):
         return len(bs)
 
 
+struct Built[T: Tr](Movable):
+    var b: Box[Self.T.K]
+
+    def __init__(out self, var b: Box[Self.T.K], tag: Int = 0):
+        self.b = b^
+
+
+@fieldwise_init
+struct Fields[T: Tr](Movable):
+    var b: Box[Self.T.K]
+
+
+struct Converted[T: Tr](Movable):
+    var n: Int
+
+    @implicit
+    def __init__(out self, var b: Box[Self.T.K]):
+        _ = b^
+        self.n = Self.T.K
+
+
 def main():
     print(f[S](Box[3]()))
     print(lanes[Four](SIMD[DType.int32, 4](1)))
@@ -60,4 +82,9 @@ def main():
     _ = b^
     print(Holder[S]().get(Box[3]()))
     print(Holder[S]().count(Box[3](), Box[3]()))
+    _ = Built[S](Box[3]())
+    _ = Built[S](b=Box[3](), tag=1)
+    _ = Fields[S](Box[3]())
+    var c: Converted[S] = Box[3]()
+    print(c.n)
     print("ok")
