@@ -93,19 +93,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2161 With the pre-elaboration pipeline off, the elaborated
-  `_reflection_write_to` of a `Writable` struct does not verify**
-
-  With `MOJITO_PRE_ELABORATION=0`, `assets/ok/writable_trait_library.mojo`
-  fails with "specialized MIR that does not verify" in a
-  `__module$std$format$_reflection_write_to$mono$TPair…` instance, where
-  the pin and the default pipeline run it.
-  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`; the
-    verifier finding names the instruction.
-  - Found by the 2026-11-13 overnight gate.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1731 A callee with a callable compile-time parameter, or a
   parameter holding a function, is no compile-time application**
 

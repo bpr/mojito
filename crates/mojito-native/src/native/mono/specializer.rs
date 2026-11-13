@@ -2695,7 +2695,7 @@ impl<'a> Specializer<'a> {
             .map_or(0, |declaration| declaration.param_decls.len());
         scope.truncate(scope.len().saturating_sub(own));
         let removed = self.removed_params(target, reduced);
-        let arguments = scope
+        let mut arguments = scope
             .iter()
             .filter(|decl| !removed.contains(decl.id()))
             .map(|decl| {
@@ -2718,7 +2718,23 @@ impl<'a> Specializer<'a> {
                     )
                 })
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut enclosing: Vec<&MirFunctionDeclaration> = std::iter::successors(
+            self.declarations
+                .get(target)
+                .and_then(|declaration| declaration.enclosing.as_deref()),
+            |name| {
+                self.declarations
+                    .get(name)
+                    .and_then(|declaration| declaration.enclosing.as_deref())
+            },
+        )
+        .filter_map(|name| self.declarations.get(name))
+        .collect();
+        enclosing.reverse();
+        for declaration in enclosing {
+            push_existential_arguments(declaration, &bindings, &mut arguments);
+        }
         Ok((bindings, arguments))
     }
 

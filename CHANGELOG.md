@@ -511,6 +511,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A body nested in a function taking a `Some[Trait]` parameter is one
+  instance per binding of that parameter, as upstream desugars it to an
+  inferred parameter of the enclosing function: the reflective
+  `Writable.write_to` default of a struct written by both `print` and a
+  `String` writer now runs with the pre-elaboration pipeline off, where
+  its nested `call_write_to` was declared for one writer and called with
+  the other (R2161).
 - The elaborator freezes a struct construction whose fields have all
   folded to the struct constant it is, as upstream folds one to its struct
   attribute: `SIMD.deinterleave` at width 2 now runs with the

@@ -29,7 +29,7 @@ fixture assets/runtime_error/pliron_trap_pow_negative.mojo
 # R2158: fixture assets/ok/reflection_source_location.mojo
 fixture assets/ok/generator_runtime_value.mojo
 # R2160: fixture assets/ok/simd_slice_insert_split_interleave.mojo
-# R2161: fixture assets/ok/writable_trait_library.mojo
+fixture assets/ok/writable_trait_library.mojo
 # R2162: fixture assets/ok/float16_semantics.mojo
 fixture assets/ok/indexer_normalization.mojo
 # R2157: test evaluator_test power_and_true_division

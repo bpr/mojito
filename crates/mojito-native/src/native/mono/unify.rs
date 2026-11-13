@@ -24,19 +24,25 @@ pub(super) fn push_sugar_arguments(
     bindings: &Bindings,
     arguments: &mut Vec<InstanceArg>,
 ) {
-    for ty in declaration.param_types.iter().chain(&declaration.variadic) {
-        if let TyKind::Param { binder, .. } = peel_refs(ty).kind()
-            && (binder.name.starts_with("Some[") || bindings.self_instance.is_none())
-            && !declaration
-                .param_decls
-                .iter()
-                .any(|decl| *decl.id() == binder.id)
-            && let Some(bound) = bindings.types.get(binder)
-            && !bound.is_string_literal()
-        {
-            arguments.push(InstanceArg::Ty(bound.clone()));
-        }
-    }
+    push_bound_sugar(declaration, bindings, arguments, |binder| {
+        binder.name.starts_with("Some[") || bindings.self_instance.is_none()
+    });
+}
+
+/// Push the `Some[Trait]` sugar bindings of `declaration`, a declaration a
+/// nested body is nested in: upstream desugars each to an inferred
+/// parameter of that declaration, so it is an enclosing binder of the
+/// nested body and splits its instance as it splits the enclosing one's
+/// ([`push_sugar_arguments`]). An owner's parameter already joins through
+/// the enclosing scope's binders.
+pub(super) fn push_existential_arguments(
+    declaration: &MirFunctionDeclaration,
+    bindings: &Bindings,
+    arguments: &mut Vec<InstanceArg>,
+) {
+    push_bound_sugar(declaration, bindings, arguments, |binder| {
+        binder.name.starts_with("Some[")
+    });
 }
 
 pub(super) fn ordered_arguments(
@@ -999,5 +1005,29 @@ fn resolve_callable_default(
             CtValue::Bool(false) => resolve_callable_default(else_value, bindings),
             _ => Ok(None),
         },
+    }
+}
+
+/// Push the binding of each parameter type of `declaration` bound to a
+/// binder `joins` admits and its `param_decls` do not declare; a builtin
+/// string binding keeps the unsuffixed spelling.
+fn push_bound_sugar(
+    declaration: &MirFunctionDeclaration,
+    bindings: &Bindings,
+    arguments: &mut Vec<InstanceArg>,
+    joins: impl Fn(&ParamRef) -> bool,
+) {
+    for ty in declaration.param_types.iter().chain(&declaration.variadic) {
+        if let TyKind::Param { binder, .. } = peel_refs(ty).kind()
+            && joins(binder)
+            && !declaration
+                .param_decls
+                .iter()
+                .any(|decl| *decl.id() == binder.id)
+            && let Some(bound) = bindings.types.get(binder)
+            && !bound.is_string_literal()
+        {
+            arguments.push(InstanceArg::Ty(bound.clone()));
+        }
     }
 }
