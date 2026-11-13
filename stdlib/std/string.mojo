@@ -46,6 +46,18 @@ struct _BoundsMessage(Movable, Writer):
         self.text.write_string(string)
 
 
+# Upstream's element bounds check: an index outside `0..size` aborts with
+# the index and the last valid index interpolated.
+@inline(.always)
+def check_bounds(idx: Int, size: Int):
+    if idx < 0 or idx >= size:
+        var message = _BoundsMessage()
+        message.write(
+            "index ", idx, " is out of bounds, valid range is 0 to ", size - 1
+        )
+        _mojito_abort(message.text)
+
+
 @inline(.always)
 def check_slice_bounds(start: Int, end: Int, length: Int):
     if start < 0 or start > length:

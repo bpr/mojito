@@ -30,6 +30,18 @@ struct _BoundsMessage(Movable, Writer):
         self.text.write_string(string)
 
 
+# Upstream's element bounds check (`std.string.check_bounds`), local for
+# the same load-order reason.
+@inline(.always)
+def _check_span_bounds(idx: Int, size: Int):
+    if idx < 0 or idx >= size:
+        var message = _BoundsMessage()
+        message.write(
+            "index ", idx, " is out of bounds, valid range is 0 to ", size - 1
+        )
+        _mojito_abort(message.text)
+
+
 def _check_span_slice_bounds(start: Int, end: Int, length: Int):
     if start < 0 or start > length:
         var message = _BoundsMessage()
@@ -164,8 +176,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     def __getitem__(ref self, index: Int) -> ref[
         Self.origin._get_owned_interior["element"]
     ] Self.T:
-        if index < 0 or index >= self._size:
-            _mojito_abort("Span index out of range")
+        _check_span_bounds(index, self._size)
         return self._data[index]
 
     @inline(.always)
@@ -173,8 +184,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
         Self.origin._get_owned_interior["element"]
     ] Self.T:
         var i = index(idx)
-        if i < 0 or i >= self._size:
-            _mojito_abort("Span index out of range")
+        _check_span_bounds(i, self._size)
         return self._data[i]
 
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,

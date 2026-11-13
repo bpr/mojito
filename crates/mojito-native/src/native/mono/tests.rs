@@ -1982,7 +1982,7 @@ fn failed_method_instance_is_reported_only_where_reached() {
     let error = specialize(mir, &["reaches".to_string()], host_target().as_ref())
         .expect_err("`reaches` instantiates `S[5].f`");
     assert_eq!(error.kind, MonoErrorKind::Instantiation, "{error}");
-    assert!(error.construct.contains("out of range"), "{error}");
+    assert!(error.construct.contains("out of bounds"), "{error}");
 }
 
 #[test]

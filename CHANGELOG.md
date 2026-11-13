@@ -511,6 +511,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An out-of-range element subscript of an `Array`, a `List`, or a `Span`
+  aborts with the pin's "index 2 is out of bounds, valid range is 0 to 1",
+  where `[1, 2][i]` reported "vm: Pointer access out of bounds" and the
+  `List` and `Span` getters their own messages; an abort during
+  compile-time evaluation now fails the instance as the pin's "function
+  instantiation failed" rather than an unsupported VM CTFE error (R2163).
 - A plain struct's static call that no candidate binds reports why, as
   at the pin: `S.f[k]()` over `@staticmethod def f[n: Int]()` and a
   run-time `k` reports "cannot use a dynamic value in a parameter list",

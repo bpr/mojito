@@ -8836,9 +8836,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by `conformance/probes/array_negative_literal_index.mojo`.
   - Probe: `comptime q = [1, 2][i]` under `comptime for i in
     range(k)` in a method instantiated at `k = 5`
-    (`assets/type_error/struct_method_per_call_clone_fails.mojo`) fails as
-    a VM pointer fault in the lifted thunk, where the pin fails the
-    `__getitem_param__` constraint "index is out of bounds".
+    (`assets/type_error/struct_method_per_call_clone_fails.mojo`) fails
+    the instance through the run-time getter's bounds abort, where the pin
+    fails the `__getitem_param__` constraint "index is out of bounds".
   - Ledger name: `array-negative-literal-index`.
   - R2043 waits on this: an `Array` display's subscript in a signature
     becomes an application once the getter exists.
@@ -9348,24 +9348,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     False._mlir_value))` over `comptime s = True._mlir_value` prints
     `False`, where the pin rejects it at the `__mlir_op`.
   - Found while landing R1955 (2026-11-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2163 An out-of-range subscript of a list display reports a VM
-  pointer error, where the pin reports the list's bounds-check abort**
-
-  `var i = 2; print([1, 2][i])` fails with "vm: Pointer access out of
-  bounds", where the pin aborts with "index 2 is out of bounds, valid range
-  is 0 to 1".
-  - At compile time, `comptime q = [1, 2][i]` out of range fails as an
-    unsupported VM CTFE error, where the pin reports "function
-    instantiation failed … index is out of bounds".
-  - The subscript appears to bypass the library getter's bounds check.
-  - The native unit test
-    `failed_method_instance_is_reported_only_where_reached`
-    (`crates/mojito-native/src/native/mono/tests.rs`) pins the
-    compile-time half and fails since da536134e (R1530).
-  - Found by the 2026-11-13 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

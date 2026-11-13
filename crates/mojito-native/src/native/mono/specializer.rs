@@ -6,6 +6,7 @@ use super::*;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::param_expr::ParamOp;
 use mojito_types::types::TyKind;
+use mojito_vm::runtime::RuntimeError;
 use std::collections::BTreeMap;
 
 impl<'a> Specializer<'a> {
@@ -1732,11 +1733,20 @@ impl<'a> Specializer<'a> {
         let (value, remaining) = self
             .vm
             .call_concrete(&fragment, &name, &called, self.fuel)
-            .map_err(|error| {
-                self.error(
+            .map_err(|error| match error {
+                // A program abort is the instance's own failure, as upstream
+                // fails the instantiation whose interpretation aborted.
+                RuntimeError::Abort(message) => MonoError {
+                    kind: MonoErrorKind::Instantiation,
+                    function: Some(template.to_string()),
+                    construct: format!(
+                        "failed to compile-time evaluate '{name}': abort: {message}"
+                    ),
+                },
+                error => self.error(
                     Some(template),
                     format!("VM CTFE failed for '{name}': {error}"),
-                )
+                ),
             })?;
         self.fuel = remaining;
         let frozen = self.vm.freeze(&fragment, value, fragment.result_ty(&name));

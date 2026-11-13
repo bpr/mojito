@@ -14,6 +14,7 @@ from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 from std.collections.optional import Optional
 from std.reflection.type_info import _unqualified_type_name
 from std.traits import IsTriviallyDeinitable
+from std.string import check_bounds
 
 @fieldwise_init
 struct _ArrayIter[
@@ -209,13 +210,16 @@ struct Array[T: AnyType, length: Int](
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        check_bounds(index, Self.length)
         return self.data[index]
 
     @inline(.always)
     def __getitem__(
         ref self, idx: Some[Indexer]
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
-        return self.data[index(idx)]
+        var i = index(idx)
+        check_bounds(i, Self.length)
+        return self.data[i]
 
     @inline(.always)
     def unsafe_get(
