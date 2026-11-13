@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A static method's parameter reading its struct's bound value member runs,
+  as at the pin: `struct W[T: Tr]` with `@staticmethod def make(var b:
+  Box[Self.T.K])` called as `W[S].make(Box[3]())` binds `T` from the spelled
+  owner before the arguments unify, where the elaborator stopped with "'T.K'
+  is not a compile-time constant here" (R1219).
 - A bound's value member in an initializer's parameter closes at the
   instance, as at the pin: `struct W[T: Tr]` with `def __init__(out self,
   b: Box[Self.T.K])` constructs as `W[S](Box[3]())`, positionally, by

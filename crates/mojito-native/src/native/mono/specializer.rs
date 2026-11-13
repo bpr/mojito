@@ -3106,7 +3106,10 @@ impl<'a> Specializer<'a> {
                     // A nested `def`'s direct call binds its enclosing
                     // binders from this instance's, or from its region
                     // copy's.
-                    let (target, mut bindings, arguments) = self.answering(owner, |this| {
+                    // The instance identity carries the spelled receiver
+                    // of a static call, so the resolved call keeps none.
+                    let spelled = static_receiver.take();
+                    let (target, bindings, arguments) = self.answering(owner, |this| {
                         this.infer_call(
                             owner,
                             function,
@@ -3122,13 +3125,9 @@ impl<'a> Specializer<'a> {
                                     .as_ref()
                                     .map_or(&this.enclosing, |(_, bindings)| bindings),
                             ),
+                            spelled.as_ref(),
                         )
                     })?;
-                    // The instance identity carries the spelled receiver
-                    // of a static call, so the resolved call keeps none.
-                    if let Some(spelled) = static_receiver.take() {
-                        self.bind_static_receiver(owner, &target, &spelled, &mut bindings)?;
-                    }
                     let reduced = bindings.reduced;
                     func.0 = self.enqueue(&target, bindings, arguments)?;
                     if reduced {
@@ -3253,6 +3252,7 @@ impl<'a> Specializer<'a> {
                         kwargs,
                         param_arg_regs,
                         instantiated_args,
+                        None,
                         None,
                     )?;
                     let reduced = bindings.reduced;
@@ -3404,6 +3404,7 @@ impl<'a> Specializer<'a> {
                                 param_arg_regs,
                                 &contract_values,
                                 scope.cloned().as_ref(),
+                                None,
                             )?;
                             let reduced = bindings.reduced;
                             let concrete = self.enqueue(&target, bindings, arguments)?;

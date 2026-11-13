@@ -5433,27 +5433,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1219 A static method's parameter reading its struct's bound
-  value member stops the elaborator**
-
-  Problem: `struct W[T: Tr]` with `@staticmethod def make(var b:
-  Box[Self.T.K]) -> Int`, called as `W[S].make(Box[3]())`, stops with
-  "unsupported monomorphizing `W.make`: 'T.K' is not a compile-time
-  constant here", where the pin prints `4`.
-  - The check accepts the call (`method_calls/statics.rs` closes `S.K` at
-    the receiver), and the same parameter on an instance method runs.
-  - `infer_call` (`native/mono/infer.rs`) reaches `W.make` with no
-    instantiated arguments and a declaration holding none of the struct's
-    parameters, so nothing binds `T` before the parameter's `T.K` is read;
-    an instance method binds `T` from its receiver.
-  - A static's body reading `Self.T.K` runs, so the gap is the parameter
-    pattern only.
-  - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
-    K: Int = 3`, `struct Box[n: Int]`, and the `make` above returning `4`.
-  - Found while landing R1201 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1200 A raw-list value parameter does not bind as a `TypeList`'s
   `values`**
 

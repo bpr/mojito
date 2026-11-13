@@ -160,6 +160,7 @@ impl Specializer<'_> {
                 &call.param_arg_regs,
                 &[],
                 None,
+                None,
             )?
         } else {
             let parameters: Vec<&Ty> = call
@@ -242,6 +243,7 @@ impl Specializer<'_> {
         param_args: &[mojito_mir::mir::MirParamArg],
         instantiated: &[TyArg],
         scope: Option<&Bindings>,
+        static_receiver: Option<&Ty>,
     ) -> Result<(String, Bindings, Vec<InstanceArg>), MonoError> {
         let declaration = self.declarations.get(target).ok_or_else(|| {
             self.error(
@@ -269,55 +271,27 @@ impl Specializer<'_> {
             }
             _ => Vec::new(),
         };
+        // A static call's spelled owner (`W[S].make`) binds the struct's
+        // parameters before the arguments unify, so a parameter type over
+        // them (`Box[Self.T.K]`) closes as a receiver-bound method's does.
+        if let Some(spelled) = static_receiver {
+            self.bind_static_receiver(owner, target, spelled, &mut bindings)?;
+        }
         let receiver_pattern_for_instance = receiver.and_then(|_| {
             self.functions
                 .get(target)
                 .and_then(|function| function.param_types.first())
                 .cloned()
         });
-        let mut owner_covered = 0;
         // A constructor's declaration restates its struct's parameters
         // first, which a method's receiver binds.
-        let mut own_start = 0;
-        if let Some(receiver) = receiver {
-            let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
-            if let Some((receiver_name, arguments)) =
-                mojito_types::types::nominal_parts(actual_receiver)
-                && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
-            {
-                own_start =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-                bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
-                    self.error(
-                        Some(owner),
-                        format!("monomorphizing receiver for `{target}`: {e}"),
-                    )
-                })?;
-                // An instance-named receiver carries the owner's concrete
-                // identity: record it so the method instance is named under
-                // the owner and its body's bare `self` spelling resolves.
-                if nominal_template(receiver_name) != receiver_name {
-                    bindings.self_instance = Some((
-                        nominal_template(receiver_name).to_string(),
-                        actual_receiver.clone(),
-                    ));
-                    owner_covered =
-                        owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-                }
+        let (own_start, mut owner_covered) = match receiver {
+            Some(receiver) => {
+                let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
+                self.bind_call_receiver(owner, target, actual_receiver, &mut bindings)?
             }
-            let receiver_pattern = self
-                .functions
-                .get(target)
-                .and_then(|function| function.param_types.first())
-                .ok_or_else(|| {
-                    self.error(
-                        Some(owner),
-                        format!("method `{target}` lacks a receiver type"),
-                    )
-                })?;
-            unify(receiver_pattern, actual_receiver, &mut bindings)
-                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
-        }
+            None => (0, 0),
+        };
         // A construction's solved arguments restate its struct's, as its
         // declaration does; a method call's are the method's own.
         let instantiated_start = if receiver == Some(dest) { 0 } else { own_start };
@@ -1046,5 +1020,60 @@ fn collector_elements(collector: &Ty) -> Option<Vec<Ty>> {
             .or_else(|| {
                 mojito_types::types::collector_pack_spread(collector).map(|pack| vec![pack.clone()])
             }),
+    }
+}
+
+impl Specializer<'_> {
+    /// Bind a call's receiver register type into `bindings`: the owning
+    /// struct's parameters from its arguments, the owner's concrete
+    /// identity when the receiver is instance-named, and the callee's
+    /// receiver pattern. Returns how many leading declaration parameters
+    /// restate the struct's, and how many of those the instance identity
+    /// covers.
+    fn bind_call_receiver(
+        &self,
+        owner: &str,
+        target: &str,
+        actual_receiver: &Ty,
+        bindings: &mut Bindings,
+    ) -> Result<(usize, usize), MonoError> {
+        let declaration = &self.declarations[target];
+        let mut own_start = 0;
+        let mut owner_covered = 0;
+        if let Some((receiver_name, arguments)) =
+            mojito_types::types::nominal_parts(actual_receiver)
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
+        {
+            own_start = owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            bind_ty_args(&struct_decl.param_decls, &arguments, bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing receiver for `{target}`: {e}"),
+                )
+            })?;
+            // An instance-named receiver carries the owner's concrete
+            // identity: record it so the method instance is named under
+            // the owner and its body's bare `self` spelling resolves.
+            if nominal_template(receiver_name) != receiver_name {
+                bindings.self_instance = Some((
+                    nominal_template(receiver_name).to_string(),
+                    actual_receiver.clone(),
+                ));
+                owner_covered = own_start;
+            }
+        }
+        let receiver_pattern = self
+            .functions
+            .get(target)
+            .and_then(|function| function.param_types.first())
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!("method `{target}` lacks a receiver type"),
+                )
+            })?;
+        unify(receiver_pattern, actual_receiver, bindings)
+            .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        Ok((own_start, owner_covered))
     }
 }

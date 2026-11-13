@@ -3,7 +3,8 @@
 # function's parameter, a method's parameter, and a function's result. A
 # method of a struct bounded the same way reads it through its own parameter
 # (`Box[Self.T.K]`) at a concrete receiver, and so does an initializer —
-# written, fieldwise, or `@implicit` — at a concrete instance.
+# written, fieldwise, or `@implicit` — at a concrete instance, and a static
+# method at its spelled owner (`Holder[S].make`).
 trait Tr:
     comptime K: Int
 
@@ -52,6 +53,11 @@ struct Holder[T: Tr](Movable):
     def count(self, *bs: Box[Self.T.K]) -> Int:
         return len(bs)
 
+    @staticmethod
+    def make(var b: Box[Self.T.K]) -> Int:
+        _ = b^
+        return Self.T.K + 1
+
 
 struct Built[T: Tr](Movable):
     var b: Box[Self.T.K]
@@ -82,6 +88,8 @@ def main():
     _ = b^
     print(Holder[S]().get(Box[3]()))
     print(Holder[S]().count(Box[3](), Box[3]()))
+    print(Holder[S].make(Box[3]()))
+    print(Holder[Four].make(Box[4]()))
     _ = Built[S](Box[3]())
     _ = Built[S](b=Box[3](), tag=1)
     _ = Fields[S](Box[3]())
