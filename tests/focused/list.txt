@@ -27,7 +27,7 @@ fixture assets/runtime_error/pliron_trap_pow_negative.mojo
 # R2157: fixture assets/ok/literal_operator_dunders.mojo
 # R2157: fixture assets/ok/owned_pointer_api.mojo
 # R2158: fixture assets/ok/reflection_source_location.mojo
-# R2159: fixture assets/ok/generator_runtime_value.mojo
+fixture assets/ok/generator_runtime_value.mojo
 # R2160: fixture assets/ok/simd_slice_insert_split_interleave.mojo
 # R2161: fixture assets/ok/writable_trait_library.mojo
 # R2162: fixture assets/ok/float16_semantics.mojo

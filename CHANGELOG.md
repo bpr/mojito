@@ -511,6 +511,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generator type owns its binders by position, as upstream's
+  `!kgen.generator` input parameters do, so a partial application's type
+  (`Add[1, _]`) and the annotation `__generator_type[b: Int] Int` are one
+  type: a generic `def` called with both now instantiates once with the
+  pre-elaboration pipeline off, where elaboration reported a colliding
+  instance symbol (R2159).
 - `@always_inline` is mandatory, as at the pin: with the pre-elaboration
   pipeline off, an `always-inline` pass still inlines every always-inline
   callee after elaboration, so `source_location()` and `call_location()`

@@ -73,19 +73,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2159 With the pre-elaboration pipeline off, a generic `def`
-  called with a generator-typed argument mints an instance symbol that
-  collides with a declaration**
-
-  With `MOJITO_PRE_ELABORATION=0`, `assets/ok/generator_runtime_value.mojo`
-  fails with "in `id`: concrete instance symbol
-  `id$mono$T$$generator$type$b$$Int$$Int` collides with an existing
-  declaration", where the pin and the default pipeline run it.
-  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
-  - Found by the 2026-11-13 overnight gate.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2160 With the pre-elaboration pipeline off, `SIMD.deinterleave`
   cannot fold its `SIMDLength` quotient**
 

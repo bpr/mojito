@@ -838,7 +838,8 @@ impl Checker {
         params: &[mojito_ast::ast::TypeParam],
         result: &SourceType,
     ) -> Result<Ty, TypeError> {
-        let decls = self.classify_param_list(GENERATOR_TYPE_OWNER, params)?;
+        let decls =
+            self.classify_param_list(mojito_types::types::GENERATOR_BINDER_OWNER, params)?;
         // The list scopes the result, as a declaration's list scopes its
         // signature: `__generator_type[T: Copyable] List[T]`.
         self.push_param_scope(&decls);
@@ -5400,10 +5401,6 @@ impl Checker {
 
 /// Whether `value` is an application computing a compile-time string
 /// ([`Checker::string_parameter_value`]).
-/// The owner of every generator type's own binders
-/// ([`Checker::generator_type`]).
-const GENERATOR_TYPE_OWNER: &str = "$generator";
-
 /// `List[T: AnyType, /]`.
 const LIST_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T")];
 /// `Set[T: KeyElement, H: Hasher & … = default_hasher]`.

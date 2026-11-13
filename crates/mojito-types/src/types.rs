@@ -995,7 +995,25 @@ dataless_types! {
 impl Ty {
     /// The generator type over `params` yielding `result`
     /// ([`TyKind::Generator`]).
+    ///
+    /// The type owns its binders: each is reowned by
+    /// [`GENERATOR_BINDER_OWNER`] at its position, and `result` and the
+    /// later declarations move with it, so two generator types that differ
+    /// only in where their binders were declared (`Add[1, _]`'s `b` and a
+    /// `__generator_type[b: Int] Int` annotation's) are one type, as
+    /// upstream's positional `!kgen.generator` input parameters are.
     pub fn generator(params: Vec<ParamDecl>, result: Self) -> Self {
+        let owned = params.iter().enumerate().all(|(position, decl)| {
+            let id = decl.id();
+            &*id.owner == GENERATOR_BINDER_OWNER && id.slot == position
+        });
+        let (params, result) = if owned {
+            (params, result)
+        } else {
+            let (params, bindings) = reown_as_own_parameters(&params, GENERATOR_BINDER_OWNER);
+            let result = bind_signature_slots(&result, &bindings);
+            (params, result)
+        };
         Self::new(TyKind::Generator(Box::new(GeneratorTy { params, result })))
     }
 
@@ -1598,6 +1616,10 @@ pub const ARRAY_TYPE_NAME: &str = "Array";
 /// array literal's construction names its compile-time arguments by.
 pub const ARRAY_ELEMENT_PARAM: &str = "T";
 pub const ARRAY_LENGTH_PARAM: &str = "length";
+
+/// The owner of every generator type's own binders ([`Ty::generator`]):
+/// slot `i` is the generator's `i`th input parameter.
+pub const GENERATOR_BINDER_OWNER: &str = "$generator";
 
 /// The owner of a canonicalized generic contract's own binders
 /// ([`canonical_generic_signature`]): slot `i` of every contract is one

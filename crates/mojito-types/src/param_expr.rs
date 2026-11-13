@@ -1145,14 +1145,24 @@ impl ParamContext {
                 }));
             }
             ParamKind::Constant(CtValue::Generator(value)) => {
+                // The body names the value's own binders; its type's are
+                // the generator type's positional ones ([`Ty::generator`]).
+                let own = generator_bindings(&value.params, &args);
                 if complete {
-                    return self.fold(&self.replace(&value.body, &bindings)?);
+                    return self.fold(&self.replace(&value.body, &own)?);
                 }
                 // A partial binding over a parameter still unbound stays a
                 // node, so a later replacement reaches that argument.
                 if args.iter().flatten().all(ParamExpr::is_closed) {
-                    let body = self.fold(&self.replace(&value.body, &bindings)?)?;
-                    let params = bound_generator_params(&ty.unbound_params(&args), &bindings);
+                    let body = self.fold(&self.replace(&value.body, &own)?)?;
+                    let unbound: Vec<_> = value
+                        .params
+                        .iter()
+                        .zip(&args)
+                        .filter(|(_, slot)| slot.is_none())
+                        .map(|(decl, _)| decl.clone())
+                        .collect();
+                    let params = bound_generator_params(&unbound, &own);
                     return self.constant(CtValue::Generator(Box::new(
                         crate::ct::GeneratorValue { params, body },
                     )));
