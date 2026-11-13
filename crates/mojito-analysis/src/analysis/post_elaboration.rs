@@ -11,7 +11,7 @@
 //! concrete once, verifying only the changed bodies
 //! (`mojito_mir::mir::ConcreteMir::rewrite_bodies`).
 
-use super::automatic_inline::AUTOMATIC_INLINE;
+use super::automatic_inline::{ALWAYS_INLINE, AUTOMATIC_INLINE};
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_CONCRETE_SYMBOLS;
@@ -48,6 +48,11 @@ pub const POST_ELABORATION_PIPELINE: &[Pass] = &[
     Pass::Body(CSE),
 ];
 
+/// The pipeline the driver runs over the concrete program with the pre-
+/// and post-elaboration pipelines off: only `always-inline`, since
+/// upstream's `@always_inline` is mandatory, not an optimization.
+pub const MANDATORY_PIPELINE: &[Pass] = &[Pass::CallGraph(ALWAYS_INLINE)];
+
 /// The symbol passes upstream runs over the elaborator's output before its
 /// function pipeline, in order: `EliminateDuplicateFunctions`, then
 /// `EliminateDeadSymbols`.
@@ -76,8 +81,29 @@ pub fn post_elaborate_program(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
 ) -> Vec<usize> {
+    run_concrete_pipeline(POST_ELABORATION_PIPELINE, functions, declarations)
+}
+
+/// Run [`MANDATORY_PIPELINE`] over every concrete function in `functions`
+/// but `__toplevel__`, as [`post_elaborate_program`] runs its own.
+pub fn inline_always_program(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) -> Vec<usize> {
+    run_concrete_pipeline(MANDATORY_PIPELINE, functions, declarations)
+}
+
+/// Run `pipeline` over every concrete function in `functions` but
+/// `__toplevel__`, the call-graph passes over them callees first, each
+/// pass under its own timing span; returns the index of each function some
+/// pass changed, ascending.
+fn run_concrete_pipeline(
+    pipeline: &[Pass],
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) -> Vec<usize> {
     let mut changed = vec![false; functions.len()];
-    for pass in POST_ELABORATION_PIPELINE {
+    for pass in pipeline {
         let _pass = timing::span(pass.name());
         match pass {
             Pass::Program(_) => {}

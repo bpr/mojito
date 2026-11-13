@@ -20,7 +20,7 @@
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
 use super::hoist_trivial_invariants::HOIST_TRIVIAL_INVARIANTS;
-use super::inline_parametric::{Admission, inline_calls};
+use super::inline_parametric::{Admission, inline_calls, is_inlined_before_elaboration};
 use super::mem2reg::MEM_2_REG;
 use super::pre_elaboration::{BodyPass, CallGraphPass, Callees, Cycles};
 use super::simplify_cf::SIMPLIFY_CF;
@@ -33,6 +33,24 @@ pub const AUTOMATIC_INLINE: CallGraphPass = CallGraphPass {
     follows: |_, _| true,
     cycles: Cycles::CallerComponent,
     run: automatic_inline,
+};
+
+/// `always-inline`: the mandatory inliner.
+///
+/// It inlines every call to an `@always_inline` callee of any flavour into
+/// a concrete body, callees first, and nothing else, as upstream inlines
+/// `@always_inline` whatever the optimization level. It is the one inlining the driver runs with the
+/// pre- and post-elaboration pipelines off, so a `kgen.source_loc` in an
+/// always-inline body still reports its caller's site, and a builtin
+/// constructor of a zero-size result never reaches a backend as a call.
+/// Its splice and cycle rule are [`AUTOMATIC_INLINE`]'s.
+pub const ALWAYS_INLINE: CallGraphPass = CallGraphPass {
+    name: "always-inline",
+    follows: |declaration, _| is_inlined_before_elaboration(declaration),
+    cycles: Cycles::CallerComponent,
+    run: |name, function, declarations, callees| {
+        inline_calls(name, function, declarations, callees, Admission::Mandatory)
+    },
 };
 
 /// The [`inline_cost`] from which an undecorated callee keeps its calls.

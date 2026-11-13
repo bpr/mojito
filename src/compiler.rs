@@ -201,7 +201,12 @@ impl CompiledProgram {
                         .and_then(SpecializedProgram::translated)
                 } else {
                     concrete.and_then(|concrete| {
-                        concrete.rewritten(|functions, _| self.sources.resolve(functions))
+                        concrete.rewritten(|functions, declarations| {
+                            let mut changed =
+                                crate::analysis::inline_always_program(functions, declarations);
+                            changed.extend(self.sources.resolve(functions));
+                            changed
+                        })
                     })
                 };
                 if let Ok(concrete) = &concrete {

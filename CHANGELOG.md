@@ -511,6 +511,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `@always_inline` is mandatory, as at the pin: with the pre-elaboration
+  pipeline off, an `always-inline` pass still inlines every always-inline
+  callee after elaboration, so `source_location()` and `call_location()`
+  report the caller's line instead of the library's, and `print(3)` and
+  `1 / 4`-style literal arithmetic compile natively instead of failing
+  with "unsupported constructor result" (R2158).
 - A literal operator whose result type carries its value is folded to that
   constant by the elaborator, as upstream's parser inlines the
   `@always_inline("builtin")` literal dunders, so `1 / 4`, `1 + 2.5`, and

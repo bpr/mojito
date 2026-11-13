@@ -7800,8 +7800,9 @@ point where a slot declared in a loop is uninitialized again.
   after the seam runs in every build.
 - **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
-  (`elaborate-drops`), drop elaboration run on request, and `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
-  pipeline runs. `elaborate-drops` output is structured, as
+  (`elaborate-drops`), drop elaboration run on request, `SIMPLIFY_CF` (`simplify-cf`), which only the post-elaboration
+  pipeline runs, and `ALWAYS_INLINE` (`always-inline`), the mandatory
+  inliner. `elaborate-drops` output is structured, as
   every pipeline pass reads it. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
@@ -8155,7 +8156,19 @@ concrete verifier rejects a reference slot read as its handle.
 - **The switch.** `MOJITO_PRE_ELABORATION=0` and
   `Compiler::with_pre_elaboration(false)` turn this pipeline off along with
   the pre-elaboration one, so the `pre_elaboration::*` differential covers
-  both.
+  both. What the switch never turns off is `MANDATORY_PIPELINE`, the
+  `always-inline` pass (`analysis::ALWAYS_INLINE`,
+  `analysis/automatic_inline.rs`), which the driver runs over the concrete
+  program in their place (`inline_always_program`), before it resolves
+  `kgen.source_loc`: upstream's `@always_inline` holds at every
+  optimization level, so every always-inline callee, of any flavour or
+  size, is inlined, callees first, with `automatic-inline`'s splice and
+  cycle rule (`Admission::Mandatory`). An always-inline body's
+  `call_location()` so reports its caller either way, and a builtin
+  constructor of a zero-size result never reaches a backend as a call
+  (R2158). A `read` argument an instance of a generic caller still passes
+  by address (`ref.make`) to a parameter of a value type binds the place,
+  not the address (`passes_address`).
 
 ## Stage 8: Register VM
 

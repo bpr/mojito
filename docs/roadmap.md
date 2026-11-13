@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2166**.
+Next free ID: **R2167**.
 
 ## Ordered Work
 
@@ -56,29 +56,20 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R2158 With the pre-elaboration pipeline off, a call location
-  reports the callee's own line, where the pin reports the caller's**
+- [ ] **R2166 With the pre-elaboration pipeline off, an omitted
+  argument a body never reads still evaluates its default**
 
   With `MOJITO_PRE_ELABORATION=0`,
-  `assets/ok/reflection_source_location.mojo` prints `189 6 False` for
-  its first location, where the pin and the default pipeline print
-  `38 31 True`.
-  - `__call_location()` is only meaningful in an `@always_inline` body,
-    which upstream always inlines. The pipeline-off path runs the body
-    un-inlined, so the location is the library's.
-  - The same divergence moves the `At:` line of
-    `assets/runtime_error/debug_assert_safe_mode_fails.mojo` into
-    `stdlib/std/reflection/location.mojo`.
-  - Lever: make `@always_inline` inlining mandatory, as upstream's is,
-    rather than a pre-elaboration pass.
-  - The native backend meets the same gap: with the pipeline off,
-    `--backend pliron` on `print(3)` fails with "unsupported constructor
-    result `NoneType`" in `_write_int`, and on
-    `assets/ok/pliron_int_truediv.mojo` with "unsupported constructor
-    result `IntLiteral[-2]`" in `IntLiteral.__sub__`, since a builtin
-    `__init__` or dunder of a zero-size result stays a call the backend
-    cannot lower.
-  - Found by the 2026-11-13 overnight gate.
+  `assets/ok/unused_argument_instances.mojo` prints `side` for
+  `fside()`, where the pin and the default pipeline print nothing.
+  - Upstream's `RemoveUnusedParams` drops the parameter before any call
+    materializes its default, and the switch turns that pass off with
+    the rest of the pipeline, so a default with an effect runs.
+  - Lever: decide whether the default's evaluation is semantics the
+    driver owes at every setting, as R2158 made `@always_inline`
+    mandatory, and run the removal (or skip the default) regardless.
+  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
+  - Found while landing R2158.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

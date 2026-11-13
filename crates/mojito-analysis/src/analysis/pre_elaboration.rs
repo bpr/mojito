@@ -10,7 +10,7 @@
 //! is finished ([`finish_package_drops`], then [`finish_package_body`]),
 //! where the body and call-graph passes run. Never per instance.
 
-use super::automatic_inline::AUTOMATIC_INLINE;
+use super::automatic_inline::{ALWAYS_INLINE, AUTOMATIC_INLINE};
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
@@ -499,6 +499,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(HOIST_TRIVIAL_INVARIANTS),
     Pass::Body(STACK_REUSE),
     Pass::CallGraph(AUTOMATIC_INLINE),
+    Pass::CallGraph(ALWAYS_INLINE),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];
 

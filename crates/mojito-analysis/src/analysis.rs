@@ -19,7 +19,8 @@
 //! phase reads until Pliron lowers them to LLVM blocks.
 
 pub use automatic_inline::{
-    AUTOMATIC_INLINE, AUTOMATIC_INLINE_PIPELINE, AUTOMATIC_INLINE_SIZE_BOUND, automatic_inline,
+    ALWAYS_INLINE, AUTOMATIC_INLINE, AUTOMATIC_INLINE_PIPELINE, AUTOMATIC_INLINE_SIZE_BOUND,
+    automatic_inline,
 };
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
@@ -57,8 +58,8 @@ use mojito_mir::mir::{
 use moves::*;
 pub use opt::{OptError, opt};
 pub use post_elaboration::{
-    ELABORATED_SYMBOL_PASSES, POST_ELABORATION_PIPELINE, eliminate_elaborated_symbols,
-    post_elaborate_program,
+    ELABORATED_SYMBOL_PASSES, MANDATORY_PIPELINE, POST_ELABORATION_PIPELINE,
+    eliminate_elaborated_symbols, inline_always_program, post_elaborate_program,
 };
 pub use pre_elaboration::{
     BodyPass, CallGraphPass, Callees, Cycles, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,

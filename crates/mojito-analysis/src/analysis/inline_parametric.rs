@@ -310,6 +310,10 @@ pub enum Admission {
     /// at any size, and an undecorated one whose [`inline_cost`] is below
     /// `bound`; never a `@no_inline` one.
     Automatic { bound: usize },
+    /// The mandatory inliner's: an always-inline callee at any size, and
+    /// nothing else, as upstream inlines `@always_inline` whatever the
+    /// optimization level.
+    Mandatory,
 }
 
 impl Admission {
@@ -328,6 +332,7 @@ impl Admission {
             (Self::Automatic { bound }, InlineLevel::Automatic) => {
                 inline_cost(callee, declarations) < bound
             }
+            (Self::Mandatory, _) => is_inlined_before_elaboration(declaration),
             _ => true,
         }
     }
@@ -2521,9 +2526,14 @@ fn argument_binding(
     if reference {
         return None;
     }
+    // A `read` argument an instance of a generic caller still passes by
+    // the address its template passed (`ref.make` of the place) binds that
+    // place, not the address as a value.
+    let by_address = place.is_some() && passes_address(caller, callee, param, argument);
     if owned
-        || callee.param_types.get(param).is_some_and(has_no_destructor)
-        || trivially_copied(caller, block, index, argument)
+        || !by_address
+            && (callee.param_types.get(param).is_some_and(has_no_destructor)
+                || trivially_copied(caller, block, index, argument))
     {
         return Some(Binding::Value(argument));
     }
@@ -2537,6 +2547,18 @@ fn argument_binding(
                 Binding::Handle(HandleSource::Register(reference, ty.clone()))
             })
         })
+}
+
+/// Whether the call passes `argument` for the `read` parameter `param` as
+/// the address of its place: a reference register to a parameter whose
+/// own type is no reference.
+fn passes_address(caller: &MirFunction, callee: &MirFunction, param: usize, argument: Reg) -> bool {
+    let is_reference = |ty: &Ty| matches!(ty.kind(), TyKind::Ref(_));
+    caller.reg_types.get(&argument.0).is_some_and(is_reference)
+        && callee
+            .param_types
+            .get(param)
+            .is_some_and(|ty| !is_reference(ty))
 }
 
 /// Whether `place` is a `ref` field, a projected place of a `ref` type
