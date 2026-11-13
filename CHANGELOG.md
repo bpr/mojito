@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's `comptime` value member read through the type name runs,
+  as at the pin: `print(E.k)`, `G(E.k)`, and a run-time construction
+  `TypeList[Trait=AnyType, E.types]()` over a raw-list member print the
+  pin's values; the new fixture pins the shapes Mojito once rejected with
+  "Undefined variable 'E'" (R436).
 - A trait method's signature reads a struct's value member, as at the
   pin: `def get(self, x: Q[P[Int, Bool].n]) -> Int: ...` checks once the
   module's structs register, where Mojito reported "not a compile-time Int

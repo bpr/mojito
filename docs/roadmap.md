@@ -6852,24 +6852,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R436 A struct's `comptime` value member read through the type name
-  is rejected**
-
-  Problem: `print(E.k)` over `struct E: comptime k = 3` prints `3` at the
-  pin, while Mojito reports "Undefined variable 'E'", and `G(E.k)` reports
-  that no constructor overload matches.
-  - The same member read as `Self.k` inside the struct runs
-    (`assets/ok/associated_value_self_read.mojo`).
-  - Probe: a run-time construction's bracket list reading a member, `var t
-    = TypeList[Trait=AnyType, E.types]()` over a raw-list member, fails
-    with "Undefined variable 'E'", and `TypeList[Trait=AnyType,
-    TypeList.of[Trait=AnyType, Int].values]()` and `TypeList[Trait=AnyType,
-    S[Int, Bool]._types]()` fail the same way, where the pin prints `2 1`;
-    in a type annotation or a `comptime` position each runs.
-  - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R438 A `ref` binding of a pack element inside a `comptime for` fails
   elaboration**
 

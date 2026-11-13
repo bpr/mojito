@@ -63,6 +63,7 @@ assets/ok/assign_register_passable_element_over_list.mojo	main	exe-differential	
 assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
+assets/ok/associated_value_type_name_read.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_shift_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
