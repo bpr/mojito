@@ -1,6 +1,6 @@
-# Batch runner: generalize `scripts/pmir-batches` and add a compile step
+# Batch runner: generalize `scripts/run-batches` and add a compile step
 
-Status: planned, not started. Do it after the current `scripts/pmir-batches`
+Status: planned, not started. Do it after the current `scripts/run-batches`
 run finishes, since that run reads its own script and commits as it goes.
 
 ## Why
@@ -14,7 +14,7 @@ The work strategy is a tiered check around batches of roadmap tasks:
 | instantiation ratchet | ~1–2 min | after every batch | a fixture that stops elaborating; growth over 1% |
 | overnight gate | ~9 h | nightly | all suites, the corpus binary, the pliron manifests |
 
-`scripts/pmir-batches` drives that for the `pmir` track only, and
+`scripts/run-batches` drives that for the batches in one note only, and
 the fast tiers miss a test target that stops compiling:
 `tests/pliron_backend_test.rs` did not compile for weeks
 (`TyKind::Error` was removed), which hid three real bugs, found
@@ -22,16 +22,15 @@ the fast tiers miss a test target that stops compiling:
 
 ## 1. Generalize the batch script
 
-Today `scripts/pmir-batches` reads its batches from the `claude_loop.py`
-commands in `docs/notes/next-batches.md`. Make one script
-(say `scripts/batches`) that takes its batches from either source:
+Today `scripts/run-batches` reads its batches from the `claude_loop.py`
+commands in `docs/notes/next-batches.md`. Extend it so it takes its batches from either source:
 
 - `--note PATH`: the `claude_loop.py` commands in a note, one batch each,
   as now.
 - `--track T [--size N]`: the track's open entries, ordered by the
   importance metric below, cut into batches of `N`.
 
-Keep everything else `pmir-batches` does: each batch's loop, focused, and
+Keep everything else it does: each batch's loop, focused, and
 ratchet; the stop on a lost fixture or growth over `--max-growth`; the
 baseline refresh commit; `--start N` and `--dry-run`; the one-line in-place
 progress display with full output only in the per-step logs.
@@ -45,7 +44,7 @@ time (redrawn every second) beside the current task's (redrawn every 5 s,
 named, durations as hours and minutes, and the task clock parsed from the
 child's line rather than echoed.
 
-Leave `scripts/pmir-batches` as a thin wrapper (`--note
+Leave `scripts/run-batches` as a thin wrapper (`--note
 docs/notes/next-batches.md`), or delete it once nothing
 names it.
 

@@ -19,9 +19,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(18446744073709551615) },
               const { dest: %r2, value: value(ct_uint(18446744073709551615)) },
-              const { dest: %r1, value: value(ct_uint(18446744073709551615)) }
+              const { dest: %r1, value: value(ct_uint(18446744073709551615)) },
+              const { dest: %r0, value: int_literal(18446744073709551615) }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -29,7 +29,7 @@
       },
       fn {
         name: wrapped,
-        registers: 3,
+        registers: 5,
         vars: 1,
         var_names: [x],
         params: 1,
@@ -42,14 +42,16 @@
         return_type: present(simd { dtype: uint8, width: 1 }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(300))] } }, reg_type { reg: %r2, type: simd { dtype: uint8, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 101, end: 102, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 105, end: 108, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 101, end: 108, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(300))] } }, reg_type { reg: %r2, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r3, type: kgen_simd { dtype: uint8, width: 1 } }, reg_type { reg: %r4, type: simd { dtype: uint8, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 101, end: 102, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 105, end: 108, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 101, end: 108, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 105, end: 108, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 105, end: 108, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
+              const { dest: %r3, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) },
+              const { dest: %r4, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) },
               const { dest: %r1, value: int_literal(300) },
               var.use { dest: %r0, var: $v0, mode: copy },
-              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+              binary { op: add, dest: %r2, a: %r0, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -75,9 +77,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(300) },
               const { dest: %r2, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) },
-              const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) }
+              const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44)] }) },
+              const { dest: %r0, value: int_literal(300) }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -103,9 +105,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: float_literal(1/10) },
               const { dest: %r2, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000)] }) },
-              const { dest: %r1, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000)] }) }
+              const { dest: %r1, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000)] }) },
+              const { dest: %r0, value: float_literal(1/10) }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -131,10 +133,10 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(2) },
               const { dest: %r1, value: int_literal(-2) },
               const { dest: %r3, value: value(ct_simd { dtype: int32, lanes: [lane_int(-2)] }) },
-              const { dest: %r2, value: value(ct_simd { dtype: int32, lanes: [lane_int(-2)] }) }
+              const { dest: %r2, value: value(ct_simd { dtype: int32, lanes: [lane_int(-2)] }) },
+              const { dest: %r0, value: int_literal(2) }
             ],
             terminator: return { value: present(%r2) }
           }

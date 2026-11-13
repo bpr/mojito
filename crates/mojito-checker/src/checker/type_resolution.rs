@@ -3804,9 +3804,9 @@ impl Checker {
                         self.record_literal_materializations(expr, &source, &slot)?;
                         // The converted value is the constructor's call node,
                         // never the argument expression's run-time value.
-                        return Ok(BoundArgument::attribute(TyArg::Val(CtValue::Expr(
-                            application,
-                        ))));
+                        return Ok(BoundArgument::attribute(TyArg::Val(
+                            application.into_value(),
+                        )));
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
                     // A type list (`Ts.values`), a closed raw list of
@@ -3834,7 +3834,7 @@ impl Checker {
                     self.implicit_parameter_application(&actual, ty, |slot| {
                         self.applied_argument(expr, slot)
                     })?
-                    .map(|application| bound(CtValue::Expr(application)))
+                    .map(|application| bound(application.into_value()))
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: ty.to_string(),
                         found: rendered,

@@ -495,8 +495,12 @@ fn arbitrary_precision_literals_stay_exact_until_scalar_materialization() {
 
 #[test]
 fn exact_float_signed_zero_uses_numeric_equality_and_abs() {
-    let e = run("var equal: Bool = -0.0 == 0.0\nvar magnitude: Float64 = abs(-0.0)\n");
-    assert_eq!(binding(&e, "equal"), boolean(true));
+    let execution = execute(
+        "var equal: Bool = -0.0 == 0.0\nprint(equal)\nvar magnitude: Float64 = abs(-0.0)\n",
+    )
+    .expect("runtime error");
+    assert_eq!(execution.output, "True\n");
+    let e = execution.bindings;
     let Value::Float64(magnitude) = binding(&e, "magnitude") else {
         panic!("abs(-0.0) did not materialize as Float64");
     };

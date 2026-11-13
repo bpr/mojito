@@ -58,19 +58,19 @@
       fn {
         name: main,
         registers: 6,
-        vars: 0,
-        var_names: [],
+        vars: 1,
+        var_names: ["$drop_r1"],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [],
+        var_types: [var_type { var: $v0, type: struct_type { name: Error, arguments: [] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("boom"))] } }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("after"))] } }, reg_type { reg: %r5, type: None }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("boom"))] } }, reg_type { reg: %r1, type: struct_type { name: Error, arguments: [] } }, reg_type { reg: %r2, type: None }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("after"))] } }, reg_type { reg: %r5, type: None }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }],
         blocks: [
           bb0 {
@@ -79,7 +79,8 @@
               call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               call { dest: %r2, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               call { dest: %r3, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              drop.reg { reg: %r1 },
+              var.store { var: $v0, src: %r1, binding_type: present(struct_type { name: Error, arguments: [] }), in_place: false },
+              drop.var { var: $v0 },
               const { dest: %r4, value: string("after") },
               call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],

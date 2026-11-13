@@ -12,7 +12,7 @@ artifact {
     decl { lowered_name: "Noisy.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
     decl { lowered_name: "Noisy.__init__", param_names: [id], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
     decl { lowered_name: main, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: mk, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Error, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+    decl { lowered_name: mk, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: struct_type { name: Error, arguments: [] }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
       fn {
@@ -82,10 +82,10 @@ artifact {
         ref_params: [],
         returns_reference: false,
         var_types: [],
-        return_type: present(Error),
+        return_type: present(struct_type { name: Error, arguments: [] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("made"))] } }, reg_type { reg: %r1, type: Error }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("made"))] } }, reg_type { reg: %r1, type: struct_type { name: Error, arguments: [] } }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
         blocks: [
           bb0 {
@@ -108,11 +108,11 @@ artifact {
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Error }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Error, arguments: [] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("kept"))] } }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: Error }, reg_type { reg: %r3, type: None }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("kept"))] } }, reg_type { reg: %r1, type: struct_type { name: Error, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Error, arguments: [] } }, reg_type { reg: %r3, type: None }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
         blocks: [
           bb0 {
@@ -120,7 +120,7 @@ artifact {
               const { dest: %r0, value: string("kept") },
               call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r1, binding_type: absent, in_place: false },
-              place.load { dest: %r2, place: place { root: $v0, root_type: present(Error), projections: [], type: present(Error), through: absent } },
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Error, arguments: [] }), projections: [], type: present(struct_type { name: Error, arguments: [] }), through: absent } },
               call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }

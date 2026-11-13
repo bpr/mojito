@@ -84,7 +84,7 @@ artifact {
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("elem"))] } }, reg_type { reg: %r4, type: Error }, reg_type { reg: %r5, type: tuple([struct_type { name: Noisy, arguments: [] }, Error]) }, reg_type { reg: %r6, type: None }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("elem"))] } }, reg_type { reg: %r4, type: struct_type { name: Error, arguments: [] } }, reg_type { reg: %r5, type: tuple([struct_type { name: Noisy, arguments: [] }, struct_type { name: Error, arguments: [] }]) }, reg_type { reg: %r6, type: None }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
         blocks: [
           bb0 {
@@ -95,7 +95,7 @@ artifact {
               place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [], type: present(struct_type { name: Noisy, arguments: [] }), through: absent } },
               const { dest: %r3, value: string("elem") },
               call { dest: %r4, func: Error, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              tuple.make { dest: %r5, elems: [%r2, %r4], element_types: present([struct_type { name: Noisy, arguments: [] }, Error]) },
+              tuple.make { dest: %r5, elems: [%r2, %r4], element_types: present([struct_type { name: Noisy, arguments: [] }, struct_type { name: Error, arguments: [] }]) },
               call { dest: %r6, func: print, raises: absent, args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }

@@ -458,8 +458,11 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         // An enum's storage is the compiler's intrinsic, constructed by its
         // own rule (`__EnumStorage[...](payload, index=i)`).
+        // The literal families' lang items (`List`, `Set`, `Dict`, `Tuple`)
+        // name types the resolver applies itself, never a value.
         if param_args.is_empty()
             || name == mojito_types::types::ENUM_STORAGE_TYPE_NAME
+            || matches!(name, "List" | "Set" | "Dict" | "Tuple")
             || self
                 .lookup(name)
                 .is_some_and(|ty| !matches!(ty.kind(), TyKind::Generator(_)))

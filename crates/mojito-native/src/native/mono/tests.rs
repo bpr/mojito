@@ -754,19 +754,34 @@ fn subscript_value_parameters_join_the_accessor_instance_identity() {
     )
     .expect("specialize tuple subscripts");
     let main = function(&specialized, "main");
+    // A constant index is `Tuple.__getitem_param__`'s compile-time
+    // parameter, so each index names its own accessor instance.
     let targets: std::collections::HashSet<&str> = nested_instructions(&main.body)
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Index {
-                call: Some(call), ..
-            } => Some(call.target.as_str()),
+            MirInstr::MethodCall {
+                resolved: Some(callee),
+                ..
+            }
+            | MirInstr::Call {
+                func: mojito_mir::mir::FuncRef(callee),
+                ..
+            } if callee.contains("__getitem_param__") => Some(callee.as_str()),
             _ => None,
         })
         .collect();
     assert!(
         targets.len() >= 2,
         "distinct constant indexes must dispatch distinct accessor \
-         instances: {targets:?}"
+         instances: {targets:?} among {:?}",
+        nested_instructions(&main.body)
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call { func, .. } => Some(func.0.as_str()),
+                MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     );
 }
 
@@ -2236,7 +2251,7 @@ fn an_instance_erases_the_struct_argument_of_a_removed_parameter() {
     let callees = main_callees(&specialized, "fb");
     assert_eq!(callees, ["fb$mono", "fb$mono"], "one `fb` for both boxes");
     let erased: Ty = TyKind::Struct(
-        "Box$mono$V$REMOVED$ARG".into(),
+        "Box$mono$V$5fREMOVED$5fARG".into(),
         vec![TyArg::Val(CtValue::RemovedArg)],
     )
     .into();
@@ -2246,7 +2261,7 @@ fn an_instance_erases_the_struct_argument_of_a_removed_parameter() {
         .declarations
         .structs
         .iter()
-        .find(|declaration| declaration.name == "Box$mono$V$REMOVED$ARG")
+        .find(|declaration| declaration.name == "Box$mono$V$5fREMOVED$5fARG")
         .expect("the erased instance is declared");
     assert_eq!(declared.fields, [("v".to_string(), Ty::int())]);
     // `remove-unused-params` removes `n` itself: `Box` lays out an `Int`
@@ -2361,7 +2376,7 @@ fn a_struct_type_argument_erases_its_own_arguments() {
                 arguments.first(),
                 Some(TyArg::Ty(element))
                     if matches!(element.kind(), TyKind::Struct(element, _)
-                        if element == "Box$mono$V$REMOVED$ARG")
+                        if element == "Box$mono$V$5fREMOVED$5fARG")
             ),
         "the list keeps its element type and erases the box's argument: {param}"
     );
@@ -2661,13 +2676,14 @@ const WBOX_SOURCE: &str = "@fieldwise_init\n\
 
 #[test]
 fn a_display_member_that_reads_no_struct_parameter_is_one_instance() {
-    // `print` hands `write_to` a `String` writer, whose type keys the
-    // instance; the struct's parameter does not.
+    // `print` hands `write_to` its `_FlushingWriteBuffer` writer, whose
+    // type keys the instance (spelled by its digest); the struct's
+    // parameter does not.
     assert_one_member_instance(
         WBOX_SOURCE,
         "WBox",
         "write_to",
-        "WBox.write_to$mono$TString",
+        "WBox.write_to$mono$Hb7a64299eb99d55b1276f52cef18ab63",
     );
 }
 
@@ -2725,10 +2741,27 @@ fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
         Vec::<String>::new()
     );
     let program = &specialized.program;
-    for (dtype, width, member) in [
-        (mojito_ast::ast::Dtype::Int32, 4, "write_to"),
-        (mojito_ast::ast::Dtype::Int8, 1, "write_to"),
-        (mojito_ast::ast::Dtype::Float32, 1, "write_repr_to"),
+    // `print` writes through its `_FlushingWriteBuffer`; `repr` into a
+    // `String`.
+    for (dtype, width, member, writer) in [
+        (
+            mojito_ast::ast::Dtype::Int32,
+            4,
+            "write_to",
+            "_FlushingWriteBuffer",
+        ),
+        (
+            mojito_ast::ast::Dtype::Int8,
+            1,
+            "write_to",
+            "_FlushingWriteBuffer",
+        ),
+        (
+            mojito_ast::ast::Dtype::Float32,
+            1,
+            "write_repr_to",
+            "String",
+        ),
     ] {
         let ty = mojito_types::types::canonical_simd_ty(dtype, width);
         let name = mojito_symbol::symbol::member_table_name(&ty).expect("a closed SIMD names one");
@@ -2748,9 +2781,18 @@ fn a_displayed_simd_value_tables_its_display_members_in_its_instance() {
             .iter()
             .find(|(name, _)| name == instance)
             .unwrap_or_else(|| panic!("`{instance}` is materialized"));
-        assert!(
-            mojito_types::types::is_nominal_string(&function.param_types[1]),
-            "`{instance}` writes to the `String` writer"
+        let written = peel_refs(&function.param_types[1])
+            .kind()
+            .as_non_simd_struct()
+            .and_then(|(name, _)| {
+                mojito_types::types::struct_template(name)
+                    .rsplit('$')
+                    .next()
+            });
+        assert_eq!(
+            written,
+            Some(writer),
+            "`{instance}` writes to the `{writer}` writer"
         );
     }
 }
@@ -3194,12 +3236,11 @@ fn a_subscript_names_the_accessor_without_its_unused_receiver() {
     assert_eq!(reads, [1, 1], "each read calls the accessor with its index");
 }
 
-/// Display reaches `write_to` from the value's type, not through a call
-/// the elaborator rewrites, so it keeps the full generator: one instance
-/// over a layout that reads no `n`, never one per `n`, which a full demand
-/// of a generator that removed an argument would make.
+/// `print`'s library body calls `write_to`, a call the elaborator
+/// rewrites, so display reaches the generator that removed `n`: one
+/// reduced instance over a layout that reads no `n`, never one per `n`.
 #[test]
-fn a_type_reached_member_keeps_its_full_generator() {
+fn a_printed_member_is_one_reduced_instance() {
     let source = "@fieldwise_init\n\
      struct W[n: Int](Writable, Copyable, Movable):\n\
      \x20   var x: Int\n\
@@ -3214,7 +3255,10 @@ fn a_type_reached_member_keeps_its_full_generator() {
     );
     let instances = functions_naming(&specialized, "W.write_to");
     assert_eq!(instances.len(), 1, "{instances:?}");
-    assert!(!instances[0].contains("$REMOVED$ARG"), "{instances:?}");
+    assert!(
+        instances[0].starts_with("W.write_to$REMOVED$ARG$mono"),
+        "{instances:?}"
+    );
 }
 
 /// An argument a body only forwards to a callee's removed argument is

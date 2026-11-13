@@ -107,6 +107,7 @@ pub(super) fn lower_fn_nested(
         &enclosing_binders,
         &mut thunks,
         raises.then(|| error_ty.clone().unwrap_or_else(Ty::error)),
+        returned.map(|_| ret_ty.clone()),
     );
     if !enclosing_binders.lifted {
         thunks.request_applications(checked, &cfg.body);
@@ -1527,6 +1528,7 @@ fn lower_nested_node(
             .as_ref()
             .filter(|effect| effect.raises)
             .map(|effect| effect.error.clone().unwrap_or_else(Ty::error)),
+        None,
     );
     thunks.request_applications(checked, &ncfg.body);
     thunks.inherit_callables(&registry);

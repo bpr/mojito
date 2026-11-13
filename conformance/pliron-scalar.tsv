@@ -1812,7 +1812,7 @@ assets/runtime_error/pliron_raise_error_value.mojo	-	ineligible	no-scalar-entry-
 assets/runtime_error/pliron_raise_iter_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pliron_raise_unhandled.mojo	-	ineligible	no-scalar-entry-shape
-assets/runtime_error/pliron_trap_pow_negative.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/pliron_trap_pow_negative.mojo	main	trap-differential	category=Abort
 assets/runtime_error/pointer_dangling.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_double_free.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-scalar-entry-shape

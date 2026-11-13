@@ -1178,25 +1178,26 @@ mod tests {
     #[test]
     fn a_pack_over_a_shallow_read_is_borrowed_and_consumes_no_element() {
         let declarations = declarations_with(vec![None]);
-        let tuple = |dest, elems| MirInstr::MakeTuple {
+        // A `Tuple`'s `!kgen.struct` storage runs no destructor, so the packs
+        // are struct creations, which own what they hold.
+        let pack = |dest, elems| MirInstr::MakeStruct {
             dest: Reg(dest),
-            elems,
-            element_types: None,
+            fields: elems,
         };
         let load = MirInstr::LoadPlace {
             dest: Reg(1),
             place: MirPlace::root(0, Some(struct_ty())),
         };
-        let mixed = tuple(3, vec![Reg(1), Reg(9)]);
-        let owned = tuple(4, vec![Reg(9)]);
-        let pair = Ty::new(TyKind::Tuple(vec![struct_ty(), struct_ty()]));
+        let mixed = pack(3, vec![Reg(1), Reg(9)]);
+        let owned = pack(4, vec![Reg(9)]);
+        let pair = Ty::new(TyKind::Struct("Pair".into(), Vec::new()));
         let function = function_of(
             vec![load, call(Vec::new()), mixed.clone(), owned.clone()],
             vec![
                 (1, struct_ty()),
                 (9, struct_ty()),
                 (3, pair),
-                (4, Ty::new(TyKind::Tuple(vec![struct_ty()]))),
+                (4, Ty::new(TyKind::Struct("One".into(), Vec::new()))),
             ],
         );
         let ends = RegisterEnds::new(&function, &declarations);

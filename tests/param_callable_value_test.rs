@@ -142,13 +142,14 @@ fn generic_callable_contract_defaults_override_implementation_defaults() {
         .find(|(name, _)| name == "invoke_contract_default")
         .map(|(_, function)| function)
         .expect("contract-default function");
-    // The call binds the contract's own default, `n = 2`, not the
-    // implementation's.
+    // The call, the callable's `__call__`, binds the contract's own default,
+    // `n = 2`, not the implementation's.
     assert!(
         nested_instructions(&function.body)
             .into_iter()
             .any(|instruction| {
                 matches!(instruction, MirInstr::CallIndirect { param_arg_regs, param_decls, .. }
+                    | MirInstr::MethodCall { param_arg_regs, param_decls, .. }
                 if !param_decls.is_empty()
                     && matches!(param_arg_regs.as_slice(), [argument]
                         if argument.name.as_deref() == Some("n")

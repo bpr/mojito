@@ -325,7 +325,7 @@ fn callable_struct_call_member_is_instantiated_only_where_called() {
             .functions
             .iter()
             .map(|(name, _)| name.clone())
-            .filter(|name| name.contains("__call__"))
+            .filter(|name| name.starts_with("Scale.") && name.contains("__call__"))
             .collect::<Vec<_>>()
     };
     let uncalled = concrete_names("    print(scale.factor)\n");

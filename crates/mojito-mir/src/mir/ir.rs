@@ -4330,7 +4330,7 @@ mod tests {
                 value: Reg(0),
                 constructor: None,
             }
-            .forwarded_operand(&|_| None, &reg_types, &MirDeclarations::default())
+            .forwarded_operand(&|_| None, &reg_types, &string_literal_declarations())
         };
         assert_eq!(folds(Ty::int(), Ty::int()), Some(Reg(0)));
         assert_eq!(folds(lane(1), lane(1)), Some(Reg(0)));
@@ -4422,6 +4422,14 @@ mod tests {
                     "Implicit",
                     vec![Ty::int()],
                     "ImplicitlyCopyable",
+                    unconditional(),
+                ),
+                // `StringLiteral` is the library's field-less
+                // `TrivialRegisterPassable` struct.
+                structure(
+                    mojito_types::types::STRING_LITERAL_TYPE_NAME,
+                    Vec::new(),
+                    trivial,
                     unconditional(),
                 ),
             ],
@@ -4759,6 +4767,37 @@ mod tests {
         )
     }
 
+    /// Declarations holding the library's `StringLiteral`, a field-less
+    /// `TrivialRegisterPassable` struct.
+    fn string_literal_declarations() -> MirDeclarations {
+        MirDeclarations {
+            structs: vec![MirStructDeclaration {
+                name: mojito_types::types::STRING_LITERAL_TYPE_NAME.into(),
+                module: String::new(),
+                fields: Vec::new(),
+                mut_self_methods: HashSet::new(),
+                fieldwise_init: false,
+                param_decls: Vec::new(),
+                explicit_destructors: HashMap::new(),
+                explicit_destroy: None,
+                conformances: Vec::new(),
+                declared: vec![mojito_checked::checked::StructConformance {
+                    trait_name: "TrivialRegisterPassable".into(),
+                    conditions: vec![GenericConstraint::Bool(true)],
+                }],
+                register_passable: true,
+                associated_types: Vec::new(),
+                origin_params: Vec::new(),
+                parameterized_associated_types: Vec::new(),
+                associated_values: Vec::new(),
+                parameterized_associated_values: Vec::new(),
+                witness_tables: Vec::new(),
+                members: Vec::new(),
+            }],
+            ..MirDeclarations::default()
+        }
+    }
+
     fn int_literal(value: i64) -> Const {
         Const::IntLiteral(mojito_common::literal::IntLiteral::from(value))
     }
@@ -4993,16 +5032,20 @@ mod tests {
                 &none,
             )
         };
+        // A literal converts at a `!kgen.simd` storage only, as
+        // `#pop.int_literal_convert` is typed.
+        let storage = mojito_types::types::storage_ty;
         assert!(matches!(
-            materialize(Ty::int().kind().clone()),
+            materialize(storage(&Ty::int()).kind().clone()),
             Some(Const::Int(i64::MIN))
         ));
         assert!(matches!(
-            materialize(Ty::uint().kind().clone()),
+            materialize(storage(&Ty::uint()).kind().clone()),
             Some(Const::Value(CtValue::UInt(value))) if value == 1 << 63
         ));
+        assert!(materialize(Ty::int().kind().clone()).is_none());
 
-        let lane = |dtype| mojito_types::types::canonical_simd_ty(dtype, 1);
+        let lane = |dtype| mojito_types::types::kgen_simd_ty(dtype, 1);
         let materialize_into = |literal: Const, source: TyKind, target: Ty| {
             let reg_types = HashMap::from([(0, ty(source)), (1, target.clone())]);
             MirInstr::MaterializeLiteral {
@@ -5045,7 +5088,7 @@ mod tests {
                 ))
                 .kind()
                 .clone(),
-                ty(Ty::uint().kind().clone())
+                storage(&Ty::uint())
             ),
             Some(Const::Value(CtValue::UInt(u64::MAX)))
         ));
@@ -5060,24 +5103,10 @@ mod tests {
             Some(Const::Value(CtValue::Simd { lanes, .. }))
                 if lanes == [CtLane::Float(f64::from(0.1f32).to_bits())]
         ));
-        // At the `!kgen.simd` storage, as `#pop.int_literal_convert` is typed.
-        let storage = mojito_types::types::storage_ty;
         assert!(matches!(
-            materialize(storage(&Ty::int()).kind().clone()),
-            Some(Const::Int(i64::MIN))
-        ));
-        assert!(matches!(
-            (
-                materialize_into(
-                    literal(300),
-                    mojito_types::types::Ty::int_literal_at(mojito_types::ct::CtValue::PopIntLiteral(0.into())).kind().clone(),
-                    storage(&lane(Dtype::UInt8))
-                ),
-                simd(Dtype::UInt8, CtLane::Int(44))
-            ),
+            (into_lane(2, Dtype::Bool), simd(Dtype::Bool, CtLane::Bool(true))),
             (Some(Const::Value(a)), Const::Value(b)) if a == b
         ));
-        assert!(into_lane(1, Dtype::Bool).is_none());
         assert!(into_lane(1, Dtype::Int32).is_some());
         assert!(
             materialize_into(
@@ -5350,7 +5379,11 @@ mod tests {
             )),
             Some(vec![CtLane::Float(f64::from(0.1f32).to_bits()); 8])
         );
-        assert!(splat(literal(1), int_literal, Dtype::Bool, 4).is_none());
+        // A literal at a `bool` lane is whether it is nonzero.
+        assert_eq!(
+            lanes_of(splat(literal(2), int_literal, Dtype::Bool, 4)),
+            Some(vec![CtLane::Bool(true); 4])
+        );
         let uint8 = canonical_simd_ty(Dtype::UInt8, 1);
         assert_eq!(
             lanes_of(splat(byte(7), uint8.clone(), Dtype::UInt8, 4)),

@@ -113,7 +113,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) },
-              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r0), expr: present(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

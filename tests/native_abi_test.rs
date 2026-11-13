@@ -249,21 +249,11 @@ fn checked_types_with_specified_runtime_representations_agree() {
         target: &target,
         structs: &structs,
     };
-    // StringLiteral lowers to the MjStrDesc descriptor.
+    // A `StringLiteral[v]` holds nothing at run time, as upstream's
+    // field-less struct does: its text is its type's parameter.
     assert_eq!(
         cx.layout_of(&Ty::string_literal_of("s")),
-        Ok(Layout::new(
-            size_of::<mojito_runtime::MjStrDesc>() as u64,
-            align_of::<mojito_runtime::MjStrDesc>() as u64
-        ))
-    );
-    // The built-in Error value is MjError.
-    assert_eq!(
-        cx.layout_of(&Ty::error()),
-        Ok(Layout::new(
-            size_of::<mojito_runtime::MjError>() as u64,
-            align_of::<mojito_runtime::MjError>() as u64
-        ))
+        Ok(Layout::new(0, 1))
     );
     // The nominal String struct ({ptr, Int, Int} fields) is MjString.
     let mut structs = StructFieldIndex::default();

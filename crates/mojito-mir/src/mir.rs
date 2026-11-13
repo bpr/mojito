@@ -148,6 +148,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
         None,
+        None,
     )
 }
 
@@ -1315,6 +1316,7 @@ fn lower_program(
             &CaptureSlots::default(),
             &EnclosingBinders::default(),
             &mut thunks,
+            None,
             None,
         );
         thunks.request_applications(checked, &cfg.body);
@@ -4853,6 +4855,7 @@ fn lower_cfg_nested(
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
     error: Option<Ty>,
+    thunk_result: Option<Ty>,
 ) -> MirFunction {
     let mut mir = MirFunction {
         body: MirBlock::default(),
@@ -4872,7 +4875,9 @@ fn lower_cfg_nested(
         ref_params: Vec::new(),
         returns_reference,
         var_tys: HashMap::new(),
-        ret_ty: None,
+        // An expression thunk's result converts at its type as it returns,
+        // since no check recorded the conversion on the expression.
+        ret_ty: thunk_result,
         raises: false,
         error_ty: None,
         error_slot: None,

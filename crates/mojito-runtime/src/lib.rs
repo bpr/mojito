@@ -122,12 +122,37 @@ struct AllocationRecord {
 
 const MAX_TRACKED_ALLOCATIONS: usize = 16_384;
 
+/// The freed allocations held back from the system allocator, oldest
+/// first, and their bytes, as `AddressSanitizer` quarantines freed memory:
+/// while a block sits here no other allocator (libc's `opendir` buffer, a
+/// foreign library's `malloc`) can be handed its addresses, so a pointer
+/// inside it is a use after free, never a foreign live object.
+struct Quarantine {
+    blocks: [usize; QUARANTINE_BLOCKS],
+    head: usize,
+    len: usize,
+    bytes: usize,
+}
+
+const QUARANTINE_BLOCKS: usize = 4096;
+const QUARANTINE_BYTES: usize = 16 << 20;
+
 fn allocations() -> &'static Mutex<[Option<(usize, AllocationRecord)>; MAX_TRACKED_ALLOCATIONS]> {
     // Keep bookkeeping out of the process heap that generated code uses.
     // This also makes lifetime checks allocation-free and deterministic.
     static ALLOCATIONS: Mutex<[Option<(usize, AllocationRecord)>; MAX_TRACKED_ALLOCATIONS]> =
         Mutex::new([None; MAX_TRACKED_ALLOCATIONS]);
     &ALLOCATIONS
+}
+
+fn quarantine() -> &'static Mutex<Quarantine> {
+    static QUARANTINE: Mutex<Quarantine> = Mutex::new(Quarantine {
+        blocks: [0; QUARANTINE_BLOCKS],
+        head: 0,
+        len: 0,
+        bytes: 0,
+    });
+    &QUARANTINE
 }
 
 /// Returns [`ABI_VERSION`].
@@ -255,12 +280,13 @@ pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
             trap(TRAP_POINTER_DOUBLE_FREE)
         }
         record.live = false;
-        *record
+        let record = *record;
+        unsafe { retire(&mut records, ptr, record.size) };
+        record
     };
     if std::env::var_os("MOJITO_RT_DBG_POINTERS").is_some() {
         eprintln!("mjrt free {ptr:p} size={}", record.size);
     }
-    unsafe { release(ptr, record.size, record.align) }
 }
 
 /// Classifies a pointer dereference: 0 live/ordinary, 1 dangling sentinel,
@@ -332,8 +358,8 @@ pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
     if is_dangling_sentinel(ptr) {
         return;
     }
-    let record = {
-        let mut records = allocations().lock().expect("allocation registry lock");
+    let mut records = allocations().lock().expect("allocation registry lock");
+    {
         let Some((_, record)) = records
             .iter_mut()
             .flatten()
@@ -348,9 +374,8 @@ pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
             trap(TRAP_ALLOC_FAILURE)
         }
         record.live = false;
-        *record
-    };
-    unsafe { release(ptr, record.size, record.align) }
+    }
+    unsafe { retire(&mut records, ptr, size as usize) };
 }
 
 /// Writes exactly `len` bytes to stdout (retrying on interruption) and
@@ -616,6 +641,44 @@ fn trap(category: u32) -> ! {
 }
 
 /// Releases a headered allocation with its registry-validated layout.
+/// Quarantine the freed allocation at `ptr` ([`Quarantine`]), releasing
+/// the oldest quarantined blocks past the budget and forgetting their
+/// records: once its memory is the system allocator's again, an address in
+/// it may be anyone's.
+///
+/// # Safety
+///
+/// `ptr` must be an [`mjrt_alloc`] result whose record in `records` was
+/// just marked freed, and must not be quarantined already.
+unsafe fn retire(
+    records: &mut [Option<(usize, AllocationRecord)>; MAX_TRACKED_ALLOCATIONS],
+    ptr: *mut u8,
+    size: usize,
+) {
+    let mut quarantine = quarantine().lock().expect("quarantine lock");
+    let tail = (quarantine.head + quarantine.len) % QUARANTINE_BLOCKS;
+    quarantine.blocks[tail] = ptr as usize;
+    quarantine.len += 1;
+    quarantine.bytes += size;
+    while quarantine.len == QUARANTINE_BLOCKS
+        || (quarantine.bytes > QUARANTINE_BYTES && quarantine.len > 1)
+    {
+        let oldest = quarantine.blocks[quarantine.head];
+        quarantine.head = (quarantine.head + 1) % QUARANTINE_BLOCKS;
+        quarantine.len -= 1;
+        let slot = records
+            .iter_mut()
+            .find(|slot| slot.is_some_and(|(base, record)| base == oldest && !record.live));
+        if let Some(slot) = slot
+            && let Some((_, record)) = slot.take()
+        {
+            quarantine.bytes -= record.size;
+            unsafe { release(oldest as *mut u8, record.size, record.align) };
+        }
+    }
+    drop(quarantine);
+}
+
 unsafe fn release(ptr: *mut u8, size: usize, align: usize) {
     let header = align.max(16);
     let layout = Layout::from_size_align(header + size, header)

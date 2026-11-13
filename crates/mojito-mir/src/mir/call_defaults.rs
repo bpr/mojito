@@ -1259,7 +1259,12 @@ fn copied_variable(
     if operands.contains(&register) {
         return None;
     }
-    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    let pointer = element_pointer(
+        function,
+        register,
+        element_pointer_type(element, mutable),
+        location,
+    );
     prelude[at] = MirInstr::MakeRef {
         dest: pointer,
         place: MirPlace::root(var, Some(ty)),
@@ -1325,7 +1330,12 @@ fn shared_load(
     };
     let place = place.clone();
     let roots = std::iter::once(place.root).chain(place.through).collect();
-    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    let pointer = element_pointer(
+        function,
+        register,
+        element_pointer_type(element, mutable),
+        location,
+    );
     prelude.insert(
         at + 1,
         MirInstr::MakeRef {
@@ -1387,7 +1397,12 @@ fn borrowed_field(
         return None;
     }
     let roots = Vec::new();
-    let pointer = fresh_register(function, element_pointer_type(element, mutable), location);
+    let pointer = element_pointer(
+        function,
+        register,
+        element_pointer_type(element, mutable),
+        location,
+    );
     let loaded = std::mem::replace(
         &mut prelude[load],
         MirInstr::MakeRef {
@@ -1436,7 +1451,12 @@ fn borrowed_element(
     };
     let place = place.clone();
     let roots = std::iter::once(place.root).chain(place.through).collect();
-    let pointer = fresh_register(function, element_pointer_type(element, false), location);
+    let pointer = element_pointer(
+        function,
+        register,
+        element_pointer_type(element, false),
+        location,
+    );
     prelude[at] = MirInstr::MakeRef {
         dest: pointer,
         place,
@@ -1451,6 +1471,22 @@ fn borrowed_element(
 /// `comptime for` body closes.
 fn orphan(function: &mut MirFunction, register: Reg) {
     function.reg_types.insert(register.0, Ty::none());
+}
+
+/// A fresh register for the pointer that addresses the element `register`
+/// held, located where the element is spelled, else at the call.
+fn element_pointer(
+    function: &mut MirFunction,
+    register: Reg,
+    ty: Ty,
+    location: Option<&SourceSpan>,
+) -> Reg {
+    let spelled = function
+        .spans
+        .0
+        .get(&register.0)
+        .map(|(span, _)| span.clone());
+    fresh_register(function, ty, spelled.as_ref().or(location))
 }
 
 /// The caller's tables, which a `VariadicList` a call builds extends, its

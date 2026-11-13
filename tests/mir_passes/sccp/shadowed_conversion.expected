@@ -19,9 +19,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(5) },
               const { dest: %r2, value: value(ct_uint(5)) },
-              const { dest: %r1, value: value(ct_uint(5)) }
+              const { dest: %r1, value: value(ct_uint(5)) },
+              const { dest: %r0, value: int_literal(5) }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -47,9 +47,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(2) },
               const { dest: %r3, value: int(2) },
               const { dest: %r1, value: int(2) },
+              const { dest: %r0, value: int_literal(2) },
               call { dest: %r2, func: UInt, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r2) }

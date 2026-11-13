@@ -41,7 +41,7 @@ fn canonical_snapshots_load_verified() {
 }
 
 #[test]
-fn verifier_findings_locate_the_offending_block() {
+fn verifier_findings_locate_the_offending_function() {
     let source = String::from_utf8(MINIMAL.to_vec())
         .unwrap()
         .replace("var.use { dest: %r0,", "var.use { dest: %r5,");
@@ -51,14 +51,14 @@ fn verifier_findings_locate_the_offending_block() {
         .iter()
         .find(|diagnostic| diagnostic.message.contains("invalid register r5"))
         .expect("invalid-register finding");
-    assert_eq!(diagnostic.context, ["function/identity/bb0"]);
+    assert_eq!(diagnostic.context, ["function/identity"]);
     let located = &source.as_bytes()[diagnostic.span.0..diagnostic.span.1];
-    assert!(located.starts_with(b"bb0 {"));
+    assert!(located.starts_with(b"fn {"));
     assert!(located.ends_with(b"}"));
 }
 
 #[test]
-fn verifier_findings_locate_terminator_blocks() {
+fn verifier_findings_locate_a_misplaced_terminators_function() {
     let source = String::from_utf8(MINIMAL.to_vec()).unwrap().replace(
         "terminator: return { value: present(%r0) }",
         "terminator: try.yield {}",
@@ -73,9 +73,9 @@ fn verifier_findings_locate_terminator_blocks() {
                 .contains("`try.yield` outside the region it ends")
         })
         .expect("misplaced try.yield finding");
-    assert_eq!(diagnostic.context, ["function/identity/bb0"]);
+    assert_eq!(diagnostic.context, ["function/identity"]);
     let located = &source.as_bytes()[diagnostic.span.0..diagnostic.span.1];
-    assert!(located.starts_with(b"bb0 {"));
+    assert!(located.starts_with(b"fn {"));
 }
 
 #[test]

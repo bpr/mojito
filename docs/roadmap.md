@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2157**.
+Next free ID: **R2166**.
 
 ## Ordered Work
 
@@ -95,6 +95,93 @@ which names the upstream pass each one follows. Each is measured by the
     with `MOJITO_PRE_ELABORATION=0` (its `b == mask` line), which
     `tests/focused/list.txt` leaves out until this lands.
   - Found while landing R1999 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2157 With the pre-elaboration pipeline off, a literal operator
+  or a `Pointer` operator the pipeline folds reaches the VM as a method
+  call it cannot run**
+
+  With `MOJITO_PRE_ELABORATION=0`, `1 / 4` fails with "vm: unknown
+  method 'IntLiteral.__truediv__'", where the pin and the default pipeline
+  print the quotient.
+  - Same family: "in `IntLiteral.__add__`: monomorphization cannot
+    resolve parameter `$value_rhs`" for a literal-and-float-literal sum,
+    and "vm: Pointer has no method '__add__'" for pointer arithmetic.
+  - Upstream folds `@always_inline("builtin")` bodies as part of
+    elaboration, never as an optional pass, so no pipeline setting
+    reaches a run-time call of one.
+  - Lever: run the builtin folds (and the inlining they need) as a
+    mandatory step of elaboration, so the pipeline-off path keeps them.
+  - Probes, each with `MOJITO_PRE_ELABORATION=0`:
+    `assets/ok/pliron_int_truediv.mojo`, `comptime_int_truediv.mojo`,
+    `simd_truediv_dunders.mojo`, `float_literal_reflected_dunders.mojo`,
+    `literal_operator_dunders.mojo`, and `owned_pointer_api.mojo`. Their
+    `pre_elaboration::*` corpus trials fail until this lands.
+  - Module-scope snippet code (`Compiler::with_snippet_module_scope`) meets
+    the same gap with the pipeline on: `evaluator_test`'s
+    `literals_coerce_at_runtime`, `power_and_true_division`, and
+    `round_rounds_to_nearest` fail with the `IntLiteral.__truediv__`
+    error.
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2158 With the pre-elaboration pipeline off, a call location
+  reports the callee's own line, where the pin reports the caller's**
+
+  With `MOJITO_PRE_ELABORATION=0`,
+  `assets/ok/reflection_source_location.mojo` prints `189 6 False` for
+  its first location, where the pin and the default pipeline print
+  `38 31 True`.
+  - `__call_location()` is only meaningful in an `@always_inline` body,
+    which upstream always inlines. The pipeline-off path runs the body
+    un-inlined, so the location is the library's.
+  - The same divergence moves the `At:` line of
+    `assets/runtime_error/debug_assert_safe_mode_fails.mojo` into
+    `stdlib/std/reflection/location.mojo`.
+  - Lever: make `@always_inline` inlining mandatory, as upstream's is,
+    rather than a pre-elaboration pass.
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2159 With the pre-elaboration pipeline off, a generic `def`
+  called with a generator-typed argument mints an instance symbol that
+  collides with a declaration**
+
+  With `MOJITO_PRE_ELABORATION=0`, `assets/ok/generator_runtime_value.mojo`
+  fails with "in `id`: concrete instance symbol
+  `id$mono$T$$generator$type$b$$Int$$Int` collides with an existing
+  declaration", where the pin and the default pipeline run it.
+  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2160 With the pre-elaboration pipeline off, `SIMD.deinterleave`
+  cannot fold its `SIMDLength` quotient**
+
+  With `MOJITO_PRE_ELABORATION=0`,
+  `assets/ok/simd_slice_insert_split_interleave.mojo` fails with "in
+  `SIMD.deinterleave`: '(SIMDLength(2) / SIMDLength(2, 2))' is not a
+  compile-time constant here", where the pin and the default pipeline
+  run it.
+  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2161 With the pre-elaboration pipeline off, the elaborated
+  `_reflection_write_to` of a `Writable` struct does not verify**
+
+  With `MOJITO_PRE_ELABORATION=0`, `assets/ok/writable_trait_library.mojo`
+  fails with "specialized MIR that does not verify" in a
+  `__module$std$format$_reflection_write_to$mono$TPair…` instance, where
+  the pin and the default pipeline run it.
+  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`; the
+    verifier finding names the instruction.
+  - Found by the 2026-11-13 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4547,29 +4634,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2162 Checking nested numeric constructors costs time
+  exponential in the nesting depth**
+
+  `var x = Int(Int(Int(1)))` takes about 35 s of checker CPU in a debug
+  build, and each further level multiplies it by roughly ten:
+  `print(Float64(0.1))` checks in 0.1 s, two levels in 2 s, three in
+  24 s, four in over 500 s. `String(String(String(1)))` checks at once.
+  - The likely cause is overload resolution re-inferring the whole
+    argument subtree once per candidate of each enclosing constructor,
+    as the numeric types' many `__init__` overloads make the probe
+    fan out at every level.
+  - Lever: memoize a probed argument's inference per candidate
+    parameter type, or infer the argument once before probing.
+  - `assets/ok/float16_semantics.mojo` (`Float64(Float16(Float64(0.1)))`)
+    takes over 120 s under load, so `scripts/sweep-assets-mojo` times it
+    out and reports it as a Mojito rejection (2026-11-13 overnight gate).
+  - The cost predates 2026-11-12: `12d481486` checks the three-level
+    probe in the same CPU time.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R2019 A Bool-bodied `comptime` alias accepts `T.values` of a
-  parameter that is not a pack**
-
-  `comptime AllCopy[T: AnyType] = conforms_to(T.values, Copyable)` is
-  accepted, where the pin rejects it at the declaration with "expected a
-  type or param_list operand", since `T` is not a variadic pack.
-  - `checker_test::bool_bodied_comptime_aliases_are_predicates` pins the
-    rejection ("a pack projection in a Bool-bodied comptime alias",
-    `crates/mojito-checker/src/checker/constraints.rs`) and fails today:
-    the body no longer lowers to a `ConformsPack`, so the check never
-    sees a pack projection.
-  - Fix: reject `.values` of a non-pack parameter where the body is
-    resolved, with the pin's diagnostic, then let the test assert that.
-  - `tests/focused/list.txt` leaves the test out until this lands.
-  - Found while landing R1999 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2022 A local `comptime` value does not shadow a module type of
   its name in a type annotation**
@@ -7505,6 +7595,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2164 A module-scope `comptime` reading a type member through a
+  static method's result does not resolve the member**
+
+  `comptime Through: Hooks = S.current().H` at module scope fails with
+  "unknown type 'Hooks'", and without the annotation with "type 'S[7]'
+  has no field 'H'". Inside a function, or spelled `S[7]().H`, it works.
+  - The `comptime_test` test
+    `a_type_member_is_read_through_a_module_alias_and_a_construction`
+    pins it and fails since 5e2dfca34 (R1857).
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -9382,6 +9485,37 @@ retained on purpose and re-probed rather than fixed; they are listed in
     False._mlir_value))` over `comptime s = True._mlir_value` prints
     `False`, where the pin rejects it at the `__mlir_op`.
   - Found while landing R1955 (2026-11-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2163 An out-of-range subscript of a list display reports a VM
+  pointer error, where the pin reports the list's bounds-check abort**
+
+  `var i = 2; print([1, 2][i])` fails with "vm: Pointer access out of
+  bounds", where the pin aborts with "index 2 is out of bounds, valid range
+  is 0 to 1".
+  - At compile time, `comptime q = [1, 2][i]` out of range fails as an
+    unsupported VM CTFE error, where the pin reports "function
+    instantiation failed … index is out of bounds".
+  - The subscript appears to bypass the library getter's bounds check.
+  - The native unit test
+    `failed_method_instance_is_reported_only_where_reached`
+    (`crates/mojito-native/src/native/mono/tests.rs`) pins the
+    compile-time half and fails since da536134e (R1530).
+  - Found by the 2026-11-13 overnight gate.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2165 Taking a never-written `unsafe_alloc` slot yields `0` on
+  the VM instead of trapping**
+
+  Taking the value out of a never-written `unsafe_alloc[Int]` slot and
+  printing it prints `0`, where the VM used to trap with its uninitialized
+  storage error.
+  - The `vm_test` test
+    `unsafe_uninit_length_slots_are_never_written_until_stored` pins it.
+  - Not bisected.
+  - Found by the 2026-11-13 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

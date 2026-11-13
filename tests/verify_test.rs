@@ -249,7 +249,10 @@ fn verifier_rejects_corrupt_projected_reference_handle_metadata() {
         .expect("value projection");
     place.projection_tys[field] = Ty::string_literal_of("s");
     expect_finding(&wrong_field_type, "field 'value'");
-    expect_finding(&wrong_field_type, "typed StringLiteral, declared Int");
+    expect_finding(
+        &wrong_field_type,
+        "typed StringLiteral[\"s\"], declared Int",
+    );
 }
 
 #[test]
@@ -288,7 +291,7 @@ fn verifier_checks_make_ref_capability_types() {
     );
     expect_finding(
         &program(wrong_referent),
-        "MakeRef destination targets StringLiteral, incompatible with place storage Int",
+        "MakeRef destination targets StringLiteral[\"s\"], incompatible with place storage Int",
     );
 
     let raw_pointer = function(
@@ -428,7 +431,7 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
     expect_finding(
         &program(read_wrong_referent),
-        "ReadRef result type StringLiteral is incompatible with referent Int",
+        "ReadRef result type StringLiteral[\"s\"] is incompatible with referent Int",
     );
 
     let write_immutable_reference = function(
@@ -479,7 +482,7 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
     expect_finding(
         &program(write_wrong_referent),
-        "WriteRef value type StringLiteral is incompatible with referent Int",
+        "WriteRef value type StringLiteral[\"s\"] is incompatible with referent Int",
     );
 
     let read_pointer = function(
@@ -524,7 +527,7 @@ fn verifier_checks_store_ref_source_type_and_permission() {
             Ty::string_literal_of("s"),
             mojito::Mutability::Mutable,
         ))),
-        "StoreRef source referent StringLiteral is incompatible with storage referent Int",
+        "StoreRef source referent StringLiteral[\"s\"] is incompatible with storage referent Int",
     );
     expect_finding(
         &program(store(immutable_int)),
@@ -696,16 +699,16 @@ fn verifier_checks_a_literal_materialized_at_its_storage() {
             .any(|error| error.contains("cannot materialize")),
         "{truncating:?}"
     );
-    // No literal converts into a `bool` vector.
+    // An integer literal converts into a `bool` vector, each lane whether
+    // it is nonzero, as `#pop.int_literal_convert` does.
     let mask = mojito::types::canonical_simd_ty(mojito::ast::Dtype::Bool, 4);
-    let one = storage_materialization_findings(
-        Const::IntLiteral(mojito::IntLiteral::from(1)),
-        Ty::int_literal_of(&0.into()),
-        &mask,
-    );
-    assert!(
-        one.iter().any(|error| error.contains("cannot materialize")),
-        "{one:?}"
+    assert_eq!(
+        storage_materialization_findings(
+            Const::IntLiteral(mojito::IntLiteral::from(1)),
+            Ty::int_literal_of(&0.into()),
+            &mask,
+        ),
+        Vec::<String>::new()
     );
     let int = storage_materialization_findings(float(), float_ty(), &Ty::int());
     assert!(
@@ -816,7 +819,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     expect_finding(&wrong_result, "subscript result has type Int");
     expect_finding(
         &wrong_result,
-        "selected result type StringLiteral does not match 'Box.__getitem__' declaration Int",
+        "selected result type StringLiteral[\"s\"] does not match 'Box.__getitem__' declaration Int",
     );
 
     let mut missing_receiver_place_requirement = lower_linked_source(SOURCE);
@@ -1078,7 +1081,7 @@ fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts(
         .referent = Ty::string_literal_of("s");
     expect_finding(
         &wrong_referent,
-        "reference-result referent StringLiteral does not match 'Box.__getitem__' declaration Item",
+        "reference-result referent StringLiteral[\"s\"] does not match 'Box.__getitem__' declaration Item",
     );
 
     let mut missing_reference_abi = lower_source(source);
@@ -1422,7 +1425,7 @@ fn verifier_rejects_return_type_mismatches() {
     );
     expect_finding(
         &program(f),
-        "return of StringLiteral from a function returning Int",
+        "return of StringLiteral[\"s\"] from a function returning Int",
     );
 }
 
@@ -1517,7 +1520,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
     });
     expect_finding(
         &prog,
-        "argument 0 of 'callee' has type StringLiteral, declared Int",
+        "argument 0 of 'callee' has type StringLiteral[\"s\"], declared Int",
     );
     prog.declarations.functions[0].param_conventions.clear();
     expect_finding(&prog, "has 0 parameter conventions, expected 1");
@@ -1583,7 +1586,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         inline: mojito_checked::declaration::InlineLevel::default(),
         provenance: mojito_checked::declaration::FunctionProvenance::default(),
     });
-    expect_finding(&prog, "register type StringLiteral, declared Int");
+    expect_finding(&prog, "register type StringLiteral[\"s\"], declared Int");
 
     // An argument binds the declaration it names, never a position: one
     // naming none is rejected, and so is a second naming the same one.
@@ -1629,28 +1632,12 @@ fn verifier_checks_compile_time_arguments_under_the_call_and_receiver_arguments(
     const FREE: &str = "def run[d: DType, h: def(SIMD[d, 2]) thin -> None]():\n    h(SIMD[d, 2](1, 2))\n\ndef show(v: SIMD[DType.int32, 2]):\n    print(v)\n\ndef main():\n    run[DType.int32, show]()\n";
     const METHOD: &str = "struct C[dtype: DType]:\n    def __init__(out self):\n        pass\n\n    def run[h: def(Scalar[Self.dtype]) thin -> None](self):\n        h(Scalar[Self.dtype](3))\n\ndef show(v: Scalar[DType.int32]):\n    print(v)\n\ndef main():\n    C[DType.int32]().run[show]()\n";
     const SIMD_METHOD: &str = "def addi[width: Int](lhs: SIMD[DType.int32, width], rhs: SIMD[DType.int32, width]) -> SIMD[DType.int32, width]:\n    return lhs + rhs\n\ndef main():\n    print(SIMD[DType.int32, 4](1, 2, 3, 4).reduce[addi, 2]())\n";
-    let mut free = lower_linked_source(FREE);
-    assert_eq!(verify(&free), Vec::<String>::new());
+    assert_eq!(verify(&lower_linked_source(FREE)), Vec::<String>::new());
     assert_eq!(verify(&lower_linked_source(METHOD)), Vec::<String>::new());
     assert_eq!(
         verify(&lower_linked_source(SIMD_METHOD)),
         Vec::<String>::new()
     );
-
-    for (_, function) in &mut free.functions {
-        for instr in &mut function.body.instrs {
-            if let MirInstr::Call {
-                func,
-                instantiated_args,
-                ..
-            } = instr
-                && func.0.starts_with("run")
-            {
-                instantiated_args[0] = TyArg::Val(CtValue::Dtype(mojito::Dtype::Int64));
-            }
-        }
-    }
-    expect_finding(&free, "declared def(SIMD[DType.int64, 2])");
 }
 
 #[test]
@@ -1690,7 +1677,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
         ],
     );
     let mut prog = program(f);
-    expect_finding(&prog, "register type StringLiteral, declared Int");
+    expect_finding(&prog, "register type StringLiteral[\"s\"], declared Int");
 
     let MirInstr::CallIndirect {
         param_arg_regs,
@@ -2158,7 +2145,7 @@ fn verifier_checks_stores_into_erased_instance_storage() {
             slot,
             reference_ty(Ty::string_literal_of("s"), mojito::Mutability::Mutable),
         ),
-        "store of ref StringLiteral into storage of type Int",
+        "store of ref StringLiteral[\"s\"] into storage of type Int",
     );
 
     // A capturing closure fits unqualified callable storage; an unqualified

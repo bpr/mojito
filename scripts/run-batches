@@ -18,16 +18,16 @@ Each batch runs:
      shrink is locked in: the fresh report becomes the baseline and is
      committed.
 
-Every step's output goes to `target/pmir-batches/<stamp>/`, with a
+Every step's output goes to `target/run-batches/<stamp>/`, with a
 `summary.md` of the run. The terminal shows the running step on one line,
 updated in place with its latest output, and a line per finished step. On a stop the script prints what failed and the
 command that resumes at that batch.
 
 Usage:
-  scripts/pmir-batches                 # run every batch with open entries
-  scripts/pmir-batches --dry-run       # list the batches and their open entries
-  scripts/pmir-batches --start 3       # resume at batch 3 (numbers from --dry-run)
-  scripts/pmir-batches --max-growth 2  # tolerate up to 2% instruction growth
+  scripts/run-batches                 # run every batch with open entries
+  scripts/run-batches --dry-run       # list the batches and their open entries
+  scripts/run-batches --start 3       # resume at batch 3 (numbers from --dry-run)
+  scripts/run-batches --max-growth 2  # tolerate up to 2% instruction growth
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def main() -> int:
             print(f"batch {number}: {' '.join(ids) if ids else '(all landed)'}")
         return 0
 
-    log_dir = ROOT / "target/pmir-batches" / dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = ROOT / "target/run-batches" / dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir.mkdir(parents=True, exist_ok=True)
     summary = Summary(log_dir / "summary.md")
     unfinished: list[str] = []
@@ -108,7 +108,7 @@ def main() -> int:
         if verdict == "refresh":
             BASELINE.write_bytes(FRESH.read_bytes())
             git("add", str(BASELINE.relative_to(ROOT)))
-            git("commit", "-q", "-m", f"Refresh the instantiation baseline after pmir batch {number} "
+            git("commit", "-q", "-m", f"Refresh the instantiation baseline after batch {number} "
                 f"({' '.join(ids)})")
             summary.line("  ratchet: baseline refreshed and committed")
         else:
@@ -224,13 +224,13 @@ class Summary:
         self.path = path
 
     def line(self, text: str) -> None:
-        print(f"pmir-batches: {text}", flush=True)
+        print(f"run-batches: {text}", flush=True)
         with self.path.open("a") as sink:
             sink.write(f"- {text}\n")
 
     def stop(self, number: int, why: str, args: argparse.Namespace) -> int:
         self.line(f"STOPPED at batch {number}: {why}")
-        resume = f"scripts/pmir-batches --start {number}"
+        resume = f"scripts/run-batches --start {number}"
         if args.max_growth != 1.0:
             resume += f" --max-growth {args.max_growth}"
         self.line(f"after fixing it, resume with: {resume}")

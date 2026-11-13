@@ -35,12 +35,11 @@
 //! - `origin_ok::<name>` / `origin_error::<name>` — production `Compiler`
 //!   accept/reject for checked-origin fixtures.
 //! - `ownership_ok::<name>` / `ownership_error::<name>` — the standalone
-//!   ownership analysis (parse → elaborate → check → `check_ownership`); every
-//!   error fixture must pin its message with `# expect:`.
+//!   production compile through ownership analysis; every error fixture must
+//!   pin its message with `# expect:`.
 //!
 //! A fixture may pin the reported message with a top `# expect: <substring>`
-//! comment, and declare with `# requires: stdlib` (valid Mojo — the lexer
-//! skips it) that its ownership seam must enter at `link`. Corpus
+//! comment. Corpus
 //! non-emptiness invariants are synthetic `*::guard_*` trials so a violation
 //! reads as an ordinary test failure.
 //!
@@ -53,10 +52,7 @@
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::backend::VmBackend;
 use mojito::mir::text::{disassemble, parse_artifact};
-use mojito::{
-    Compiler, CompilerError, OwnershipError, check, check_ownership, elaborate, inject_prelude,
-    link, parse,
-};
+use mojito::{Compiler, CompilerError, OwnershipError};
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -180,26 +176,6 @@ fn expected_substring(source: &str) -> Option<String> {
             .trim_start()
             .strip_prefix("expect:")
             .map(|s| s.trim().to_string())
-    })
-}
-
-/// The `# requires: stdlib` directive marks a fixture that names bundled
-/// standard-library types (`StringSpan`, …). The ownership groups enter at
-/// raw `parse`, which resolves no module, so such a fixture enters at `link`
-/// instead; every other stage of the seam is unchanged.
-fn requires_stdlib(path: &Path) -> bool {
-    requires(path, "stdlib")
-}
-
-/// Whether the fixture carries a `# requires: <value>` directive.
-fn requires(path: &Path, value: &str) -> bool {
-    fs::read_to_string(path).is_ok_and(|source| {
-        source.lines().any(|line| {
-            line.trim_start()
-                .strip_prefix('#')
-                .and_then(|rest| rest.trim_start().strip_prefix("requires:"))
-                .is_some_and(|found| found.trim() == value)
-        })
     })
 }
 
@@ -739,21 +715,15 @@ fn origin_trials(trials: &mut Vec<Trial>) {
     }
 }
 
-/// Elaborate and type-check a fixture (the production stage order), then run
-/// the ownership analysis. (Mirrors the helper `tests/ownership_test.rs` keeps
-/// for its targeted tests.) A `# requires: stdlib` fixture enters at `link` so
-/// its standard-library types resolve; any other takes the implicit prelude,
-/// whose aliases name `Int` and its siblings.
+/// Compile a fixture through `Compiler` (the production stage order, against
+/// the bundled library), keeping the ownership analysis's verdict; any other
+/// compile error is a broken fixture.
 fn own(path: &Path) -> Result<(), OwnershipError> {
-    let program = if requires_stdlib(path) {
-        link(path).expect("link error")
-    } else {
-        let src = fs::read_to_string(path).expect("read fixture");
-        inject_prelude(parse(&src).expect("parse error")).expect("inject implicit prelude")
-    };
-    let program = elaborate(program).expect("comptime error");
-    check(&program).expect("type error");
-    check_ownership(&program)
+    match Compiler::default().compile_path(path) {
+        Ok(_) => Ok(()),
+        Err(CompilerError::Ownership(error)) => Err(error),
+        Err(error) => panic!("expected the fixture to compile up to ownership: {error}"),
+    }
 }
 
 fn ownership_trials(trials: &mut Vec<Trial>) {

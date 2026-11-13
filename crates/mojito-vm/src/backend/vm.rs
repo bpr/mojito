@@ -1882,7 +1882,7 @@ mod held_struct_tests {
                 trait_name: trait_name.into(),
                 conditions: vec![mojito_types::types::GenericConstraint::Bool(true)],
             }],
-            register_passable: false,
+            register_passable: trait_name == "TrivialRegisterPassable",
             associated_types: Vec::new(),
             origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),

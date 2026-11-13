@@ -4588,15 +4588,25 @@ impl Checker {
                 // name, or a bare struct parameter.
                 let (subject, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
                     (Some(pack), _) if self_pack => (Ok(self.self_binder(pack)), true),
-                    (Some(pack), _) => (
-                        Ok(ParamRef {
-                            id: self
-                                .binder_in_scope(pack)
-                                .ok_or_else(|| self.unresolved_head(pack))?,
-                            name: pack.into(),
-                        }),
-                        true,
-                    ),
+                    (Some(pack), _) => {
+                        let id = self
+                            .binder_in_scope(pack)
+                            .ok_or_else(|| self.unresolved_head(pack))?;
+                        // `.values` projects a pack; the pin rejects it over
+                        // any other parameter.
+                        if !self.names_a_pack_in_scope(pack) {
+                            return Err(TypeError::Unsupported(
+                                "expected a type or param_list operand".to_string(),
+                            ));
+                        }
+                        (
+                            Ok(ParamRef {
+                                id,
+                                name: pack.into(),
+                            }),
+                            true,
+                        )
+                    }
                     (None, ExprKind::Identifier(param))
                         if let Some(binder) = self.type_binder_in_scope(param) =>
                     {
@@ -6074,6 +6084,30 @@ impl Checker {
                 .or_else(|| scopes.values.get(level)?.get(spelling).and_then(declared))
                 .or_else(|| scopes.packs.get(level)?.get(spelling).and_then(declared))
         })
+    }
+
+    /// Whether a bare name denotes a variadic pack in the open parameter
+    /// scopes, innermost first, as [`Self::binder_in_scope`] resolves it.
+    fn names_a_pack_in_scope(&self, name: &str) -> bool {
+        let spelling = name.trim_start_matches('*');
+        let scopes = self.param_scopes.borrow();
+        (0..scopes.types.len()).rev().find_map(|level| {
+            if scopes.types[level].contains_key(&format!("*{spelling}"))
+                || scopes
+                    .packs
+                    .get(level)
+                    .is_some_and(|packs| packs.contains_key(spelling))
+            {
+                Some(true)
+            } else {
+                let declared = scopes.types[level].contains_key(spelling)
+                    || scopes
+                        .values
+                        .get(level)
+                        .is_some_and(|values| values.contains_key(spelling));
+                declared.then_some(false)
+            }
+        }) == Some(true)
     }
 
     /// One proposition of [`Self::compile_condition`]: its connectives

@@ -87,8 +87,7 @@
               var.store { var: $v1, src: %r6, binding_type: absent, in_place: false },
               var.use { dest: %r7, var: $v1, mode: move },
               tuple.make { dest: %r8, elems: [%r7], element_types: present([struct_type { name: Noisy, arguments: [] }]) },
-              call { dest: %r9, func: print, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              drop.reg { reg: %r8 }
+              call { dest: %r9, func: print, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

@@ -1132,11 +1132,11 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
             object: member(
                 ExprKind::Index {
                     object: bx(ExprKind::Identifier("S".into())),
-                    index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
+                    index: bx(ExprKind::Identifier("Int".into())),
                 },
                 "Of",
             ),
-            index: bx(ExprKind::TypeValue(Type::Named("Bool".into(), vec![]))),
+            index: bx(ExprKind::Identifier("Bool".into())),
         }
     );
     assert_eq!(
@@ -1158,7 +1158,7 @@ fn parses_a_member_application_in_expression_position_as_a_subscript() {
         parse_expr("x.f[Int]\n").kind,
         ExprKind::Index {
             object: member(ExprKind::Identifier("x".into()), "f"),
-            index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
+            index: bx(ExprKind::Identifier("Int".into())),
         }
     );
 }
@@ -2391,7 +2391,7 @@ fn parses_nested_type_argument() {
                     "Box".into(),
                     vec![ParamArg::Value(Expr::from(ExprKind::Index {
                         object: bx(ExprKind::Identifier("Pair".into())),
-                        index: bx(ExprKind::TypeValue(Type::Named("Int".into(), vec![]))),
+                        index: bx(ExprKind::Identifier("Int".into())),
                     }))],
                 )
             );
@@ -3581,8 +3581,11 @@ fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
                 kind: ExprKind::Index { .. },
                 ..
             }),
-            ParamArg::Type(_)
-        ]
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            })
+        ] if name == "Int"
     ));
 }
 

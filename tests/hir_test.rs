@@ -469,7 +469,7 @@ fn dead_region_op_is_erased() {
 
 #[test]
 fn raise_erases_rest_of_block() {
-    let cfg = checked_function_cfg(
+    let cfg = linked_function_cfg(
         "def f(x: Int) raises -> Int:\n    raise Error(\"e\")\n    var dead = x\n    return dead\n",
         "f",
     );
@@ -487,11 +487,11 @@ fn raise_erases_rest_of_block() {
 #[test]
 fn checked_hir_retains_semantic_identity_type_and_adjustments() {
     let body = mojito::parse(
-        "def f(x: Int) -> Int:\n    return x\n\ndef main():\n    var y: Int = f(1 + 2)\n",
+        "@fieldwise_init\nstruct V(ImplicitlyCopyable):\n    var x: Int\n    def __add__(self, o: Self) -> Self:\n        return o\n\ndef f(v: V) -> V:\n    return v\n\ndef main(a: V):\n    var y: V = f(a + a)\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&body).expect("check");
-    let main_body = root_def_body(&checked, 1);
+    let main_body = root_def_body(&checked, 2);
     let cfg = Cfg::build_checked_fn(&checked, &[], &main_body);
     let expression = cfg
         .g

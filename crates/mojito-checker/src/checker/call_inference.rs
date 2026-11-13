@@ -746,7 +746,9 @@ impl Checker {
 
     /// Type the call `call` of the value `name` as its method call
     /// `name.__call__(args)` ([`Self::infer_call_method`]). `None` for a
-    /// callee no binding names, which the call by name types.
+    /// callee no binding names, and for a nested `def` named by its
+    /// declaration, whose call by name is a direct call of its lifted body;
+    /// the call by name types both.
     pub(super) fn infer_value_method_call(
         &self,
         call: &Expr,
@@ -757,6 +759,13 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         self.binding_scope(name)?;
         let ty = self.lookup(name)?;
+        if super::is_closure_storage(ty)
+            && self
+                .lookup_owner(name)
+                .is_some_and(|owner| self.nested_function_owners.contains(&owner))
+        {
+            return None;
+        }
         let receiver = super::initializer_list::spelled_node(
             call,
             1,
@@ -1241,7 +1250,7 @@ impl Checker {
                         return Err(failure.clone());
                     }
                     Err(TypeError::BadCall {
-                        func: name.to_string(),
+                        func: mojito_common::error::declared_spelling(name).to_string(),
                         reason: match availability_failures.as_slice() {
                             [Some(reason)] => reason.clone(),
                             _ => "no overload matches the supplied arguments".to_string(),
@@ -1249,7 +1258,7 @@ impl Checker {
                     })
                 }
                 Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
-                    func: name.to_string(),
+                    func: mojito_common::error::declared_spelling(name).to_string(),
                     reason: "ambiguous overloaded call".to_string(),
                 }),
             };

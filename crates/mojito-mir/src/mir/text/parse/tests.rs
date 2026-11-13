@@ -115,7 +115,8 @@ fn artifact_with_register_type(ty_text: &str) -> String {
          returns_reference: false,\n      var_types: [],\n      return_type: present(None),\n      \
          raises: false,\n      error_type: absent,\n      \
          register_types: [reg_type {{ reg: %r0, type: {ty_text} }}],\n      locations: [],\n      \
-         blocks: []\n    }}\n  ]\n}}\n"
+         blocks: [bb0 {{ instructions: [], terminator: return {{ value: absent }} }}]\n    }}\n  \
+         ]\n}}\n"
     )
 }
 

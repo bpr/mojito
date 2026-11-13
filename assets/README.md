@@ -99,11 +99,9 @@ handoff — e.g. the checker-inferred scalar-range constructor rewrite. Every
 corpus group that runs `ok` fixtures compiles through `Compiler`, so the
 harness does not read the directive: it documents the fixture.
 
-An `ownership_ok`/`ownership_error` fixture may carry `# requires: stdlib`
-when it names a bundled standard-library type (`StringSpan`, …). Those
-corpus groups enter the ownership seam at raw `parse`, which resolves no
-module; the directive enters at `link` instead, leaving every later stage of
-the seam unchanged.
+The `ownership_ok`/`ownership_error` groups compile through `Compiler`
+against the bundled library, so an older fixture's `# requires: stdlib`
+line is inert.
 
 ## Note
 

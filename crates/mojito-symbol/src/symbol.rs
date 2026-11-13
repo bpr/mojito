@@ -638,6 +638,12 @@ pub use mojito_types::types::{
     is_stdlib_string_struct,
 };
 
+/// The lang items' overload symbols the crates below this one name: the
+/// literal splats and `None`'s conversion, each one constant beside its type.
+pub use mojito_types::types::{
+    NONE_TYPE_FROM_NONE, SIMD_FROM_FLOAT_LITERAL, SIMD_FROM_INT_LITERAL,
+};
+
 /// The lowered symbol of an overloaded free function: `pick$ov$Int`.
 pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())

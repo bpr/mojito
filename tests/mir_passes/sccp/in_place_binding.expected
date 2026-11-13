@@ -19,11 +19,11 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int(2) },
-              const { dest: %r1, value: int_literal(3) },
               const { dest: %r5, value: int(3) },
               const { dest: %r2, value: int(3) },
               const { dest: %r3, value: int(5) },
+              const { dest: %r0, value: int(2) },
+              const { dest: %r1, value: int_literal(3) },
               var.store { var: $v0, src: %r3, binding_type: present(Int), in_place: false },
               var.use { dest: %r4, var: $v0, mode: copy },
               drop.var { var: $v0 }

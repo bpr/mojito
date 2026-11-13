@@ -124,11 +124,18 @@ fn scalar_capability_manifest_and_differential() {
         let compiled = compiler
             .compile_source(&src, Path::new(&rel))
             .unwrap_or_else(|error| panic!("{rel}: trap fixture must compile: {error}"));
-        let vm_error = compiler
+        let vm_error = match compiler
             .execute(&compiled)
             .expect_err("trap fixture must fail on the VM")
-            .to_string();
-        let category = TrapCategory::from_vm_message(&vm_error).unwrap_or_else(|| {
+        {
+            CompilerError::Runtime(error) => error,
+            error => panic!("{rel}: expected a runtime error, got {error}"),
+        };
+        let category = match &vm_error {
+            RuntimeError::Abort(_) => Some(TrapCategory::Abort),
+            error => TrapCategory::from_vm_message(&error.to_string()),
+        }
+        .unwrap_or_else(|| {
             panic!("{rel}: VM error carries no recognized trap category: {vm_error}")
         });
         let options = CompileOptions {

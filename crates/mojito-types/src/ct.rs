@@ -2193,9 +2193,11 @@ mod tests {
             simd_construction_lanes(Dtype::Int32, 3, &[literal(1), literal(2)]),
             Err(SimdConstructionError::Arity)
         );
+        // A literal converts at a `bool` lane to whether it is nonzero, as
+        // `#pop.int_literal_convert` does.
         assert_eq!(
-            simd_construction_lanes(Dtype::Bool, 2, &[literal(1), literal(0)]),
-            Err(SimdConstructionError::Lane)
+            simd_construction_lanes(Dtype::Bool, 2, &[literal(2), literal(0)]),
+            Ok(vec![CtLane::Bool(true), CtLane::Bool(false)])
         );
         // A host `Int` is an element of an `int` vector only; a single one
         // still converts.

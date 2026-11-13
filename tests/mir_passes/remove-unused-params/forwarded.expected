@@ -51,7 +51,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) },
-              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r0), expr: present(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mid", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -84,7 +84,7 @@
               struct.create { dest: %r2, fields: [%r5] },
               const { dest: %r0, value: param(param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }) },
               binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }))], spread: absent }
+              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r3), expr: present(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "expr_fwd", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }))], spread: absent }
             ],
             terminator: return { value: present(%r4) }
           }
@@ -117,7 +117,7 @@
               struct.create { dest: %r1, fields: [%r5] },
               const { dest: %r2, value: param(param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }) },
               binary { op: floor_div, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent },
-              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }))], spread: absent }
+              call { dest: %r4, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r3), expr: present(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: floordiv, type: meta_value(Int), operands: [param_constant(ct_int_literal(10)), param_decl_ref { owner: "div_fwd", slot: 0, name: n, type: meta_value(Int) }] }))], spread: absent }
             ],
             terminator: return { value: present(%r4) }
           }
@@ -201,7 +201,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }) },
-              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
+              call { dest: %r1, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r0), expr: present(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },
               const { dest: %r2, value: param(param_decl_ref { owner: "mixed", slot: 0, name: n, type: meta_value(Int) }) },
               binary { op: add, dest: %r3, a: %r1, b: %r2, resolved: absent, raises: absent }
             ],
@@ -253,13 +253,11 @@
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 456, end: 457, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 450, end: 463, origin: absent }) }],
-        removed_params: [param_id { owner: "dmid", slot: 0 }],
-        callee_removed_params: [callee_params { callee: "dleaf", params: [param_id { owner: "dleaf", slot: 0 }] }],
         blocks: [
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) }) },
-              call { dest: %r1, func: dleaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) }) }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) })), value_arg(ct_int(2))], spread: absent }
+              call { dest: %r1, func: dleaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(a), value: present(%r0), expr: present(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) }) }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "dmid", slot: 0, name: x, type: meta_value(Int) })), value_arg(ct_int(2))], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -292,14 +290,14 @@
               struct.create { dest: %r2, fields: [%r12] },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: eq, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: param(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }, call { dest: %r5, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r4), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }], terminator: return { value: present(%r5) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: param(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }, call { dest: %r5, func: leaf, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r4), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }], terminator: return { value: present(%r5) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               const { dest: %r6, value: param(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) },
               const { dest: %r8, value: int_literal(1) },
               literal.materialize { dest: %r13, value: %r8, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r9, fields: [%r13] },
               var.use { dest: %r7, var: $v0, mode: copy },
               binary { op: sub, dest: %r10, a: %r7, b: %r9, resolved: absent, raises: absent },
-              call { dest: %r11, func: rec, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r6), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
+              call { dest: %r11, func: rec, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(n), value: present(%r6), expr: present(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "rec", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }
             ],
             terminator: return { value: present(%r11) }
           }

@@ -682,7 +682,7 @@ fn true_division_keeps_integers_and_divides_a_literal_pair_exactly() {
 
 #[test]
 fn floor_div_mod_pow_preserve_type() {
-    ok(
+    ok_std(
         "var a: Int = 7 // 2\nvar b: Int = 7 % 2\nvar c: Int = 2 ** 10\nvar d: Float64 = 7.0 // 2.0\n",
     );
 }
@@ -960,19 +960,12 @@ fn rejects_non_bool_while_condition() {
 
 #[test]
 fn rejects_for_over_non_range() {
-    let e = err("for i in 5:\n    pass\n");
-    match e {
-        TypeError::TypeMismatch {
-            expected, found, ..
-        } => {
-            assert_eq!(
-                expected,
-                "a nominal collection or a type with borrowed __iter__"
-            );
-            assert_eq!(found, "IntLiteral[5]");
-        }
-        other => panic!("expected a type mismatch, got {other:?}"),
-    }
+    let e = err_std("for i in 5:\n    pass\n");
+    assert!(
+        matches!(&e, TypeError::NoSuchMethod { object_type, method }
+            if object_type == "IntLiteral[5]" && method == "__iter__"),
+        "got {e:?}"
+    );
 }
 
 #[test]
@@ -1118,11 +1111,11 @@ fn binds_a_member_application_through_its_parameter_list() {
     let members = "struct S[T: AnyType]:\n    comptime Of[U: AnyType] = Int\n\n\
                    struct P:\n    comptime Buf[n: Int] = SIMD[DType.int64, n]\n    \
                    comptime Two[a: Int, b: Int] = a + b\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{members}def main():\n    var a: S[Int].Of[Bool] = 1\n    \
          var b: P.Buf[2] = SIMD[DType.int64, 2](1)\n    var c: Int = P.Two[1, b=2]\n"
     ));
-    let e = err(&format!(
+    let e = err_std(&format!(
         "{members}def main():\n    var a: S[Int].Of[Bool, Int] = 1\n"
     ));
     assert!(
@@ -1136,11 +1129,14 @@ fn binds_a_member_application_through_its_parameter_list() {
         ),
         "got {e:?}"
     );
-    let e = err(&format!(
+    let e = err_std(&format!(
         "{members}def main():\n    var b: P.Buf[Bool] = 1\n"
     ));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
-    let e = err(&format!(
+    assert!(
+        matches!(&e, TypeError::ParamValueType { param, .. } if param == "n"),
+        "got {e:?}"
+    );
+    let e = err_std(&format!(
         "{members}def main():\n    var c: Int = P.Two[1, c=2]\n"
     ));
     assert!(matches!(e, TypeError::Unsupported(_)), "got {e:?}");
@@ -1793,11 +1789,11 @@ fn a_raising_iter_runs_and_an_iter_result_without_next_is_rejected() {
 fn trait_method_requirements_preserve_and_enforce_raises_effects() {
     let declarations = "trait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Failure(Fallible):\n    var code: Int\n    def run(self) raises -> Int:\n        raise \"failed\"\n        return self.code\n";
 
-    ok(&format!(
+    ok_std(&format!(
         "{declarations}\ndef invoke[T: Fallible](value: T) raises -> Int:\n    return value.run()\n"
     ));
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{declarations}\ndef invoke[T: Fallible](value: T) -> Int:\n    return value.run()\n"
         )),
         TypeError::UnhandledRaise(_)
@@ -1938,7 +1934,7 @@ fn accepts_trait_comptime_type_member_conformance() {
 #[test]
 fn accepts_trait_comptime_value_member_conformance() {
     ok(
-        "trait Fixed:\n    comptime size: Int\n\n@fieldwise_init\nstruct Buffer[size: Int](Fixed):\n    comptime size = Self.size\n    var tag: Int\n",
+        "trait Fixed:\n    comptime size: Int\n\n@fieldwise_init\nstruct Buffer[n: Int](Fixed):\n    comptime size = Self.n\n    var tag: Int\n",
     );
 }
 
@@ -2236,7 +2232,10 @@ fn rejects_type_argument_for_value_parameter() {
     let e = err(&format!(
         "{FIXEDBUF}var b: FixedBuffer[Int] = FixedBuffer[Int](0)\n"
     ));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    assert!(
+        matches!(&e, TypeError::ParamValueType { param, .. } if param == "size"),
+        "got {e:?}"
+    );
 }
 
 #[test]
@@ -2306,7 +2305,7 @@ fn accepts_simd_construction_ops_and_index() {
 
 #[test]
 fn accepts_simd_splat_construction() {
-    ok("var v: SIMD[DType.uint8, 8] = SIMD[DType.uint8, 8](7)\n");
+    ok_std("var v: SIMD[DType.uint8, 8] = SIMD[DType.uint8, 8](7)\n");
 }
 
 #[test]
@@ -2726,7 +2725,7 @@ fn accepts_return_on_all_if_paths() {
 
 #[test]
 fn accepts_trailing_return_after_a_loop() {
-    ok("def f(n: Int) -> Int:\n    for i in range(n):\n        return i\n    return -1\n");
+    ok_std("def f(n: Int) -> Int:\n    for i in range(n):\n        return i\n    return -1\n");
 }
 
 #[test]
@@ -2809,18 +2808,18 @@ fn rejects_method_missing_return() {
 
 #[test]
 fn accepts_raise_and_try_except() {
-    ok("try:\n    raise Error(\"boom\")\nexcept e:\n    var x: Int = 1\n");
+    ok_std("try:\n    raise Error(\"boom\")\nexcept e:\n    var x: Int = 1\n");
 }
 
 #[test]
 fn accepts_string_shorthand_raise() {
-    ok("def boom() raises:\n    raise \"oops\"\n");
+    ok_std("def boom() raises:\n    raise \"oops\"\n");
 }
 
 #[test]
 fn accepts_try_else_finally_and_bound_error() {
     // `except e:` binds `e: Error`, usable (e.g. re-raised).
-    ok(
+    ok_std(
         "def reraiser() raises:\n    try:\n        raise \"x\"\n    except e:\n        raise e^\n    else:\n        pass\n    finally:\n        pass\n",
     );
 }
@@ -2828,8 +2827,8 @@ fn accepts_try_else_finally_and_bound_error() {
 #[test]
 fn enforces_raises_effect_at_call_sites() {
     let source = "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\ndef caller() -> Int:\n    return boom()\n";
-    assert!(matches!(err(source), TypeError::UnhandledRaise(_)));
-    ok(
+    assert!(matches!(err_std(source), TypeError::UnhandledRaise(_)));
+    ok_std(
         "def boom() raises -> Int:\n    raise \"deep\"\n    return 0\n\ndef caller() raises -> Int:\n    return boom()\n",
     );
 }
@@ -2952,18 +2951,18 @@ fn reads_an_instance_method_through_its_type_as_a_function_taking_the_receiver()
 fn enforces_raises_effect_at_instance_and_static_method_calls() {
     let declarations = "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n    @staticmethod\n    def static_explode() raises -> Int:\n        raise \"boom\"\n";
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{declarations}\ndef caller(b: Bomb) -> Int:\n    return b.explode()\n"
         )),
         TypeError::UnhandledRaise(_)
     ));
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{declarations}\ndef caller() -> Int:\n    return Bomb.static_explode()\n"
         )),
         TypeError::UnhandledRaise(_)
     ));
-    ok(&format!(
+    ok_std(&format!(
         "{declarations}\ndef caller(b: Bomb) raises -> Int:\n    return b.explode()\n"
     ));
 }
@@ -2982,9 +2981,9 @@ fn enforces_effects_after_free_overload_and_callable_selection() {
     ));
 
     let callable = "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises -> Int) raises -> Int:\n    return callback()\n";
-    ok(callable);
+    ok_std(callable);
     assert!(matches!(
-        err(
+        err_std(
             "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    print(invoke(boom))\n"
         ),
         TypeError::TypeMismatch { .. }
@@ -2993,7 +2992,7 @@ fn enforces_effects_after_free_overload_and_callable_selection() {
 
 #[test]
 fn accepts_error_typed_variable() {
-    ok("var e: Error = Error(\"msg\")\n");
+    ok_std("var e: Error = Error(\"msg\")\n");
 }
 
 #[test]
@@ -3042,15 +3041,15 @@ fn infers_parametric_error_types_from_callable_arguments() {
 }
 
 #[test]
-fn rejects_error_constructor_with_non_string() {
-    let e = err("var e: Error = Error(5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+fn rejects_error_constructor_with_non_writable() {
+    let e = err_std("struct NotWritable:\n    pass\n\nvar e: Error = Error(NotWritable())\n");
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 }
 
 #[test]
 fn except_binding_is_scoped_to_its_clause() {
     // `e` from `except e:` does not leak past the try statement.
-    let e = err("try:\n    raise \"x\"\nexcept e:\n    pass\nvar leaked: Error = e\n");
+    let e = err_std("try:\n    raise \"x\"\nexcept e:\n    pass\nvar leaked: Error = e\n");
     assert_eq!(e, TypeError::UndefinedVariable("e".into()));
 }
 
@@ -3059,7 +3058,7 @@ fn except_binding_is_scoped_to_its_clause() {
 #[test]
 fn import_statements_are_accepted_as_no_ops() {
     // Imports type-check (they are no-ops); real code alongside still runs.
-    ok("import mypackage.mymodule as mm\nfrom other import a, b as c\nvar x: Int = 1 + 2\n");
+    ok("import mypackage.mymodule as mm\nfrom other import a, b as c\nvar x: Int = 3\n");
 }
 
 #[test]
@@ -3109,7 +3108,7 @@ fn abs_preserves_the_numeric_type() {
 #[test]
 fn rejects_stringify_of_non_stringable() {
     let e = err_std("def f() -> Int:\n    return 1\n\nvar s: String = String(f)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 }
 
 #[test]
@@ -4080,7 +4079,7 @@ fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def fail(self, var **options: Int) raises -> Int:\n        raise \"failed\"\n\ndef call(counter: Counter) -> Int:\n    return counter.fail(code=1)\n"
         ),
         TypeError::UnhandledRaise(_)
@@ -4200,7 +4199,7 @@ fn accepts_variadic_args() {
 
 #[test]
 fn accepts_a_heterogeneous_variadic_type_pack() {
-    ok(
+    ok_std(
         "def count[*ArgTypes: AnyType](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    var n: Int = count(1, \"two\", True)\n",
     );
 }
@@ -4556,7 +4555,7 @@ fn accepts_implicit_conversion_in_parameter_defaults() {
         "struct Wrap(Copyable, Movable):\n",
         "    var v: Int\n",
         "    @implicit\n",
-        "    def __init__(out self, marker: NoneType):\n",
+        "    def __init__(out self, marker: __mlir_type.`!kgen.none`):\n",
         "        self.v = 0\n",
         "    def __init__(out self, n: Int):\n",
         "        self.v = n\n",
@@ -4953,16 +4952,16 @@ fn handwritten_constructor_uses_default_and_keyword_binding() {
 
 #[test]
 fn lifecycle_initialization_is_required_on_every_value_producing_path() {
-    ok(
+    ok_std(
         "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool):\n        if choose:\n            self.value = 1\n        else:\n            self.value = 2\n",
     );
     assert!(matches!(
-        err(
+        err_std(
             "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool):\n        if choose:\n            self.value = 1\n"
         ),
         TypeError::UninitializedField { .. }
     ));
-    ok(
+    ok_std(
         "struct Choice:\n    var value: Int\n    def __init__(out self, choose: Bool) raises:\n        if choose:\n            self.value = 1\n        else:\n            raise \"no value\"\n",
     );
 }
@@ -8148,13 +8147,14 @@ fn bool_bodied_comptime_aliases_are_predicates() {
         TypeError::NotComptime("U".into())
     );
 
-    // Pack projections cannot substitute through the param-only pack form.
+    // `.values` projects a pack, so over a parameter that is not one the
+    // body rejects at its declaration, as at the pin.
     let TypeError::Unsupported(message) =
         err("comptime AllCopy[T: AnyType] = conforms_to(T.values, Copyable)\n")
     else {
         panic!("expected a pack-projection rejection");
     };
-    assert_eq!(message, "a pack projection in a Bool-bodied comptime alias");
+    assert_eq!(message, "expected a type or param_list operand");
 
     // A bound beyond `AnyType` is the alias's own parameter bound, as at
     // the pin.
@@ -8264,7 +8264,7 @@ fn lambda_in_a_method_parameter_default_is_rejected_contextually() {
 
 #[test]
 fn lambda_omitted_return_type_is_fixed_none() {
-    let error = err("def main():\n    var f: def() thin = lambda: 1 + 1\n    f()\n");
+    let error = err_std("def main():\n    var f: def() thin = lambda: 1 + 1\n    f()\n");
     assert!(
         matches!(
             &error,
@@ -8418,11 +8418,12 @@ fn element_call_shapes_that_stay_rejected() {
         matches!(&error, TypeError::NotCallable { ty, .. } if ty == "Int"),
         "{error:?}"
     );
-    // Type brackets over an indexable value keep the residual diagnostic.
+    // Type brackets over an indexable value reject the index's type, as at
+    // the pin ("invalid call to '__getitem__'").
     let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) -> Doubler:\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    print(c[Int](3))\n";
     let error = checked_with_std(source).expect_err("type brackets");
     assert!(
-        matches!(&error, TypeError::Unsupported(message) if message.contains("runtime index arguments")),
+        matches!(&error, TypeError::BadCall { func, .. } if func == "__getitem__"),
         "{error:?}"
     );
     // Generic-function parameter application is untouched.
@@ -8579,7 +8580,7 @@ fn accepts_self_qualified_value_parameter_in_a_struct_alias() {
     let e = err(
         "struct P[T: AnyType, n: Int](Copyable, Movable):\n    comptime Alias = P[Self.n, Self.n]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
     );
-    assert!(e.to_string().contains("'n'"), "got {e:?}");
+    assert!(e.to_string().contains("'T'"), "got {e:?}");
 }
 
 #[test]
@@ -9690,7 +9691,7 @@ fn value_parameter_field_read_requires_an_implicitly_copyable_field() {
     let source = "@fieldwise_init\nstruct In(Copyable):\n    var v: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var a: Int\n    var i: In\n\ndef f[q: Q]():\n    var j = q.i\n    print(j.v)\n\ndef main():\n    f[Q(8, In(5))]()\n";
     assert!(matches!(
         err_std(source),
-        TypeError::ImplicitCopy { ty, .. } if ty == "In"
+        TypeError::ComptimeCrossing(ty) if ty == "In"
     ));
 }
 

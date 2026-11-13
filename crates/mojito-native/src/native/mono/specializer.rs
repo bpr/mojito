@@ -1282,6 +1282,31 @@ impl<'a> Specializer<'a> {
         Ok(answered)
     }
 
+    /// `infer` retried while it fails having met compile-time applications
+    /// nothing has answered yet (a callee's declared result over one), each
+    /// demanded first, as an instance's substitution is retried
+    /// ([`Self::answer_pending`]).
+    fn answering<T>(
+        &mut self,
+        owner: &str,
+        mut infer: impl FnMut(&Self) -> Result<T, MonoError>,
+    ) -> Result<T, MonoError> {
+        let outer = std::mem::take(&mut *self.applications.pending.borrow_mut());
+        let bindings = self.base_bindings();
+        let result = loop {
+            match infer(self) {
+                Err(error) => match self.answer_pending(owner, &bindings) {
+                    Ok(true) => {}
+                    Ok(false) => break Err(error),
+                    Err(demand) => break Err(demand),
+                },
+                inferred => break inferred,
+            }
+        };
+        self.applications.pending.borrow_mut().extend(outer);
+        result
+    }
+
     /// The condition with every compile-time application in it evaluated:
     /// an application under the instance's bindings is demanded and run on
     /// the VM, a layout query is answered under the target, whether the
@@ -3051,22 +3076,24 @@ impl<'a> Specializer<'a> {
                     // A nested `def`'s direct call binds its enclosing
                     // binders from this instance's, or from its region
                     // copy's.
-                    let (target, mut bindings, arguments) = self.infer_call(
-                        owner,
-                        function,
-                        &func.0,
-                        receiver,
-                        *dest,
-                        (args, *spread),
-                        kwargs,
-                        param_arg_regs,
-                        instantiated_args,
-                        Some(
-                            region
-                                .as_ref()
-                                .map_or(&self.enclosing, |(_, bindings)| bindings),
-                        ),
-                    )?;
+                    let (target, mut bindings, arguments) = self.answering(owner, |this| {
+                        this.infer_call(
+                            owner,
+                            function,
+                            &func.0,
+                            receiver,
+                            *dest,
+                            (args, *spread),
+                            kwargs,
+                            param_arg_regs,
+                            instantiated_args,
+                            Some(
+                                region
+                                    .as_ref()
+                                    .map_or(&this.enclosing, |(_, bindings)| bindings),
+                            ),
+                        )
+                    })?;
                     // The instance identity carries the spelled receiver
                     // of a static call, so the resolved call keeps none.
                     if let Some(spelled) = static_receiver.take() {

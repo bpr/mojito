@@ -1596,16 +1596,22 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     // first, holding none of the default's body.
     let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
+    // The bundled library's functions are linked beside the program; the
+    // program's own statements are the ones no library module stamps.
     assert!(
         prepared
             .iter()
+            .filter(|stmt| stmt
+                .module
+                .as_deref()
+                .is_none_or(|module| !module.contains("/stdlib/std/")))
             .all(|stmt| !matches!(stmt.kind, mojito::ast::StmtKind::Def { .. })),
         "preparing lifts no function"
     );
     let default = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Trait { methods, .. } => methods
+            mojito::ast::StmtKind::Trait { name, methods, .. } if name == "T" => methods
                 .iter()
                 .find_map(|method| method.default_body.as_ref()),
             _ => None,
@@ -1615,7 +1621,7 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     let spelled = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Struct { methods, .. } => Some(methods),
+            mojito::ast::StmtKind::Struct { name, methods, .. } if name == "S" => Some(methods),
             _ => None,
         })
         .expect("the conformer");
@@ -1706,7 +1712,9 @@ fn a_kgen_type_parameter_prepares_as_a_type_of_all_types_binder() {
     let function = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Def { type_params, .. } => Some(type_params),
+            mojito::ast::StmtKind::Def {
+                name, type_params, ..
+            } if name == "f" => Some(type_params),
             _ => None,
         })
         .expect("the function");
@@ -1740,7 +1748,9 @@ fn a_kgen_string_parameter_prepares_as_a_value_binder_of_its_spelling() {
     let function = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Def { type_params, .. } => Some(type_params),
+            mojito::ast::StmtKind::Def {
+                name, type_params, ..
+            } if name == "f" => Some(type_params),
             _ => None,
         })
         .expect("the function");

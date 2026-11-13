@@ -87,7 +87,7 @@ fn compiled(source: &str) -> String {
 /// The lowered MIR function names for `source`, in emission order (duplicates
 /// preserved — a repeated name is a symbol collision).
 fn lowered_names(source: &str) -> Vec<String> {
-    lower_program(&parse(source).expect("parse error"))
+    lower_program(&elaborate(parse(source).expect("parse error")).expect("elaborate"))
         .expect("type error")
         .functions
         .into_iter()

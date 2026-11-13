@@ -20,8 +20,8 @@
           bb0 {
             instructions: [
               const { dest: %r7, value: int(20) },
-              var.store { var: $v0, src: %r7, binding_type: present(Int), in_place: false },
               const { dest: %r16, value: int(1) },
+              var.store { var: $v0, src: %r7, binding_type: present(Int), in_place: false },
               var.use { dest: %r14, var: $v0, mode: copy },
               drop.var { var: $v0 },
               binary { op: sub, dest: %r17, a: %r14, b: %r16, resolved: absent, raises: absent },

@@ -1,7 +1,7 @@
   functions: [
       fn {
         name: has_int,
-        registers: 5,
+        registers: 7,
         vars: 0,
         var_names: [],
         params: 0,
@@ -14,22 +14,20 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r2, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 73, end: 74, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 121, end: 122, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 73, end: 122, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 73, end: 122, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 73, end: 122, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r1, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r4, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 351, end: 352, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 351, end: 352, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 351, end: 352, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 380, end: 381, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 380, end: 381, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 380, end: 381, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 351, end: 381, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              comptime.if { results: [%r2], values: [param(param_pack_query { pack: param_decl_ref { owner: "has_int", slot: 0, name: Ts, type: meta_param_list(meta_type) }, query: pack_contains(param_constant(ct_type(Int))) })], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
-              literal.materialize { dest: %r4, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
-              struct.create { dest: %r3, fields: [%r4] }
+              comptime.if { results: [%r6], values: [param(param_pack_query { pack: param_decl_ref { owner: "has_int", slot: 0, name: Ts, type: meta_param_list(meta_type) }, query: pack_contains(param_constant(ct_type(Int))) })], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }, literal.materialize { dest: %r1, value: %r0, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r2, fields: [%r1] }], terminator: comptime.yield { values: [%r2] } }]], else: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r5, fields: [%r4] }], terminator: comptime.yield { values: [%r5] } }] }
             ],
-            terminator: return { value: present(%r3) }
+            terminator: return { value: present(%r6) }
           }
         ]
       },
       fn {
         name: pack_contains_concrete,
-        registers: 6,
+        registers: 8,
         vars: 0,
         var_names: [],
         params: 0,
@@ -42,12 +40,12 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r2, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r3, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 173, end: 193, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r2, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 622, end: 642, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [%r3], values: [param(param_pack_query { pack: param_constant(ct_tuple([ct_type(Int), ct_type(Bool)])), query: pack_contains(param_constant(ct_type(Int))) })], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }], terminator: comptime.yield { values: [%r1] } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }], terminator: comptime.yield { values: [%r2] } }] }, literal.materialize { dest: %r5, value: %r3, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r4, fields: [%r5] }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [%r7], values: [param(param_pack_query { pack: param_constant(ct_tuple([ct_type(Int), ct_type(Bool)])), query: pack_contains(param_constant(ct_type(Int))) })], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r3, fields: [%r2] }], terminator: comptime.yield { values: [%r3] } }]], else: [bb0 { instructions: [const { dest: %r4, value: int_literal(2) }, literal.materialize { dest: %r5, value: %r4, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r6, fields: [%r5] }], terminator: comptime.yield { values: [%r6] } }] }], terminator: break { label: present(loop4294967295), values: [%r7] } }] }
             ],
             terminator: return { value: present(%r0) }
           }

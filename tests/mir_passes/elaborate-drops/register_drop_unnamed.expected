@@ -70,13 +70,13 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: StringLiteral, arguments: [value_arg(ct_kgen_string("boom"))] } }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: None }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Token, arguments: [] } }, reg_type { reg: %r2, type: None }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 30, end: 36, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 24, end: 37, origin: absent }) }, reg_loc { reg: %r2, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: string("boom") },
-              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              const { dest: %r0, value: int(7) },
+              struct.create { dest: %r1, fields: [%r0] },
               call { dest: %r2, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               drop.reg { reg: %r1 }
             ],

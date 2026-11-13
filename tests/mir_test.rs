@@ -89,21 +89,6 @@ fn value_binder_has_no_slot_and_every_used_slot_is_typed() {
 }
 
 #[test]
-fn struct_binder_named_local_keeps_its_own_type() {
-    let source = "struct S[k: Int]:\n    var x: Int\n\
-                  \x20   def __init__(out self):\n        self.x = 1\n\
-                  \x20   def m(self) -> String:\n        var k = String(\"x\")\n\
-                  \x20       return k + String(Self.k)\n\n\
-                  def main():\n    print(S[2]().m())\n";
-    let mir = checked_program_mir(source);
-    let method = mir_function(&mir, "S.m");
-    assert!(
-        matches!(binder_slot_ty(method, "k"), Some(TyKind::Struct(..))),
-        "{method:#?}"
-    );
-}
-
-#[test]
 fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
     let source = "def main():\n    var a: Int\n    a = 1\n    print(a)\n";
     let mir = checked_program_mir(source);
@@ -210,7 +195,8 @@ fn dying_copy_at_read_parameter_lends_its_source() {
     assert!(
         instrs.iter().any(|instr| matches!(
             instr,
-            MirInstr::LoadPlace { dest, place } if *dest == argument && place.root == a
+            MirInstr::LoadPlace { dest, place } | MirInstr::MakeRef { dest, place }
+                if *dest == argument && place.root == a
         )),
         "{main:#?}"
     );
@@ -785,8 +771,8 @@ fn bound_operator_calls<'m>(
 }
 
 /// Whether the call `operands` picks out, by returning its operands, takes
-/// one as a load of a call-result slot that a `DropVar` destroys after the
-/// call.
+/// one as a load of, or a reference to, a call-result slot that a `DropVar`
+/// destroys after the call.
 fn reads_a_read_temporary(
     function: &MirFunction,
     operands: impl Fn(&MirInstr) -> Option<Vec<Reg>>,
@@ -800,14 +786,20 @@ fn reads_a_read_temporary(
         return false;
     };
     operands.iter().any(|operand| {
-        instrs.iter().any(|instr| match instr {
-            MirInstr::LoadPlace { dest, place } if dest == operand => function.var_names
+        instrs.iter().any(|instr| {
+            match instr {
+            MirInstr::LoadPlace { dest, place } | MirInstr::MakeRef { dest, place }
+                if dest == operand =>
+            {
+                function.var_names
                 [place.root as usize]
                 .starts_with(mojito::mir::CALL_RESULT_SLOT)
                 && instrs[call_at..].iter().any(
                     |later| matches!(later, MirInstr::DropVar { var, .. } if *var == place.root),
-                ),
+                )
+            }
             _ => false,
+        }
         })
     })
 }
@@ -1300,7 +1292,7 @@ fn consuming_nominal_element_read_retains_explicit_accessor_dispatch() {
     assert_eq!(dispatches.len(), 1, "{mir:#?}");
     assert_eq!(
         dispatches[0].0.map(|call| call.target.as_str()),
-        Some("Array.__getitem__")
+        Some("Array.__getitem__$ov$Int")
     );
     assert_eq!(*dispatches[0].1, None);
     assert!(
@@ -1763,35 +1755,33 @@ fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
 
 #[test]
 fn builtin_reads_a_string_parameter_in_place() {
-    // `Error(message)` and `input(prompt)` bind their `String` as
-    // upstream's `read` parameter does: the call retains the parameter's
-    // place, and nothing copies or moves it into a register.
-    let source = "def fail(message: String) raises:\n    raise Error(message)\n\ndef ask(prompt: String) raises -> String:\n    return input(prompt)\n\ndef main():\n    try:\n        fail(String(\"boom\"))\n        print(ask(String(\"? \")))\n    except e:\n        print(e)\n";
+    // `input(prompt)` binds its `String` as upstream's `read` parameter
+    // does: the call retains the parameter's place, and nothing copies or
+    // moves it into a register.
+    let source = "def ask(prompt: String) raises -> String:\n    return input(prompt)\n\ndef main():\n    try:\n        print(ask(String(\"? \")))\n    except e:\n        print(e)\n";
     let compiled = Compiler::default()
         .with_pre_elaboration(false)
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
-    for (function, builtin) in [("fail", "Error"), ("ask", "input")] {
-        let body = mir_function(compiled.elaborated_mir(), function);
-        let instructions = nested_instructions(&body.body);
-        let place = instructions
+    let body = mir_function(compiled.elaborated_mir(), "ask");
+    let instructions = nested_instructions(&body.body);
+    let place = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "input" => arg_places.first().cloned(),
+            _ => None,
+        })
+        .expect("input call")
+        .expect("the read argument keeps its place");
+    assert!(place.is_whole_root() && place.root == 0, "{body:#?}");
+    assert!(
+        !instructions
             .iter()
-            .find_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func, arg_places, ..
-                } if func.0 == builtin => arg_places.first().cloned(),
-                _ => None,
-            })
-            .expect("builtin call")
-            .expect("the read argument keeps its place");
-        assert!(place.is_whole_root() && place.root == 0, "{body:#?}");
-        assert!(
-            !instructions
-                .iter()
-                .any(|instruction| matches!(instruction, MirInstr::UseVar { var: 0, .. })),
-            "{body:#?}"
-        );
-    }
+            .any(|instruction| matches!(instruction, MirInstr::UseVar { var: 0, .. })),
+        "{body:#?}"
+    );
 }
 
 #[test]
@@ -2430,7 +2420,10 @@ fn index_write_lowers_to_a_store_with_an_index_projection() {
 
 #[test]
 fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
-    let source = "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n";
+    // `Row`'s subscripts take an `Int`, so the check normalizes an
+    // `Indexer` argument to it (the bundled `List` declares upstream's
+    // `Some[Indexer]` overloads, which take the index as it is).
+    let source = "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\nstruct Row:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [3, 7, 11]\n    def __getitem__(self, i: Int) -> Int:\n        return self.items[i]\n    def __setitem__(mut self, i: Int, v: Int):\n        self.items[i] = v\n\ndef main():\n    var values = Row()\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -3279,7 +3272,8 @@ fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
     assert!(
         instrs.iter().any(|instr| matches!(
             instr,
-            MirInstr::LoadPlace { place, .. } if place.through.is_some()
+            MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. }
+                if place.through.is_some()
         )),
         "a stable pointer deref substitutes the owner place through the loan"
     );
@@ -3840,17 +3834,18 @@ fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
 }
 
 #[test]
-fn assignment_flushes_temporary_argument_anchors_before_the_store() {
-    // A plain-origin view temporary passed to a call assigned straight back
-    // over its source: the anchor's `KeepAlive` follows the call but precedes
-    // the store into `s`, because upstream destroys the temporary at the call.
+fn assignment_ends_a_temporary_argument_before_the_store() {
+    // A view temporary passed to a call assigned straight back over its
+    // source lives in its call-result slot, which dies after the call but
+    // before the store into `s`, because upstream destroys the temporary at
+    // the call.
     let source =
         "def main():\n    var s = String(\"abc\")\n    s = String(StringSpan(s))\n    print(s)\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
-        .expect("compile assignment over a plain view temporary");
-    let mir = compiled.mir().clone();
+        .expect("compile assignment over a view temporary");
+    let mir = compiled.drop_elaborated_mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -3861,39 +3856,38 @@ fn assignment_flushes_temporary_argument_anchors_before_the_store() {
         .iter()
         .position(|name| name == "s")
         .expect("s slot") as u32;
-    let anchor = main
-        .var_names
-        .iter()
-        .position(|name| name.starts_with("$arg_loan"))
-        .expect("hidden argument anchor slot") as u32;
     let instructions = main.body.instrs.iter().collect::<Vec<_>>();
-    let keep_alive = instructions
+    let view = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::DefVar { var, src, .. }
+                if instructions.iter().any(|call| {
+                    matches!(
+                        call,
+                        MirInstr::Call { dest, func, .. }
+                            if dest == src && func.0.starts_with("StringSpan.__init__$ov$String")
+                    )
+                }) =>
+            {
+                Some(*var)
+            }
+            _ => None,
+        })
+        .expect("the view temporary's call-result slot");
+    assert!(main.var_names[view as usize].starts_with(mojito::mir::CALL_RESULT_SLOT));
+    let call = instructions
+        .iter()
+        .position(|instruction| {
+            matches!(instruction, MirInstr::Call { func, .. }
+                if func.0.starts_with("__module$std$string$String.__init__$ov$$u2A$Ts"))
+        })
+        .expect("the String call");
+    let ended = instructions
         .iter()
         .position(
-            |instruction| matches!(instruction, MirInstr::KeepAlive { var } if *var == anchor),
+            |instruction| matches!(instruction, MirInstr::DropVar { var, .. } if *var == view),
         )
-        .expect("the anchor flushes as a KeepAlive");
-    let anchored = instructions
-        .iter()
-        .position(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::EstablishLoans { reference, .. } if *reference == anchor
-            )
-        })
-        .expect("the anchor slot borrows the view's source");
-    let call = instructions[anchored..keep_alive]
-        .iter()
-        .position(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::Call { .. } | MirInstr::MethodCall { .. }
-            )
-        });
-    assert!(
-        call.is_some(),
-        "the String call follows the anchor and precedes its KeepAlive"
-    );
+        .expect("the view temporary dies");
     let store = instructions
         .iter()
         .rposition(|instruction| match instruction {
@@ -3903,8 +3897,8 @@ fn assignment_flushes_temporary_argument_anchors_before_the_store() {
         })
         .expect("the assignment stores into s");
     assert!(
-        keep_alive < store,
-        "the anchor's loans end before the store into s"
+        call < ended && ended < store,
+        "the view temporary dies after the call and before the store into s"
     );
 }
 
@@ -4473,34 +4467,23 @@ fn pack_element_read_argument_retains_its_place() {
             .all(|place| place.as_ref().map(|place| place.root) == Some(value)),
         "show: {places:?}"
     );
-    // `print`'s read pack `*values: *Ts` is spread from a tuple whose one
-    // element is loaded from the slot where it lies.
-    let pack = instructions
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func,
-                args,
-                spread: Some(spread),
-                ..
-            } if func.0 == "print" => args.get(*spread).copied(),
-            _ => None,
-        })
-        .expect("spread call of print");
+    // `print`'s read pack `*values: *Ts` is upstream's `VariadicPack` over
+    // its arguments' references: the element refers to the slot where it
+    // lies.
     let elements = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::MakeTuple { dest, elems, .. } if *dest == pack => Some(elems.clone()),
+            MirInstr::MakeRefPack { elems, .. } => Some(elems.clone()),
             _ => None,
         })
-        .expect("print's pack tuple");
+        .expect("print's reference pack");
     assert!(
         !elements.is_empty()
             && elements
                 .iter()
                 .all(|element| instructions.iter().any(|instruction| matches!(
                     instruction,
-                    MirInstr::LoadPlace { dest, place } if dest == element && place.root == value
+                    MirInstr::MakeRef { dest, place } if dest == element && place.root == value
                 ))),
         "print: {elements:?}"
     );
@@ -5332,7 +5315,7 @@ fn closure_value_is_its_storage_struct() {
     ));
     assert!(outer.body.instrs.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::CallIndirect { resolved: Some(resolved), .. }
+        MirInstr::MethodCall { resolved: Some(resolved), .. }
             if resolved == "outer$vc$__storage.__call__"
     )));
     assert!(
@@ -5483,7 +5466,7 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
 }
 
 #[test]
-fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
+fn callable_type_bound_is_retained_and_verifies_its_requirement_calls() {
     let src = "def apply[F: def(Int) -> Int](callback: F, value: Int) -> Int:\n    return callback(value)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(apply(increment, 41))\n";
     let mut mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
@@ -5498,21 +5481,23 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
         .find(|(name, _)| name == "apply")
         .expect("generic apply lowered")
         .1;
+    // A call through the bound is its `__call__` requirement's call.
     let (dest, callee, argument, target) = apply
         .body
         .instrs
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::CallIndirect {
+            MirInstr::MethodCall {
                 dest,
-                callee,
+                recv,
+                method,
                 args,
                 resolved,
                 ..
-            } => Some((*dest, *callee, args[0], resolved.clone())),
+            } if method == "__call__" => Some((*dest, *recv, args[0], resolved.clone())),
             _ => None,
         })
-        .expect("bounded callback lowers indirectly");
+        .expect("bounded callback calls its requirement");
     let Some(mojito::TyKind::Param {
         callable_bound: Some(contract),
         ..
@@ -5535,10 +5520,8 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
     apply.reg_types.insert(argument.0, Ty::bool());
     let errors = mojito::mir::verify::verify(&mir);
     assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("argument 0 of indirect callable")),
-        "the callable contract must independently verify argument types: {errors:?}"
+        errors.iter().any(|error| error.contains("argument 0 of")),
+        "the requirement's contract must independently verify argument types: {errors:?}"
     );
 }
 

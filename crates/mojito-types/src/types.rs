@@ -8598,7 +8598,7 @@ mod string_literal_application_tests {
         assert!(matches!(ab.kind(), TyKind::Struct(name, _) if name == STRING_LITERAL_TYPE_NAME));
         assert!(ab.is_string_literal());
         assert_eq!(ab.kind().string_literal_text(), Some("ab"));
-        assert!(!ab.kind().is_non_simd_struct());
+        assert!(ab.kind().is_non_simd_struct());
         let (name, args) = nominal_parts(&ab).expect("a literal is an instance");
         assert_eq!(name, STRING_LITERAL_TYPE_NAME);
         assert_eq!(application(args.into_owned()), ab);
@@ -8658,7 +8658,7 @@ mod numeric_literal_application_tests {
         ));
         assert_eq!(four.to_string(), "IntLiteral[4]");
         assert!(matches!(four.kind(), TyKind::Struct(name, _) if name == INT_LITERAL_TYPE_NAME));
-        assert!(!four.kind().is_non_simd_struct());
+        assert!(four.kind().is_non_simd_struct());
     }
 
     #[test]

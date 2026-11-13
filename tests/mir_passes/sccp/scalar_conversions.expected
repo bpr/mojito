@@ -19,14 +19,14 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(7) },
               const { dest: %r6, value: int(7) },
               const { dest: %r1, value: int(7) },
               const { dest: %r2, value: value(ct_uint(7)) },
-              const { dest: %r3, value: int_literal(2) },
               const { dest: %r7, value: value(ct_uint(2)) },
               const { dest: %r4, value: value(ct_uint(2)) },
-              const { dest: %r5, value: value(ct_uint(3)) }
+              const { dest: %r5, value: value(ct_uint(3)) },
+              const { dest: %r0, value: int_literal(7) },
+              const { dest: %r3, value: int_literal(2) }
             ],
             terminator: return { value: present(%r5) }
           }
@@ -79,10 +79,10 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(3) },
               const { dest: %r3, value: value(ct_uint(3)) },
               const { dest: %r1, value: value(ct_uint(3)) },
-              const { dest: %r2, value: float(4008000000000000) }
+              const { dest: %r2, value: float(4008000000000000) },
+              const { dest: %r0, value: int_literal(3) }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -108,9 +108,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(200) },
               const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(200)] }) },
-              const { dest: %r2, value: int(200) }
+              const { dest: %r2, value: int(200) },
+              const { dest: %r0, value: int_literal(200) }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -136,9 +136,9 @@
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: float_literal(1000000000000000000000000000000.0) },
               const { dest: %r3, value: float(46293e5939a08cea) },
               const { dest: %r1, value: float(46293e5939a08cea) },
+              const { dest: %r0, value: float_literal(1000000000000000000000000000000.0) },
               scalar.cast { dest: %r2, value: %r1, target: Int }
             ],
             terminator: return { value: present(%r2) }
