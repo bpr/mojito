@@ -51,11 +51,18 @@ struct _BoundsMessage(Movable, Writer):
 @inline(.always)
 def check_bounds(idx: Int, size: Int):
     if idx < 0 or idx >= size:
-        var message = _BoundsMessage()
-        message.write(
-            "index ", idx, " is out of bounds, valid range is 0 to ", size - 1
-        )
-        _mojito_abort(message.text)
+        _bounds_abort(idx, size)
+
+
+# The failure path stays out of line so each inlined check is one compare
+# and one call.
+@inline(.never)
+def _bounds_abort(idx: Int, size: Int):
+    var message = _BoundsMessage()
+    message.write(
+        "index ", idx, " is out of bounds, valid range is 0 to ", size - 1
+    )
+    _mojito_abort(message.text)
 
 
 @inline(.always)
