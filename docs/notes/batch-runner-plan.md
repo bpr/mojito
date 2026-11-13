@@ -11,7 +11,7 @@ The work strategy is a tiered check around batches of roadmap tasks:
 |---|---|---|---|
 | `scripts/smoke` | ~30–40 s | `claude_loop.py`, after every task | gross breakage, both backends |
 | `scripts/focused` | ~4 min | after every batch | the fragile-area fixtures, every corpus group and natively |
-| instantiation ratchet | ~1–2 min | after every batch | a fixture that stops elaborating; growth over 1% |
+| instantiation ratchet | ~1–2 min planned, 10–13 min measured (§4) | after every batch | a fixture that stops elaborating; growth over 1% |
 | overnight gate | ~9 h | nightly | all suites, the corpus binary, the pliron manifests |
 
 `scripts/run-batches` drives that for the batches in one note only, and
@@ -75,3 +75,22 @@ entries that depend on an entry, directly or transitively, through their
   putting each entry's open prerequisites ahead of it, as `list` does.
 - Judgment can refine it (an entry whose probes name other entries'
   symptoms also cascades), but the count is the default.
+
+## 4. Make the ratchet check fast again
+
+On 2026-11-13, `scripts/instantiation-report --check` took far longer
+than the ~1–2 minutes the tier table assumes:
+
+- batch 3 of `scripts/run-batches`: 758 s (`target/run-batches/20261113-072230/batch3-ratchet.log`);
+- an in-session rerun of the same check: 10 m 32 s wall, 79 m 38 s user.
+
+It now costs more than `scripts/focused` (~10 min that run), so it
+dominates each batch's checking time. Measure where it goes before choosing
+a fix:
+
+- whether the per-fixture compile time grew across the 1,721 fixtures
+  (the debug binary runs every `assets/ok` and `benchmarks/compile`
+  fixture to completion), or a few fixtures dominate;
+- whether running the release binary (`--bin`), or stopping each fixture
+  after elaboration rather than executing it, gets the check back to a
+  couple of minutes.

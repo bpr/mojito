@@ -47,7 +47,7 @@ pub(super) fn merge_associated_requirement(
                 result: more_result,
             },
         ) => {
-            result == more_result
+            *result == rebind_generator_result(more_result, more_params, params)
                 && same_generator_signature(params, more_params)
                 && params
                     .iter()
@@ -101,6 +101,24 @@ pub(super) fn rebind_slots(
         other => other.clone(),
     };
     constraint.map(&binder, &operand)
+}
+
+/// A generator's result type `result`, stated over the binders `from`,
+/// restated over `to` slot by slot, as two generator types compare with
+/// their binder lists aligned by position (`comptime get[n: Int]:
+/// SIMD[DType.int32, n]` in a trait and in its conformer). A result that
+/// does not restate keeps its own binders.
+pub(super) fn rebind_generator_result(result: &Ty, from: &[ParamDecl], to: &[ParamDecl]) -> Ty {
+    let context = ParamContext::detached();
+    let mut renamed = mojito_types::param_expr::ParamBindings::new();
+    for (source, target) in from.iter().zip(to) {
+        renamed.bind(
+            source.id().clone(),
+            context.decl_ref(target.id().clone(), target.name(), target.binder_meta()),
+        );
+    }
+    mojito_types::types::replace_parameters(&context, result, &renamed, 0)
+        .unwrap_or_else(|_| result.clone())
 }
 
 /// Whether two compile-time arguments are equal: values as the one folder

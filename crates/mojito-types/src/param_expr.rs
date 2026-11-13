@@ -1174,7 +1174,7 @@ impl ParamContext {
                 args: applied,
             } if applied.is_empty() && complete => {
                 let applied: Vec<ParamExpr> = args.iter().flatten().cloned().collect();
-                let result = crate::types::substitute(&ty.result, bindings.types());
+                let result = crate::types::replace_parameters(self, &ty.result, &bindings, 0)?;
                 return Ok(self.type_member(subject, name, &applied, MetaTy::value(result)));
             }
             ParamKind::BindParams {
@@ -1206,7 +1206,9 @@ impl ParamContext {
             _ => {}
         }
         let meta = if complete {
-            MetaTy::value(crate::types::substitute(&ty.result, bindings.types()))
+            MetaTy::value(crate::types::replace_parameters(
+                self, &ty.result, &bindings, 0,
+            )?)
         } else {
             MetaTy::value(Ty::generator(
                 bound_generator_params(&ty.unbound_params(&args), &bindings),

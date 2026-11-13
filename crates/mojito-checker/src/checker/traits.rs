@@ -350,23 +350,27 @@ impl Checker {
             }
         }
         for member in comptime_members {
-            let (requirement, constraints) =
-                match self.ct_member_req_from_anno(&member.params, &member.ty)? {
-                    CtMemberReq::Value(result) if !member.params.is_empty() => {
-                        self.generator_requirement(name, member, result)?
-                    }
-                    requirement => {
-                        let owner = requirement_owner(name, &member.name);
-                        let decls = if member.params.is_empty() {
-                            Vec::new()
-                        } else {
-                            self.classify_params(&owner, &member.params)?
-                        };
-                        let types = type_scope(&decls);
-                        let clauses = self.member_clauses(&decls, types, &member.where_clauses)?;
-                        (requirement, clauses)
-                    }
-                };
+            // The requirement's own binders are open while its annotation
+            // resolves (`comptime get[n: Int]: SIMD[DType.int32, n]`).
+            let owner = requirement_owner(name, &member.name);
+            let decls = if member.params.is_empty() {
+                Vec::new()
+            } else {
+                self.classify_params(&owner, &member.params)?
+            };
+            let declared = self.in_param_scope(&decls, |checker| {
+                checker.ct_member_req_from_anno(&member.params, &member.ty)
+            })?;
+            let (requirement, constraints) = match declared {
+                CtMemberReq::Value(result) if !member.params.is_empty() => {
+                    self.generator_requirement(member, decls, result)?
+                }
+                requirement => {
+                    let types = type_scope(&decls);
+                    let clauses = self.member_clauses(&decls, types, &member.where_clauses)?;
+                    (requirement, clauses)
+                }
+            };
             if !constraints.is_empty()
                 && let Some(previous) =
                     ct_constraints.insert(member.name.clone(), constraints.clone())
@@ -1983,7 +1987,10 @@ impl Checker {
                 ) = (req, &parameterized.template)
                 {
                     if !same_generator_signature(params, decls)
-                        || !generator_result_satisfies(body, result)
+                        || !generator_result_satisfies(
+                            body,
+                            &rebind_generator_result(result, params, decls),
+                        )
                     {
                         return Err(TypeError::TraitComptimeMemberMismatch {
                             struct_name: name.to_string(),
@@ -4319,8 +4326,8 @@ impl Checker {
     /// parameterized value member.
     fn generator_requirement(
         &self,
-        trait_name: &str,
         member: &TraitComptime,
+        mut params: Vec<ParamDecl>,
         result: Ty,
     ) -> Result<(CtMemberReq, Vec<GenericConstraint>), TypeError> {
         if member.params.iter().any(|parameter| {
@@ -4334,8 +4341,6 @@ impl Checker {
                 "origin parameters on a parameterized comptime value".to_string(),
             ));
         }
-        let owner = requirement_owner(trait_name, &member.name);
-        let mut params = self.classify_params(&owner, &member.params)?;
         // The requirement's `where` clauses close its parameter list, as a
         // generic alias's do, so an application through a bound checks them.
         // They compile with its own binders open.

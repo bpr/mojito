@@ -4802,6 +4802,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     attribute `SIMD.__init__(IntLiteral)`'s body folds to, rather than
     applying the declared initializer through the alias (found while
     landing R1781).
+  - Probe: `comptime zero[d: DType] = Scalar[d](3)`, read as
+    `zero[DType.uint16]`, and the same body as a struct's `comptime
+    zero[d: DType]: Scalar[d]` member, print `3` at the pin and fail
+    with "not an associated comptime expression"; `SIMD[d, 2](3)` lowers
+    (found while landing R1208).
   - `comptime_requests.rs`'s `CalleeOracle::callee` answers `Other` for a
     call through any struct alias (`P(2)` over `comptime P = Pt`,
     `Int32(5)`), so `applies_callable` never lifts it; it must resolve a
@@ -5250,28 +5255,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `1.5`; so do `(7.5).__ceildiv__(2.0)`, `(7).__ceildiv__(2)`,
     `(7.5).__neg__()`, and the reflected `(2.5).__radd__(1.0)`.
   - Found while landing R1855 (2026-11-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1208 A parameterized `comptime` value's declared type cannot read
-  the member's own parameters**
-
-  Problem: `comptime get[n: Int]: SIMD[DType.int32, n] =
-  SIMD[DType.int32, n](7)` in `struct A`, read as `A.get[2]`, prints `[7,
-  7]` at the pin, while Mojito stops with "not a compile-time Int constant:
-  n".
-  - The annotation resolves before the member's own parameters are in scope
-    (`Checker::ct_member_req_from_anno`, `checker/constraints.rs`).
-  - A trait requirement has the same gap: `comptime get[n: Int]:
-    SIMD[DType.int32, n]` in `trait HasGet`, read through a bound as
-    `T.get[2]`, prints `[5, 5]` at the pin.
-  - The requirement's result type must then be substituted with the read's
-    arguments (`Checker::generator_application`), and conformance must
-    compare result types with the two binder lists aligned by position
-    (`same_generator_signature`, `checker/traits_support.rs`).
-  - Probe: `comptime get[T: AnyType]: T` in a trait is rejected with
-    "unknown type 'T'", where the pin accepts the trait.
-  - Found while landing R1146 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

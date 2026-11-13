@@ -324,23 +324,26 @@ impl Checker {
                 });
             let member = generator.as_ref().unwrap_or(member);
             let member_owner = format!("{struct_name}.{}", member.name);
-            // Resolve and classify the annotation now even when the member's
-            // symbolic body cannot be checked until application. This keeps
-            // associated `comptime NAME: Type where ... = ...` declarations
-            // from silently discarding an invalid declared type.
-            let requirement = member
-                .ty
-                .as_ref()
-                .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
-                .transpose()?;
             // A parameterized member's own binders, classified once: its
-            // clause compiles with them open and bound to them, as upstream
-            // emits a member's clause in the member's own scope.
+            // annotation and clause resolve with them open and bound to them,
+            // as upstream emits a member's signature in the member's own scope.
             let own_decls = if member.params.is_empty() {
                 Vec::new()
             } else {
                 self.classify_params(&member_owner, &member.params)?
             };
+            // Resolve and classify the annotation now even when the member's
+            // symbolic body cannot be checked until application. This keeps
+            // associated `comptime NAME: Type where ... = ...` declarations
+            // from silently discarding an invalid declared type.
+            self.push_param_scope_as(&own_decls, member_type_scope(&member_owner, &member.params));
+            let requirement = member
+                .ty
+                .as_ref()
+                .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
+                .transpose();
+            self.pop_param_scope();
+            let requirement = requirement?;
             // The member's own clause and the conditions of the conditional
             // traits requiring it are assumed while its body resolves; every
             // application re-checks the clause (`availability`), and a

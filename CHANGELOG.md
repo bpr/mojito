@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameterized `comptime` value's declared type reads the member's own
+  parameters, as at the pin: `comptime get[n: Int]: SIMD[DType.int32, n]`
+  in a struct, and as a trait requirement read through a bound
+  (`T.get[2]`), runs on the VM and natively, where Mojito reported "not a
+  compile-time Int constant: n", and `comptime pick[T: AnyType]: T` in a
+  trait is accepted where it reported "unknown type 'T'" (R1208).
 - A subscript over an anonymous `Some[Trait]` parameter binds it to the
   index's type, as at the pin: a user struct's `__getitem__(self, i:
   Some[Indexer])` now runs on the VM and natively, one instance per index
