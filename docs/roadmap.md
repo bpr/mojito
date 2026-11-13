@@ -5433,23 +5433,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1217 A parameterized member read on a concrete struct in a
-  substituted signature does not close in the checker**
-
-  Problem: `def f[T: Tr](x: Box[T.get[0]])` over `comptime get[idx: Int]:
-  Int`, called as `f[S](Box[1]())` where `S` defines `get[idx: Int]: Int =
-  idx + 1`, fails with "type mismatch for argument to 'f': expected
-  Box[S.get[0]], found Box[1]", where the pin prints `1`.
-  - `Checker::answer_concrete_members` (`checker/constraints.rs`) answers
-    only member reads without arguments, so `S.get[0]` stays a read.
-  - The struct side of the answer exists (`struct_member_at`,
-    `ConformanceFacts::parameterized_associated`). It needs the member's
-    parameters bound to the read's arguments, as the elaborator's
-    `type_member_answer` (`native/mono/symbolic.rs`) does.
-  - Found while landing R1201 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1218 A bound's value member in a struct parameter's type is not
   answered at the instance**
 

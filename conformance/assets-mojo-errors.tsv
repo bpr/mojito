@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1188
+# swept-count	1193
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -871,6 +871,8 @@ assets/type_error/parameter_field_transfer.mojo	compile-reject	agree	error: cann
 assets/type_error/parameterized_assoc_arity.mojo	compile-reject	agree	error: failed to infer parameter 'b', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/parameterized_assoc_conformance_arity.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasWrap'
 assets/type_error/parameterized_assoc_self_origin_mismatch.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasIter'
+assets/type_error/parameterized_value_member_self_signature_mismatch.mojo	compile-reject	agree	error: 'S' does not implement all requirements for 'Tr'
+assets/type_error/parameterized_value_member_substituted_signature_mismatch.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Box[Int(2)]' to 'Box[Int(1)]'
 assets/type_error/parameter_list_explicit_elements.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/parameter_list_spread_pack.mojo	compile-reject	agree	error: value passed to 'values' cannot be converted from 'ParameterList[values]' to 'KGENParamList[$0]', it depends on an unresolved parameter '$0'
 assets/type_error/parameter_transfer.mojo	compile-reject	agree	error: cannot transfer from a parameter expression; did you want to introduce a local 'var'?

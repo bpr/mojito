@@ -918,6 +918,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-ent
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member_dependent_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameterized_value_member_substituted_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_function_type_inline.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_setitem_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_method_value.mojo	-	ineligible	no-scalar-entry-shape

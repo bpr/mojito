@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameterized value requirement read in a signature closes at the
+  substitution, as at the pin: `def f[T: Tr](x: Box[T.get[0]])` called as
+  `f[S](Box[1]())` over `comptime get[idx: Int]: Int = idx + 1` prints `1`,
+  where Mojito reported "expected Box[S.get[0]], found Box[1]", and a
+  trait method's `b: Box[Self.get[0]]` matches a conformer's `Box[1]`, where
+  the trait failed "not an associated comptime expression" (R1217).
 - A type annotation reads a member through a local compile-time value, as
   at the pin: `var a: w.E = True` over `comptime w = W[3]()` and `var m:
   L.__getitem_param__[SIMDLength(0)] = 3` over `comptime L =

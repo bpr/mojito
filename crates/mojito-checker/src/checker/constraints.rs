@@ -1042,7 +1042,9 @@ impl Checker {
     /// member's own `where` clauses are checked against both; a type
     /// member binds as its annotation read does. Through a type parameter
     /// (`T.get[0]`) it is the bound's generator requirement applied, which
-    /// the elaborator answers per instance. `None` when `object` names no
+    /// the elaborator answers per instance, and through a trait's own
+    /// `Self` the trait's requirement, which a conformer's substitution
+    /// answers. `None` when `object` names no
     /// type or `field` is no parameterized member of it.
     pub(super) fn parameterized_member_application(
         &self,
@@ -1051,10 +1053,21 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Option<Result<ParamExpr, TypeError>> {
         let subject = self.member_subject(object)?;
-        if let TyKind::Param { .. } = subject.kind() {
-            let (params, result) =
-                self.lookup_trait_generator(&self.refined_bound(&subject)?, field)?;
-            return Some(self.generator_application(&subject, field, params, result, args));
+        match subject.kind() {
+            TyKind::Param { .. } => {
+                let (params, result) =
+                    self.lookup_trait_generator(&self.refined_bound(&subject)?, field)?;
+                return Some(self.generator_application(&subject, field, params, result, args));
+            }
+            TyKind::SelfType => {
+                let CtMemberReq::Generator { params, result } =
+                    self.trait_self_comptime.last()?.get(field)?
+                else {
+                    return None;
+                };
+                return Some(self.generator_application(&subject, field, params, result, args));
+            }
+            _ => {}
         }
         let (name, arguments) = subject.kind().as_non_simd_struct()?;
         let info = self.structs.get(name)?;
@@ -4396,6 +4409,34 @@ impl Checker {
         arguments: &[TyArg],
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
+        Some(
+            self.struct_member_generator(info, arguments, field)?
+                .and_then(|generator| {
+                    let context = &self.param_context;
+                    if generator_is_closed(&generator) {
+                        return context
+                            .constant(CtValue::Generator(Box::new(generator)))
+                            .map_err(param_error);
+                    }
+                    Ok(context.type_member(
+                        &context.type_shape(subject.clone()),
+                        field,
+                        &[],
+                        mojito_types::param_expr::MetaTy::value(generator.ty()),
+                    ))
+                }),
+        )
+    }
+
+    /// A struct's parameterized value member `field` as the generator its
+    /// declaration is, its body at the struct application's `arguments`.
+    /// `None` when `field` is no parameterized value member.
+    fn struct_member_generator(
+        &self,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        field: &str,
+    ) -> Option<Result<mojito_types::ct::GeneratorValue, TypeError>> {
         let member = info.parameterized_associated.get(field)?;
         let MemberTemplate::Value { decls, body } = &member.template else {
             return None;
@@ -4408,21 +4449,10 @@ impl Checker {
                 .replace(body, &outer)
                 .and_then(|replaced| context.fold(&replaced))
                 .map_err(param_error)?;
-            let generator = mojito_types::ct::GeneratorValue {
+            Ok(mojito_types::ct::GeneratorValue {
                 params: decls.clone(),
                 body,
-            };
-            if generator_is_closed(&generator) {
-                return context
-                    .constant(CtValue::Generator(Box::new(generator)))
-                    .map_err(param_error);
-            }
-            Ok(context.type_member(
-                &context.type_shape(subject.clone()),
-                field,
-                &[],
-                mojito_types::param_expr::MetaTy::value(generator.ty()),
-            ))
+            })
         })())
     }
 
@@ -6262,11 +6292,10 @@ impl Checker {
                 self.checker
                     .param_context
                     .answer_type_members(expr, &mut |shape, name, args| {
-                        Ok(args
-                            .is_empty()
-                            .then(|| (self.subject_of)(shape))
-                            .flatten()
-                            .and_then(|subject| self.checker.subject_value_member(&subject, name))
+                        Ok((self.subject_of)(shape)
+                            .and_then(|subject| {
+                                self.checker.subject_value_member(&subject, name, args)
+                            })
                             .map(ParamExpr::into_value))
                     })
             }
@@ -6279,7 +6308,22 @@ impl Checker {
         mojito_types::types::rewrite_ty(ty, &mut answer).unwrap_or_else(|_| ty.clone())
     }
 
-    fn subject_value_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
+    /// The value member `field` of `subject` read at `args`: a member
+    /// without arguments as it stands, a parameterized member as its
+    /// generator bound to `args` (upstream's `#kgen.bind_params`), which a
+    /// concrete struct's closed member folds. Through a type parameter the
+    /// read stays, now on the substituted subject.
+    fn subject_value_member(
+        &self,
+        subject: &Ty,
+        field: &str,
+        args: &[ParamExpr],
+    ) -> Option<ParamExpr> {
+        if !args.is_empty() {
+            let generator = self.subject_generator_member(subject, field)?;
+            let args: Vec<_> = args.iter().cloned().map(Some).collect();
+            return self.param_context.bind_params(&generator, &args).ok();
+        }
         match subject.kind() {
             TyKind::Param { .. } => {
                 let ty = self.lookup_trait_assoc_value_ty(&self.refined_bound(subject)?, field)?;
@@ -6293,6 +6337,39 @@ impl Checker {
             _ if !subject.is_simd() => {
                 let (name, arguments) = mojito_types::types::nominal_parts(subject)?;
                 self.struct_value_member(self.structs.get(name)?, &arguments, field)?
+                    .ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// The parameterized value member `field` of `subject` read unapplied:
+    /// a type parameter's bound generator requirement, or a struct's
+    /// member as the generator constant it declares at the struct's
+    /// arguments, which a complete binding folds even over arguments still
+    /// symbolic (`Self.k` at the conformer's own binders).
+    fn subject_generator_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
+        match subject.kind() {
+            TyKind::Param { .. } => {
+                let (params, result) =
+                    self.lookup_trait_generator(&self.refined_bound(subject)?, field)?;
+                Some(self.param_context.type_member(
+                    &self.param_context.type_shape(subject.clone()),
+                    field,
+                    &[],
+                    mojito_types::param_expr::MetaTy::value(Ty::generator(
+                        params.to_vec(),
+                        result.clone(),
+                    )),
+                ))
+            }
+            _ if !subject.is_simd() => {
+                let (name, arguments) = mojito_types::types::nominal_parts(subject)?;
+                let generator = self
+                    .struct_member_generator(self.structs.get(name)?, &arguments, field)?
+                    .ok()?;
+                self.param_context
+                    .constant(CtValue::Generator(Box::new(generator)))
                     .ok()
             }
             _ => None,
