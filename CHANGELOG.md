@@ -511,6 +511,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime for` over a value pack (`total[1, 2, 3]()` summing
+  `comptime for value in values`) and a `ref self` method called on a
+  constructed value inside a lifted compile-time expression run with the
+  pre-elaboration pipeline off, as at the pin, where CTFE reported that
+  the `ParameterList.__iter__` reference receiver must be a place. Work
+  already landed fixed it; no code changes in this entry (R2002).
 - A body nested in a function taking a `Some[Trait]` parameter is one
   instance per binding of that parameter, as upstream desugars it to an
   inferred parameter of the enclosing function: the reflective

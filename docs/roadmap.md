@@ -4619,27 +4619,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2002 A lifted `comptime for` over a value pack passes its
-  `ParameterList` to `__iter__` as a register, which the VM refuses as a
-  reference receiver, with the pre-elaboration pipeline off**
-
-  With `MOJITO_PRE_ELABORATION=0`, `def total[*values: Int]() -> Int`
-  summing `comptime for value in values` and called as `total[1, 2, 3]()`
-  fails with "VM CTFE failed for '$comptime$total$c0…': vm: reference
-  receiver for method 'ParameterList….__iter__' must be a place", where
-  the pin and the default pipeline print `6`.
-  - The lifted thunk calls `__iter__(ref self)` on the `ParameterList`
-    value its construction leaves in a register; upstream's lowering
-    materializes an rvalue receiver of a `ref self` method into a
-    temporary before the call.
-  - With the pipeline on, `inline-parametric` and `mem-2-reg` remove the
-    call, so only the pipeline-off path reaches the VM's check.
-  - Probe: the program above, and `assets/ok/bracket_function_application.mojo`,
-    both with `MOJITO_PRE_ELABORATION=0`.
-  - Found while landing R2001 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1942 A lifted compile-time expression calling a local
   `comptime` closure fails in CTFE, where the pin runs it**
 
