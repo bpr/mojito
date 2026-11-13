@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A subscript over an anonymous `Some[Trait]` parameter binds it to the
+  index's type, as at the pin: a user struct's `__getitem__(self, i:
+  Some[Indexer])` now runs on the VM and natively, one instance per index
+  type, and `values[Int32(1)]` over a `List[Int]` runs with the
+  pre-elaboration pipeline off, where elaboration reported "solution for
+  `Some[Indexer]` is not concrete" (R2017).
 - A struct type read as a run-time value is a value of its `AnyStruct`
   metatype, as at the pin: `_ = Int` and `_ = List[Int]` run on the VM and
   natively, and `f(Int)`, `print(Int)`, `objs[Int]`, and `Int32.size` are

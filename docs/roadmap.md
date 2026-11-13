@@ -56,28 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R2017 With the pre-elaboration pipeline off, a call to a
-  `Some[Indexer]` parameter reaches the elaborator with the anonymous
-  parameter unsolved**
-
-  With `MOJITO_PRE_ELABORATION=0`, `values[Int32(1)]` over a
-  `List[Int]` fails with "unsupported monomorphizing
-  `List.__getitem__$ov$Some$u5B$Indexer$u5D$$Indexer`: solution for
-  `Some[Indexer]` is not concrete", where the pin and the default
-  pipeline print `20`.
-  - Upstream's `Some[Indexer]` is an infer-only type parameter that each
-    call binds to its argument's type; the call reaching the elaborator
-    keys the parameter by the opaque `Some[Indexer]` instead.
-  - With the pipeline on, `inline-parametric` inlines the accessor and
-    hides the call, so only the pipeline-off path, which the
-    `pre_elaboration` corpus group runs, meets it.
-  - Probe: the program above, and `assets/ok/conversion_traits_library.mojo`
-    with `MOJITO_PRE_ELABORATION=0` (its `pick[T: Indexer]` reaches the
-    same call), which `tests/focused/list.txt` leaves out until this lands.
-  - Found while landing R1999 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2018 With the pre-elaboration pipeline off, comparing a
   `Scalar[DType.bool]` with a `Bool` reaches the VM unconverted**
 

@@ -49,8 +49,8 @@ impl Specializer<'_> {
     /// `__getitem__`/`__setitem__` family) to its concrete instance. The
     /// receiver binds the owner's parameters and the destination's checked
     /// type anchors the result, mirroring the nullary iterator-step
-    /// inference; subscript actuals are indexes or constructed slice values
-    /// and never carry generic solutions of their own. A subscript is a
+    /// inference; the checked parameter types solve the accessor's own
+    /// binders, an anonymous `Some[Trait]` index's among them. A subscript is a
     /// call of its accessor, so it names the generator without the
     /// accessor's unused arguments, as upstream's rewritten call does, and
     /// its contract loses the arguments that bound them: returns the
@@ -801,6 +801,7 @@ impl Specializer<'_> {
             target,
             owner_covered,
         )?);
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
             self.error(
                 Some(owner),

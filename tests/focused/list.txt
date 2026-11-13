@@ -31,7 +31,7 @@ fixture assets/runtime_error/pliron_trap_pow_negative.mojo
 # R2160: fixture assets/ok/simd_slice_insert_split_interleave.mojo
 # R2161: fixture assets/ok/writable_trait_library.mojo
 # R2162: fixture assets/ok/float16_semantics.mojo
-# R2017: fixture assets/ok/indexer_normalization.mojo
+fixture assets/ok/indexer_normalization.mojo
 # R2157: test evaluator_test power_and_true_division
 # R2164: test comptime_test a_type_member_is_read_through_a_module_alias_and_a_construction
 # R2165: test vm_test unsafe_uninit_length_slots_are_never_written_until_stored
@@ -63,7 +63,7 @@ fixture assets/ok/comptime_match_patterns.mojo
 fixture assets/ok/comptime_for_borrowing_iterator.mojo
 fixture assets/ok/template_method_bound_defaulted_argument.mojo
 fixture assets/ok/trait_method_parameter_markers.mojo
-# R2017: fixture assets/ok/conversion_traits_library.mojo
+fixture assets/ok/conversion_traits_library.mojo
 fixture assets/ok/reference_element_chained_read.mojo
 fixture assets/ok/copyable_iterator_reference_aggregate.mojo
 fixture assets/ok/origin_delegated_multi_binder.mojo
