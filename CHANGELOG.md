@@ -511,6 +511,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `Bool` converted to a `Scalar[DType.bool]` is the declared `@implicit
+  SIMD.__init__(Bool)` call wherever it converts, as at the pin, so `mask ==
+  True`, `mask.__eq__(True)`, and `mask & b` run with the pre-elaboration
+  pipeline off, where the VM reported "cannot compare Bool and Bool"
+  (R2018).
+
 - A compile-time bracket list now binds by the one rule in `call.rs`
   everywhere: the checker's callable-argument origin tracking and MIR's
   parameter-argument pairing and verifier read the per-argument

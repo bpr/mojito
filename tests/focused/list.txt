@@ -150,7 +150,7 @@ fixture assets/ok/template_print_keywords.mojo
 fixture assets/ok/pliron_print_str_literal.mojo
 fixture assets/ok/bool_declared_initializers.mojo
 fixture assets/ok/bool_declared_members.mojo
-# R2018: fixture assets/ok/bool_declared_operators.mojo
+fixture assets/ok/bool_declared_operators.mojo
 fixture assets/ok/bool_declared_writable.mojo
 fixture assets/ok/bool_storage_primitives.mojo
 fixture assets/ok/simd_bool_masks.mojo

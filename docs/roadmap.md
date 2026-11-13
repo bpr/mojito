@@ -56,26 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R2018 With the pre-elaboration pipeline off, comparing a
-  `Scalar[DType.bool]` with a `Bool` reaches the VM unconverted**
-
-  With `MOJITO_PRE_ELABORATION=0`, `mask == True` or `mask.__eq__(True)`
-  over `var mask = SIMD[DType.bool, 1](True)` fails with "Type error:
-  cannot compare Bool and Bool", where the pin and the default pipeline
-  print `True`; `mask == Scalar[DType.bool](True)` runs.
-  - The VM's `values_equal` (`crates/mojito-vm/src/runtime.rs`) is handed
-    a one-lane `Value::Simd` and a `Value::Bool`: the `Bool` argument's
-    implicit conversion to `Scalar[DType.bool]`, which upstream performs
-    at the call through `SIMD`'s `@implicit` initializer, is not in the
-    MIR the elaborator receives.
-  - With the pipeline on, the passes fold the comparison away.
-  - Probe: the program above, and `assets/ok/bool_declared_operators.mojo`
-    with `MOJITO_PRE_ELABORATION=0` (its `b == mask` line), which
-    `tests/focused/list.txt` leaves out until this lands.
-  - Found while landing R1999 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2157 With the pre-elaboration pipeline off, a literal operator
   or a `Pointer` operator the pipeline folds reaches the VM as a method
   call it cannot run**

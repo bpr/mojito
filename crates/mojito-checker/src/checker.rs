@@ -2232,15 +2232,19 @@ impl Checker {
             return self.record_literal_materializations(&construction, from, to);
         }
         // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
-        // which asserts one lane.
+        // which asserts one lane: the conversion is that constructor's call.
         if from.is_bool()
             && let Some((_, width)) = to.as_simd()
         {
-            return self.record_instance_assertion(
+            self.record_instance_assertion(
                 &expression.source_span(),
                 &width,
                 mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE,
-            );
+            )?;
+            return match self.implicit_conversion_constructor(from, to)? {
+                Some(selected) => self.record_selected_conversion(expression, from, selected, to),
+                None => Ok(()),
+            };
         }
         let scalar_boundary = from.kind().is_numeric_literal()
             && (to.is_int()
