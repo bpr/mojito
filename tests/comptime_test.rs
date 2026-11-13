@@ -1830,7 +1830,7 @@ fn a_type_member_is_read_through_a_module_alias_and_a_construction() {
     let missing = "trait Hooks:\n    comptime lowers: Bool = True\n\nstruct DefHooks[n: Int](Hooks):\n    pass\n\ncomptime Cur: Hooks = DefHooks[1]\n\ndef main():\n    print(Cur.no_hook)\n";
     let error = run(missing).unwrap_err();
     assert!(
-        error.contains("'DefHooks[1]' has no field 'no_hook'"),
+        error.contains("'DefHooks[1]' value has no attribute 'no_hook'"),
         "{error}"
     );
 }

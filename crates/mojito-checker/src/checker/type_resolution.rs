@@ -1344,7 +1344,10 @@ impl Checker {
     /// The type a member read's base names or constructs, beside the
     /// struct's name when the base is a bare parameterized struct, read as
     /// its unbound generator ([`Self::unbound_generator`]).
-    fn member_base<'a>(&self, base: &'a SourceType) -> Result<(Ty, Option<&'a str>), TypeError> {
+    pub(super) fn member_base<'a>(
+        &self,
+        base: &'a SourceType,
+    ) -> Result<(Ty, Option<&'a str>), TypeError> {
         // A compile-time construction's member is its type's (`S[2]().H`).
         if let SourceType::Value(value) = base {
             return self.compile_time_value_type(value).map(|ty| (ty, None));

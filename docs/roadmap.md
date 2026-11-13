@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2169**.
+Next free ID: **R2170**.
 
 ## Ordered Work
 
@@ -7480,16 +7480,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2164 A module-scope `comptime` reading a type member through a
-  static method's result does not resolve the member**
+- [ ] **R2169 Inside a function, a type member read through a bare
+  struct whose parameters all have defaults binds the defaults**
 
-  `comptime Through: Hooks = S.current().H` at module scope fails with
-  "unknown type 'Hooks'", and without the annotation with "type 'S[7]'
-  has no field 'H'". Inside a function, or spelled `S[7]().H`, it works.
-  - The `comptime_test` test
-    `a_type_member_is_read_through_a_module_alias_and_a_construction`
-    pins it and fails since 5e2dfca34 (R1857).
-  - Found by the 2026-11-13 overnight gate.
+  At the pin `S.H` over `struct S[k: Int = 0]` with `comptime H: Hooks =
+  DefHooks[Self.k]` is "cannot access comptime member 'H' with unbound
+  parameter 'S.k'" at any scope. Mojito rejects it at module scope but
+  accepts it inside a function, reading `S` as `S[0]`.
+  - Cause: the function-scope type-member read resolves the bare base as
+    a type annotation, filling defaults, instead of as its unbound
+    generator (`Checker::member_base`, `Checker::unbound_generator`).
+  - Probe: `def main(): comptime T = S.H; print(T.lowers)` prints `True`.
+  - Probe: `def main(): print(S.H.lowers)` prints `True`.
+  - Found while landing R2164 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

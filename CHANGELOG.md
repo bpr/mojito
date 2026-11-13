@@ -511,6 +511,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A module-scope `comptime` reads a type member through a static
+  member's construction again: `comptime Through: Hooks = S.current().H`
+  over a parametric `S` resolves `current` through `S`'s unbound generator,
+  as a function-scope read does, where it reported "unknown type 'Hooks'"
+  or "type 'S[7]' has no field 'H'" (R2164).
 - Checking a nest of numeric constructions no longer costs time
   exponential in its depth: `Int(Int(Int(Int(Int(Int(1))))))` and
   `Float64(Float16(Float64(0.1)))` check in a fraction of a second, where

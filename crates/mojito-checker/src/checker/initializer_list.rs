@@ -734,7 +734,9 @@ impl Checker {
                 if matches!(root, SourceType::Named(name, _) if self.lookup(name).is_some()) {
                     return None;
                 }
-                self.ty_from_anno(base).ok()?
+                // A bare parametric struct's member is read through its
+                // unbound generator, as a type member read's base is.
+                self.member_base(base).ok()?.0
             }
             _ => return None,
         };
