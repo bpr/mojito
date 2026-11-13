@@ -5652,6 +5652,20 @@ impl Checker {
         }
     }
 
+    /// The list binder of the type pack a subscript's `object` reads an
+    /// element of: the pack itself (`Ts`, `Self.Ts`) or its `TypeList`
+    /// member spelled out (`Self.Ts.__getitem_param__`), which `Ts[i]` is
+    /// sugar for upstream.
+    pub(super) fn type_pack_subscripted(&self, object: &Expr) -> Option<ParamExpr> {
+        match &object.kind {
+            ExprKind::Member {
+                object: list,
+                field,
+            } if field == "__getitem_param__" => self.type_pack_named(list),
+            _ => self.type_pack_named(object),
+        }
+    }
+
     /// The list binder of the value pack an expression names while it is
     /// still a parameter: a `def`'s own `*values: Int`, whose local is its
     /// visible `ParameterList` binder and which no other local shadows, or

@@ -1366,7 +1366,7 @@ impl Checker {
     /// through the contract an alias application uses (keywords, defaults,
     /// bounds); an abstract base lowers each argument at its declared
     /// parameter.
-    fn member_application(
+    pub(super) fn member_application(
         &self,
         base_ty: &Ty,
         name: &str,

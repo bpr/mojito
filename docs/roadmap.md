@@ -5258,37 +5258,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1178 A struct's type-valued parameterized `comptime` member is
-  not read in a compile-time expression**
-
-  Problem: over `struct W[T: AnyType]` with `comptime Get[i: Int] =
-  Self.T`, `comptime E = W[Int].Get[0]`, `comptime if W[U].Get[0] ==
-  Int:`, and a later member `comptime First = Self.Get[0]` are rejected,
-  where the pin runs each.
-  - Only a type annotation reads the member (`var x: W[Int].Get[0]`),
-    through `Checker::resolve_parameterized_member`.
-  - The one compile-time builder has no arm for it (`build_ct`,
-    `checker/constraints.rs`), and every compile-time reader goes through
-    it: `eval_associated_ct`, `constraint_operand`,
-    `comptime_type_operand`, and a local `comptime` binding's.
-  - The rejections differ by site: "function types as compile-time
-    values", "Undefined variable 'W'", "unsupported dependent parameter
-    expression", and "'Self' is not a compile-time type".
-  - Probe: a struct member spelling a type pack's member out, `comptime
-    First = Self.Ts.__getitem_param__[0]`, read as `var x: S[Int,
-    Bool].First`, fails with "not an associated comptime expression".
-  - Probe: the subscript spelling in a local `comptime`, `comptime T =
-    TypeList[Trait=AnyType, Ts.values]()[1]`, fails with "type
-    'TypeList[AnyType, Ts]' cannot be indexed here", where the pin runs it.
-  - Probe: a later member applying a sibling's parameterized type member,
-    `comptime F = Self.E[Self.n]` (or `Self.E[2]`) beside `comptime E[k:
-    Int] = Box[k]`, read as `var b: S.F`, fails with "not an associated
-    comptime expression", where the pin runs it; `var b: Self.E[Self.n]`
-    in a method runs.
-  - Found while landing R1168 (2026-10-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1716 A spread of a `ParameterList` value binds only a literal
   construction**
 
@@ -7019,7 +6988,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The elaborator's `declared_associated_type` rejects it from that
     error, and `inline-parametric`'s `StructDeclaration::associated_type`
     leaves such a projection open.
-  - No executing fixture reaches it.
+  - Probe: a type-valued requirement read through a bound, `comptime if
+    T.Get[0] == Int:` in `def f[T: HasGet]()` under `comptime Get[i:
+    Int]: AnyType`, passes the check but fails in the elaborator
+    ("unsupported comptime if condition ... the instance does not
+    decide"), where the pin prints `int`.
   - Done when the member's value parameter keys by a binder identity and
     the elaborator binds it from the application's `TyArg::Val`.
   - Found while landing R661 (2026-10-13).
@@ -10721,8 +10694,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     as an alias (`reverse = TypeList.tabulate[...]`).
   - Port them to `stdlib/std/builtin/variadics.mojo` and delete the rules.
   - Found while landing R1168 (2026-10-20).
-  - Depends on R1181 (`tabulate`), R806 (an alias read through the
-    struct), and R1178 (a member applying `__getitem_param__`).
+  - Depends on R1181 (`tabulate`) and R806 (an alias read through the
+    struct).
   - Model: Fable, Planned.
 
 - [ ] **R378 A function lifted for a compile-time expression evaluates

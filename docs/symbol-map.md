@@ -1256,8 +1256,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `generator_application` do.
   `parametric_value_application` recognizes every application shape
   (`subscript_param_args` reads the brackets) and dispatches to
-  `value_alias_application` or `parameterized_member_value`, whose `where`
-  clauses `validate_member_availability` checks, else to
+  `value_alias_application` or `parameterized_member_application` (a
+  value-bodied member, whose `where` clauses
+  `validate_member_availability` checks, or a type-bodied one applied
+  through `member_application`, the annotation path's reader, so
+  `Self.Get[0]` in a later member or a method reads as `var x:
+  Self.Get[0]` does), else to
   `generator_application_of`, which binds the brackets against a generator
   value's type (`g[4]` over `comptime g = T.get`, `G[3]` over a
   `__generator_type` parameter, `f[4]` over a generic callable parameter
@@ -2853,7 +2857,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::generator_requirement` in `traits.rs`, merged and matched by
   `same_generator_signature` in `traits_support.rs`); a read through a
   bound (`T.get[0]`) is `Checker::generator_application`
-  (`constraints.rs`, from `parameterized_member_value` over
+  (`constraints.rs`, from `parameterized_member_application` over
   `lookup_trait_generator`), a `TypeMember` node with the bound
   arguments. The conformer's member crosses the waist as
   `ParameterizedAssociatedValue` (`mojito-checked/src/declaration.rs`,
@@ -3004,7 +3008,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   resolve a pack to its list — the bare name through
   `value_pack_in_scope` or `type_pack_in_scope` (`constraints.rs`), which
   read the list off the visible binder's type (`visible_pack_list`), a
-  struct's own `Self.values` through `self_value_pack`. Only a
+  struct's own `Self.values` through `self_value_pack`.
+  `type_pack_subscripted` is the subject of a type pack's element read in
+  `build_ct`: the pack itself or its `TypeList` member spelled out
+  (`Self.Ts.__getitem_param__[0]`, the read `Self.Ts[0]` is sugar for).
+  Only a
   parameter position reads the list itself: `compile_dependent_ct_expr`'s
   `Index` arm makes `values[i]` a `ListGet` (upstream's
   `__getitem_param__`, roadmap R800), while a `comptime for` over it steps

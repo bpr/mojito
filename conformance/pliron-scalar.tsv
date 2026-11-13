@@ -1322,6 +1322,7 @@ assets/ok/struct_member_applies_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_member_bracket_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_member_reads_type_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_member_sibling_elaborated.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_member_type_member_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_member_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_instance_clone_unreached.mojo	-	ineligible	no-scalar-entry-shape

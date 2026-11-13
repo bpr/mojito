@@ -838,9 +838,9 @@ impl Checker {
 
     /// The parametric value `expr` applies, when it is one: a value-bodied
     /// generic alias (`twice[k]`, `Twice[3]`, `plus_one[n=3]`) or a
-    /// struct's parameterized value member (`S[10].plus[2]`,
-    /// `Self.get[1]`), bound at the application. `None` for any other
-    /// expression.
+    /// struct's parameterized member, value- or type-bodied
+    /// (`S[10].plus[2]`, `Self.get[1]`, `Self.Get[0]`), bound at the
+    /// application. `None` for any other expression.
     pub(super) fn parametric_value_application(
         &self,
         expr: &Expr,
@@ -858,7 +858,7 @@ impl Checker {
                 object: base,
                 field,
             } => self
-                .parameterized_member_value(base, field, &args)
+                .parameterized_member_application(base, field, &args)
                 .or_else(|| self.generator_application_of(object, &args)),
             _ => None,
         }
@@ -969,13 +969,16 @@ impl Checker {
                 .is_some_and(|alias| matches!(alias.body, AliasBody::Value(_)))
     }
 
-    /// The parameterized value member `field` of the struct `object` names,
-    /// applied to `args` at the struct's arguments; the member's own
-    /// `where` clauses are checked against both. Through a type parameter
+    /// The parameterized member `field` of the struct `object` names, its
+    /// generator applied to `args` at the struct's arguments, upstream's
+    /// `#kgen.bind_params` whether the body is a value (`S[10].plus[2]`,
+    /// `Self.get[1]`) or a type (`Self.Get[0]`, `W[Int].Get[0]`). A value
+    /// member's own `where` clauses are checked against both; a type
+    /// member binds as its annotation read does. Through a type parameter
     /// (`T.get[0]`) it is the bound's generator requirement applied, which
     /// the elaborator answers per instance. `None` when `object` names no
-    /// type or `field` is no parameterized value member of it.
-    pub(super) fn parameterized_member_value(
+    /// type or `field` is no parameterized member of it.
+    pub(super) fn parameterized_member_application(
         &self,
         object: &Expr,
         field: &str,
@@ -991,7 +994,10 @@ impl Checker {
         let info = self.structs.get(name)?;
         let member = info.parameterized_associated.get(field)?;
         let MemberTemplate::Value { decls, body } = &member.template else {
-            return None;
+            return Some(
+                self.member_application(&subject, field, args)
+                    .map(|ty| self.param_context.type_shape(ty)),
+            );
         };
         let label = format!("{subject}.{field}");
         Some((|| {
@@ -2068,10 +2074,13 @@ impl Checker {
             // A tuple or list display is its literal constructor's
             // application at its natural type.
             _ if let Some(applied) = self.display_application(expr, None) => applied,
-            // An element of the struct's own type pack (`Self.Ts[0]`): its
-            // `TypeList`'s `__getitem_param__`, at an index that may read an
-            // earlier member (`Self.Ts[Self.width - 1]`).
-            ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
+            // An element of the struct's own type pack, spelled `Self.Ts[0]`
+            // or as its `TypeList` member `Self.Ts.__getitem_param__[0]`:
+            // that `__getitem_param__`, at an index that may read an earlier
+            // member (`Self.Ts[Self.width - 1]`).
+            ExprKind::Index { object, index }
+                if let Some(pack) = self.type_pack_subscripted(object) =>
+            {
                 Ok(context.type_shape(self.type_pack_element(&pack, &build(index)?)?))
             }
             // An element of a value pack (`vs[0]`): `param_list.get` over the

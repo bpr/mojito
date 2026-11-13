@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's type-valued parameterized `comptime` member applies through
+  `Self` in a compile-time expression, as at the pin: `comptime First =
+  Self.Get[0]` and `comptime F = Self.E[Self.n]` in a later member, and
+  `comptime X = Self.Get[0]` or `comptime if Self.Get[0] == Int:` in a
+  method, run on the VM and natively, where Mojito reported "not an
+  associated comptime expression" or "'Self.Get' is not a type parameter
+  of the enclosing struct". `Self.Ts.__getitem_param__[0]` reads the
+  type pack's element as `Self.Ts[0]` does (R1178).
 - A parameterized `comptime` value's declared type reads the member's own
   parameters, as at the pin: `comptime get[n: Int]: SIMD[DType.int32, n]`
   in a struct, and as a trait requirement read through a bound

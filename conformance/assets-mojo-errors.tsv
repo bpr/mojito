@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1186
+# swept-count	1188
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -1080,6 +1080,7 @@ assets/type_error/struct_field_non_deinitable_param.mojo	compile-reject	agree	er
 assets/type_error/struct_field_trait_type.mojo	compile-reject	agree	error: struct fields do not support trait types; 'AnyType' is a trait, use a concrete type or compile-time generic
 assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead
 assets/type_error/struct_member_type_as_value_argument.mojo	compile-reject	agree	error: 'Box' parameter 'n' has 'Int' type, but value has type 'AnyStruct[Int]'
+assets/type_error/struct_member_type_member_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/struct_method_instance_clone_fails.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/struct_method_per_call_clone_fails.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/struct_operator_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: type 'Res' does not conform to 'Deinitable' and must be explicitly destroyed
