@@ -55,6 +55,7 @@ assets/ok/assign_register_passable_element_over_list.mojo	elaborated	39	1979	22	
 assets/ok/associated_trait_self_element.mojo	elaborated	21	894	12	13	989	720	72	276	56
 assets/ok/associated_type_return.mojo	elaborated	21	894	13	14	991	721	72	277	57
 assets/ok/associated_value_self_read.mojo	elaborated	21	1012	13	14	990	721	72	277	57
+assets/ok/associated_value_type_name_read.mojo	elaborated	21	1188	12	14	989	832	72	276	57
 assets/ok/augmented_bitwise_assignment.mojo	elaborated	45	2430	19	31	1091	1873	167	300	130
 assets/ok/augmented_shift_assignment.mojo	elaborated	33	2216	15	24	1001	1512	132	279	108
 assets/ok/augmented_store_copies_nothing.mojo	elaborated	75	5728	34	49	1228	1940	395	347	129
@@ -79,7 +80,7 @@ assets/ok/borrowed_iteration_temporary_source_drop.mojo	elaborated	25	1282	13	15
 assets/ok/bound_generic_write_to.mojo	elaborated	45	2783	19	32	1500	2037	164	417	124
 assets/ok/bound_member_list_generic_conformer.mojo	elaborated	25	1255	14	17	999	932	76	278	60
 assets/ok/bound_operator_requirement_call.mojo	elaborated	38	2035	15	19	1064	1073	128	287	64
-assets/ok/bound_value_member_in_signature.mojo	elaborated	22	1322	13	15	996	809	75	277	58
+assets/ok/bound_value_member_in_signature.mojo	elaborated	22	1497	13	15	996	809	75	277	58
 assets/ok/bracket_capitalized_display_element.mojo	elaborated	25	1159	14	17	995	892	89	280	70
 assets/ok/bracket_capitalized_module_constant.mojo	elaborated	27	1726	14	20	1353	1377	111	390	96
 assets/ok/bracket_capitalized_subscript_operator.mojo	elaborated	31	1938	15	24	1417	1647	129	399	114
@@ -250,6 +251,7 @@ assets/ok/comptime_local_binder_alias.mojo	elaborated	30	2026	15	23	1360	1586	12
 assets/ok/comptime_local_display_applications.mojo	elaborated	109	7972	51	90	2540	4642	596	749	427
 assets/ok/comptime_local_over_binder.mojo	elaborated	32	1654	17	24	1063	1103	95	299	74
 assets/ok/comptime_local_struct_binding.mojo	elaborated	24	1378	13	15	996	830	79	277	58
+assets/ok/comptime_local_value_member_annotation.mojo	elaborated	22	1197	13	15	1053	848	75	285	60
 assets/ok/comptime_match_coverage_warnings.mojo	elaborated	22	1365	13	15	996	930	81	277	58
 assets/ok/comptime_match_forms.mojo	elaborated	24	1528	14	17	998	976	87	278	60
 assets/ok/comptime_match_patterns.mojo	elaborated	32	3428	17	24	1417	1581	142	395	75
@@ -908,6 +910,8 @@ assets/ok/parameterized_assoc_self_origin.mojo	elaborated	28	1174	19	20	1109	844
 assets/ok/parameterized_assoc_self_origin_return.mojo	elaborated	28	1174	19	20	1109	844	103	305	70
 assets/ok/parameterized_assoc_value.mojo	elaborated	20	893	12	13	989	720	71	276	56
 assets/ok/parameterized_value_member.mojo	elaborated	20	1422	12	13	989	720	71	276	56
+assets/ok/parameterized_value_member_dependent_type.mojo	elaborated	24	1374	14	17	1353	1083	96	390	81
+assets/ok/parameterized_value_member_substituted_signature.mojo	elaborated	22	1131	14	15	999	722	73	280	58
 assets/ok/parametric_function_type_inline.mojo	elaborated	11	558	5	5	234	212	25	64	11
 assets/ok/parametric_setitem_store.mojo	elaborated	24	1038	16	17	1017	740	75	284	60
 assets/ok/parametric_static_method_value.mojo	elaborated	47	2508	22	30	1100	1325	160	300	91
@@ -1037,7 +1041,7 @@ assets/ok/pointer_to_ref_union_origin.mojo	elaborated	21	900	12	13	989	720	74	27
 assets/ok/pointer_to_ref_write_through.mojo	elaborated	20	901	12	13	989	720	71	276	56
 assets/ok/pointer_to_reference_call.mojo	elaborated	22	1135	12	13	989	720	75	276	56
 assets/ok/pointer_to_tuple_element.mojo	elaborated	25	1430	14	17	1063	1036	87	291	71
-assets/ok/pointer_tuple_field_write.mojo	elaborated	20	953	12	13	989	741	71	276	56
+assets/ok/pointer_tuple_field_write.mojo	elaborated	20	947	12	13	989	741	71	276	56
 assets/ok/pointer_type_argument_clone_binder.mojo	elaborated	24	1203	16	17	998	748	79	280	60
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	elaborated	29	1364	15	18	1002	907	101	279	61
 assets/ok/pointer_unsafe_vocabulary.mojo	elaborated	21	1220	12	14	989	811	72	276	57
@@ -1297,6 +1301,7 @@ assets/ok/string_span_methods.mojo	elaborated	113	11710	28	47	1339	3085	1076	372
 assets/ok/string_view_equality.mojo	elaborated	14	792	5	5	234	296	86	64	11
 assets/ok/string_writable_sequence.mojo	elaborated	38	2942	16	27	1081	1672	142	297	94
 assets/ok/stropping.mojo	elaborated	20	1011	12	13	989	720	71	276	56
+assets/ok/struct_application_type_member_comparison.mojo	elaborated	12	672	5	6	234	366	26	64	12
 assets/ok/struct_callable_parameter.mojo	elaborated	28	1213	15	19	1008	837	79	280	62
 assets/ok/struct_comptime_member_names_own_struct.mojo	elaborated	21	1251	13	14	999	726	72	278	57
 assets/ok/struct_comptime_member_read_order.mojo	elaborated	21	1072	12	14	989	832	72	276	57
@@ -1312,6 +1317,7 @@ assets/ok/struct_member_applies_function.mojo	elaborated	25	1527	14	18	1181	1167
 assets/ok/struct_member_bracket_value_argument.mojo	elaborated	31	2329	15	24	1355	1714	115	391	100
 assets/ok/struct_member_reads_type_pack.mojo	elaborated	22	1341	13	15	1053	869	75	285	60
 assets/ok/struct_member_sibling_elaborated.mojo	elaborated	20	1042	12	13	989	741	71	276	56
+assets/ok/struct_member_type_member_application.mojo	elaborated	32	2405	17	25	1592	1779	128	449	107
 assets/ok/struct_member_unread_struct_parameter_instances.mojo	elaborated	67	4568	28	56	1673	3436	258	463	211
 assets/ok/struct_method_comptime_template_served.mojo	elaborated	53	3055	20	36	1225	2314	182	326	118
 assets/ok/struct_method_instance_clone_unreached.mojo	elaborated	28	1172	15	17	1021	882	94	283	60
@@ -1520,6 +1526,7 @@ assets/ok/trait_requirement_docstring.mojo	elaborated	21	919	12	13	989	741	72	27
 assets/ok/trait_requirement_indexes_own_pack.mojo	elaborated	23	1072	15	16	992	723	74	279	59
 assets/ok/trait_requirement_parameter_default.mojo	elaborated	28	1885	19	21	1182	1584	79	291	64
 assets/ok/trait_requirement_variadic_collector.mojo	elaborated	39	2964	21	31	1374	2505	131	355	94
+assets/ok/trait_signature_reads_struct_value_member.mojo	elaborated	22	895	14	15	1006	722	73	280	58
 assets/ok/trait_value_member_comptime_position.mojo	elaborated	31	1912	17	24	1484	1797	117	421	102
 assets/ok/trait_value_member_through_type_param.mojo	elaborated	20	1010	12	13	989	720	71	276	56
 assets/ok/trait_valued_parameter.mojo	elaborated	24	1936	14	17	1082	994	77	300	62
@@ -1585,6 +1592,7 @@ assets/ok/type_and_trait_read_as_value.mojo	elaborated	11	379	5	5	177	173	25	56	
 assets/ok/type_comparison_values.mojo	elaborated	20	1621	9	14	644	1442	42	162	28
 assets/ok/type_member_string_materialized.mojo	elaborated	42	2385	16	23	1179	1654	155	297	81
 assets/ok/type_member_struct_value_reads.mojo	elaborated	31	2578	15	22	1338	2204	94	345	73
+assets/ok/type_member_symbolic_application_read.mojo	elaborated	21	1129	13	14	1077	1015	72	277	57
 assets/ok/type_member_unused_argument_instances.mojo	elaborated	36	1768	21	28	1064	1129	105	293	73
 assets/ok/type_names_applied_elements.mojo	elaborated	45	8088	18	31	1159	7005	723	315	628
 assets/ok/type_of_comptime_assert.mojo	elaborated	20	963	12	13	989	720	71	276	56
@@ -1720,4 +1728,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	111	7385	46	93	2308	5590	643	666
 benchmarks/compile/trait_defaults.mojo	elaborated	131	8395	43	91	1520	6729	299	411	195
 benchmarks/compile/tstring.mojo	elaborated	27	1155	15	18	1020	862	82	289	61
 benchmarks/compile/tuple.mojo	elaborated	33	1615	16	22	1072	987	99	292	70
-total	1721	66578	4583219	31273	47044	2075195	2889716	314491	577623	200723
+total	1729	66754	4593379	31375	47165	2083498	2897083	315106	579924	201213
