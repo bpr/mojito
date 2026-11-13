@@ -649,25 +649,35 @@ impl Checker {
     /// The spelling of the type `object` reads when it names a struct's
     /// closed `comptime` type member ([`Self::type_member_read`]): inside
     /// the struct, the member's own spelling over `Self`; through a spelled
-    /// struct, the type the member resolves to there. `None` when `object`
-    /// names no such member or its type has no source spelling.
+    /// struct, the type the member resolves to there, or the member's
+    /// spelling at the receiver ([`self_at_receiver`]) when that type has no
+    /// source spelling. `None` when `object` names no such member.
     fn type_member_spelling(&self, object: &Expr) -> Option<Expr> {
         let (spelling, member) = self.type_member_read(object)?;
         if matches!(spelling, SourceType::SelfParam(_)) {
             return member?.expression_spelling(object.span);
         }
         let ty = self.ty_from_anno(&spelling).ok()?;
-        match mojito_types::ct::source_type(&ty, object.span) {
-            Some(spelled) => self
+        if let Some(spelled) = mojito_types::ct::source_type(&ty, object.span) {
+            return self
                 .keyword_spelling(spelled)
-                .expression_spelling(object.span),
-            // An argument applying a function (`T[n=f()]`) has no source
-            // spelling of its value: a member that reads nothing of `Self`
-            // is its own spelling at any receiver.
-            None => member?
-                .expression_spelling(object.span)
-                .filter(|spelled| !reads_self(spelled)),
+                .expression_spelling(object.span);
         }
+        // A type with no closed spelling — an argument applying a function
+        // (`T[n=f()]`), or one still a parameter expression (`T[t]`) — is
+        // the member's own spelling with `Self` bound to the receiver, as
+        // upstream substitutes the member's value at the instance.
+        let spelled = member?.expression_spelling(object.span)?;
+        if !reads_self(&spelled) {
+            return Some(spelled);
+        }
+        let ExprKind::Member {
+            object: receiver, ..
+        } = &object.kind
+        else {
+            return None;
+        };
+        self_at_receiver(spelled, receiver)
     }
 
     /// `spelling` with each bracket argument of an infer-only struct
@@ -1398,6 +1408,47 @@ fn pack_index_expression(
 /// Whether `expression` is a call of `type_of`.
 fn is_type_of(expression: &Expr) -> bool {
     matches!(&expression.kind, ExprKind::Call { name, .. } if name == "type_of")
+}
+
+/// The member spelling `spelled` with each `Self` read as the type
+/// `receiver` spells (`Box[Self.n + 1]` through `T[t]` is `Box[T[t].n +
+/// 1]`). `None` when `receiver` spells no type, or `Self` stays in a
+/// position no substitution reaches.
+fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
+    struct SelfAt<'r> {
+        expression: &'r Expr,
+        ty: SourceType,
+    }
+    impl mojito_ast::visit::MutVisitor for SelfAt<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            if matches!(&expr.kind, ExprKind::Identifier(name) if name == "Self") {
+                expr.kind = self.expression.kind.clone();
+            }
+        }
+
+        fn visit_type_mut(&mut self, ty: &mut SourceType) {
+            match ty {
+                SourceType::SelfType => *ty = self.ty.clone(),
+                SourceType::SelfParam(name) if !name.starts_with('*') => {
+                    *ty = SourceType::Assoc {
+                        base: Box::new(self.ty.clone()),
+                        name: std::mem::take(name),
+                        args: Vec::new(),
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+    let ty = receiver.type_spelling()?;
+    mojito_ast::visit::walk_expr_mut(
+        &mut SelfAt {
+            expression: receiver,
+            ty,
+        },
+        &mut spelled,
+    );
+    (!reads_self(&spelled)).then_some(spelled)
 }
 
 /// Whether `expr` spells `Self` or a read of a `Self` parameter.

@@ -6955,36 +6955,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1639 A struct's type member read through an application over a
-  symbolic parameter has no receiver**
-
-  `T[t].current.answer()` inside `def f[t: Int]()`, over `struct T[n:
-  Int]` with `comptime current = Self`, stops with "type 'T[t]' has no
-  field 'current'", where the pin prints `3` for `f[3]()`.
-  - The checker reads a type member through a struct as the source
-    spelling of the type it resolves to (`type_member_spelling`,
-    `checker/initializer_list.rs`). `ct::source_type` has no spelling for
-    a type whose argument is still a parameter expression (`T[t]`).
-  - MIR lowering recognizes a static call's type receiver only by its
-    syntax (`type_receiver_name`, `mir/lower_expr/expr_method.rs`): a
-    bracket over a type name, `type_of(…)`, or a bare name. A `Member` receiver the
-    checker resolved to a type is lowered as a value.
-  - Upstream reads the member as its value, a type the elaborator
-    substitutes per instance. A checked fact that a receiver denotes a
-    type, which lowering reads in place of its syntax, closes both.
-  - Probe: `T[t].boxed.n` and `T[t].boxed(10).get()` over `comptime boxed
-    = Box[Self.n + 1]`, which the pin prints as `4` and `14` for `t = 3`.
-  - Probe: a member read through a bare struct name whose infer-only
-    parameter has no default, `comptime v = T.four()` and `g[T.four()]()`
-    over `struct T[n: Int, //]` with `comptime four = T[n=4]` and `def
-    g[t: T]()`, fails with "Undefined variable 'T'" and "cannot infer type
-    parameter", where the pin prints `1`: `type_member_read` resolves the
-    receiver to an instance first, and bare `T` binds no `n`. With a
-    default (`n: Int = 2`) both run since R1562.
-  - Found while landing R1632 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1680 `reflect[T].name()` spells an origin-parametric type with
   Mojito's parameter list, not upstream's**
 

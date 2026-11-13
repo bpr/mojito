@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's `comptime` type member read through an application over a
+  parameter still symbolic runs, as at the pin (R1639): the member is its
+  value with `Self` bound to the application, so `T[t].current.answer()`,
+  `T[t].boxed.n`, `T[t].boxed(10)`, and `comptime C = T[t + 1].current`
+  in `def f[t: Int]` no longer stop with "'T[t]' value has no attribute".
 - A struct's `comptime` value member read through the type name runs,
   as at the pin: `print(E.k)`, `G(E.k)`, and a run-time construction
   `TypeList[Trait=AnyType, E.types]()` over a raw-list member print the
