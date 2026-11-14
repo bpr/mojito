@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2193**.
+Next free ID: **R2196**.
 
 ## Ordered Work
 
@@ -803,6 +803,37 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2193 Concrete instructions grew 4.49% over batches 5 to 7**
+
+  The elaborated corpus grew from 4,572,727 to 4,778,195 concrete
+  instructions (+205,468) between the batch-4 baseline (d024d953f) and
+  the batch-7 refresh, across 1,736 shared fixtures, 1,733 of which moved.
+  - Concrete functions grew 66,678 to 77,086, and generator instances
+    47,067 to 57,438. Template instructions fell 2,086,690 to 2,047,866,
+    so the growth is in instances, not in templates.
+  - Largest per-fixture growth: `benchmarks/compile/collections_many.mojo`
+    +7,320, `list_from_iterable` +1,441, `template_method_pack_struct`
+    +1,315, `list_contiguous_slice_view` +1,154,
+    `display_argument_built_at_call_setup` +882,
+    `template_method_subscripted_receiver` +828,
+    `template_method_value_parameter` +803,
+    `simd_parameter_default_construction` +790, `comptime_collections`
+    +779, and `capturing_lambda_array_display` +739 (all under
+    `assets/ok/` but the first).
+  - Suspected cause: the by-address calling changes (R1918, R1920, R2180,
+    R1420, R1438) add `ref.make`s, result slots, and error-slot traffic
+    that SROA, Mem2Reg, and Canonicalize do not yet fold, and more
+    instances survive because a callee's address operands keep it apart.
+  - Lever: compare the top fixtures' `run --timings` counters at each
+    commit after d024d953f, find the pattern the cleanup passes leave,
+    and teach the pass to fold it, with a case under `tests/mir_passes/`.
+    Keep the lowering, which follows upstream.
+  - The growth is accepted in `benchmarks/instantiation.tsv`, so the
+    ratchet measures from the larger total. Refresh it again when a fix
+    shrinks the total.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2030 The elaborator's cost grows with a template's
   `inlined_cf_scope` wrapper regions and superlinearly with its length**
@@ -2728,6 +2759,49 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2194 A `ref.make` of a call argument claims a permission its source lacks**
+
+  Four `assets/ok` fixtures stopped compiling between the batch-4 and
+  batch-7 instantiation baselines with "MakeRef destination recovers
+  permission unavailable through its source capability".
+  - `for_destructuring_lifetimes.mojo`, `for_destructuring_targets.mojo`,
+    and `match_enum_cases_optional.mojo` fail in `main` after the
+    pre-elaboration `inline-parametric` pass, and every later pass repeats
+    the finding.
+  - `view_temporaries.mojo` fails after the post-elaboration pipeline, in
+    the `Point.write_to` instance.
+  - Suspected cause: R1920 (98f73647c) or one of the receiver-by-address
+    changes before it (R1918, R2180) lowers a `mut`/`ref` or by-address
+    argument as a `ref.make` of a place reached only through a read-only
+    reference, and the inliner keeps that reference when it binds the
+    callee's parameter.
+  - First step: bisect the four fixtures over the commits after d024d953f.
+  - Found by `scripts/instantiation-report --check` after batch 7
+    (2026-11-14). The refreshed baseline records them as failed rows, so
+    the ratchet no longer reports them.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2195 A pointer passed to a `mut` parameter is passed as a value**
+
+  `assets/ok/mut_pointer_parameter_reassign.mojo` stopped compiling: the
+  verifier rejects `main` with "argument 0 of 'write_back' is a `mut` or
+  `ref` parameter but passes a Pointer[Int, ...] value", beside "MakeRef
+  destination targets Int, incompatible with place storage Pointer[Int,
+  ...]".
+  - The `ref.make` for the argument is typed as the pointee rather than the
+    pointer slot, so the call passes the loaded pointer instead of the
+    slot's address.
+  - Suspected cause: R1920 (98f73647c), which made a `mut`/`ref` argument
+    its place's address and added the verifier rule, meets R1269
+    (79d431aa3), which made a slot holding a pointer the pointer rather
+    than its pointee.
+  - Found by `scripts/instantiation-report --check` after batch 7
+    (2026-11-14). The refreshed baseline records it as a failed row, so
+    the ratchet no longer reports it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2089 A conformance's constraint need not imply its ancestors'**
 
