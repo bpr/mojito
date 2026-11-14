@@ -482,14 +482,18 @@ impl Checker {
             name,
             type_params,
             ty,
+            where_clauses,
             value,
-            ..
         } = &statement.kind
         else {
             return Ok(());
         };
         if !type_params.is_empty() {
             return Ok(());
+        }
+        if !where_clauses.is_empty() {
+            self.constrained_module_constants
+                .insert(name.clone(), where_clauses.clone());
         }
         // A vector-annotated scalar is its splat, which
         // `fold_module_constants` folded at the annotation.
@@ -2329,9 +2333,11 @@ impl Checker {
                         value,
                     );
                 }
-                for condition in where_clauses {
-                    let constraint = self.compile_where_clause(condition)?;
-                    self.validate_declaration_constraint(name, &constraint)?;
+                // A constrained constant is a generator type whose clauses
+                // each read proves, never the declaration.
+                if at_module && !where_clauses.is_empty() {
+                    self.constrained_module_constants
+                        .insert(name.clone(), where_clauses.clone());
                 }
                 // A comptime `Int` is recorded (for value-parameter use) and bound as
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
@@ -2453,6 +2459,13 @@ impl Checker {
                 // which every read materializes.
                 if let Some(application) = self.local_comptime_application(name) {
                     self.record_at(stmt.source_span()).comptime_value = Some(Box::new(application));
+                }
+                if !at_module
+                    && !where_clauses.is_empty()
+                    && let Some(owner) = self.lookup_owner(name)
+                {
+                    self.constrained_local_constants
+                        .insert(owner, where_clauses.clone());
                 }
                 self.record_statement_binding(stmt, name);
                 Ok(())

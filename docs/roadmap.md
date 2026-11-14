@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2174**.
+Next free ID: **R2175**.
 
 ## Ordered Work
 
@@ -5065,27 +5065,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R509 A constrained module constant is a plain value, where the pin
-  makes it a generator type**
+- [ ] **R2174 A constrained constant's read has its declared type, where
+  the pin types it `__generator_type T where (...)`**
 
-  Problem: `comptime C: Int where (f(1) > 5, "big only") = f(1)` with
-  nothing reading `C` runs at the pin and stops in Mojito with "unsupported
-  generic constraint operand".
-  - At the pin a non-generic constrained constant has type
-    `__generator_type Int where (...)`. Its clauses are checked only where
-    a read instantiates it at `Int` (`var x: Int = C`).
-  - The checker's `StmtKind::Comptime` arm (`checker/statements.rs`)
-    compiles each clause (`compile_where_clause`) and validates it
-    (`validate_declaration_constraint`) at the declaration, and
-    `constraint_operand` (`checker/constraints.rs`) has no arm for a call.
-  - Probe: `comptime C: Int where (1 > 5, "big only") = 1`, unread, stops
-    with "constraint failed: big only", where the pin prints.
-  - Probe: `print(C)` over `comptime C: Int where (1 < 5, "small") = 1`
-    prints `1`, where the pin rejects it ("'__generator_type Int where
-    True' does not conform to trait 'Writable'"): a Mojito-only
-    acceptance.
-  - Probe: `conformance/probes/constrained_module_constant_unread.mojo`.
-  - Found while landing R488 (2026-10-08).
+  Problem: a read of `comptime C: Int where (1 < 5, "small") = 1` with no
+  expected type is an `Int` in Mojito, so positions that infer a type from
+  the read accept it, where the pin rejects them.
+  - At the pin the read is a zero-parameter generator carrying the clause.
+    It converts to its result only where a position expects that exact
+    type (`var x: Int = C`, `h[C]()`, `g(C)`, `C + 1`), and only under a
+    proven clause.
+  - Mojito proves the clauses at each read
+    (`Checker::instantiate_constrained_constant`) but binds the name at its
+    declared type: `GeneratorTy` carries no `where` clause, and no
+    zero-parameter generator converts to its result in a typed position.
+  - Probe: `print(C)` prints `1`, where the pin rejects it ("'__generator_type
+    Int where True' does not conform to trait 'Writable'").
+  - Probe: `var x = C` then `print(x)` prints `1`; the pin rejects the
+    `print` the same way.
+  - Probe: `C == 1` and `comptime if C == 1:` are `True`, where the pin
+    says "'__generator_type Int where True' does not implement the
+    '__eq__' method".
+  - Probe: `String(C)` builds `"1"`, where the pin reports "no matching
+    function in initialization".
+  - Probe: `var x: Int = D` over an unannotated `comptime D where (1 < 5,
+    "ok") = 1` prints `1`, where the pin rejects converting
+    `'__generator_type IntLiteral[1] where True'` to `Int`.
+  - Found while landing R509 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6022,7 +6028,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `g[2]()` is rejected by both, with the pin saying "lacking evidence".
   - Probe: `def f[*vs: Int]() -> Int where len(vs) > 1`, called as
     `f[4, 5]()`, is rejected by both, with the same two messages.
-  - R509's constrained module constant reaches the same operand rule.
+  - Probe: `var x: Int = C` over `comptime C: Int where (f(1) > 1,
+    "big") = f(1)` stops with "unsupported generic constraint operand",
+    where the pin rejects it with "cannot implicitly convert
+    '__generator_type Int where (f(Int(1)) > Int(1))' value to 'Int'".
   - Found while landing R1284 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.

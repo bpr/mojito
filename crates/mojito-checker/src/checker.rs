@@ -565,6 +565,14 @@ pub struct Checker {
     /// such a constant: a parameter expression, never a type, so
     /// `comptime E = A` over one is a value binding and not an alias.
     applied_module_constants: declaration_table::DeclarationSet,
+    /// The `where` clauses of each constrained non-generic module constant
+    /// (`comptime C: Int where (...) = ...`), by name: upstream's generator
+    /// type, whose clauses each read proves where it instantiates the
+    /// constant ([`Self::instantiate_constrained_constant`]).
+    constrained_module_constants: HashMap<String, Vec<mojito_ast::ast::Expr>>,
+    /// The `where` clauses of each constrained local constant, by its
+    /// binding's owner.
+    constrained_local_constants: HashMap<mojito_types::origin::OwnerId, Vec<mojito_ast::ast::Expr>>,
     /// The object of the field read being inferred: a compile-time value
     /// read there is projected, never materialized whole.
     projected_object: RefCell<Option<SourceSpan>>,
@@ -1110,6 +1118,8 @@ impl Checker {
             predeclared_constants: HashSet::new(),
             predeclared_functions: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
+            constrained_module_constants: HashMap::new(),
+            constrained_local_constants: HashMap::new(),
             projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
             traits: declaration_table::DeclarationTable::default(),

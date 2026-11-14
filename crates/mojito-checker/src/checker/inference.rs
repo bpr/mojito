@@ -1200,6 +1200,7 @@ impl Checker {
                 self.check_capture_access(name, false)?;
                 self.reject_display_crossing(expr)?;
                 self.reject_unavailable_reference(name)?;
+                self.instantiate_constrained_constant(name)?;
                 if let Some(owner) = self.lookup_owner(name) {
                     self.record_at(expr.source_span()).binding = Some(owner);
                 }

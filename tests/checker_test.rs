@@ -7862,13 +7862,19 @@ fn diagnostic_where_clauses_cover_structs_and_comptime_declarations() {
     };
     assert_eq!(reason, "constraint failed: Copyable type required");
 
-    ok("comptime N: Int where (True, \"N enabled\") = 1\n");
-    let TypeError::BadCall { reason, .. } =
-        err("comptime N: Int where (False, \"N unavailable\") = 1\n")
-    else {
-        panic!("expected a failed comptime declaration constraint");
+    // A constrained constant is a generator type: an unread one is never
+    // checked, and a read proves its clauses where it instantiates it.
+    ok("comptime N: Int where (True, \"N enabled\") = 1\n\ndef main():\n    var x: Int = N\n");
+    ok("comptime N: Int where (False, \"N unavailable\") = 1\n");
+    let TypeError::GeneratorConversion { found, expected } = err(
+        "comptime N: Int where (False, \"N unavailable\") = 1\n\ndef main():\n    var x: Int = N\n",
+    ) else {
+        panic!("expected a read to reject the unproven constant");
     };
-    assert_eq!(reason, "constraint failed: N unavailable");
+    assert_eq!(
+        (found.as_str(), expected.as_str()),
+        ("__generator_type Int where False", "Int")
+    );
 
     let TypeError::Unsupported(message) =
         err("trait Invalid:\n    comptime Item: AnyType where (True, 7)\n")
@@ -7918,14 +7924,16 @@ fn repeated_where_clauses_keep_independent_messages_across_declaration_families(
     };
     assert_eq!(reason, "constraint failed: selection disabled");
 
-    // Non-generic top-level comptime declarations validate every clause.
-    ok("comptime N: Int where (True, \"m1\") where (True, \"m2\") = 1\n");
-    let TypeError::BadCall { reason, .. } =
-        err("comptime N: Int where (True, \"m1\") where (False, \"m2\") = 1\n")
-    else {
-        panic!("expected the second comptime clause to fail");
+    // A read of a non-generic constant proves every clause.
+    ok(
+        "comptime N: Int where (True, \"m1\") where (True, \"m2\") = 1\n\ndef main():\n    var x: Int = N\n",
+    );
+    let TypeError::GeneratorConversion { found, .. } = err(
+        "comptime N: Int where (True, \"m1\") where (False, \"m2\") = 1\n\ndef main():\n    var x: Int = N\n",
+    ) else {
+        panic!("expected the second comptime clause to reject the read");
     };
-    assert_eq!(reason, "constraint failed: m2");
+    assert_eq!(found, "__generator_type Int where False");
 
     // Parameterized associated members carry the full clause list to each
     // projection.

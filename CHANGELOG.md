@@ -695,6 +695,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A constant constrained by a `where` clause is a generator type, as at
+  the pin (R509): the declaration checks no clause, so `comptime C: Int
+  where (f(1) > 5, "big only") = f(1)` with nothing reading it no longer
+  stops with "unsupported generic constraint operand", nor a false clause
+  with "constraint failed". Each read proves the clauses where it
+  instantiates the constant, rejecting an unproven one with "cannot
+  implicitly convert '__generator_type Int where False' value to 'Int'".
+
 - A default that is neither a literal nor an `@implicit` conversion of one
   is evaluated once per instance at compile time, and each call leaving its
   slot out materializes the value, as at the pin (R528): `fd2(x: Int =

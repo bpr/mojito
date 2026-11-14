@@ -2065,7 +2065,10 @@ impl Checker {
                 };
                 Ok(context.type_shape(ty))
             }
-            ExprKind::Identifier(name) => self.build_ct_name(name, recording),
+            ExprKind::Identifier(name) => {
+                self.instantiate_constrained_constant(name)?;
+                self.build_ct_name(name, recording)
+            }
             // Upstream's bracketed attribute (`` __mlir_attr[`8`, ` : index`] ``),
             // unless a binding shadows the name.
             _ if let Some((name, args)) = expr.bracket_application()
@@ -5852,6 +5855,48 @@ impl Checker {
             func: name.to_string(),
             reason,
         })
+    }
+
+    /// Instantiate the constrained constant `name` where a body reads it,
+    /// as upstream converts a generator type `__generator_type Int where
+    /// (...)` to its result: every clause must be proven here. A clause
+    /// that is false or that the read cannot decide rejects the read; an
+    /// unread constant is never checked. A name naming no constrained
+    /// constant reads as itself.
+    pub(super) fn instantiate_constrained_constant(&self, name: &str) -> Result<(), TypeError> {
+        let clauses = match self.binding_scope(name) {
+            Some(0) => self.constrained_module_constants.get(name),
+            Some(_) => self
+                .lookup_owner(name)
+                .and_then(|owner| self.constrained_local_constants.get(&owner)),
+            None => None,
+        };
+        for clause in clauses.into_iter().flatten() {
+            let constraint = self.compile_where_clause(clause)?;
+            let condition = match &constraint {
+                GenericConstraint::WithMessage(condition, _) => condition.as_ref(),
+                condition => condition,
+            };
+            let residual =
+                match self.constraint_verdict(&constraint, &ConstraintEnvironment::default())? {
+                    ConstraintVerdict::Proven => continue,
+                    ConstraintVerdict::Residual(proposition)
+                        if self.assumptions_prove(&proposition) =>
+                    {
+                        continue;
+                    }
+                    ConstraintVerdict::Residual(_) => format!("({condition})"),
+                    ConstraintVerdict::Disproven => "False".to_string(),
+                };
+            let expected = self
+                .lookup(name)
+                .map_or_else(|| name.to_string(), ToString::to_string);
+            return Err(TypeError::GeneratorConversion {
+                found: format!("__generator_type {expected} where {residual}"),
+                expected,
+            });
+        }
+        Ok(())
     }
 
     /// Validate a constraint on a declaration with no generic argument list,

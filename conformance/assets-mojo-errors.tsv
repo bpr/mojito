@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1192
+# swept-count	1193
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -417,6 +417,7 @@ assets/type_error/conditional_equal_literal_arms_materialize.mojo	compile-reject
 assets/type_error/conditional_float_literal_arms_int_lane.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/conditional_int_float_literal_ambiguous_merge.mojo	compile-reject	agree	error: ambiguous merge: left value has type 'IntLiteral[1]' and right value has type 'FloatLiteral[2.5]', and both convert to each other
 assets/type_error/constrained_conforms_to_message.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/constrained_constant_read_unproven.mojo	compile-reject	agree	error: cannot implicitly convert '__generator_type Int where False' value to 'Int'
 assets/type_error/construction_bracket_on_nonparametric_struct.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/construction_unbound_int_slot_through_simd_length.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/constructor_collector_aliases_mut_argument.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'rest' argument in 'V' initializer call

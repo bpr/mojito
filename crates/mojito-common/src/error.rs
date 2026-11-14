@@ -337,6 +337,15 @@ pub enum TypeError {
         found: String,
         expected: String,
     },
+    /// A read of a constrained compile-time constant (`comptime C: Int
+    /// where (...) = ...`), a generator type, whose `where` clause the read
+    /// cannot prove (`found` spells the generator, `__generator_type Int
+    /// where False`): upstream converts the generator to its result type
+    /// only under a proven constraint.
+    GeneratorConversion {
+        found: String,
+        expected: String,
+    },
     /// A struct type bound where its annotation declares an instance of
     /// that struct (`comptime x: Int = Int`).
     TypeAsInstance(String),
@@ -961,7 +970,8 @@ impl fmt::Display for TypeError {
                     "cannot implicitly convert '{found}' value to '{expected}'"
                 )
             }
-            Self::MetatypeConversion { found, expected } => {
+            Self::MetatypeConversion { found, expected }
+            | Self::GeneratorConversion { found, expected } => {
                 write!(
                     f,
                     "cannot implicitly convert '{found}' value to '{expected}'"
