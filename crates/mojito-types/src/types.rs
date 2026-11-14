@@ -1871,6 +1871,41 @@ pub fn storage_ty(ty: &Ty) -> Ty {
     simd_storage(ty).unwrap_or_else(|| ty.clone())
 }
 
+/// The `!kgen.struct` of `!kgen.pointer`s a `!lit.ref.pack` lowers to.
+///
+/// One pointer per element, as upstream's LIT lowering turns the pack's
+/// references into pointers (`VariadicPack.get_as_kgen_pack`'s `rebind`).
+/// `None` for any other type.
+pub fn ref_pack_pointers(ty: &Ty) -> Option<Ty> {
+    let TyKind::LitRefPack { elements, .. } = ty.kind() else {
+        return None;
+    };
+    Some(
+        TyKind::Tuple(
+            elements
+                .iter()
+                .map(|element| TyKind::KgenPointer(element.clone()).into())
+                .collect(),
+        )
+        .into(),
+    )
+}
+
+/// The pointees of a closed `!kgen.struct` of `!kgen.pointer`s, the
+/// values `kgen.struct.load_indirect` loads. `None` for any other type.
+pub fn pointer_struct_pointees(ty: &Ty) -> Option<Vec<Ty>> {
+    let TyKind::Tuple(elements) = ty.kind() else {
+        return None;
+    };
+    elements
+        .iter()
+        .map(|element| match element.kind() {
+            TyKind::KgenPointer(pointee) => Some(pointee.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.
 ///
 /// The text pieces (the backtick-stropped arguments no plain identifier
@@ -2161,17 +2196,6 @@ pub fn collector_pack_spread(ty: &Ty) -> Option<&Ty> {
         }
         _ => None,
     }
-}
-
-/// The literal struct of a `VariadicPack`'s loaded elements, upstream's
-/// `_loaded_kgen_pack_type`: the tuple of its pack (`*Ts`) or of its bound
-/// elements. `None` for any other type.
-pub fn loaded_pack_type(ty: &Ty) -> Option<Ty> {
-    let elements = match collector_pack_spread(ty) {
-        Some(pack) if variadic_pack_owned(ty.kind()).is_some() => vec![pack.clone()],
-        _ => variadic_pack_elements(ty.kind())?,
-    };
-    Some(TyKind::Tuple(elements).into())
 }
 
 /// The type a positional collector of `element`s (`*xs: element`) has in
@@ -2520,6 +2544,15 @@ pub fn list_spread(ty: &Ty) -> Option<&ParamExpr> {
         }
         _ => None,
     }
+}
+
+/// The element types a spread of `list` stands for: its elements once
+/// its length is known, and the spread itself while it is open.
+pub fn list_spread_elements(list: &ParamExpr) -> Result<Vec<Ty>, ParamError> {
+    Ok(match ParamContext::detached().list_elements(list)? {
+        Some(elements) => elements.into_iter().map(DependentType::resolve).collect(),
+        None => vec![TyKind::Dependent(DependentType::Parameter(list.clone())).into()],
+    })
 }
 
 /// [`list_spread`] over a type-argument list.
@@ -5832,7 +5865,12 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
     };
     let list = |types: &[Ty], rewrite: &mut dyn TyRewrite| match bound_pack(types, rewrite) {
         Some(elements) => Ok(elements),
-        None => all(types, rewrite),
+        None => match types {
+            [spread] if let Some(list) = list_spread(spread) => {
+                list_spread_elements(&rewrite.expr(list)?)
+            }
+            _ => all(types, rewrite),
+        },
     };
     Ok(match ty.kind() {
         TyKind::Param {

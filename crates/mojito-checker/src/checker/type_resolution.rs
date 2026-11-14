@@ -1665,8 +1665,10 @@ impl Checker {
     /// `!kgen.simd<length, address>` a vector of `length` addresses
     /// ([`TyKind::KgenAddressSimd`]),
     /// and `!kgen.pointer<T>` the default-address-space address a `Pointer`
-    /// wraps ([`TyKind::KgenPointer`]). Every other spelling is outside the
-    /// subset.
+    /// wraps ([`TyKind::KgenPointer`]). `!kgen.struct<:param_list<type> L
+    /// isParamPack>` is the literal struct of a computed list of types
+    /// (`VariadicPack._kgen_pack_with_pointer_type`). Every other spelling is
+    /// outside the subset.
     fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         let (text, operands) = mojito_types::types::mlir_type_spelling(args);
         match (text.as_str(), operands.as_slice()) {
@@ -1683,6 +1685,9 @@ impl Checker {
             }
             .into()),
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
+            ("!kgen.struct<:param_list<type>{}isParamPack>", [list]) => {
+                self.mlir_param_list_struct(list)
+            }
             ("!lit.ref.pack<:param_list<{}>{},{}>", [element_trait, elements, origin]) => {
                 self.mlir_ref_pack_type(element_trait, elements, origin)
             }
@@ -1744,6 +1749,24 @@ impl Checker {
             return Err(unsupported_mlir_type());
         };
         Ok(TyKind::Tuple(self.mlir_type_list_elements(values)?).into())
+    }
+
+    /// The literal struct `!kgen.struct<:param_list<type> L isParamPack>`
+    /// of the list of types a compile-time expression `L` computes
+    /// ([`Self::param_list_tuple`]).
+    fn mlir_param_list_struct(&self, list: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
+        let mojito_ast::ast::ParamArg::Value(expr) = list else {
+            return Err(unsupported_mlir_type());
+        };
+        let list = self.compile_dependent_ct_expr(expr)?;
+        if !matches!(list.meta(), MetaTy::ParamList(_)) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a parameter list of types".to_string(),
+                found: list.meta().to_string(),
+                context: "the list operand of a '!kgen.struct<:param_list<type>>'".to_string(),
+            });
+        }
+        self.param_list_tuple(list, expr)
     }
 
     /// The reference pack `!lit.ref.pack<:param_list<Trait> Ts.values,
@@ -4397,6 +4420,43 @@ impl Checker {
     }
 
     /// Resolve `Tuple[T1, …, Tn]` from its type arguments (each a type).
+    /// The tuple storage of the literal struct of the type list `list`
+    /// (`!kgen.struct<:param_list<type> L isParamPack>`): a known list's
+    /// elements, the spread (`*Ts`) of a pack in scope as `Self.Ts` or `Ts`,
+    /// and the spread of a list still open otherwise.
+    pub(super) fn param_list_tuple(&self, list: ParamExpr, site: &Expr) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        if let Some(elements) = self
+            .param_context
+            .list_elements(&list)
+            .map_err(param_error)?
+        {
+            return Ok(TyKind::Tuple(
+                elements
+                    .into_iter()
+                    .map(mojito_types::types::DependentType::resolve)
+                    .collect(),
+            )
+            .into());
+        }
+        let pack = list.as_decl_ref().and_then(|reference| {
+            let name = reference.name.trim_start_matches('*');
+            [
+                ParamArg::Type(SourceType::SelfParam(format!("*{name}"))),
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(format!("*{name}")),
+                    ..site.clone()
+                }),
+            ]
+            .iter()
+            .find_map(|pack| self.pack_spread_argument(pack).and_then(Result::ok))
+        });
+        let element = pack.unwrap_or_else(|| {
+            TyKind::Dependent(mojito_types::types::DependentType::Parameter(list)).into()
+        });
+        Ok(TyKind::Tuple(vec![element]).into())
+    }
+
     pub(super) fn tuple_element_types(
         &self,
         args: &[mojito_ast::ast::ParamArg],
@@ -5610,6 +5670,7 @@ fn unsupported_mlir_type() -> TypeError {
          '__mlir_type[`!kgen.param_list<`, T, `>`]', \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
          '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]', \
+         '__mlir_type[`!kgen.struct<:param_list<type> `, L, ` isParamPack>`]', \
          '__mlir_type[`!kgen.pointer<`, T, `>`]', \
          '__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]', and \
          '__mlir_type.`!pop.array<n, T>`' are accepted"

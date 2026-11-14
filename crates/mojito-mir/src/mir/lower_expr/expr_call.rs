@@ -390,6 +390,9 @@ impl<'a> Flatten<'a> {
         if let Some(index) = Self::checked_kgen_struct_extract(call) {
             return self.lower_kgen_struct_extract(call, index, args);
         }
+        if Self::checked_kgen_load_indirect(call) {
+            return self.lower_kgen_load_indirect(call, args);
+        }
         if let Some(mask) = Self::checked_pop_simd_shuffle(call) {
             return self.lower_pop_simd_shuffle(call, mask, args);
         }

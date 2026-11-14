@@ -4607,6 +4607,56 @@ fn a_bare_literal_register_type_reads_from_its_const_before_1_172() {
     );
 }
 
+/// A `kgen.struct.load_indirect` older than schema 1.194 loads a reference
+/// pack; it reads as a load of the `!kgen.struct` of pointers a `rebind`
+/// gives the pack, as upstream's `VariadicPack.get_as_kgen_pack` does.
+#[test]
+fn older_load_indirect_rebinds_its_reference_pack() {
+    let elements = vec![Ty::int(), Ty::bool()];
+    let pack: Ty = TyKind::LitRefPack {
+        elements: elements.clone(),
+        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: false },
+    }
+    .into();
+    let loading = function_with(
+        vec![pack, TyKind::Tuple(elements.clone()).into()],
+        vec![MirInstr::LoadIndirect {
+            dest: Reg(1),
+            pack: Reg(0),
+        }],
+    );
+    let program = program_with(vec![("f".into(), loading)]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program).replacen(&current, "mojito-mir 1.193", 1);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, f) = &parsed.program.functions[0];
+    assert!(
+        matches!(
+            f.body.instrs.as_slice(),
+            [
+                MirInstr::Rebind {
+                    dest: Reg(2),
+                    value: Reg(0)
+                },
+                MirInstr::LoadIndirect {
+                    dest: Reg(1),
+                    pack: Reg(2)
+                },
+            ]
+        ),
+        "{:?}",
+        f.body.instrs
+    );
+    let pointers: Ty = TyKind::Tuple(
+        elements
+            .into_iter()
+            .map(|element| TyKind::KgenPointer(element).into())
+            .collect(),
+    )
+    .into();
+    assert_eq!(f.reg_types.get(&2), Some(&pointers));
+}
+
 /// A raise edge older than schema 1.193 defines its error in a register,
 /// which its error region stores on; it loads writing a slot of its own,
 /// which the region marks initialized and moves into that register, as

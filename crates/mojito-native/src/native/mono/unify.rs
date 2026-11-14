@@ -627,6 +627,32 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
         TyKind::Tuple(p) | TyKind::RuntimePack(p) | TyKind::Variant(p) => match actual.kind() {
+            // Storage spreading a pack (`Tuple[*Ts]`,
+            // `VariadicPack._loaded_kgen_pack_type`) binds the pack to the
+            // actual's elements, and
+            // one spreading a list computed from packs solves nothing.
+            TyKind::Tuple(a) | TyKind::RuntimePack(a) | TyKind::Variant(a)
+                if let Some(TyKind::Param { binder, .. }) =
+                    mojito_types::types::pack_spread(p).map(Ty::kind) =>
+            {
+                match bindings.types.get(binder).map(Ty::kind) {
+                    Some(TyKind::RuntimePack(bound)) => unify(
+                        &TyKind::Tuple(bound.clone()).into(),
+                        &TyKind::Tuple(a.clone()).into(),
+                        bindings,
+                    ),
+                    Some(_) => Err(format!("expected `{pattern}`, found `{actual}`")),
+                    None => {
+                        bind_pack(binder, a.clone(), bindings);
+                        Ok(())
+                    }
+                }
+            }
+            TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::Variant(_)
+                if matches!(p.as_slice(), [spread] if mojito_types::types::list_spread(spread).is_some()) =>
+            {
+                Ok(())
+            }
             TyKind::Tuple(a) | TyKind::RuntimePack(a) | TyKind::Variant(a)
                 if p.len() == a.len() =>
             {

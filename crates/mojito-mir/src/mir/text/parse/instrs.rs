@@ -171,6 +171,9 @@ impl Decoder {
         if self.minor < 170 {
             upgrade_struct_literal_targets(&mut function);
         }
+        if self.minor < 194 {
+            upgrade_load_indirect_operands(&mut function);
+        }
         for register in upgrade_bare_literals(&mut function, &bare_literals) {
             self.error(
                 value.span,
@@ -1507,6 +1510,16 @@ pub(super) fn upgrade_struct_literal_targets(function: &mut MirFunction) {
     function.body = blocks;
 }
 
+/// Rebind the reference pack each `kgen.struct.load_indirect` of
+/// `function`, read from text older than MIR 1.194, loads to the
+/// `!kgen.struct` of pointers it lowers to, as upstream's
+/// `VariadicPack.get_as_kgen_pack` does before the load.
+pub(super) fn upgrade_load_indirect_operands(function: &mut MirFunction) {
+    let mut blocks = std::mem::take(&mut function.body);
+    load_indirect_operands(&mut blocks, function);
+    function.body = blocks;
+}
+
 /// Give each register of `registers`, typed by a bare literal atom older
 /// than MIR 1.172 (1.174 for `StringLiteral`), the literal type carrying the value of the `const`
 /// defining it; the registers no literal `const` defines.
@@ -1589,6 +1602,38 @@ fn storage_literal_targets(block: &mut MirBlock, function: &mut MirFunction) {
                 MirInstr::MakeStruct {
                     dest: created,
                     fields: vec![storage],
+                },
+            );
+            index += 1;
+        }
+        index += 1;
+    }
+}
+
+fn load_indirect_operands(block: &mut MirBlock, function: &mut MirFunction) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+            load_indirect_operands(region, function);
+        }
+        if let MirInstr::LoadIndirect { dest, pack } = &mut block.instrs[index]
+            && let Some(pointers) = function
+                .reg_types
+                .get(&pack.0)
+                .and_then(mojito_types::types::ref_pack_pointers)
+        {
+            let rebound = crate::mir::Reg(function.n_regs);
+            function.n_regs += 1;
+            function.reg_types.insert(rebound.0, pointers);
+            if let Some(span) = function.spans.0.get(&dest.0).cloned() {
+                function.spans.0.insert(rebound.0, span);
+            }
+            let value = std::mem::replace(pack, rebound);
+            block.instrs.insert(
+                index,
+                MirInstr::Rebind {
+                    dest: rebound,
+                    value,
                 },
             );
             index += 1;

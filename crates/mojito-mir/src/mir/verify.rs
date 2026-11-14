@@ -102,13 +102,15 @@ pub fn verify_concrete_function_in(
 /// They agree as the verifier compares them (`types_compatible`), or are
 /// a `SIMD` and its `!kgen.simd` storage, which the pin's `rebind` takes
 /// across (`rebind[Scalar[dtype]]` of a `#kgen.simd<…> : !kgen.scalar<…>`
-/// attribute in `std.utils.numerics.nan`).
+/// attribute in `std.utils.numerics.nan`), or a `!lit.ref.pack` and the
+/// `!kgen.struct` of `!kgen.pointer`s it lowers to
+/// (`VariadicPack.get_as_kgen_pack`'s `rebind`).
 pub fn types_agree(found: &Ty, expected: &Ty) -> bool {
-    types_compatible(found, expected)
-        || types_compatible(
-            &mojito_types::types::storage_ty(found),
-            &mojito_types::types::storage_ty(expected),
-        )
+    let lowered = |ty: &Ty| {
+        mojito_types::types::ref_pack_pointers(ty)
+            .unwrap_or_else(|| mojito_types::types::storage_ty(ty))
+    };
+    types_compatible(found, expected) || types_compatible(&lowered(found), &lowered(expected))
 }
 
 mod calls;

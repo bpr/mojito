@@ -221,7 +221,7 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
         &AssocBindings {
             types: struct_subst(&info.decls(), targs),
             values: solved_value_bindings(&info.decls(), targs),
-            ids: mojito_types::param_expr::ParamBindings::new(),
+            ids: forwarded_pack_lists(&info.decls(), targs),
             origins: HashMap::new(),
         },
     )
@@ -816,6 +816,34 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         }
         _ => ty.clone(),
     }
+}
+
+/// The struct's type pack lists a receiver binds to a caller's pack still
+/// open (`VariadicPack[..., *Ts]`), each bound to that pack's own list, so a
+/// member type computed from the list (`variadic_ptr_map` of `Self.Ts`)
+/// names the caller's pack.
+fn forwarded_pack_lists(
+    decls: &[ParamDecl],
+    targs: &[TyArg],
+) -> mojito_types::param_expr::ParamBindings {
+    let context = ParamContext::detached();
+    let mut bindings = mojito_types::param_expr::ParamBindings::new();
+    for (decl, argument) in decls.iter().zip(targs) {
+        if let (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(spread)) = (decl, argument)
+            && let Some(TyKind::Param { binder, .. }) =
+                mojito_types::types::pack_spread(std::slice::from_ref(spread)).map(Ty::kind)
+        {
+            bindings.bind(
+                decl.id().clone(),
+                context.decl_ref(
+                    binder.id.clone(),
+                    &binder.name,
+                    mojito_types::param_expr::MetaTy::type_list(),
+                ),
+            );
+        }
+    }
+    bindings
 }
 
 /// Solve value parameters from the arguments of one function's application

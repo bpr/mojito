@@ -105,17 +105,6 @@ impl Checker {
         {
             return Ok(Ty::index());
         }
-        // A heterogeneous collector's `get_loaded_kgen_pack()` is upstream's
-        // `VariadicPack` loading its elements into a `!kgen.struct` of their
-        // values, and the collector itself while it is compiler storage.
-        if method == "get_loaded_kgen_pack"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && param_args.is_empty()
-            && mojito_types::types::is_heterogeneous_collector(&obj_ty)
-        {
-            return Ok(mojito_types::types::loaded_pack_type(&obj_ty).unwrap_or(obj_ty));
-        }
         // The conversion dunders of the numeric literals are the methods
         // upstream declares for `Boolable`, `Intable`, and `Floatable`; the
         // backends answer them through the conversion built-in. A `SIMD`'s

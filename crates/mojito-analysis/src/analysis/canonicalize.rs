@@ -115,7 +115,7 @@ pub fn canonicalize(
     patterns += folded_callees;
     loop {
         let before = erased.len();
-        erase_dead_until_none(function, &mut erased);
+        erase_dead_until_none(function, declarations, &mut erased);
         let materialized = fold::materialize_constants(function, declarations, None);
         if erased.len() == before && materialized == 0 {
             break;
@@ -290,6 +290,14 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 MirInstr::MakeRefPack { dest, elems } => {
                     reference_packs.insert(dest.0, elems.clone());
                 }
+                // A copy of a reference pack, or of the `!kgen.struct` of
+                // pointers it lowers to (`get_as_kgen_pack`), holds its
+                // references.
+                MirInstr::CopyValue { dest, value, .. }
+                    if let Some(elems) = reference_packs.get(&value.0).cloned() =>
+                {
+                    reference_packs.insert(dest.0, elems);
+                }
                 _ => {}
             }
         }
@@ -300,8 +308,9 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         creates,
         extracts,
     };
-    // An element read out of a `lit.ref.pack.create` at a constant index
-    // is that element's reference: upstream's `lit.ref.pack.extract` fold.
+    // An element read out of a `lit.ref.pack.create`, or a copy of it, at a
+    // constant index is that element's reference: upstream's
+    // `lit.ref.pack.extract` fold.
     let extracted_reference = |instruction: &MirInstr| match instruction {
         MirInstr::Index {
             base,
@@ -482,13 +491,32 @@ impl StructFolds<'_> {
 }
 
 /// Erase the trivially dead instructions of `function` until none is left,
-/// adding their results to `erased`.
-fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) {
+/// adding their results to `erased`. A `value.copy` that runs no copy
+/// constructor over a value whose copy is a bit copy (a
+/// [`MirDeclarations::copy_is_identity`] type, or a `!kgen.struct` of
+/// pointers) is free of effects too.
+fn erase_dead_until_none(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    erased: &mut HashSet<u32>,
+) {
     loop {
         let mut reads = vec![0_u32; function.n_regs as usize];
         count_register_reads(&mut function.body, &mut reads);
+        let reg_types = &function.reg_types;
+        let bit_copy = |instruction: &MirInstr| match instruction {
+            MirInstr::CopyValue {
+                value,
+                constructor: None,
+                ..
+            } => reg_types.get(&value.0).is_some_and(|ty| {
+                declarations.copy_is_identity(ty)
+                    || mojito_types::types::pointer_struct_pointees(ty).is_some()
+            }),
+            _ => false,
+        };
         let before = erased.len();
-        erase_dead(&mut function.body, &reads, erased);
+        erase_dead(&mut function.body, &reads, &bit_copy, erased);
         if erased.len() == before {
             break;
         }
@@ -496,15 +524,21 @@ fn erase_dead_until_none(function: &mut MirFunction, erased: &mut HashSet<u32>) 
 }
 
 /// Remove each instruction of `blocks` and their regions that would be
-/// trivially dead and defines only unread results, adding them to `erased`.
-fn erase_dead(block: &mut MirBlock, reads: &[u32], erased: &mut HashSet<u32>) {
+/// trivially dead, or is a `bit_copy`, and defines only unread results,
+/// adding them to `erased`.
+fn erase_dead(
+    block: &mut MirBlock,
+    reads: &[u32],
+    bit_copy: &dyn Fn(&MirInstr) -> bool,
+    erased: &mut HashSet<u32>,
+) {
     block.instrs.retain_mut(|instruction| {
         for region in instruction_regions_mut(instruction) {
-            erase_dead(region, reads, erased);
+            erase_dead(region, reads, bit_copy, erased);
         }
         let mut results = Vec::new();
         instruction_result_regs(instruction, &mut results);
-        let dead = instruction.would_be_trivially_dead()
+        let dead = (instruction.would_be_trivially_dead() || bit_copy(instruction))
             && !results.is_empty()
             && results
                 .iter()

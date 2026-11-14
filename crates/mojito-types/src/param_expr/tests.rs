@@ -793,6 +793,43 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
     assert!(context.list_get(&pack, &literal(&context, -1)).is_err());
 }
 
+/// `variadic_ptrremove_map` over `variadic_ptr_map` of a pack still open
+/// is the pack itself, and binding the pack maps it element-wise.
+#[test]
+fn pointer_map_and_remove_undo_each_other() {
+    let context = ParamContext::new();
+    let pack = context.register(ParamId::new("S", 0), "Ts", MetaTy::type_list());
+    let pointers = context.list_pointer_map(&pack).expect("a pack maps");
+    assert!(
+        matches!(pointers.kind(), ParamKind::ListTabulate { .. }),
+        "{pointers}"
+    );
+    assert_eq!(context.list_pointer_remove(&pointers), Ok(pack.clone()));
+
+    let types = CtValue::Tuple(vec![CtValue::Type(Ty::int()), CtValue::Type(Ty::bool())]);
+    let mut bound = ParamBindings::new();
+    bound.bind_name("Ts", context.constant(types.clone()).expect("constant"));
+    let closed = context.replace(&pointers, &bound).expect("replacement");
+    let pointer = |ty: Ty| CtValue::Type(TyKind::KgenPointer(ty).into());
+    assert_eq!(
+        closed.as_constant(),
+        Some(&CtValue::Tuple(vec![
+            pointer(Ty::int()),
+            pointer(Ty::bool())
+        ]))
+    );
+    assert_eq!(
+        context
+            .list_pointer_remove(&closed)
+            .expect("pointers remove")
+            .as_constant(),
+        Some(&types)
+    );
+
+    let plain = context.constant(types).expect("constant");
+    assert!(context.list_pointer_remove(&plain).is_err());
+}
+
 /// A `SIMDLength` index reads as its lane count: a closed length selects
 /// its element, and a length still a parameter gives the element at its
 /// lane count, as upstream's `__getitem_param__[idx: SIMDLength]` reads

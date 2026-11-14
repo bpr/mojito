@@ -2672,6 +2672,17 @@ impl Checker {
                 self.struct_conformance(name, &args, tr)
             }
             TyKind::Param { .. } | TyKind::Assoc { .. } => self.archetype_conformance(ty, tr),
+            // A spread of a tabulated list (`variadic_ptr_map` of a pack)
+            // conforms as its every element does.
+            TyKind::Dependent(_)
+                if let Some(ParamKind::ListTabulate { element, .. }) =
+                    mojito_types::types::list_spread(ty).map(ParamExpr::kind) =>
+            {
+                self.conformance(
+                    &mojito_types::types::DependentType::resolve(element.clone()),
+                    tr,
+                )
+            }
             TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
             _ if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) => {
                 mojito_types::conformance::leaf_conformance(ty, tr, element)

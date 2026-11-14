@@ -753,6 +753,14 @@ impl ParamContext {
             });
         }
         let element = self.intern(element);
+        // `tabulate(length(L), L[i])` is `L` itself.
+        if let ParamKind::ListGet { list, index } = element.kind()
+            && *index == self.tabulate_index()
+            && self.shift(list, 0, 1).is_ok_and(|shifted| shifted == *list)
+            && self.list_length(list).is_ok_and(|length| length == count)
+        {
+            return Ok(list.clone());
+        }
         let list = self.make(
             MetaTy::ParamList(Box::new(element.meta().clone())),
             ParamKind::ListTabulate { count, element },
@@ -840,6 +848,56 @@ impl ParamContext {
         )?;
         let element = self.list_get(&self.shift(list, 0, 1)?, &index)?;
         self.list_tabulate(&length, &element)
+    }
+
+    /// KGEN's `variadic_ptr_map` at address space 0: the list of
+    /// `!kgen.pointer`s to `list`'s types, a tabulation of its length whose
+    /// element `i` is `!kgen.pointer<list[i]>`.
+    pub fn list_pointer_map(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let length = self.list_length(list)?;
+        let element = self.list_get(&self.shift(list, 0, 1)?, &self.tabulate_index())?;
+        let pointer = TyKind::KgenPointer(crate::types::DependentType::resolve(element));
+        self.list_tabulate(&length, &self.type_shape(pointer.into()))
+    }
+
+    /// KGEN's `variadic_ptrremove_map`: the pointees of a list of
+    /// `!kgen.pointer` types, element by element over a known list and
+    /// through the element of a tabulation of pointers, so it undoes
+    /// [`Self::list_pointer_map`] while the list is still a parameter.
+    pub fn list_pointer_remove(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let not_pointers = || ParamError::TypeMismatch {
+            operation: "variadic_ptrremove_map".to_string(),
+            expected: "a list of `!kgen.pointer` types".to_string(),
+            found: list.to_string(),
+        };
+        let pointee = |element: &ParamExpr| match element.kind() {
+            ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => match ty.kind() {
+                TyKind::KgenPointer(pointee) => Ok(self.type_expr(pointee)),
+                _ => Err(not_pointers()),
+            },
+            _ => Err(not_pointers()),
+        };
+        if let ParamKind::ListTabulate { count, element } = list.kind() {
+            return self.list_tabulate(count, &pointee(element)?);
+        }
+        let Some(elements) = self.list_elements(list)? else {
+            return Err(not_pointers());
+        };
+        let pointees = elements
+            .iter()
+            .map(|element| pointee(element).map(crate::types::DependentType::resolve))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.type_list(pointees)
+    }
+
+    /// The type-valued expression `ty` is, the inverse of
+    /// [`crate::types::DependentType::resolve`]: a dependent type's own
+    /// expression, and any other type's [`Self::type_shape`].
+    pub fn type_expr(&self, ty: &Ty) -> ParamExpr {
+        match ty.kind() {
+            TyKind::Dependent(crate::types::DependentType::Parameter(expr)) => expr.clone(),
+            _ => self.type_shape(ty.clone()),
+        }
     }
 
     /// The length of a parameter list, as an `Int` expression: a constant

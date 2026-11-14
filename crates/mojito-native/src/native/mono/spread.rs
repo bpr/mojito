@@ -98,17 +98,37 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
             index += 1;
             continue;
         };
+        let read = block.instrs[..index]
+            .iter()
+            .rposition(|instruction| defines(instruction, pack));
+        // An LLVM intrinsic call over a loaded struct no collector slot
+        // holds (a call's result passed directly) passes its elements, read
+        // out of the register, as `pop.call_llvm_intrinsic` takes a
+        // `!kgen.struct`'s elements.
+        let register_elements = match tables.reg_types.get(&pack.0).map(Ty::kind) {
+            Some(TyKind::Tuple(elements))
+                if matches!(&block.instrs[index], MirInstr::CallLlvmIntrinsic { .. })
+                    && read.is_none_or(|read| {
+                        !matches!(block.instrs[read], MirInstr::MakeTuple { .. })
+                            && collector_read(&block.instrs[read], pack, tables.var_tys).is_none()
+                    }) =>
+            {
+                Some(elements.clone())
+            }
+            _ => None,
+        };
+        if let Some(elements) = register_elements {
+            index += spread_register_elements(block, index, position, pack, &elements, tables);
+            continue;
+        }
         // A collector the callee no longer takes (an unused argument whose
         // read the removal erased) is dropped with the call's rewrite.
-        let Some(read) = block.instrs[..index]
-            .iter()
-            .rposition(|instruction| defines(instruction, pack))
-        else {
+        let Some(read) = read else {
             index += 1;
             continue;
         };
         // An LLVM intrinsic call over the loaded elements a tuple holds
-        // (`get_loaded_kgen_pack`'s expanded `kgen.struct.load_indirect`)
+        // (`VariadicPack`'s expanded `kgen.struct.load_indirect`)
         // passes them.
         if matches!(&block.instrs[index], MirInstr::CallLlvmIntrinsic { .. })
             && let MirInstr::MakeTuple { elems, .. } = &block.instrs[read]
@@ -199,6 +219,56 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
     Ok(())
 }
 
+/// Pass the elements of the literal struct `pack` to the LLVM intrinsic
+/// call at `index` in its spread `position`, each a tuple-storage element
+/// read of the register; returns how many instructions the call moved by,
+/// itself included.
+fn spread_register_elements(
+    block: &mut MirBlock,
+    index: usize,
+    position: usize,
+    pack: Reg,
+    elements: &[Ty],
+    tables: &mut SpreadTables<'_>,
+) -> usize {
+    let span = tables.spans.0.get(&pack.0).cloned();
+    let mut fresh = |ty: Ty| {
+        let register = Reg(*tables.n_regs);
+        *tables.n_regs += 1;
+        tables.reg_types.insert(register.0, ty);
+        if let Some(span) = &span {
+            tables.spans.0.insert(register.0, span.clone());
+        }
+        register
+    };
+    let mut reads = Vec::with_capacity(elements.len() * 2);
+    let mut values = Vec::with_capacity(elements.len());
+    for (element_index, element) in elements.iter().enumerate() {
+        let at = fresh(Ty::int());
+        reads.push(MirInstr::Const {
+            dest: at,
+            k: Const::Int(i64::try_from(element_index).expect("a pack's arity fits an Int")),
+        });
+        let value = fresh(element.clone());
+        reads.push(MirInstr::Index {
+            dest: value,
+            base: pack,
+            index: at,
+            base_place: None,
+            index_place: None,
+            call: None,
+            intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
+        });
+        values.push(value);
+    }
+    let call = spread_operands(&mut block.instrs[index]).expect("the spread call was matched");
+    call.args.splice(position..=position, values);
+    *call.spread = None;
+    let inserted = reads.len();
+    block.instrs.splice(index..index, reads);
+    inserted + 1
+}
+
 /// The operands a whole-pack spread rewrites on a direct call, a method
 /// call, an indirect call of a nested `def`, or an LLVM intrinsic call: its
 /// position, the positional arguments, and their places (an intrinsic's
@@ -243,9 +313,10 @@ const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_
 }
 
 /// Expand each `kgen.struct.load_indirect` of `blocks` over a bound
-/// reference pack into a read of each element through its reference
-/// (`lit.ref.pack.extract`, then `ref.read`) and the `tuple.make` of the
-/// values, as upstream's LLVM lowering loads each pointer.
+/// literal struct of `!kgen.pointer`s into a load through each pointer
+/// (its tuple-storage element, converted to a `!lit.ref`, then `ref.read`)
+/// and the `tuple.make` of the values, as upstream's LLVM lowering loads
+/// each pointer.
 fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
     let mut index = 0;
     while index < block.instrs.len() {
@@ -256,17 +327,15 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
             index += 1;
             continue;
         };
-        let Some(TyKind::LitRefPack { elements, origin }) =
-            tables.reg_types.get(&pack.0).map(Ty::kind)
+        let Some(elements) = tables
+            .reg_types
+            .get(&pack.0)
+            .and_then(mojito_types::types::pointer_struct_pointees)
         else {
             index += 1;
             continue;
         };
-        if mojito_types::types::pack_spread(elements).is_some() {
-            index += 1;
-            continue;
-        }
-        let (elements, origin) = (elements.clone(), origin.clone());
+        let origin = mojito_types::origin::PointerOrigin::Untracked { mutable: false };
         let span = tables.spans.0.get(&dest.0).cloned();
         let mut fresh = |ty: Ty| {
             let register = Reg(*tables.n_regs);
@@ -277,13 +346,23 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
             }
             register
         };
-        let mut reads = Vec::with_capacity(elements.len() * 3 + 1);
+        let mut reads = Vec::with_capacity(elements.len() * 4 + 1);
         let mut values = Vec::with_capacity(elements.len());
         for (element_index, element) in elements.iter().enumerate() {
             let at = fresh(Ty::int());
             reads.push(MirInstr::Const {
                 dest: at,
                 k: Const::Int(i64::try_from(element_index).expect("a pack's arity fits an Int")),
+            });
+            let pointer = fresh(TyKind::KgenPointer(element.clone()).into());
+            reads.push(MirInstr::Index {
+                dest: pointer,
+                base: pack,
+                index: at,
+                base_place: None,
+                index_place: None,
+                call: None,
+                intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
             });
             let reference = fresh(
                 TyKind::LitRef {
@@ -292,14 +371,9 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 }
                 .into(),
             );
-            reads.push(MirInstr::Index {
+            reads.push(MirInstr::PointerConvert {
                 dest: reference,
-                base: pack,
-                index: at,
-                base_place: None,
-                index_place: None,
-                call: None,
-                intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
+                value: pointer,
             });
             let value = fresh(element.clone());
             reads.push(MirInstr::ReadRef {

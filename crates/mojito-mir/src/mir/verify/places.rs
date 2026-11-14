@@ -493,8 +493,10 @@ pub(super) fn verify_place(
         }
         current = Some(projected.clone());
     }
+    // A discharged rebind step leaves the place typed as the rebind named
+    // it, which agrees with its storage's type.
     if let (Some(current), Some(terminal)) = (&current, &place.ty)
-        && !types_compatible(terminal, current)
+        && !super::types_agree(terminal, current)
     {
         errors.push(format!(
             "{prefix} place terminal type {terminal} does not match projected type {current}"

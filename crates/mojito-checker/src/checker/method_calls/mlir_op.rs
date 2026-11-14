@@ -4,6 +4,8 @@
 //! storage through pointers or lane by lane and after moving it out through
 //! them,
 //! `kgen.struct.extract` of an element of a literal struct,
+//! `kgen.struct.load_indirect` of the values a literal struct of pointers
+//! addresses,
 //! `kgen.source_loc` of the call site an inline chain was entered from,
 //! `lit.mojo.version.major`, `.minor`, and `.patch` of the language version,
 //! `lit.ref.pack.extract` of an element reference of a reference pack,
@@ -28,7 +30,8 @@ impl Checker {
     /// self` element by element. Every other
     /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
     /// the LLVM dialect's trap ([`Self::infer_llvm_trap_op`]),
-    /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), a
+    /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), an
+    /// indirect struct load ([`Self::infer_kgen_load_indirect_op`]), a
     /// source location ([`Self::infer_kgen_source_loc_op`]), a language
     /// version component ([`Self::infer_mojo_version_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a lane gather
@@ -47,6 +50,7 @@ impl Checker {
         const LLVM_INTRINSIC: &str = "pop.call_llvm_intrinsic";
         const STRUCT_EXTRACT: &str = "kgen.struct.extract";
         const REF_PACK_EXTRACT: &str = "lit.ref.pack.extract";
+        const LOAD_INDIRECT: &str = "kgen.struct.load_indirect";
         const SIMD_SHUFFLE: &str = "pop.simd.shuffle";
         const STRING_SIZE: &str = "pop.string.size";
         const STRING_ADDRESS: &str = "pop.string.address";
@@ -60,6 +64,9 @@ impl Checker {
         }
         if matches!(method, STRUCT_EXTRACT | REF_PACK_EXTRACT) {
             return self.infer_kgen_struct_extract_op(span, method, call);
+        }
+        if method == LOAD_INDIRECT {
+            return self.infer_kgen_load_indirect_op(span, method, call);
         }
         if method == SIMD_SHUFFLE {
             return self.infer_simd_shuffle_op(span, method, call);
@@ -144,6 +151,71 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::MarkDestroyed
         }));
         Ok(Ty::none())
+    }
+
+    /// Type ``__mlir_op.`kgen.struct.load_indirect`(p)``, recording it as
+    /// `SemanticAdjustment::KgenStructLoadIndirect`: the literal struct of
+    /// the values the literal struct of `!kgen.pointer`s `p` addresses, as
+    /// upstream's `VariadicPack` spells its elements' load over
+    /// `get_as_kgen_pack()`. A struct whose list of pointers is still open
+    /// loads the list's `variadic_ptrremove_map`.
+    fn infer_kgen_load_indirect_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: String| TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        };
+        if !param_args.is_empty() || !kwargs.is_empty() {
+            return Err(invalid("op takes no attributes".to_string()));
+        }
+        let [operand] = args else {
+            return Err(invalid(format!(
+                "op expected 1 operand, but found {}",
+                args.len()
+            )));
+        };
+        let operand_ty = self.infer(operand)?;
+        let not_pointers = || {
+            invalid(format!(
+                "op operand must be a '!kgen.struct' of '!kgen.pointer's, but got '{operand_ty}'"
+            ))
+        };
+        let TyKind::Tuple(elements) = operand_ty.kind() else {
+            return Err(not_pointers());
+        };
+        let loaded = match elements.as_slice() {
+            [spread] if let Some(list) = mojito_types::types::list_spread(spread) => {
+                let pointees = self
+                    .param_context
+                    .list_pointer_remove(list)
+                    .map_err(|_| not_pointers())?;
+                self.param_list_tuple(pointees, operand)?
+            }
+            _ => TyKind::Tuple(
+                elements
+                    .iter()
+                    .map(|element| match element.kind() {
+                        TyKind::KgenPointer(pointee) => Ok(pointee.clone()),
+                        _ => Err(not_pointers()),
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+            .into(),
+        };
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::KgenStructLoadIndirect,
+        ));
+        Ok(loaded)
     }
 
     /// Type ``__mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](s)``,

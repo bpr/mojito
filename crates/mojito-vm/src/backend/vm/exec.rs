@@ -303,7 +303,7 @@ impl VmBackend {
             MirInstr::LoadIndirect { dest, pack } => {
                 let Value::Tuple(references) = regs[pack.0 as usize].clone() else {
                     return Err(RuntimeError::TypeError(
-                        "vm: kgen.struct.load_indirect over no reference pack".to_string(),
+                        "vm: kgen.struct.load_indirect over no struct of pointers".to_string(),
                     ));
                 };
                 let loaded = references

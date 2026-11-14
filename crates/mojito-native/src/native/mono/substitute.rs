@@ -696,15 +696,28 @@ fn substituted_struct_arguments(
 }
 
 fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
-    match (mojito_types::types::pack_spread(types)).map(Ty::kind) {
-        Some(TyKind::Param { binder, .. })
-            if let Some(TyKind::RuntimePack(elements)) =
-                bindings.types.get(binder).map(Ty::kind) =>
-        {
-            sub_types(elements, bindings)
-        }
-        _ => sub_types(types, bindings),
+    if let Some(TyKind::Param { binder, .. }) =
+        mojito_types::types::pack_spread(types).map(Ty::kind)
+        && let Some(TyKind::RuntimePack(elements)) = bindings.types.get(binder).map(Ty::kind)
+    {
+        return sub_types(elements, bindings);
     }
+    // A spread of a computed list (`variadic_ptr_map` of a pack) is its
+    // elements once the bindings close it.
+    if let [spread] = types
+        && let Some(list) = mojito_types::types::list_spread(spread)
+    {
+        let elements = ParamContext::detached()
+            .replace(list, &ct_bindings(bindings))
+            .and_then(|list| mojito_types::types::list_spread_elements(&list))
+            .map_err(|error| MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: error.to_string(),
+            })?;
+        return sub_types(&elements, bindings);
+    }
+    sub_types(types, bindings)
 }
 
 pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, MonoError> {

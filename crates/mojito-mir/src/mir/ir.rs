@@ -2538,10 +2538,11 @@ pub enum MirInstr {
         dest: Reg,
         elems: Vec<Reg>,
     },
-    /// Load every element of the reference pack `pack` into `dest`'s
-    /// literal struct (`TyKind::Tuple`) of their values: upstream's
-    /// `kgen.struct.load_indirect`, which `VariadicPack.get_loaded_kgen_pack`
-    /// applies. The elaborator expands it once the pack is bound.
+    /// Load the value each `!kgen.pointer` of the literal struct `pack`
+    /// addresses into `dest`'s literal struct (`TyKind::Tuple`) of those
+    /// values: upstream's `kgen.struct.load_indirect`, which
+    /// `VariadicPack` applies to `get_as_kgen_pack()` to load its elements.
+    /// The elaborator expands it once the pack is bound.
     LoadIndirect {
         dest: Reg,
         pack: Reg,
@@ -3240,6 +3241,23 @@ impl MirInstr {
                 let source = reg_types.get(&value.0)?;
                 (reg_types.get(&dest.0) == Some(source) && declarations.copy_is_identity(source))
                     .then_some(*value)
+            }
+            // A `!lit.ref` converted from a reference to its element type (a
+            // `Pointer` or another `!lit.ref`) is that reference, as
+            // upstream's lowering makes them one pointer.
+            Self::PointerConvert { dest, value } => {
+                let address_element = |reg: &Reg| match reg_types.get(&reg.0)?.kind() {
+                    TyKind::LitRef { element, .. } | TyKind::Pointer { element, .. } => {
+                        Some(mojito_types::types::erase_origins(element))
+                    }
+                    _ => None,
+                };
+                (matches!(
+                    reg_types.get(&dest.0).map(Ty::kind),
+                    Some(TyKind::LitRef { .. })
+                ) && address_element(dest).is_some()
+                    && address_element(dest) == address_element(value))
+                .then_some(*value)
             }
             Self::SimdReduce { dest, value, .. }
                 if held_alike(dest, value)

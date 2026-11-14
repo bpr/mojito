@@ -3,6 +3,7 @@
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
 //! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
 //! `kgen.struct.extract`, lowered to a tuple-storage element read,
+//! `kgen.struct.load_indirect`, kept as `kgen.struct.load_indirect`,
 //! `kgen.source_loc`, lowered to `kgen.source_loc` at the op's own site,
 //! `pop.simd.shuffle`, lowered to a two-operand `simd.shuffle`,
 //! `pop.array.repeat`, `pop.array.get`, `pop.array.replace`, and
@@ -221,6 +222,30 @@ impl<'a> Flatten<'a> {
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::TupleStorage),
         });
+        dest
+    }
+
+    /// Whether the checker recorded `call` as a `kgen.struct.load_indirect`
+    /// `__mlir_op`.
+    pub(super) fn checked_kgen_load_indirect(call: Node<'a>) -> bool {
+        call.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::KgenStructLoadIndirect
+            )
+        })
+    }
+
+    /// Lower the checked `kgen.struct.load_indirect` `call` over its one
+    /// operand, a literal struct of pointers, to `kgen.struct.load_indirect`.
+    pub(super) fn lower_kgen_load_indirect(&mut self, call: Node<'a>, args: &[Node<'a>]) -> Reg {
+        let [operand] = args else {
+            unreachable!("a checked `kgen.struct.load_indirect` has one operand")
+        };
+        let pack = self.expr(*operand);
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let dest = self.fresh_typed(call.location(), None, ty);
+        self.emit(MirInstr::LoadIndirect { dest, pack });
         dest
     }
 

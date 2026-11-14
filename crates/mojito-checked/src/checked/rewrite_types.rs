@@ -741,6 +741,7 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::MarkDestroyed
             | Self::PopSimdShuffle { mask: _ }
             | Self::PopArrayRepeat
+            | Self::KgenStructLoadIndirect
             | Self::PopArrayGep
             | Self::SpelledConstruction { construction: _ }
             | Self::PointerToPlace {

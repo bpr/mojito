@@ -769,8 +769,12 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             value,
             constructor,
         } => {
+            // `mem-2-reg` reads a reference pack's slot through a discharged
+            // `rebind` to the `!kgen.struct` of pointers it lowers to
+            // (`get_as_kgen_pack`) as a copy at that type.
             if let (Some(found), Some(expected)) = (cx.reg_ty(*value), cx.reg_ty(*dest))
                 && !types_compatible(found, expected)
+                && mojito_types::types::ref_pack_pointers(found).as_ref() != Some(expected)
             {
                 errors.push(format!(
                     "{prefix}: copied value has type {found}, destination has type {expected}"
@@ -1536,13 +1540,33 @@ fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &m
 /// reference pack and the result the literal struct of its elements.
 fn verify_load_indirect(cx: &InstrCx<'_>, dest: Reg, pack: Reg, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
-    let Some(TyKind::LitRefPack { elements, .. }) = cx.reg_ty(pack).map(Ty::kind) else {
+    let Some(operand) = cx.reg_ty(pack) else {
+        return;
+    };
+    // A template's struct over a list of pointers still open is judged by
+    // the instance that closes it.
+    if let TyKind::Tuple(elements) = operand.kind()
+        && let [spread] = elements.as_slice()
+        && mojito_types::types::list_spread(spread).is_some()
+    {
+        if cx
+            .reg_ty(dest)
+            .is_some_and(|found| !matches!(found.kind(), TyKind::Tuple(_)))
+        {
+            errors.push(format!(
+                "{prefix}: kgen.struct.load_indirect result is not a literal struct"
+            ));
+        }
+        return;
+    }
+    let Some(pointees) = mojito_types::types::pointer_struct_pointees(operand) else {
         errors.push(format!(
-            "{prefix}: kgen.struct.load_indirect operand is not a reference pack"
+            "{prefix}: kgen.struct.load_indirect operand {operand} is not a `!kgen.struct` of \
+             `!kgen.pointer`s"
         ));
         return;
     };
-    let loaded: Ty = TyKind::Tuple(elements.clone()).into();
+    let loaded: Ty = TyKind::Tuple(pointees).into();
     if let Some(found) = cx.reg_ty(dest)
         && !types_compatible(found, &loaded)
     {

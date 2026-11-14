@@ -430,6 +430,14 @@ impl ScopeCx<'_> {
                     self.walk_in(role, ty, nested);
                 }
             }
+            // A literal struct of a list computed from packs still open
+            // (`VariadicPack._kgen_pack_with_pointer_type`) spreads it.
+            TyKind::Tuple(types)
+                if let [spread] = types.as_slice()
+                    && let Some(list) = mojito_types::types::list_spread(spread) =>
+            {
+                self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
+            }
             TyKind::Overload(types)
             | TyKind::Tuple(types)
             | TyKind::RuntimePack(types)

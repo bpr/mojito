@@ -3843,6 +3843,19 @@ impl Checker {
                 }
                 self.bracket_type_operand(ty, recording)
             }
+            // KGEN's pointer maps over a list of types: `variadic_ptr_map`
+            // (at address space 0, the default `!kgen.pointer`) gives the
+            // pointers to them, and `variadic_ptrremove_map` the pointees
+            // of a list of pointers.
+            ("#kgen.param.expr<variadic_ptr_map,{},0:index>:{}", [list, result]) => {
+                let list = self.bracket_type_list(list, result, "variadic_ptr_map", recording)?;
+                context.list_pointer_map(&list).map_err(param_error)
+            }
+            ("#kgen.param.expr<variadic_ptrremove_map,{}>:{}", [list, result]) => {
+                let list =
+                    self.bracket_type_list(list, result, "variadic_ptrremove_map", recording)?;
+                context.list_pointer_remove(&list).map_err(param_error)
+            }
             (shape, [ty, target])
                 if let Some(query) = shape
                     .strip_prefix("#kgen.param.expr<")
@@ -3936,7 +3949,9 @@ impl Checker {
                  '#kgen.param.expr<data_to_str>', '#kgen.param.expr<get_env>' at an 'i1', \
                  '!kgen.string', or 'index', '#kgen.param.expr<target_has_feature>', \
                  '#kgen.param.expr<target_get_field>' of a known field, \
-                 '#kgen.param.expr<rebind>', '#kgen.param.expr<get_sizeof>', \
+                 '#kgen.param.expr<rebind>', '#kgen.param.expr<variadic_ptr_map>' at address \
+                 space 0, '#kgen.param.expr<variadic_ptrremove_map>', \
+                 '#kgen.param.expr<get_sizeof>', \
                  '#kgen.param.expr<get_alignof>', '#kgen.param.identical', \
                  '#pop.string_concat', '#pop.int_literal_convert' and \
                  '#pop<float_literal_convert>' at a '!kgen.simd' type, \
@@ -3996,6 +4011,39 @@ impl Checker {
             });
         }
         Ok(ty)
+    }
+
+    /// The list of types a `#kgen.param.expr` pointer map reads, and the
+    /// `KGENParamListType[!kgen.type]` result type it spells after it.
+    fn bracket_type_list(
+        &self,
+        list: &ParamArg,
+        result: &ParamArg,
+        name: &str,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let list = self.bracket_operand(list, recording)?;
+        let types = |meta: &MetaTy| {
+            matches!(meta, MetaTy::ParamList(element) if **element == MetaTy::Type
+                || **element == MetaTy::value(TyKind::TypeType.into()))
+        };
+        if !types(list.meta()) {
+            return Err(TypeError::TypeMismatch {
+                expected: "a parameter list of types".to_string(),
+                found: list.meta().to_string(),
+                context: format!("the list operand of '#kgen.param.expr<{name}>'"),
+            });
+        }
+        let result = self.bracket_operand(result, recording)?;
+        let result = MetaTy::value(mojito_types::types::DependentType::resolve(result));
+        if !types(&result) {
+            return Err(TypeError::TypeMismatch {
+                expected: "'KGENParamListType[!kgen.type]'".to_string(),
+                found: result.to_string(),
+                context: format!("the result type of '#kgen.param.expr<{name}>'"),
+            });
+        }
+        Ok(list)
     }
 
     /// The `!kgen.target` operand of a `#kgen.param.expr` read of a target.

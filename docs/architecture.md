@@ -1417,13 +1417,19 @@ that pack itself, as upstream's call passes the `VariadicPack`: the
 elaborator (`expand_pack_spreads`) checks that the bindings close the pack,
 the argument typed its `VariadicPack` or its elements' tuple, and expands
 only a spread into an LLVM intrinsic call into its elements (the bundled
-`llvm_intrinsic` spreads `args.get_loaded_kgen_pack()`, which lowers to a
-`kgen.struct.load_indirect`, `MirInstr::LoadIndirect`, of the pack's
-references; the elaborator expands it into one `index{TupleStorage}` and
+`llvm_intrinsic` spreads `args.get_loaded_kgen_pack()`, which `VariadicPack`
+declares as upstream does: a `kgen.struct.load_indirect`,
+`MirInstr::LoadIndirect`, of `get_as_kgen_pack()`, the `rebind` of the
+pack's references to the `!kgen.struct` of `!kgen.pointer`s it lowers to,
+typed through the `variadic_ptr_map` and `variadic_ptrremove_map` parameter
+expressions; the elaborator discharges the `rebind` (`types_agree`) and
+expands the load into one `index{TupleStorage}`, `pointer.convert`, and
 `ref.read` per element and their `tuple.make`, and `canonicalize` folds an
-extract of a `lit.ref.pack.create` to the element's reference, so the
-post-elaboration pipeline promotes a constant operand to the `immarg` the
-intrinsic needs); a spread `inline-parametric` leaves in an
+extract of a `lit.ref.pack.create`, or of a copy of it, to the element's
+reference, so the post-elaboration pipeline promotes a constant operand to
+the `immarg` the intrinsic needs; a loaded struct passed straight from a
+call, which no collector slot holds, is read element by element out of its
+register, `spread_register_elements`); a spread `inline-parametric` leaves in an
 inlined body, its collector already bound, is passed the same way. A method
 call carries the same position (`MirInstr::MethodCall::spread`, schema
 1.24). The checker types the spread against the

@@ -4,10 +4,7 @@
 # `mojito_types::llvm_intrinsic::LlvmIntrinsic`'s; a reached call of any
 # other is rejected when its instance is elaborated.
 #
-# The body is upstream's, except that `args.get_loaded_kgen_pack()` is
-# served by the compiler, a `kgen.struct.load_indirect` of the
-# `VariadicPack`'s references, where upstream declares it (roadmap R1922).
-# `_RegisterPackType`, `expect`, `likely`, `unlikely`, and `assume` are
+# The body is upstream's. `_RegisterPackType`, `expect`, `likely`, `unlikely`, and `assume` are
 # upstream's, verbatim: the first's `!kgen.struct` field is Mojito's
 # compiler-private tuple storage of the same elements.
 # Omitted: the gather, scatter, masked load and store, prefetch, and GPU

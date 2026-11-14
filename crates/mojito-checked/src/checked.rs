@@ -1215,6 +1215,11 @@ pub enum SemanticAdjustment {
     KgenStructExtract {
         index: mojito_types::param_expr::ParamExpr,
     },
+    /// ``__mlir_op.`kgen.struct.load_indirect`(p)``: the literal struct of
+    /// the values the `!kgen.struct` of `!kgen.pointer`s `p` addresses,
+    /// as the bundled `VariadicPack` loads its elements. MIR keeps
+    /// it as `MirInstr::LoadIndirect`.
+    KgenStructLoadIndirect,
     /// ``__mlir_op.`kgen.source_loc`[inlineCount=n.__mlir_index__(), _type=…]()``:
     /// the `(line, column, file)` of the call site `inline_count` (the
     /// compile-time `Int` the attribute casts) inlined frames out from the

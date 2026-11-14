@@ -786,6 +786,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `VariadicPack.get_loaded_kgen_pack()` is upstream's declared member, a
+  `kgen.struct.load_indirect` of `get_as_kgen_pack()`, instead of a
+  compiler rule (R1922). The bundled `VariadicPack` declares upstream's
+  `_kgen_element_types`, `_variadic_pointer_types`,
+  `_kgen_pack_with_pointer_type`, `get_as_kgen_pack`,
+  `_variadic_with_pointers_removed`, `_loaded_kgen_pack_type`, and
+  `get_loaded_kgen_pack` verbatim, and any module may spell what they
+  use: `#kgen.param.expr<variadic_ptr_map, L, 0: index>` and
+  `#kgen.param.expr<variadic_ptrremove_map, L>` over a list of types,
+  the `!kgen.struct<:param_list<type> L isParamPack>` of a list, and
+  ``__mlir_op.`kgen.struct.load_indirect` `` of a struct of pointers
+  (`assets/ok/variadic_pack_pointer_maps.mojo`), whose loaded struct an
+  LLVM intrinsic call takes directly or through a `var`. The
+  rebind of the pack's references to its pointers agrees as upstream's
+  LIT lowering makes it, and the post-elaboration folds see through it.
+  MIR text moves to 1.194 (the load's operand is the struct of pointers;
+  an older artifact's load of a reference pack reads through a `rebind`)
+  and the package format to 218. An owned `var *args` collector, still a
+  tuple, has no `get_loaded_kgen_pack` until R2197.
+
 - A raising call now writes its callee's error into the nearest error
   slot, the enclosing `try`'s or the function's, as upstream's call
   passes the slot `findNearestErrorSlot` returns as the callee's

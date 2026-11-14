@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.193
+# Mojito Textual MIR Format, Version 1.194
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.193 is implemented end to end for inspection and loading: canonical
+Version 1.194 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.193
+mojito-mir 1.194
 ```
 
-The writer emits 1.193. The reader accepts 1.0 through 1.193; *Schema 1.0*
+The writer emits 1.194. The reader accepts 1.0 through 1.194; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1183,6 +1183,21 @@ contract holds its compile-time arguments per declared parameter
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
 
+Schema 1.194 makes `kgen.struct.load_indirect`'s `pack` upstream's
+operand, the `tuple` of `kgen_pointer`s a `lit_ref_pack` lowers to, which
+`VariadicPack.get_loaded_kgen_pack` reaches through `get_as_kgen_pack`'s
+`rebind` of the pack; the verifier rejects a `lit_ref_pack` operand, and
+the elaborator expands the load into one tuple-storage `index`,
+`pointer.convert` to a `lit_ref`, and `ref.read` per element. A
+`value.copy` may read a `lit_ref_pack` at that `tuple` (`mem-2-reg`'s
+read of the pack's slot through the discharged `rebind`), and a place
+whose `rebind` step was discharged keeps the rebound type. The syntax
+is unchanged. An older artifact's load of a `lit_ref_pack` is upgraded as
+it loads: a `rebind` of the pack to its pointers, which the load then
+takes. The package format moves to `mojito-package 218` with it, when a
+checked `kgen.struct.load_indirect` records
+`SemanticAdjustment::KgenStructLoadIndirect` (R1922).
+
 Schema 1.193 makes a raise edge's `error` the slot the instruction writes
 its error into when it raises, `present(raises { type, flag: %rN, error:
 $vM })`, as upstream's throwing `lit.call` takes the slot
@@ -2336,7 +2351,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
 | `MakeRefPack` | `lit.ref.pack.create { dest, elems: [%rA, …] }` (schema 1.162: upstream's `lit.ref.pack.create`, the `lit_ref_pack` of `dest`'s register type built from one reference per element, in order; a call builds its callee's `read` `*args: *Ts` `VariadicPack` over it) |
-| `LoadIndirect` | `kgen.struct.load_indirect { dest, pack: %rA }` (schema 1.162: upstream's `kgen.struct.load_indirect`, the `tuple` of the `lit_ref_pack` `pack`'s elements, each loaded through its reference; `VariadicPack.get_loaded_kgen_pack()` lowers to it, and the elaborator expands it) |
+| `LoadIndirect` | `kgen.struct.load_indirect { dest, pack: %rA }` (schema 1.162: upstream's `kgen.struct.load_indirect`; schema 1.194: the `tuple` of the values the `tuple` of `kgen_pointer`s `pack` addresses, `VariadicPack.get_loaded_kgen_pack()` applying it to `get_as_kgen_pack()`, and the elaborator expands it) |
 | `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
 | `ArrayRepeat` / `ArrayGet` / `ArrayReplace` | `array.repeat { dest, value }` / `array.get { dest, array, index }` / `array.replace { dest, array, value, index }` (schema 1.137): upstream's `pop.array.repeat`, the `!pop.array` of `dest`'s register type holding `value` in every element, `pop.array.get`, element `index` of `array`, and `pop.array.replace`, `array` with element `index` replaced by `value`; `index` is a closed `index` constant, or a template's `param(...)` constant elaboration closes and checks against the array's size; the element is trivially register-passable, and the verifier checks the value against it and a closed index against a known size |
 | `ArrayGep` | `array.gep { dest, array, index }` (schema 1.141): upstream's `pop.array.gep`, the `kgen_pointer` to element `index` (an `index` register) of the `pop_array` the `kgen_pointer` `array` addresses; it reads nothing and checks no bound, and the verifier checks the operand, index, and result types |

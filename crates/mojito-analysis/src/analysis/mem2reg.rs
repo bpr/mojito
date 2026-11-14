@@ -365,13 +365,17 @@ impl Facts {
                     .any(|(_, mention)| matches!(mention, Mention::Store(_)));
         let identity = typed.is_some_and(|ty| declarations.copy_is_identity(ty));
         // A reference pack's origin is erased in the slot a split
-        // `VariadicPack` leaves, so its values match the slot modulo it.
+        // `VariadicPack` leaves, so its values match the slot modulo it, and
+        // a read through a discharged `rebind` to the `!kgen.struct` of
+        // pointers it lowers to (`get_as_kgen_pack`) is the same value.
         let slot_typed = |register: &Reg| {
             let found = function.reg_types.get(&register.0);
             found == typed
                 || found.zip(typed).is_some_and(|(found, typed)| {
                     matches!(typed.kind(), TyKind::LitRefPack { .. })
-                        && erase_origins(found) == erase_origins(typed)
+                        && (erase_origins(found) == erase_origins(typed)
+                            || mojito_types::types::ref_pack_pointers(typed).as_ref()
+                                == Some(found))
                 })
         };
         (var as usize >= function.n_params || entry_stored.contains(&var))

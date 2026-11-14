@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2199**.
+Next free ID: **R2201**.
 
 ## Ordered Work
 
@@ -5155,6 +5155,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2200 `variadic_ptrremove_map` of a list still a parameter has no
+  residual node**
+
+  `#kgen.param.expr<variadic_ptrremove_map, L>` folds only over a known
+  list of `!kgen.pointer` types or the tabulation `variadic_ptr_map`
+  builds (`ParamContext::list_pointer_remove`, `param_expr.rs`), and is an
+  error over any other open list, where KGEN keeps the expression and
+  folds it once the list is bound.
+  - Probe: `struct Q[*Ts: AnyType]` declaring `comptime R =
+    __mlir_attr[`#kgen.param.expr<variadic_ptrremove_map, `,
+    rebind[_MLIR.KGENParamListType[__mlir_type.`!kgen.type`]](
+    Self.Ts.values), `>: `, _MLIR.KGENParamListType[...]]` fails ("expects
+    a list of `!kgen.pointer` types, found Ts"); the pin compiles it.
+  - Lever: a residual application node (as `LIST_LENGTH_FUNCTION` is for a
+    length) that `replace`/the elaborator fold through
+    `list_pointer_remove` once the list closes, reporting the error there
+    for a bound non-pointer element.
+  - Found while landing R1922 (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R472 A plain `def`'s `comptime for` element read through a `String`
   field materializes the whole element**
 
@@ -7304,6 +7325,25 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R2199 An `__mlir_op` whose result type is not `RegisterPassable`
+  is accepted, where the pin rejects it**
+
+  The pin refuses an op result it cannot prove `RegisterPassable` ("cannot
+  be returned directly from __mlir_op as it is not a 'RegisterPassable'
+  type"), and `Checker::infer_mlir_op` (`checker/method_calls/mlir_op.rs`)
+  types the result without asking.
+  - Probe: `def second[*Ts: AnyType](*args: *Ts) -> Ts[1]` returning
+    ``__mlir_op.`kgen.struct.extract`[index=Int(1).__mlir_index__()](
+    args.get_loaded_kgen_pack())`` prints `2.5` for `second(1, 2.5)`; the
+    pin rejects the extract, whose `Ts[1]` is only `AnyType`.
+  - Ask the op's result type `RegisterPassable` (`register_passability`,
+    `checker/traits.rs`) once per typed `__mlir_op`, and reject a
+    `Possible` or `Excluded` answer with the pin's message.
+  - Found while landing R1922 (2026-11-14).
+  - Ledger name: `mlir-op-result-not-register-passable`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2196 A `Pointer` held in a place is addressed as its pointee, so
   a pointer to it reads or writes the wrong storage**
 
@@ -8973,7 +9013,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     it shares.
   - `_printf_cpu` passes `args.get_loaded_kgen_pack()` as the variadic
     tail, which the `external_call` checker must accept as a C argument
-    list (R1922 owns the method itself).
+    list.
   - Spell the plugin selection as `std.math` does until `comptime if case`
     lands, and keep the `print_emit_fn` arm out with R1884.
   - Probe: `_printf["At: %s:%llu:%llu: x\n"]("f".as_c_string_span(),
@@ -9820,6 +9860,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     keep their output on both backends.
   - Probe: `var t = (M(20), 3)` and `Tuple(k^, 3)` print one `move` per
     element, as the pin does.
+  - Probe: `get_loaded_kgen_pack()` on an owned pack (`def f[*Ts:
+    Movable](var *args: *Ts)`) runs, as the pin's does: it is the owned
+    `VariadicPack`'s declared member, which the tuple stand-in lacks.
   - Probe: once a pack's drop runs `__deinit__`, an empty pack must still
     inline it: `scaled[2]()` over `def scaled[n: Int, *Us: Writable &
     Movable](var *extra: *Us)` and `take()` print as the pin.
@@ -9888,31 +9931,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1922 `get_loaded_kgen_pack` is a compiler rule, where upstream's
-  `VariadicPack` declares it over `variadic_ptr_map`**
-
-  `args.get_loaded_kgen_pack()`, which the bundled `llvm_intrinsic` calls,
-  is typed by the compiler as the loaded elements' tuple (`mc_infer.rs`,
-  `types::loaded_pack_type`) and lowered to a `kgen.struct.load_indirect`
-  of the pack's `_value` field (`expr_method.rs`), where upstream declares
-  the method over `get_as_kgen_pack()`.
-  - `MirInstr::LoadIndirect` (`kgen.struct.load_indirect`) exists, and the
-    elaborator expands it (`mono/spread.rs`, `expand_load_indirect`).
-  - Needs the `#kgen.param.expr<variadic_ptr_map, …>` and
-    `<variadic_ptrremove_map, …>` attributes in `mlir_applied_type`, as
-    parameter expressions that fold once the pack is bound, and an
-    `__mlir_op.\`kgen.struct.load_indirect\`` the checker types.
-  - Then declare `_kgen_element_types`, `_variadic_pointer_types`,
-    `_kgen_pack_with_pointer_type`, `get_as_kgen_pack`,
-    `_variadic_with_pointers_removed`, `_loaded_kgen_pack_type`, and
-    `get_loaded_kgen_pack` in `variadics.mojo`, and delete the rule.
-  - Probe: `rg get_loaded_kgen_pack crates` finds nothing, and
-    `llvm_intrinsic_shuffles.mojo` and `bit_count_ops.mojo` run on both
-    backends.
-  - Split from R1302 (2026-11-05).
-  - Depends on R1921.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1681 `Pointer` is the compiler's `TyKind::Pointer`, where upstream
   declares `struct Pointer` in `std/memory/pointer.mojo` over a
   `!kgen.pointer` field**
@@ -9932,6 +9950,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the type.
   - Address spaces wait on it: `Pointer` and `!kgen.pointer<T>` hold only
     the default one.
+  - Probe: `#kgen.param.expr<variadic_ptr_map, L, 1: index>` is rejected as
+    outside the subset (`mlir_bracket_attribute`), since its pointers
+    would carry address space 1; only `0: index` is read.
   - A `ref` binding's `TyKind::Ref` and a `!lit.ref` value
     (`TyKind::LitRef`) are two types, where upstream's are one.
   - R1679's display probe is part of it.

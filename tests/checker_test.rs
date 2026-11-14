@@ -9287,6 +9287,63 @@ fn bracketed_mlir_attr_outside_the_subset_is_rejected() {
 }
 
 #[test]
+fn kgen_pointer_maps_and_load_indirect_type_as_upstream() {
+    // `variadic_ptr_map` and `variadic_ptrremove_map` read a list of types,
+    // a `!kgen.struct<:param_list<type> L isParamPack>` is the literal
+    // struct of the list, and `kgen.struct.load_indirect` loads a struct of
+    // pointers into the struct of their pointees, as the bundled
+    // `VariadicPack.get_loaded_kgen_pack` spells them.
+    ok_std(concat!(
+        "from std.builtin.variadics import _MLIR\n",
+        "struct P[*Ts: AnyType]:\n",
+        "    comptime _kgen_element_types = rebind[\n",
+        "        _MLIR.KGENParamListType[__mlir_type.`!kgen.type`]\n",
+        "    ](Self.Ts.values)\n",
+        "    comptime _pointers = __mlir_attr[\n",
+        "        `#kgen.param.expr<variadic_ptr_map, `, Self._kgen_element_types,\n",
+        "        `, 0: index>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
+        "    ]\n",
+        "    comptime _pointer_struct = __mlir_type[\n",
+        "        `!kgen.struct<:param_list<type> `, Self._pointers, ` isParamPack>`,\n",
+        "    ]\n",
+        "    comptime _removed = __mlir_attr[\n",
+        "        `#kgen.param.expr<variadic_ptrremove_map, `, Self._pointers,\n",
+        "        `>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
+        "    ]\n",
+        "def popcount[*Ts: AnyType](*args: *Ts) -> Int32:\n",
+        "    var loaded = __mlir_op.`kgen.struct.load_indirect`(args.get_as_kgen_pack())\n",
+        "    return __mlir_op.`pop.call_llvm_intrinsic`[\n",
+        "        intrin=\"llvm.ctpop\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()\n",
+        "    ](loaded)\n",
+        "def main():\n",
+        "    print(popcount(Int32(7)))\n",
+    ));
+    for (source, message) in [
+        (
+            "def main():\n    var x = 1\n    var y = __mlir_op.`kgen.struct.load_indirect`(x)\n",
+            "op operand must be a '!kgen.struct' of '!kgen.pointer's",
+        ),
+        (
+            concat!(
+                "from std.builtin.variadics import _MLIR\n",
+                "struct P[*Ts: AnyType]:\n",
+                "    comptime _pointers = __mlir_attr[\n",
+                "        `#kgen.param.expr<variadic_ptr_map, `, rebind[\n",
+                "            _MLIR.KGENParamListType[__mlir_type.`!kgen.type`]\n",
+                "        ](Self.Ts.values),\n",
+                "        `, 1: index>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
+                "    ]\n",
+                "def main():\n    print(1)\n",
+            ),
+            "is outside the subset",
+        ),
+    ] {
+        let error = err_std(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
 fn mlir_i1_is_no_condition_and_bool_storage_is_an_ordinary_field() {
     // An `i1` declares no `__bool__`, so it is no condition, as at the pin.
     let error =
