@@ -374,6 +374,24 @@ pub(super) fn verify_subscript_call(
                 "{prefix}: selected subscript mut/ref argument has no retained caller place"
             ));
         }
+        // A parameter received by address takes a reference to the caller's
+        // storage (`crate::mir::address_call_operands`); an owned or
+        // `deinit` one takes the value itself.
+        let borrowed = !matches!(
+            argument.convention,
+            Some(
+                mojito_ast::ast::ArgConvention::Var
+                    | mojito_ast::ast::ArgConvention::Deinit
+                    | mojito_ast::ast::ArgConvention::Out
+            )
+        ) && !matches!(argument.parameter_ty.kind(), TyKind::Ref(_));
+        let actual_ty = actual_ty.map(|actual| {
+            if borrowed {
+                crate::mir::operand_value_ty(actual)
+            } else {
+                actual
+            }
+        });
         if let Some(actual_ty) = actual_ty
             && !types_compatible(actual_ty, &argument.parameter_ty)
         {

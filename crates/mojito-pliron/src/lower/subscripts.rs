@@ -85,7 +85,14 @@ impl FnLowering<'_> {
             let place = recv_place.expect("aliased receivers have a place").clone();
             self.aliased_receiver_address(ctx, &place, anchor)?
         } else {
-            self.arg_value(ctx, recv, &params[0], recv_owned, anchor)?
+            self.place_backed_arg_value(
+                ctx,
+                recv,
+                &params[0],
+                recv_owned,
+                recv_place.filter(|place| self.addresses_place(recv, place)),
+                anchor,
+            )?
         };
         let rest = &params[1..];
         let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -153,7 +160,14 @@ impl FnLowering<'_> {
                         let place = (*place).clone();
                         self.place_address(ctx, &place, anchor)?.0
                     } else {
-                        self.arg_value(ctx, *reg, &expected, owned, anchor)?
+                        self.place_backed_arg_value(
+                            ctx,
+                            *reg,
+                            &expected,
+                            owned,
+                            place.filter(|place| self.addresses_place(*reg, place)),
+                            anchor,
+                        )?
                     }
                 }
                 None => {
@@ -180,7 +194,12 @@ impl FnLowering<'_> {
         // receiver back — the `lower_method_call` contract.
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
-            && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
+            && match recv_place
+                .filter(|place| self.addresses_place(recv, place))
+                .and_then(|place| place.ty.as_ref())
+                .or_else(|| self.func.reg_types.get(&recv.0))
+                .map(Ty::kind)
+            {
                 Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
                     self.struct_decls
                         .get(struct_name.as_str())

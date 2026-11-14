@@ -495,7 +495,7 @@ impl VmBackend {
         if pointer_copy {
             return Ok(None);
         }
-        let addressed = self.addressed_receiver(
+        let addressed = self.addressed_operand(
             prog,
             (caller.function, caller.id),
             (&caller.registers, &mut caller.variables),

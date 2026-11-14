@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2178**.
+Next free ID: **R2180**.
 
 ## Ordered Work
 
@@ -9193,17 +9193,52 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1919 An indirect call, a subscript, and a type-parameter
-  construction pass by-address operands as loaded values beside their
-  places**
+- [ ] **R2178 A call through a function value passes its by-address
+  operands as loaded values beside their places**
 
-  `call.indirect`, `index`, `index.multi`, `index.multi_set`, and
-  `construct_type_param` keep the value-plus-place operand shape that a
-  direct `call` no longer has.
-  - Their `arg_places`, `base_place`, `index_place`, and `kwarg_places`
-    tables are each read by the VM and Pliron to recover the address.
-  - Fix: extend `mir::address_call_operands` to each instruction in turn,
-    with the VM's and Pliron's binding for it.
+  `mir::address_call_operands` reads a callee's conventions only from its
+  `MirFunctionDeclaration`, and a `call.indirect` has none: its contract is
+  the callee register's `def(...)` type.
+  - So `f(b)` over `f: def(Big) -> Int` with a memory-only `Big` passes a
+    `place.load` of `b` beside `arg_places`, where upstream's indirect
+    `lit.call` takes a `!lit.ref` of `b`.
+  - Fix: bind the operands by the function type's `conventions`,
+    `ref_params`, and `params` (the slot matching `match_call_slots` does
+    for a declaration), and teach `lower-arg-conventions`
+    (`mir::load_register_passable_operands`) the same contract for an
+    instance whose substitution makes a parameter register-passable.
+  - The VM's two indirect-call bindings (`vm/exec.rs` and `vm/frames.rs`)
+    must read an addressed operand from its place, as their `call` arm
+    does (`addressed_operand_values`), and Pliron's `lower_call_indirect`
+    (`lower/closures.rs`) must pass the address.
+  - The move check's `call_operands` (`analysis/moves.rs`) must list the
+    instruction's operands.
+  - Probe: `def apply(f: def(Big) -> Int, b: Big) -> Int: return f(b)`
+    keeps `place.load` of `b` feeding the `call.indirect` in `emit-mir`.
+  - Found while landing R1919 (2026-11-13).
+  - Depends on R2177 (the callable-contract convention reader).
+  - Model: Opus, Not Planned.
+
+- [ ] **R2179 A type parameter's copy construction passes its source as a
+  loaded value beside its place**
+
+  `T(copy=x)` (`MirInstr::ConstructTypeParam`) takes its `copy=` source as
+  a `place.load` beside `kwarg_places`, where upstream's copy initializer
+  takes a `read` operand, an address when `T` is memory-only.
+  - `mir::address_call_operands` cannot address it yet: the elaborator's
+    `construct_type_parameters` (`mir/type_construction.rs`) writes the
+    construction as a `value.copy` of the source register at a built-in
+    binding, and `value.copy` reads a value, not a reference.
+  - That rewrite sees only a block, so it cannot allocate the `ref.read`
+    an addressed source would need, and `inline-parametric` runs the same
+    rewrite.
+  - Fix: give `construct_type_parameters` the function's register table
+    so a built-in copy reads an addressed source through, then address the
+    `copy=` source in `address_call_operands` when `T` is memory-only.
+  - Probe: `def make[T: Copyable & Movable](x: T) -> T: return
+    T(copy=x)` keeps a `place.load` of `x` feeding `type.construct` in the
+    template `emit-mir` prints.
+  - Found while landing R1919 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9232,7 +9267,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     result" bit for `loans.rs`, delete the place-based argument paths, make
     the verifier require a reference at a by-address slot, and move the MIR
     text version with an upgrade of older calls.
-  - Depends on R1917, R1919, R2177.
+  - Depends on R1917, R1919, R2177, R2178, R2179.
   - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,

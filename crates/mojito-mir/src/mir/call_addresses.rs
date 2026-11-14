@@ -2,9 +2,10 @@
 //!
 //! Upstream's `lit.call` takes an argument its callee receives by address —
 //! a `mut` or `ref` parameter, or a `read` one of a memory-only type — as a
-//! `!lit.ref` of the caller's storage, and loads nothing. A direct `call`
-//! here passes such an argument as a `ref.make` of its retained place
-//! ([`address_call_operands`]), and the call's `arg_places` entry names the
+//! `!lit.ref` of the caller's storage, and loads nothing. A direct `call`,
+//! a resolved `call.method`, and a checked subscript, its accessor's call on
+//! the base, pass such an operand as a `ref.make` of its retained place
+//! ([`address_call_operands`]), and the instruction's place table names the
 //! same storage.
 //!
 //! A register-passable `read` argument is passed by value, as upstream's
@@ -13,8 +14,9 @@
 //! through its reference once elaborated ([`load_register_passable_operands`]).
 
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Proj, Reg,
-    count_register_reads, instruction_regions, instruction_regions_mut, mir_place_handle_ty,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
+    MirSubscriptArg, Proj, Reg, count_register_reads, instruction_regions, instruction_regions_mut,
+    mir_place_handle_ty,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
@@ -43,7 +45,8 @@ pub fn call_operand_parameters(
     if declaration.has_receiver && !is_initializer_symbol(callee) {
         return None;
     }
-    operand_parameters(declaration, positional, kwargs)
+    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    operand_parameters(declaration, positional, &keywords)
 }
 
 /// How a callee receives its regular parameter `parameter` by address.
@@ -91,11 +94,12 @@ pub fn operand_value_ty(ty: &Ty) -> &Ty {
     }
 }
 
-/// Pass each by-address operand of every direct call in `functions` as a
-/// `ref.make` of its retained place, rather than a whole load of it.
+/// Pass each by-address operand of every direct call, resolved method
+/// call, and checked subscript in `functions` as a `ref.make` of its
+/// retained place, rather than a whole load of it.
 ///
 /// The operand is rewritten when its one reader is the call and its
-/// definition reads the storage the call's `arg_places` entry names: a
+/// definition reads the storage the call's place table names: a
 /// `place.load` of it, or a `ref.read` of a `ref.make` of it, which goes
 /// too when nothing else reads it. A place ending in a `ref` field, whose
 /// load reads through the stored handle, keeps its load.
@@ -195,23 +199,22 @@ fn by_address(
 fn operand_parameters(
     declaration: &MirFunctionDeclaration,
     positional: usize,
-    kwargs: &[(String, Reg)],
+    keywords: &[&str],
 ) -> Option<Vec<Option<usize>>> {
-    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
     let matched = match_call_slots(
         &declaration.param_names,
         &declaration.required,
         declaration.positional_only,
         declaration.keyword_only,
         positional,
-        &keywords,
+        keywords,
         CallVariadics {
             positional: declaration.variadic.is_some(),
             keyword: declaration.kw_variadic.is_some(),
         },
     )
     .ok()?;
-    let mut parameters = vec![None; positional + kwargs.len()];
+    let mut parameters = vec![None; positional + keywords.len()];
     for (parameter, slot) in matched.slots.iter().enumerate() {
         match slot {
             ArgSlot::Positional(operand) => parameters[*operand] = Some(parameter),
@@ -222,36 +225,252 @@ fn operand_parameters(
     Some(parameters)
 }
 
-/// The parameters each operand of a resolved direct `call` or `call.method`
-/// binds, with its callee's declaration; the receiver is not among them.
-fn direct_call_operands<'a>(
-    instruction: &MirInstr,
+/// A resolved call's operands as its callee's declaration binds them.
+struct BoundCall<'a, 'i> {
+    declaration: &'a MirFunctionDeclaration,
+    /// The receiver operand and the place it reads, for a method call or a
+    /// subscript.
+    receiver: Option<(Reg, Option<&'i MirPlace>)>,
+    /// Each regular operand, positional then keyword, with its retained
+    /// place and the parameter it binds (`None` for a collector's).
+    operands: Vec<(Reg, Option<&'i MirPlace>, Option<usize>)>,
+}
+
+/// The operands of a resolved direct `call`, `call.method`, or checked
+/// subscript (`index.get`, `index.multi`, `index.multi_set`), with its
+/// callee's declaration: a subscript is a call of its accessor on the base,
+/// as upstream's subscript emission calls `__getitem__`/`__setitem__` with
+/// the same operand conventions.
+fn bound_call<'a, 'i>(
+    instruction: &'i MirInstr,
     callees: &Callees<'a>,
-) -> Option<(&'a MirFunctionDeclaration, Vec<Option<usize>>)> {
+) -> Option<BoundCall<'a, 'i>> {
     match instruction {
         MirInstr::Call {
             func,
             args,
             kwargs,
+            arg_places,
+            kwarg_places,
             spread: None,
             ..
         } => {
             let declaration = callees.get(&func.0)?;
-            call_operand_parameters(&func.0, declaration, args.len(), kwargs)
-                .map(|parameters| (declaration, parameters))
+            let parameters = call_operand_parameters(&func.0, declaration, args.len(), kwargs)?;
+            Some(BoundCall {
+                declaration,
+                receiver: None,
+                operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
+            })
         }
         MirInstr::MethodCall {
+            recv,
+            recv_place,
             resolved: Some(callee),
             args,
             kwargs,
+            arg_places,
+            kwarg_places,
             spread: None,
             ..
         } => {
             let declaration = callees.get(callee)?;
-            operand_parameters(declaration, args.len(), kwargs)
-                .map(|parameters| (declaration, parameters))
+            let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+            let parameters = operand_parameters(declaration, args.len(), &keywords)?;
+            Some(BoundCall {
+                declaration,
+                receiver: Some((*recv, recv_place.as_deref())),
+                operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
+            })
         }
-        _ => None,
+        _ => {
+            let subscript = SubscriptOperands::of(instruction)?;
+            let declaration = callees.get(subscript.callee)?;
+            let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
+            let parameters = operand_parameters(declaration, subscript.positional.len(), &names)?;
+            let registers = subscript
+                .positional
+                .into_iter()
+                .chain(subscript.keywords.into_iter().map(|(_, register)| register));
+            Some(BoundCall {
+                declaration,
+                receiver: Some(subscript.receiver),
+                operands: registers
+                    .zip(subscript.places)
+                    .zip(parameters)
+                    .map(|((register, place), parameter)| (register, place, parameter))
+                    .collect(),
+            })
+        }
+    }
+}
+
+/// A checked subscript's operands as a call of its accessor passes them.
+struct SubscriptOperands<'i> {
+    /// The accessor the checker selected.
+    callee: &'i str,
+    /// The base and the place it reads.
+    receiver: (Reg, Option<&'i MirPlace>),
+    positional: Vec<Reg>,
+    /// A keyword index, or a store's value under the setter's keyword.
+    keywords: Vec<(&'i str, Reg)>,
+    /// Each positional then keyword operand's retained place.
+    places: Vec<Option<&'i MirPlace>>,
+}
+
+impl<'i> SubscriptOperands<'i> {
+    /// The operands of an `index.get` with a selected accessor, an
+    /// `index.multi`, or an `index.multi_set`. An accessor keyed on value
+    /// parameters of its own (`__getitem_param__`) takes no runtime index.
+    fn of(instruction: &'i MirInstr) -> Option<Self> {
+        match instruction {
+            MirInstr::Index {
+                base,
+                index,
+                base_place,
+                index_place,
+                call: Some(call),
+                ..
+            } => {
+                let indexed = !call.arguments.is_empty();
+                Some(Self {
+                    callee: &call.target,
+                    receiver: (*base, base_place.as_deref()),
+                    positional: indexed.then_some(*index).into_iter().collect(),
+                    keywords: Vec::new(),
+                    places: indexed
+                        .then_some(index_place.as_deref())
+                        .into_iter()
+                        .collect(),
+                })
+            }
+            MirInstr::MultiIndex {
+                object,
+                args,
+                object_place,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                call: Some(call),
+                ..
+            } => Some(Self {
+                callee: &call.target,
+                receiver: (*object, object_place.as_deref()),
+                positional: args
+                    .iter()
+                    .map(|MirSubscriptArg::Index(reg)| *reg)
+                    .collect(),
+                keywords: kwargs
+                    .iter()
+                    .map(|(name, MirSubscriptArg::Index(reg))| (name.as_str(), *reg))
+                    .collect(),
+                places: arg_places
+                    .iter()
+                    .chain(kwarg_places)
+                    .map(Option::as_ref)
+                    .collect(),
+            }),
+            MirInstr::MultiSet {
+                receiver,
+                receiver_place,
+                args,
+                arg_places,
+                value,
+                value_place,
+                value_keyword,
+                call,
+            } => Some(Self {
+                callee: &call.target,
+                receiver: (*receiver, receiver_place.as_deref()),
+                positional: args
+                    .iter()
+                    .map(|MirSubscriptArg::Index(reg)| *reg)
+                    .collect(),
+                keywords: vec![(value_keyword.as_str(), *value)],
+                places: arg_places
+                    .iter()
+                    .map(Option::as_ref)
+                    .chain([value_place.as_deref()])
+                    .collect(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A call's positional then keyword operands with their places and the
+/// parameters they bind.
+fn operand_list<'i>(
+    args: &[Reg],
+    kwargs: &[(String, Reg)],
+    arg_places: &'i [Option<MirPlace>],
+    kwarg_places: &'i [Option<MirPlace>],
+    parameters: &[Option<usize>],
+) -> Vec<(Reg, Option<&'i MirPlace>, Option<usize>)> {
+    args.iter()
+        .chain(kwargs.iter().map(|(_, register)| register))
+        .zip(arg_places.iter().chain(kwarg_places).map(Option::as_ref))
+        .zip(parameters)
+        .map(|((register, place), parameter)| (*register, place, *parameter))
+        .collect()
+}
+
+/// The registers of the operands [`bound_call`] lists for `instruction`,
+/// in its order, with the receiver's.
+fn operand_registers_mut(instruction: &mut MirInstr) -> (Option<&mut Reg>, Vec<&mut Reg>) {
+    match instruction {
+        MirInstr::Call { args, kwargs, .. } => (
+            None,
+            args.iter_mut()
+                .chain(kwargs.iter_mut().map(|(_, register)| register))
+                .collect(),
+        ),
+        MirInstr::MethodCall {
+            recv, args, kwargs, ..
+        } => (
+            Some(recv),
+            args.iter_mut()
+                .chain(kwargs.iter_mut().map(|(_, register)| register))
+                .collect(),
+        ),
+        MirInstr::Index {
+            base,
+            index,
+            call: Some(call),
+            ..
+        } => (
+            Some(base),
+            if call.arguments.is_empty() {
+                Vec::new()
+            } else {
+                vec![index]
+            },
+        ),
+        MirInstr::MultiIndex {
+            object,
+            args,
+            kwargs,
+            ..
+        } => (
+            Some(object),
+            args.iter_mut()
+                .chain(kwargs.iter_mut().map(|(_, argument)| argument))
+                .map(|MirSubscriptArg::Index(register)| register)
+                .collect(),
+        ),
+        MirInstr::MultiSet {
+            receiver,
+            args,
+            value,
+            ..
+        } => (
+            Some(receiver),
+            args.iter_mut()
+                .map(|MirSubscriptArg::Index(register)| register)
+                .chain([value])
+                .collect(),
+        ),
+        _ => (None, Vec::new()),
     }
 }
 
@@ -295,6 +514,7 @@ fn address_function_operands(
         if !read_once(operand) || rewrites.contains_key(&operand.0) {
             continue;
         }
+        let mutability = place_mutability(function, &place, mutability);
         let rewrite = match definitions.get(&operand.0) {
             Some(Definition::Load(loaded))
                 if same_storage(loaded, &place) && loaded.through == place.through =>
@@ -334,6 +554,27 @@ fn address_function_operands(
     rewrite_blocks(&mut function.body, &rewrites, &retired);
 }
 
+/// The mutability of a reference to `place` a callee wants with
+/// `wanted`: a `ref` parameter's reference is as mutable as the place it
+/// addresses, as upstream's `ref` binds its operand's own mutability, so a
+/// `read` parameter's storage, or a place reached through an immutable
+/// reference, lends an immutable one.
+fn place_mutability(function: &MirFunction, place: &MirPlace, wanted: Mutability) -> Mutability {
+    let root = place.root as usize;
+    let read_parameter = root < function.n_params
+        && !function.owned_params.get(root).copied().unwrap_or(true)
+        && !function.ref_params.get(root).copied().unwrap_or(true);
+    let immutable_reference = matches!(
+        place.root_ty.as_ref().map(Ty::kind),
+        Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
+    );
+    if read_parameter || immutable_reference {
+        Mutability::Immutable
+    } else {
+        wanted
+    }
+}
+
 /// Whether two places name the same storage, whatever local reference
 /// either is reached through.
 fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
@@ -369,53 +610,11 @@ fn collect(
             MirInstr::MakeRef { dest, place } => {
                 definitions.insert(dest.0, Definition::Address(place.clone()));
             }
-            MirInstr::Call {
-                args,
-                kwargs,
-                arg_places,
-                kwarg_places,
-                ..
-            } => {
-                if let Some((declaration, parameters)) = direct_call_operands(instruction, callees)
-                {
-                    push_operands(
-                        (args, kwargs),
-                        (arg_places, kwarg_places),
-                        (declaration, &parameters),
-                        declarations,
-                        operands,
-                    );
+            _ => {
+                if let Some(bound) = bound_call(instruction, callees) {
+                    push_operands(&bound, declarations, operands);
                 }
             }
-            MirInstr::MethodCall {
-                recv,
-                recv_place,
-                args,
-                kwargs,
-                arg_places,
-                kwarg_places,
-                ..
-            } => {
-                let Some((declaration, parameters)) = direct_call_operands(instruction, callees)
-                else {
-                    continue;
-                };
-                if let Some(place) = recv_place.as_deref()
-                    && let Some(ty) = place.ty.as_ref()
-                    && !matches!(ty.kind(), TyKind::Ref(_))
-                    && let Some(mutability) = by_address_receiver(declaration, ty, declarations)
-                {
-                    operands.push((*recv, place.clone(), mutability));
-                }
-                push_operands(
-                    (args, kwargs),
-                    (arg_places, kwarg_places),
-                    (declaration, &parameters),
-                    declarations,
-                    operands,
-                );
-            }
-            _ => {}
         }
         for region in instruction_regions(instruction) {
             collect(region, callees, declarations, definitions, operands);
@@ -423,28 +622,30 @@ fn collect(
     }
 }
 
-/// Push each operand of a call that its callee receives by address, with
-/// the place it addresses.
+/// Push the receiver and each operand of a call that its callee receives
+/// by address, with the place it addresses.
 fn push_operands(
-    (args, kwargs): (&[Reg], &[(String, Reg)]),
-    (arg_places, kwarg_places): (&[Option<MirPlace>], &[Option<MirPlace>]),
-    (declaration, parameters): (&MirFunctionDeclaration, &[Option<usize>]),
+    bound: &BoundCall<'_, '_>,
     declarations: &MirDeclarations,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
-    let registers = args
-        .iter()
-        .chain(kwargs.iter().map(|(_, register)| register));
-    let places = arg_places.iter().chain(kwarg_places);
-    for ((register, place), parameter) in registers.zip(places).zip(parameters) {
+    if let Some((register, Some(place))) = bound.receiver
+        && let Some(ty) = place.ty.as_ref()
+        && !matches!(ty.kind(), TyKind::Ref(_))
+        && let Some(mutability) = by_address_receiver(bound.declaration, ty, declarations)
+    {
+        operands.push((register, place.clone(), mutability));
+    }
+    for (register, place, parameter) in &bound.operands {
         let (Some(place), Some(parameter)) = (place, parameter) else {
             continue;
         };
         if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
             continue;
         }
-        if let Some(mutability) = by_address_parameter(declaration, declarations, *parameter) {
-            operands.push((*register, place.clone(), mutability));
+        if let Some(mutability) = by_address_parameter(bound.declaration, declarations, *parameter)
+        {
+            operands.push((*register, (*place).clone(), mutability));
         }
     }
 }
@@ -491,44 +692,32 @@ fn load_in_blocks(
             changed |= load_in_blocks(region, reg_types, context);
         }
         let mut loads = Vec::new();
-        if let Some((declaration, parameters)) =
-            direct_call_operands(&block.instrs[index], context.callees)
-        {
-            let receiver_by_value = matches!(
-                &block.instrs[index],
-                MirInstr::MethodCall { recv, recv_place: Some(_), .. }
-                    if reg_types.get(&recv.0).is_some_and(|ty| {
-                        by_value_receiver(declaration, ty, context.declarations)
+        let by_value = bound_call(&block.instrs[index], context.callees).map(|bound| {
+            let receiver = bound.receiver.is_some_and(|(register, place)| {
+                place.is_some()
+                    && reg_types.get(&register.0).is_some_and(|ty| {
+                        by_value_receiver(bound.declaration, ty, context.declarations)
                     })
-            );
-            if receiver_by_value && let MirInstr::MethodCall { recv, .. } = &mut block.instrs[index]
-            {
-                read_operand(recv, reg_types, context, &mut loads);
+            });
+            let operands: Vec<bool> = bound
+                .operands
+                .iter()
+                .map(|(_, _, parameter)| {
+                    parameter.is_some_and(|parameter| {
+                        by_value_parameter(bound.declaration, context.declarations, parameter)
+                    })
+                })
+                .collect();
+            (receiver, operands)
+        });
+        if let Some((receiver, operands)) = by_value {
+            let (receiver_register, registers) = operand_registers_mut(&mut block.instrs[index]);
+            if receiver && let Some(register) = receiver_register {
+                read_operand(register, reg_types, context, &mut loads);
             }
-            if let MirInstr::Call { args, kwargs, .. } | MirInstr::MethodCall { args, kwargs, .. } =
-                &mut block.instrs[index]
-            {
-                let registers = args
-                    .iter_mut()
-                    .chain(kwargs.iter_mut().map(|(_, register)| register));
-                for (register, parameter) in registers.zip(parameters) {
-                    let Some(parameter) = parameter else {
-                        continue;
-                    };
-                    let by_value = !declaration
-                        .ref_params
-                        .get(parameter)
-                        .copied()
-                        .unwrap_or(true)
-                        && by_address_parameter(declaration, context.declarations, parameter)
-                            .is_none()
-                        && !matches!(
-                            declaration.param_types.get(parameter).map(Ty::kind),
-                            Some(TyKind::Ref(_))
-                        );
-                    if by_value {
-                        read_operand(register, reg_types, context, &mut loads);
-                    }
+            for (register, by_value) in registers.into_iter().zip(operands) {
+                if by_value {
+                    read_operand(register, reg_types, context, &mut loads);
                 }
             }
         }
@@ -538,6 +727,26 @@ fn load_in_blocks(
         index += inserted + 1;
     }
     changed
+}
+
+/// Whether a callee receives its regular parameter `parameter` by value
+/// where its operand may be a reference: an owned one, or a `read` one an
+/// instance's substitution made register-passable.
+fn by_value_parameter(
+    declaration: &MirFunctionDeclaration,
+    declarations: &MirDeclarations,
+    parameter: usize,
+) -> bool {
+    !declaration
+        .ref_params
+        .get(parameter)
+        .copied()
+        .unwrap_or(true)
+        && by_address_parameter(declaration, declarations, parameter).is_none()
+        && !matches!(
+            declaration.param_types.get(parameter).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        )
 }
 
 /// Whether a method receives by value the receiver a reference of type

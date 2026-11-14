@@ -2400,7 +2400,12 @@ to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a
 memory-only type, with a retained `recv_place` becomes a `ref.make` of it,
 so `p.bump(q)` and `Big.bump(p, q)` pass two addresses; its arguments map
-to parameters past the receiver. The package's unit lowering runs the same rewrite. The
+to parameters past the receiver. A checked subscript (`index.get`,
+`index.multi`, `index.multi_set`) is its accessor's call on the base, as
+upstream emits `__getitem__`/`__setitem__`: its base is the receiver and
+its index operands, and a store's value, bind the accessor's parameters by
+its declaration, so `b[k]` over a memory-only `b` and `k` passes two
+addresses. The package's unit lowering runs the same rewrite. The
 elaborator infers from a by-address operand's referent, the move check
 reads the addressed storage at the `ref.make`, copy elision reads a
 `ref.make` copy operand as it reads the load, and `lower-arg-conventions`
@@ -2408,7 +2413,9 @@ reads through the reference (`mir::load_register_passable_operands`)
 where an instance's substitution makes the parameter or a `read`
 receiver register-passable (`read x: T` at `T = Int`), as upstream's pass
 loads such an argument at the call; the move check and the inliner's
-receiver binding read a method call's operands as a call's. The place stays in `arg_places`, which the VM and Pliron still
+receiver binding read a method call's and a subscript's operands as a
+call's, and the verifier compares a subscript's by-address operand by its
+referent. The place stays in `arg_places`, which the VM and Pliron still
 bind a parameter from, and the VM loads an addressed operand's place for
 a callee taking the value (R1920). A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
@@ -2421,8 +2428,9 @@ to the dying source with the load. A reference result at such a parameter
 retains its hidden handle slot's place, `through` that handle
 (`Flatten::lower_borrowed_read_operand`), so the rewrite passes the
 reference the call returned, as upstream passes the `!lit.ref` itself. A
-trait-dispatched, callable-bound, or temporary-receiver method call
-(R2177), an indirect call, and a subscript (R1919) keep the load.
+trait-dispatched, callable-bound, or temporary-receiver method call or
+subscript (R2177), an indirect call (R2178), and a type parameter's copy
+construction (R2179) keep the load.
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes

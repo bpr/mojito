@@ -127,9 +127,9 @@ impl VmBackend {
         Ok(values)
     }
 
-    /// The receiver a method call passes by address, read from its place,
-    /// with the place's type; `None` for a receiver passed as a value.
-    pub(super) fn addressed_receiver<'p>(
+    /// The receiver or lone operand a call passes by address, read from
+    /// its place, with the place's type; `None` for one passed as a value.
+    pub(super) fn addressed_operand<'p>(
         &mut self,
         prog: &Prog,
         (function, frame_id): (usize, FrameId),
@@ -1124,7 +1124,7 @@ impl VmBackend {
                 kwarg_places,
                 ..
             } => {
-                let addressed = self.addressed_receiver(
+                let addressed = self.addressed_operand(
                     prog,
                     (function, frame_id),
                     (regs, vars),
@@ -1365,7 +1365,14 @@ impl VmBackend {
                             )));
                         }
                     };
-                    let idx = regs[index.0 as usize].clone();
+                    let idx = self
+                        .addressed_operand(
+                            prog,
+                            (function, frame_id),
+                            (regs, vars),
+                            (*index, index_place.as_deref()),
+                        )?
+                        .map_or_else(|| regs[index.0 as usize].clone(), |(value, _)| value);
                     let parameterless = call.arguments.is_empty();
                     let arguments = if parameterless { Vec::new() } else { vec![idx] };
                     let argument_places = if parameterless {
@@ -1469,21 +1476,50 @@ impl VmBackend {
                 let subscript_value = |argument: &MirSubscriptArg| match argument {
                     MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
                 };
-                let arguments = args.iter().map(subscript_value).collect();
+                let mut arguments: Vec<Value> = args.iter().map(subscript_value).collect();
                 let call = call.as_ref().ok_or_else(|| {
                     RuntimeError::TypeError(
                         "vm: nominal multi-index lacks a checked call contract".to_string(),
                     )
                 })?;
-                let keyword_arguments = kwargs
+                let mut keyword_arguments: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(name, argument)| (name.clone(), subscript_value(argument)))
                     .collect();
+                let operands = args
+                    .iter()
+                    .chain(kwargs.iter().map(|(_, argument)| argument))
+                    .map(|MirSubscriptArg::Index(register)| register)
+                    .zip(arg_places.iter().chain(kwarg_places.iter()));
+                for (operand, value, _) in self.addressed_operand_values(
+                    prog,
+                    (function, frame_id),
+                    (regs, vars),
+                    operands,
+                )? {
+                    match operand.checked_sub(arguments.len()) {
+                        None => arguments[operand] = value,
+                        Some(keyword) => keyword_arguments[keyword].1 = value,
+                    }
+                }
+                let (receiver, receiver_ty) = self
+                    .addressed_operand(
+                        prog,
+                        (function, frame_id),
+                        (regs, vars),
+                        (*object, object_place.as_deref()),
+                    )?
+                    .unwrap_or_else(|| {
+                        (
+                            regs[object.0 as usize].clone(),
+                            prog.mir.functions[function].1.reg_types.get(&object.0),
+                        )
+                    });
                 let result = self.method_call(
                     prog,
                     MethodInvocation {
-                        receiver: regs[object.0 as usize].clone(),
-                        receiver_ty: prog.mir.functions[function].1.reg_types.get(&object.0),
+                        receiver,
+                        receiver_ty,
                         method: "__getitem__",
                         resolved_name: Some(&call.target),
                         result_adapter: None,
@@ -1513,21 +1549,50 @@ impl VmBackend {
                 value_keyword,
                 call,
             } => {
-                let arguments = args
+                let mut arguments = args
                     .iter()
                     .map(|argument| match argument {
                         MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
                     })
                     .collect::<Vec<_>>();
-                let keyword_arguments =
+                let mut keyword_arguments =
                     vec![(value_keyword.clone(), regs[value.0 as usize].clone())];
                 let argument_places = arg_places.clone();
                 let keyword_argument_places = vec![value_place.as_deref().cloned()];
+                let operands = args
+                    .iter()
+                    .map(|MirSubscriptArg::Index(register)| register)
+                    .chain([value])
+                    .zip(argument_places.iter().chain(&keyword_argument_places));
+                for (operand, value, _) in self.addressed_operand_values(
+                    prog,
+                    (function, frame_id),
+                    (regs, vars),
+                    operands,
+                )? {
+                    match operand.checked_sub(arguments.len()) {
+                        None => arguments[operand] = value,
+                        Some(keyword) => keyword_arguments[keyword].1 = value,
+                    }
+                }
+                let (receiver, receiver_ty) = self
+                    .addressed_operand(
+                        prog,
+                        (function, frame_id),
+                        (regs, vars),
+                        (*receiver, receiver_place.as_deref()),
+                    )?
+                    .unwrap_or_else(|| {
+                        (
+                            regs[receiver.0 as usize].clone(),
+                            prog.mir.functions[function].1.reg_types.get(&receiver.0),
+                        )
+                    });
                 let _ = self.method_call(
                     prog,
                     MethodInvocation {
-                        receiver: regs[receiver.0 as usize].clone(),
-                        receiver_ty: prog.mir.functions[function].1.reg_types.get(&receiver.0),
+                        receiver,
+                        receiver_ty,
                         method: "__setitem__",
                         resolved_name: Some(&call.target),
                         result_adapter: None,

@@ -756,6 +756,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checked subscript passes its operands as its accessor's call does: a
+  memory-only or `mut` base, and a memory-only index or stored value, is a
+  `ref.make` of the caller's place instead of a whole load beside it, so
+  `b[k]`, `b[k, j]`, and `b[k] = v` over a memory-only `b` and key pass
+  addresses, as upstream's `__getitem__`/`__setitem__` call takes
+  `!lit.ref` operands (R1919). The verifier, the move check,
+  `lower-arg-conventions`, the VM's subscript binding, and Pliron's
+  `lower_subscript_call` read the address. An indirect call (R2178) and a
+  type parameter's `T(copy=x)` (R2179) keep the load.
+
 - A resolved method call passes its receiver and arguments as a direct
   call does: a `mut`/`ref` receiver or argument, or a `read` one of a
   memory-only type, is a `ref.make` of the caller's place, upstream's

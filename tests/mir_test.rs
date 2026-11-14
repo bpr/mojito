@@ -4488,6 +4488,77 @@ fn method_call_passes_by_address_operands_as_references() {
 }
 
 #[test]
+fn subscript_passes_by_address_operands_as_references() {
+    // A subscript is its accessor's call on the base: a memory-only base,
+    // index, or stored value passes as a reference to the caller's storage,
+    // while a register-passable index is loaded.
+    let src = "struct Key(Copyable, Movable):\n    var s: String\n    def __init__(out self, s: String):\n        self.s = s\n\nstruct Table(Movable):\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __getitem__(self, k: Key) -> Int:\n        return self.n\n    def __getitem__(self, k: Key, i: Int) -> Key:\n        return k.copy()\n    def __setitem__(mut self, k: Key, i: Int, value: Key):\n        self.n = i\n\ndef main():\n    var t = Table(1)\n    var a = Key(\"x\")\n    var b = Key(\"y\")\n    var i = 2\n    print(t[a])\n    print(t[a, i].s)\n    t[a, i] = b\n";
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let instructions = nested_instructions(&main.body);
+    let addressed = |register: Reg| {
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == register))
+    };
+    let index = |register: &MirSubscriptArg| match register {
+        MirSubscriptArg::Index(register) => *register,
+    };
+    let mut seen = 0;
+    for instruction in &instructions {
+        match instruction {
+            MirInstr::Index {
+                base,
+                index: key,
+                call: Some(_),
+                ..
+            } => {
+                assert!(addressed(*base) && addressed(*key), "{main:#?}");
+                seen += 1;
+            }
+            MirInstr::MultiIndex { object, args, .. } => {
+                assert!(
+                    addressed(*object) && addressed(index(&args[0])),
+                    "{main:#?}"
+                );
+                assert!(!addressed(index(&args[1])), "{main:#?}");
+                seen += 1;
+            }
+            MirInstr::MultiSet {
+                receiver,
+                args,
+                value,
+                ..
+            } => {
+                assert!(
+                    addressed(*receiver) && addressed(index(&args[0])),
+                    "{main:#?}"
+                );
+                assert!(
+                    !addressed(index(&args[1])) && addressed(*value),
+                    "{main:#?}"
+                );
+                seen += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(seen, 3, "{main:#?}");
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn pack_element_read_argument_retains_its_place() {
     // A pack element `Ts[i]` is one more type known only per instance:
     // `print` and an ordinary `read` parameter read it where it lies, as
