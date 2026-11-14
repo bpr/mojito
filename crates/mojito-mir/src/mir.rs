@@ -802,7 +802,9 @@ impl MirDeclarations {
 
     /// The requirement a call through `bounds` selects by its `dispatch`
     /// symbol: one a bound trait declares, or a parent it refines, nearest
-    /// first.
+    /// first. A compiler-known lifecycle trait no declaration answers is
+    /// read by its upstream declaration (`TraitDeclaration::lifecycle`), so
+    /// `x.copy()` over `T: Copyable` binds `Copyable`'s `copy`.
     pub fn bound_requirement(
         &self,
         bounds: &[String],
@@ -814,7 +816,10 @@ impl MirDeclarations {
             if !visited.insert(name) {
                 continue;
             }
-            let Some(declaration) = self.trait_declaration(name) else {
+            let Some(declaration) = self
+                .trait_declaration(name)
+                .or_else(|| TraitDeclaration::lifecycle(name))
+            else {
                 continue;
             };
             if let Some(requirement) = declaration

@@ -7,7 +7,10 @@
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::{ArgConvention, CONTEXTUAL_SENTINEL, Decorator, ExprKind};
 use mojito_common::error::TypeError;
-use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
+use mojito_symbol::symbol::{
+    OverloadFamily, OverloadSets, SignatureKey, TRAIT_DISPATCH, method_symbol, overload_family,
+    split_method_symbol,
+};
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Origin, OriginParamId};
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
@@ -16,6 +19,7 @@ use mojito_types::types::{
     substitute_origin_params,
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// A package stores each one as a bytecode record, its sets and maps
 /// written sorted, so equal declarations encode equal bytes.
@@ -444,6 +448,54 @@ pub struct TraitDeclaration {
     /// upstream's trait declares each, and a defaulted one's member
     /// function is its body, not another declaration of the name.
     pub requirements: Vec<TraitRequirement>,
+}
+
+impl TraitDeclaration {
+    /// The declaration upstream's `std.builtin` gives the compiler-known
+    /// lifecycle trait `name` (`Copyable`, `ImplicitlyCopyable`, `Movable`,
+    /// `Deinitable`), which no program or package declares here: its
+    /// parents (`mojito_types::conformance::compiler_trait_parents`) and
+    /// the requirement a call through a bound on it selects, `Copyable`'s
+    /// `copy(self) -> Self` with a `read` receiver.
+    pub fn lifecycle(name: &str) -> Option<&'static Self> {
+        static DECLARATIONS: LazyLock<Vec<TraitDeclaration>> = LazyLock::new(|| {
+            ["Copyable", "ImplicitlyCopyable", "Movable", "Deinitable"]
+                .into_iter()
+                .map(|name| TraitDeclaration {
+                    name: name.to_string(),
+                    refines: mojito_types::conformance::compiler_trait_parents(name)
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    requirements: (name == "Copyable")
+                        .then(|| TraitRequirement {
+                            name: "copy".to_string(),
+                            arity: 0,
+                            dispatch: method_symbol(
+                                TRAIT_DISPATCH,
+                                "copy",
+                                &SignatureKey::from_tys([]),
+                            ),
+                            param_names: Vec::new(),
+                            param_types: Vec::new(),
+                            param_conventions: Vec::new(),
+                            variadic_index: None,
+                            required: Vec::new(),
+                            positional_only: None,
+                            keyword_only: None,
+                            variadic: None,
+                            kw_variadic: None,
+                            variadic_convention: None,
+                        })
+                        .into_iter()
+                        .collect(),
+                })
+                .collect()
+        });
+        DECLARATIONS
+            .iter()
+            .find(|declaration| declaration.name == name)
+    }
 }
 
 /// One requirement of a trait declaration, a bodyless method declaration.

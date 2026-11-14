@@ -9228,25 +9228,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2180 A lifecycle trait declares no requirements, so `x.copy()`
-  over `T: Copyable` passes its receiver as a loaded value**
-
-  `Copyable`, `Movable`, and the other lifecycle traits
-  (`mojito_types::conformance::LIFECYCLE_TRAITS`) are compiler-known and
-  have no `TraitDeclaration`, so `MirDeclarations::bound_requirement` finds
-  no requirement for `__trait_dispatch.copy$ov$`, and
-  `mir::address_call_operands` leaves the receiver a `place.load`.
-  - Upstream's `Copyable` declares `copy(self) -> Self` with a `read`
-    receiver, so its call takes a `!lit.ref` of a memory-only `x`.
-  - Fix: record the lifecycle traits' requirements (`copy`, and any other
-    method a bound on them selects) as `TraitRequirement`s the declaration
-    table answers, as the program's own traits are.
-  - Probe: `def cp[T: Copyable](a: T) -> T: return a.copy()` keeps
-    `place.load` of `a` feeding the `call.method` in `emit-mir`.
-  - Found while landing R2177 (2026-11-13).
-  - Depends on R1269.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1920 A call keeps `arg_places` beside its address operand, and
   the backends recover the address from the place**
 

@@ -2440,8 +2440,11 @@ reads each addressed operand through its reference ahead of the call
 An operand over a type parameter a pointer may instantiate is addressed
 too: a `ref.make` of the whole of a slot holding a pointer designates the
 slot, the pointer, as upstream's `!lit.ref` of a pointer local does
-(`make_ref_target`, `Prog::pointer_value_slot`). A lifecycle requirement's
-receiver (`x.copy()`) keeps its load (R2180). A type
+(`make_ref_target`, `Prog::pointer_value_slot`). A compiler-known
+lifecycle trait no declaration answers is read by its upstream declaration
+(`TraitDeclaration::lifecycle`), so `x.copy()` through `Copyable`, or a
+trait refining it, binds `Copyable`'s `copy(self) -> Self` and passes a
+memory-only receiver's address. A type
 parameter's copy construction (`T(copy=x)`, `type.construct`) passes its
 source as its copy initializer's `read copy: Self` operand, a `ref.make`
 of the source's place when `T` is memory-only, as upstream's call of the

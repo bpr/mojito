@@ -4554,6 +4554,45 @@ fn requirement_and_temporary_receiver_calls_pass_by_address_operands() {
 }
 
 #[test]
+fn lifecycle_bound_copy_passes_its_receiver_by_address() {
+    // `Copyable` declares `copy(self) -> Self` upstream, so `x.copy()`
+    // through a lifecycle bound, directly or through a refining trait,
+    // binds that requirement's `read` receiver as a reference.
+    let src = "trait Named(Copyable):\n    pass\n\ndef cp[T: Copyable](a: T) -> T:\n    return a.copy()\n\ndef icp[T: ImplicitlyCopyable](a: T) -> T:\n    return a.copy()\n\ndef ncp[T: Named](a: T) -> T:\n    return a.copy()\n\ndef main():\n    print(cp(1))\n";
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    for name in ["cp", "icp", "ncp"] {
+        let (_, function) = mir
+            .functions
+            .iter()
+            .find(|(lowered, _)| lowered == name)
+            .unwrap_or_else(|| panic!("{name} lowered"));
+        let instructions = nested_instructions(&function.body);
+        let receiver = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall { method, recv, .. } if method == "copy" => Some(*recv),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} calls copy"));
+        assert!(
+            instructions.iter().any(|instruction| matches!(
+                instruction,
+                MirInstr::MakeRef { dest, .. } if *dest == receiver
+            )),
+            "{name}: {instructions:#?}"
+        );
+    }
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn subscript_passes_by_address_operands_as_references() {
     // A subscript is its accessor's call on the base: a memory-only base,
     // index, or stored value passes as a reference to the caller's storage,

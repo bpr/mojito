@@ -156,8 +156,7 @@ A call reads its argument conventions from the callee's signature rather
 than checker markers, passes by-address operands as addresses with no
 `arg_places` side table, and returns a raising callee's result and error
 through memory slots. The largest structural change left at the MIR waist;
-it touches the VM, Pliron, and the package format. R2180 runs as a
-prerequisite.
+it touches the VM, Pliron, and the package format.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \

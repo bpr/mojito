@@ -765,6 +765,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `x.copy()` through a `Copyable` bound, an `ImplicitlyCopyable` one, or
+  a trait refining `Copyable` binds `Copyable`'s `copy(self) -> Self`
+  requirement, as upstream's `std.builtin` declares it, so a memory-only
+  receiver passes as a `ref.make` of the caller's place instead of a load
+  beside it (R2180).
+
 - A type parameter's copy construction (`T(copy=x)`, `type.construct`)
   passes its source as its copy initializer's `read copy: Self` operand:
   over a memory-only `T` it is a `ref.make` of the caller's place, as
@@ -796,8 +802,7 @@ to evolve under the `0.x` compatibility rules.
   the elaborator answers a requirement itself (`len` of a `Tuple` through
   `Sized`) it reads the addressed operands back as values (R2177). A
   requirement call over a type parameter a pointer may instantiate keeps
-  the load (R1269), as do `x.copy()` over `T: Copyable` (R2180) and a
-  `def(...)` bound's call (R2178).
+  the load (R1269), as does a `def(...)` bound's call (R2178).
 
 - A checked subscript passes its operands as its accessor's call does: a
   memory-only or `mut` base, and a memory-only index or stored value, is a
