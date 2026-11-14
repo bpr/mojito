@@ -282,12 +282,29 @@ impl VmBackend {
                 args.iter()
                     .map(|register| caller.registers[register.0 as usize].clone()),
             );
-            let keywords: Vec<(String, Value)> = kwargs
+            let mut keywords: Vec<(String, Value)> = kwargs
                 .iter()
                 .map(|(name, register)| {
                     (name.clone(), caller.registers[register.0 as usize].clone())
                 })
                 .collect();
+            let operands = args.iter().zip(arg_places).chain(
+                kwargs
+                    .iter()
+                    .map(|(_, register)| register)
+                    .zip(kwarg_places),
+            );
+            for (operand, value, _) in self.addressed_operand_values(
+                prog,
+                (caller.function, caller.id),
+                (&caller.registers, &mut caller.variables),
+                operands,
+            )? {
+                match operand.checked_sub(args.len()) {
+                    None => positional[capture_count + operand] = value,
+                    Some(keyword) => keywords[keyword].1 = value,
+                }
+            }
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
                 Some(signature) => self.bind_for_closure_call(

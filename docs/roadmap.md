@@ -9118,6 +9118,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     operand over such a parameter loaded (`pointer_may_bind`: `T:
     Intable`, `T: Writable`, a lifecycle bound, or `Self`); drop that
     guard with the fix.
+  - Probe: the same guard covers a call through a function value or a
+    `def(...)` bound over such a parameter: `def apply[T: Copyable](f:
+    def(T) -> Int, x: T) -> Int: return f(x)` keeps `place.load` of `x`
+    feeding the `call.indirect` in `emit-mir`.
   - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
     return inner(value)` over `def inner[T: Intable](value: T) -> Int:
     return Int(value)`, called with `Pointer(to=x)`, fails verification
@@ -9187,42 +9191,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fix: record each argument's convention on `call`/`call.method` at
     lowering (the checker binds it), and classify by that record.
   - Found while landing R1930 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2178 A call through a function value passes its by-address
-  operands as loaded values beside their places**
-
-  `mir::address_call_operands` reads a callee's conventions only from its
-  `MirFunctionDeclaration`, and a `call.indirect` has none: its contract is
-  the callee register's `def(...)` type.
-  - So `f(b)` over `f: def(Big) -> Int` with a memory-only `Big` passes a
-    `place.load` of `b` beside `arg_places`, where upstream's indirect
-    `lit.call` takes a `!lit.ref` of `b`.
-  - Fix: bind the operands by the function type's `conventions`,
-    `ref_params`, and `params` (the slot matching `match_call_slots` does
-    for a declaration), and teach `lower-arg-conventions`
-    (`mir::load_register_passable_operands`) the same contract for an
-    instance whose substitution makes a parameter register-passable.
-  - The VM's two indirect-call bindings (`vm/exec.rs` and `vm/frames.rs`)
-    must read an addressed operand from its place, as their `call` arm
-    does (`addressed_operand_values`), and Pliron's `lower_call_indirect`
-    (`lower/closures.rs`) must pass the address.
-  - The move check's `call_operands` (`analysis/moves.rs`) must list the
-    instruction's operands.
-  - Probe: `def apply(f: def(Big) -> Int, b: Big) -> Int: return f(b)`
-    keeps `place.load` of `b` feeding the `call.indirect` in `emit-mir`.
-  - A `def(...)` bound's `__call__` (`call.method` of
-    `__trait_dispatch.__call__$ov$…`) has the same gap: the elaborator
-    rewrites it into the value's `call.indirect`
-    (`mir::indirect_from_bound_call`), so its operands may be addressed
-    only once an indirect call's are. Read its conventions off the bound's
-    `FuncTy` (`mir::callable_bound_requirement`) in
-    `address_call_operands`' `Contract`.
-  - Probe: `def apply[F: def(Big) -> Int](f: F, b: Big) -> Int: return
-    f(b)` keeps `place.load` of `b` feeding the `call.method` in
-    `emit-mir`.
-  - Found while landing R1919 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

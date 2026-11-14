@@ -2439,9 +2439,15 @@ reads each addressed operand through its reference ahead of the call
 (`mir::read_addressed_operands`), since the builtin takes values (R2177).
 An operand over a type parameter a pointer may instantiate keeps its load,
 since a `ref.make` of a whole pointer slot designates the pointee (R1269);
-so does a lifecycle requirement's receiver (`x.copy()`, R2180), a
-`def(...)` bound's `__call__` and an indirect call (R2178), and a type
-parameter's copy construction (R2179).
+so does a lifecycle requirement's receiver (`x.copy()`, R2180) and a type
+parameter's copy construction (R2179). A call through a function value
+(`call.indirect`) and a `def(...)` bound's `__call__` bind their operands
+by the value's or the bound's function type (its `conventions`,
+`ref_params`, and `params`, slot-matched as a declaration's), as
+upstream's indirect `lit.call` reads the callee's signature; the callee
+itself is passed as a value. `lower-arg-conventions` reads an addressed
+operand through where an instance's substitution makes the function
+type's parameter register-passable (R2178).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes

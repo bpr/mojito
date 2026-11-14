@@ -795,7 +795,7 @@ fn move_context(f: &MirFunction) -> MoveContext {
     };
     let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.body, &mut |instr| match instr {
-        MirInstr::Call { args, kwargs, .. } => {
+        MirInstr::Call { args, kwargs, .. } | MirInstr::CallIndirect { args, kwargs, .. } => {
             context.call_operands.extend(
                 args.iter()
                     .chain(kwargs.iter().map(|(_, register)| register))

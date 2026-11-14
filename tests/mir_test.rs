@@ -4624,6 +4624,52 @@ fn subscript_passes_by_address_operands_as_references() {
 }
 
 #[test]
+fn indirect_and_callable_bound_calls_pass_by_address_operands() {
+    // A call through a function value or a `def(...)` bound reads its
+    // operands' conventions off the function type: a memory-only `read`
+    // or `mut` argument passes as a reference to the caller's storage,
+    // while a register-passable one and the callee itself are loaded.
+    let src = "struct Big(Copyable):\n    var a: Int\n    var s: String\n    def __init__(out self, a: Int):\n        self.a = a\n        self.s = \"x\"\n\ndef apply(f: def(Big, Int) -> Int, b: Big, n: Int) -> Int:\n    return f(b, n)\n\ndef apply_mut(f: def(mut Big) -> Int, mut b: Big) -> Int:\n    return f(b)\n\ndef apply_bound[F: def(Big) -> Int](f: F, b: Big) -> Int:\n    return f(b)\n";
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    for (name, addressed_count) in [("apply", 1), ("apply_mut", 1), ("apply_bound", 1)] {
+        let (_, function) = mir
+            .functions
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .expect("function lowered");
+        let instructions = nested_instructions(&function.body);
+        let addressed = |register: Reg| {
+            instructions
+                .iter()
+                .any(|instruction| matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == register))
+        };
+        let (callee, args) = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::CallIndirect { callee, args, .. } => Some((*callee, args.clone())),
+                MirInstr::MethodCall { recv, args, .. } => Some((*recv, args.clone())),
+                _ => None,
+            })
+            .expect("call through the value");
+        assert!(!addressed(callee), "{function:#?}");
+        assert!(addressed(args[0]), "{function:#?}");
+        assert_eq!(
+            args.iter().filter(|register| addressed(**register)).count(),
+            addressed_count,
+            "{function:#?}"
+        );
+    }
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn pack_element_read_argument_retains_its_place() {
     // A pack element `Ts[i]` is one more type known only per instance:
     // `print` and an ordinary `read` parameter read it where it lies, as

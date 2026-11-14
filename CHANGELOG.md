@@ -756,6 +756,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a function value (`call.indirect`) and a `def(...)`
+  bound's call pass their operands by the function type's conventions, as
+  upstream's indirect `lit.call` reads the callee's signature: a
+  `mut`/`ref` or memory-only `read` argument is a `ref.make` of the
+  caller's place, so `f(b)` over `f: def(Big) -> Int` or `F: def(Big) ->
+  Int` passes the address of a memory-only `b` (R2178). The verifier, the
+  move check, `lower-arg-conventions`, the VM's indirect-call bindings,
+  and Pliron's `bind_contract_slots` read the address. An operand over a
+  type parameter a pointer may instantiate keeps its load (R1269).
+
 - A method call through a trait bound passes its operands by the
   requirement the bound declares, as upstream's call of a requirement
   reads its signature: a `mut`/`ref` or memory-only `read` receiver or

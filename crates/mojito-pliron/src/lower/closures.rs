@@ -191,8 +191,20 @@ impl FnLowering<'_> {
                 ArgSlot::Keyword(k) if by_ref => {
                     place_address(self, ctx, kwarg_places.get(*k).and_then(Option::as_ref))?
                 }
-                ArgSlot::Positional(p) => self.arg_value(ctx, args[*p], &expected, owned, dest)?,
-                ArgSlot::Keyword(k) => self.arg_value(ctx, kwargs[*k].1, &expected, owned, dest)?,
+                ArgSlot::Positional(p) => self.contract_arg_value(
+                    ctx,
+                    args[*p],
+                    arg_places.get(*p).and_then(Option::as_ref),
+                    (&expected, owned),
+                    dest,
+                )?,
+                ArgSlot::Keyword(k) => self.contract_arg_value(
+                    ctx,
+                    kwargs[*k].1,
+                    kwarg_places.get(*k).and_then(Option::as_ref),
+                    (&expected, owned),
+                    dest,
+                )?,
                 ArgSlot::Default => {
                     return Err(self.unsupported_reg(
                         "defaulted argument at an indirect call site".into(),
@@ -203,6 +215,25 @@ impl FnLowering<'_> {
             lowered.push(value);
         }
         Ok(lowered)
+    }
+
+    /// The value an indirect call passes for a by-value slot: one the call
+    /// passes by address (`mojito_mir::mir::address_call_operands`) is
+    /// read from, or bound to, its place.
+    fn contract_arg_value(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        place: Option<&MirPlace>,
+        (expected, owned): (&LowerTy, bool),
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        match place.filter(|place| self.addresses_place(reg, place)) {
+            Some(place) => {
+                self.place_backed_arg_value(ctx, reg, expected, owned, Some(place), dest)
+            }
+            None => self.arg_value(ctx, reg, expected, owned, dest),
+        }
     }
 
     /// Materialize a constant default at the parameter's scalar type, exactly
