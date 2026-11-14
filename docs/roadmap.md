@@ -4772,6 +4772,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the bundled `VariadicPack` declares `Copyable where not
     is_owned` without upstream's `else "Cannot copy an owned variadic
     pack."`.
+  - Probe: the bundled `VariadicPack.consume_elements` spells upstream's
+    `where (Self.is_owned) else "consume_elements may only be called on
+    owned variadic packs"` in the tuple form.
   - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
     2026-10-17 re-pin.
   - At `1.3.0.dev2026110105` `@explicit_destroy("<message>")` warns as
@@ -9439,6 +9442,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A register-passable `read` the result borrows
     (`Flatten::lends_read_arguments`) keeps a place only to root the
     result's loans: derive those from the result type's origin instead.
+  - Probe: over `def read[o: ImmOrigin](r: Pointer[Int, o]._mlir_lit_ref)
+    -> ref[o] Int` returning `__get_litref_as_mvalue(r)`, `var x = 222`
+    then `print(read(__get_mvalue_as_litref(x)))` with no later use of `x`
+    prints `0` where the pin prints `222`: `x` is dropped after the call,
+    before the read through its result, since the in-place `ref.make`
+    operand has no `arg_places` entry. Binding the `!lit.ref` first (`var
+    r = ...; print(read(r))`) fails the same way.
   - Fix: one helper finds the `ref.make` defining an operand, and every
     reader uses it.
   - Depends on R2185, R2186, R2187.
@@ -9767,6 +9777,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     admission go with it.
   - Probe: `owned_pack_destroyed_in_reverse.mojo` and
     `pack_constructor_spread_served.mojo` keep their output.
+  - Probe: once a pack's drop runs `__deinit__`, an empty pack must still
+    inline it. Forcing a read pack's drop to run code, `scaled[2]()` over
+    `def scaled[n: Int, *Us: Writable](*extra: *Us)` failed
+    `inline-parametric`'s verification ("intrinsic TupleStorage result
+    type ... paramfor_next_value ... is incompatible with its checked
+    element type") on the `comptime for` over `reversed(range(0))`.
   - Split from R1921 (2026-11-05).
   - Depends on R1924.
   - Model: Fable, Not Planned.
@@ -9824,26 +9840,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Split from R1302 (2026-11-05).
   - Depends on R1921.
   - Model: Fable, Not Planned.
-
-- [ ] **R1924 Upstream's `__get_litref_as_mvalue` and
-  `__get_address_as_owned_value` are not builtins**
-
-  Both are rejected as undefined, where the pin turns a `!lit.ref` into the
-  place it refers to and a `!kgen.pointer` into the owned value it holds.
-  - Probe: the bundled `VariadicPack.__getitem_param__` returns
-    `Pointer(_mlir_value=litref_elt)[]` where upstream returns
-    `__get_litref_as_mvalue(litref_elt)`.
-  - Probe: `VariadicPack.consume_elements` is not declared: upstream's body
-    passes `__get_address_as_owned_value(ptr._get_kgen_pointer())`, and the
-    bundled `Tuple`'s `unsafe_take_pointee()` spelling is rejected for an
-    element that is not trivially destructible ("requires a trivially
-    destructible element").
-  - Lever: type each beside `__get_mvalue_as_litref`
-    (`checker/operators.rs`): the first a place through the reference, the
-    second a move out of the address.
-  - Found while landing R1302 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1681 `Pointer` is the compiler's `TyKind::Pointer`, where upstream
   declares `struct Pointer` in `std/memory/pointer.mojo` over a
@@ -11269,8 +11265,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - With that body the bundled library does not package: "no symbolic
     rule for an unbound pack or reflected type: method 'consume_elements'
     of an unbound pack".
-  - `var *args: *Ts` is still the tuple of its values (R1927), and the
-    bundled `VariadicPack` declares no `consume_elements` (R1924).
+  - `var *args: *Ts` is still the tuple of its values (R1927), so the
+    bundled `VariadicPack.consume_elements` is never reached.
   - Do not add a symbolic `consume_elements` rule for the tuple collector.
   - Split from R341 (2026-11-08), whose copy, move, default, and
     `init_with` initializers landed.

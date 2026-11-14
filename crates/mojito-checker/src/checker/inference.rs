@@ -1321,6 +1321,7 @@ impl Checker {
                 .infer_unbound_pack_construction(name, param_args, args, kwargs)
                 .or_else(|| self.infer_pack_element_call(expr, name, param_args, args, kwargs))
                 .or_else(|| self.infer_value_method_call(expr, name, param_args, args, kwargs))
+                .or_else(|| self.infer_address_builtin(expr, name, param_args, args, kwargs))
             {
                 Some(typed) => typed,
                 None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),

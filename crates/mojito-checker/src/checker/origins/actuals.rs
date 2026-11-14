@@ -160,6 +160,9 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
         use mojito_types::origin::{Mutability, Origin, RefTy};
 
+        if let Some(spelled) = self.spelled_construction(expr) {
+            return self.reference_actual(&spelled);
+        }
         if let Some(mut reference) = self.infer_reference_value(expr) {
             let retained = self.aggregate_origins(expr);
             if !retained.is_empty() {
@@ -666,6 +669,9 @@ impl Checker {
                 | Origin::Unbound => true,
             }
         }
+        if let Some(spelled) = self.spelled_construction(expr) {
+            return self.returned_reference_parameter_origin(&spelled);
+        }
         match &expr.kind {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.returned_reference_parameter_origin(inner)
@@ -825,6 +831,9 @@ impl Checker {
         self_place: Option<&mojito_types::origin::OriginPlace>,
     ) -> Option<mojito_types::origin::Origin> {
         use mojito_types::origin::{Origin, OriginSeg, PointerOrigin};
+        if let Some(spelled) = self.spelled_construction(expr) {
+            return self.returned_pointer_dereference_origin(&spelled, self_place);
+        }
         let pointer = dereferenced_pointer(expr)?;
         let TyKind::Pointer { origin, .. } = self.infer(pointer).ok()?.into_kind() else {
             return None;

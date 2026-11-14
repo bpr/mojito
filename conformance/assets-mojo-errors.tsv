@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1195
+# swept-count	1197
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -887,6 +887,7 @@ assets/type_error/param_expr_where_false.mojo	compile-reject	agree	error: invali
 assets/type_error/param_expr_where_residual.mojo	compile-reject	agree	error: invalid call to 'below': lacking evidence to prove correctness
 assets/type_error/param_expr_where_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'floored': lacking evidence to prove correctness
 assets/type_error/parametric_static_method_value_unbound.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
+assets/type_error/pointer_address_as_owned_value_not_kgen_pointer.mojo	compile-reject	agree	error: operand must have '!kgen.pointer<T>' type, not 'ref[x] Int'
 assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization
@@ -905,6 +906,7 @@ assets/type_error/pointer_kgen_pointer_no_origin.mojo	compile-reject	agree	error
 assets/type_error/pointer_kgen_pointer_subscript.mojo	compile-reject	agree	error: '__mlir_type.`!kgen.pointer<!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>>>`' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
 assets/type_error/pointer_lit_ref_not_its_referent.mojo	compile-reject	agree	error: cannot implicitly convert 'ref[x] Int' value to 'Int'
 assets/type_error/pointer_lit_ref_origin_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_litref_as_mvalue_not_lit_ref.mojo	compile-reject	agree	error: operand isn't a '!lit.ref' type 'Int'
 assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	error: invalid call to 'unsafe_origin_cast': value passed to 'target_origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_origin_cast_no_upgrade.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_param_symbolic_origin_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment

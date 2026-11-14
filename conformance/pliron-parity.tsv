@@ -1009,6 +1009,7 @@ assets/ok/pliron_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
+assets/ok/pointer_address_builtins.mojo	main	exe-differential	sanitized
 assets/ok/pointer_bound_copy.mojo	main	exe-differential	sanitized
 assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	main	exe-differential	sanitized
 assets/ok/pointer_deref_store_overwrite_drop.mojo	main	exe-differential	sanitized

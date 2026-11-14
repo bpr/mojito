@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's address builtins `__get_litref_as_mvalue(r)` and
+  `__get_address_as_owned_value(k)` are accepted, as at the pin: the first
+  is the place a `!lit.ref` refers to (read, assigned, passed `mut`, bound
+  by `ref`, returned as a `ref` result), the second moves the value a
+  `!kgen.pointer` holds out of it, and each rejects any other operand with
+  the pin's message. The bundled `VariadicPack.__getitem_param__` and
+  `Tuple.consume_elements` now use them as upstream's do, and
+  `VariadicPack` declares upstream's `consume_elements` (R1924;
+  `assets/ok/pointer_address_builtins.mojo`). A struct's named destructor
+  no longer makes its implicit drop run code where its `__del__is_trivial`
+  witness holds.
+
 - A predicate alias read as a run-time value over a type parameter
   (`return NotCopy[T]`, `return IsSmallCopy[T]`, `return C[Self.T]`) is
   the `Bool` each instance answers, as at the pin: the elaborator answers

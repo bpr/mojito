@@ -202,6 +202,10 @@ pub enum TypeError {
     /// moves one of its parameters, or two initializers that differ only
     /// in their refined types. Carries the pin's message.
     InvalidReceiver(String),
+    /// An address builtin's operand of the wrong MLIR type
+    /// (`__get_litref_as_mvalue` of a value that is no `!lit.ref`).
+    /// Carries the pin's message.
+    InvalidAddressOperand(String),
     /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
     /// scope. Mojito requires `var` to declare a new variable.
     AssignToUndeclared(String),
@@ -810,7 +814,8 @@ impl fmt::Display for TypeError {
             }
             Self::InvalidDecorator(message)
             | Self::Unavailable(message)
-            | Self::InvalidReceiver(message) => f.write_str(message),
+            | Self::InvalidReceiver(message)
+            | Self::InvalidAddressOperand(message) => f.write_str(message),
             Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
             }

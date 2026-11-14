@@ -49,11 +49,10 @@
 # collector is still the tuple of its elements (roadmap R1927), and
 # `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members they read are
 # not declared (R1922). Otherwise it differs from upstream's:
-# - the `Copyable` conformance has no `else` message (R1115);
+# - the `Copyable` conformance has no `else` message, and
+#   `consume_elements` spells its `where ... else` message in the tuple
+#   form (R1115);
 # - `element_types` has no `@deprecated(use=Ts)` (R1925);
-# - `__getitem_param__` returns `Pointer(_mlir_value=litref_elt)[]` where
-#   upstream returns `__get_litref_as_mvalue(litref_elt)`, and
-#   `consume_elements` is not declared (R1924);
 # - `_write_to`'s delimiters are `StaticString`s where upstream's are
 #   origin-parametric `StringSlice`s (R1926).
 from std.builtin.constrained import _constrained_conforms_to
@@ -676,6 +675,32 @@ struct VariadicPack[
                     True
                 ]().unsafe_deinit_pointee()
 
+    def consume_elements[
+        F: def[idx: Int](var elt: Self.Ts[idx])
+    ](deinit self, elt_handler: F, /) where (
+        Self.is_owned,
+        "consume_elements may only be called on owned variadic packs",
+    ):
+        """Consume the variadic pack by transferring ownership of each element
+        into the provided closure one at a time.  This is only valid on 'owned'
+        variadic packs.
+
+        Parameters:
+            F: The type of the element handler closure.
+
+        Args:
+            elt_handler: A function that will be called for each element of the
+                         pack.
+        """
+
+        comptime for i in range(Self.__len__()):
+            var ptr = Pointer(to=self[i])
+            # TODO: Cannot use Pointer.unsafe_take_pointee because it requires
+            # the element to be Movable, which is not required here.
+            elt_handler[i](
+                __get_address_as_owned_value(ptr._get_kgen_pointer())
+            )
+
     # ===-------------------------------------------------------------------===#
     # Trait implementations
     # ===-------------------------------------------------------------------===#
@@ -717,7 +742,7 @@ struct VariadicPack[
         var litref_elt = __mlir_op.`lit.ref.pack.extract`[
             index=index.__mlir_index__()
         ](self._value)
-        return Pointer(_mlir_value=litref_elt)[]
+        return __get_litref_as_mvalue(litref_elt)
 
     def _write_to[
         *, is_repr: Bool = False

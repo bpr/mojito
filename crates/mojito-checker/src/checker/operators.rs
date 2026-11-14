@@ -1128,6 +1128,36 @@ impl Checker {
         Ok(TyKind::LitRef { element, origin }.into())
     }
 
+    /// Type upstream's address builtins `__get_litref_as_mvalue(r)` and
+    /// `__get_address_as_owned_value(k)` at `call`, when `name` is one and
+    /// no binding shadows it. Each is spelled as the pointer operation that
+    /// is Mojito's primitive for it, which upstream's `Pointer` declares
+    /// over the builtin: the place a `!lit.ref` refers to is the
+    /// dereference `Pointer(_mlir_value=r)[]`, of `r`'s element under `r`'s
+    /// origin; the owned value a `!kgen.pointer` holds is the take
+    /// `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)
+    /// .unsafe_take_pointee()`, which moves it out of the address, leaving
+    /// it uninitialized, and, as the address carries no origin, lends and
+    /// ends no checked storage.
+    pub(super) fn infer_address_builtin(
+        &self,
+        call: &Expr,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let litref = match name {
+            "__get_litref_as_mvalue" => true,
+            "__get_address_as_owned_value" => false,
+            _ => return None,
+        };
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        Some(self.infer_spelled_address_builtin(call, name, litref, param_args, args, kwargs))
+    }
+
     /// Record the value of `expr`, an operator over `operands` one of which
     /// is a `SIMD` vector, as the node's parameter value. At run time each
     /// operand is a parameter expression or a builtin callable's
@@ -1371,6 +1401,82 @@ impl Checker {
             element,
             mojito_types::origin::PointerOrigin::Place { place, mutable },
         ))
+    }
+
+    /// Check the address builtin `name` at `call` as the pointer operation
+    /// [`Self::infer_address_builtin`] spells it: a `!lit.ref` operand's
+    /// dereference when `litref`, else a `!kgen.pointer` operand's take.
+    fn infer_spelled_address_builtin(
+        &self,
+        call: &Expr,
+        name: &str,
+        litref: bool,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        use super::initializer_list::spelled_node;
+        let ([operand], [], []) = (args, kwargs, param_args) else {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "expected exactly one positional argument".to_string(),
+            });
+        };
+        let found = self.infer(operand)?;
+        match (litref, found.kind()) {
+            (true, TyKind::LitRef { .. }) | (false, TyKind::KgenPointer(_)) => {}
+            (true, _) => {
+                return Err(TypeError::InvalidAddressOperand(format!(
+                    "operand isn't a '!lit.ref' type '{found}'"
+                )));
+            }
+            (false, _) => {
+                return Err(TypeError::InvalidAddressOperand(format!(
+                    "operand must have '!kgen.pointer<T>' type, not '{found}'"
+                )));
+            }
+        }
+        let param_args = if litref {
+            Vec::new()
+        } else {
+            vec![mojito_ast::ast::ParamArg::Named {
+                name: "origin".to_string(),
+                value: Box::new(mojito_ast::ast::ParamArg::Value(spelled_node(
+                    call,
+                    2,
+                    ExprKind::Identifier("MutUntrackedOrigin".to_string()),
+                    call.span,
+                ))),
+            }]
+        };
+        let pointer = spelled_node(
+            call,
+            1,
+            ExprKind::Call {
+                name: "Pointer".to_string(),
+                param_args,
+                args: Vec::new(),
+                kwargs: vec![mojito_ast::ast::KwArg {
+                    name: "_mlir_value".to_string(),
+                    value: operand.clone(),
+                }],
+            },
+            call.span,
+        );
+        let spelled = if litref {
+            ExprKind::Index {
+                object: Box::new(pointer),
+                index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
+            }
+        } else {
+            ExprKind::MethodCall {
+                object: Box::new(pointer),
+                method: "unsafe_take_pointee".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            }
+        };
+        self.infer_spelled(call, spelled_node(call, 0, spelled, call.span))
     }
 
     /// A read dunder binds its operand as a method call binds a read

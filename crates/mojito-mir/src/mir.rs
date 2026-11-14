@@ -768,9 +768,7 @@ impl MirDeclarations {
                     .conformances
                     .iter()
                     .find(|row| row.trait_name == "IsTriviallyDeinitable");
-                if declaration.explicit_destroy.is_some()
-                    || !declaration.explicit_destructors.is_empty()
-                {
+                if declaration.explicit_destroy.is_some() {
                     return false;
                 }
                 if let Some(holds) = row.and_then(|row| {

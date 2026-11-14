@@ -6119,9 +6119,23 @@ impl<'a> ArenaBuilder<'a> {
         let node = self.expr(&construction.0);
         // A conversion the sugar takes converts its construction, a `for`
         // loop iterates the construction it spells, a `comptime for` steps
-        // it, and `and`/`or` tests its truth.
+        // it, and `and`/`or` tests its truth. A place the sugar spells (an
+        // address builtin's dereference) is the place a `mut` or `ref`
+        // argument retains and a `ref` binding or result borrows.
         let facts = self.facts(&expression.source_span());
         let conversions = conversion_adjustments(facts);
+        let place_uses: Vec<SemanticAdjustment> = facts
+            .call_place_use
+            .then_some(SemanticAdjustment::RetainCallPlace)
+            .into_iter()
+            .chain(facts.reference_value_use.map(|writable| {
+                if writable {
+                    SemanticAdjustment::BorrowMutable
+                } else {
+                    SemanticAdjustment::BorrowShared
+                }
+            }))
+            .collect();
         let truthiness = facts
             .truthiness_condition
             .then_some(SemanticAdjustment::Truthiness);
@@ -6137,6 +6151,7 @@ impl<'a> ArenaBuilder<'a> {
             )
             .collect();
         self.nodes[node.0 as usize].adjustments.extend(conversions);
+        self.nodes[node.0 as usize].adjustments.extend(place_uses);
         self.nodes[node.0 as usize].adjustments.extend(loops);
         self.nodes[node.0 as usize].adjustments.extend(truthiness);
         self.nodes[node.0 as usize].adjustments.extend(lifted);

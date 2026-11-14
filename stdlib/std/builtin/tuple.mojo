@@ -210,8 +210,11 @@ struct Tuple[*Ts: Movable](
     def consume_elements[
         F: def[idx: Int](var elt: Self.Ts[idx])
     ](deinit self, elt_handler: F, /):
-        comptime for i in range(len(Self.Ts)):
-            elt_handler[i](Pointer(to=self[i]).unsafe_take_pointee())
+        comptime for i in range(Self.__len__()):
+            var ptr = Pointer(to=self[i])
+            elt_handler[i](
+                __get_address_as_owned_value(ptr._get_kgen_pointer())
+            )
 
     # Current Mojo's family spelling for the same consuming teardown.
     def deinit_with[
