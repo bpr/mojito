@@ -61,10 +61,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
-        if matches!(
-            self.func.reg_types.get(&recv.0).map(Ty::kind),
-            Some(TyKind::Pointer { .. })
-        ) {
+        if self.func.reg_types.get(&recv.0).is_some_and(Ty::is_pointer) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):

@@ -61,8 +61,12 @@ pub(super) fn verify_intrinsic_index(
             MirIntrinsicSubscript::VariadicStorage,
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
-        (MirIntrinsicSubscript::Pointer, Some(TyKind::Pointer { element, .. }))
-        | (MirIntrinsicSubscript::ComptimeList, Some(TyKind::ComptimeList(element))) => {
+        (MirIntrinsicSubscript::Pointer, Some(pointer))
+            if let Some(element) = pointer.pointer_element() =>
+        {
+            Some(vec![element])
+        }
+        (MirIntrinsicSubscript::ComptimeList, Some(TyKind::ComptimeList(element))) => {
             Some(vec![element])
         }
         (_, Some(base)) => {
@@ -94,9 +98,10 @@ pub(super) fn verify_intrinsic_index(
 pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
     match base.kind() {
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Some(elements.clone()),
-        TyKind::VariadicPack(element)
-        | TyKind::ComptimeList(element)
-        | TyKind::Pointer { element, .. } => Some(vec![(*element).clone()]),
+        TyKind::VariadicPack(element) | TyKind::ComptimeList(element) => {
+            Some(vec![element.clone()])
+        }
+        pointer if let Some(element) = pointer.pointer_element() => Some(vec![element.clone()]),
         other => tuple_elements(other).map(|elements| elements.into_iter().cloned().collect()),
     }
 }

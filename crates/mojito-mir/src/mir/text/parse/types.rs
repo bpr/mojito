@@ -183,7 +183,7 @@ impl Decoder {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
                     self.unknown(fields, &["element", "origin"]);
-                    TyKind::Pointer { element, origin }.into()
+                    Ty::pointer(element, origin)
                 }
                 "kgen_pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;

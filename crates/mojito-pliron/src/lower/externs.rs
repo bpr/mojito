@@ -8,7 +8,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::ffi::{self, CType, FfiCallee};
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Lower `external_call["callee", Ret, ...](args)`: the callee name is
@@ -110,9 +109,7 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         let ty = self.func.reg_types.get(&reg.0).cloned();
         match ty.as_ref() {
-            Some(ty) if matches!(ty.kind(), TyKind::Pointer { .. }) => {
-                self.reg_value(ctx, reg, ScalarTy::Ptr)
-            }
+            Some(ty) if ty.is_pointer() => self.reg_value(ctx, reg, ScalarTy::Ptr),
             Some(ty) if ty.kind().is_non_simd_struct() => {
                 let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                     unreachable!("matched above");
@@ -120,7 +117,7 @@ impl FnLowering<'_> {
                 let field = self.struct_decls.get(name.as_str()).and_then(|decl| {
                     decl.fields
                         .iter()
-                        .find(|(_, field_ty)| matches!(field_ty.kind(), TyKind::Pointer { .. }))
+                        .find(|(_, field_ty)| field_ty.is_pointer())
                         .map(|(field, _)| field.clone())
                 });
                 let Some(field) = field else {

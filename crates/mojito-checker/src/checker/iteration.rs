@@ -989,7 +989,7 @@ fn struct_may_refer_elsewhere(info: &StructInfo) -> bool {
     }) || info
         .fields
         .iter()
-        .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. }))
+        .any(|(_, ty)| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
 }
 
 fn instantiate_iterator_reference(

@@ -219,11 +219,11 @@ impl Checker {
                         origins,
                     )));
                 }
-                TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
+                handle if let Some((element, origin)) = handle.pointer_or_lit_ref() => {
                     if let Some(origin) = origin.as_origin() {
                         out.push(CaptureOrigin::read(bound(origin, origins)));
                     }
-                    collect(checker, element, origins, out);
+                    collect(checker, &element, origins, out);
                 }
                 TyKind::ComptimeList(element) => collect(checker, element, origins, out),
                 TyKind::Tuple(elements)
@@ -335,9 +335,9 @@ impl Checker {
             }
             match ty.kind() {
                 TyKind::Ref(_) => true,
-                TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
+                handle if let Some((element, origin)) = handle.pointer_or_lit_ref() => {
                     (pointer_loans && origin.as_origin().is_some())
-                        || contains(checker, element, pointer_loans, seen)
+                        || contains(checker, &element, pointer_loans, seen)
                 }
                 TyKind::ComptimeList(element) => contains(checker, element, pointer_loans, seen),
                 TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
@@ -393,13 +393,13 @@ impl Checker {
                 .any(Self::type_contains_unsafe_any_pointer);
         }
         match ty.kind() {
-            TyKind::Pointer {
-                origin: mojito_types::origin::PointerOrigin::UnsafeAny { .. },
-                ..
-            } => true,
-            TyKind::Pointer { element, .. } | TyKind::ComptimeList(element) => {
-                Self::type_contains_unsafe_any_pointer(element)
+            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                matches!(
+                    origin,
+                    mojito_types::origin::PointerOrigin::UnsafeAny { .. }
+                ) || Self::type_contains_unsafe_any_pointer(&element)
             }
+            TyKind::ComptimeList(element) => Self::type_contains_unsafe_any_pointer(element),
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
                 elements.iter().any(Self::type_contains_unsafe_any_pointer)
             }
@@ -441,7 +441,7 @@ impl Checker {
                 let found = self.lookup(name);
                 match found.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => vec![reference.origin.clone()],
-                    Some(TyKind::Pointer { origin, .. } | TyKind::LitRef { origin, .. }) => origin
+                    Some(handle) if let Some((_, origin)) = handle.pointer_or_lit_ref() => origin
                         .as_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
@@ -688,7 +688,7 @@ impl Checker {
                     .borrow()
                     .get(&expression.source_span())
                     .and_then(|facts| facts.selected_call.as_deref())
-                    && let TyKind::Pointer { origin, .. } = contract.result_ty.kind()
+                    && let Some(origin) = contract.result_ty.kind().pointer_origin()
                     && let Some(origin) = origin.as_origin()
                 {
                     return vec![origin];

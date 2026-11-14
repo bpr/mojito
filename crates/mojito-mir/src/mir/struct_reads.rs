@@ -165,7 +165,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         let parts: Vec<TyArg> = structure
             .fields
             .iter()
-            .filter(|(_, field)| !matches!(field.kind(), TyKind::Pointer { .. }))
+            .filter(|(_, field)| !field.is_pointer())
             .flat_map(|(_, field)| self.layout_parts(field, visiting))
             .collect();
         visiting.pop();
@@ -369,7 +369,8 @@ impl<'d, 'a> StructReads<'d, 'a> {
             TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => {
                 self.member_parts(item, member, visiting)
             }
-            TyKind::Pointer { .. } | TyKind::Ref(_) | TyKind::Never => Vec::new(),
+            TyKind::Ref(_) | TyKind::Never => Vec::new(),
+            pointer if pointer.is_pointer() => Vec::new(),
             _ if has_no_destructor(ty) => Vec::new(),
             _ => vec![(TyArg::Ty(ty.clone()), Need::Whole)],
         }
@@ -572,11 +573,10 @@ mod tests {
                     "Link",
                     type_decl("Link", "T"),
                     vec![
-                        TyKind::Pointer {
-                            element: applied("Link", TyArg::Ty(param("Link", "T"))),
-                            origin: PointerOrigin::Static,
-                        }
-                        .into(),
+                        Ty::pointer(
+                            applied("Link", TyArg::Ty(param("Link", "T"))),
+                            PointerOrigin::Static,
+                        ),
                         Ty::int(),
                     ],
                 ),

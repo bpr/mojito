@@ -199,8 +199,7 @@ impl Checker {
         // value is that dunder folded (`infix_value`), which asserts nothing.
         // An unlinked program (a phase test's) declares no `SIMD`, so its
         // scalar comparisons stay the built-in ones below.
-        let pointer_or_archetype =
-            |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { .. }) || is_bound_archetype(ty);
+        let pointer_or_archetype = |ty: &Ty| ty.is_pointer() || is_bound_archetype(ty);
         let comparison = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
         if let Some(span) = &span
             && (matches!(
@@ -273,11 +272,14 @@ impl Checker {
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
         // have; Mojo leaves such use undefined, so Mojito rejects it early.
-        let origin_bearing = |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { origin, .. } if origin.as_origin().is_some());
+        let origin_bearing = |ty: &Ty| {
+            ty.kind()
+                .pointer_origin()
+                .is_some_and(|origin| origin.as_origin().is_some())
+        };
         if matches!(op, Add | Sub | Eq | Ne)
             && (origin_bearing(&lt) || origin_bearing(&rt))
-            && (matches!(lt.kind(), TyKind::Pointer { .. })
-                || matches!(rt.kind(), TyKind::Pointer { .. }))
+            && (lt.is_pointer() || rt.is_pointer())
         {
             return Err(TypeError::Unsupported(
                 "pointer arithmetic and comparison are not supported on an \
@@ -285,15 +287,15 @@ impl Checker {
                     .to_string(),
             ));
         }
-        if let TyKind::Pointer { element, .. } = lt.kind() {
+        if let Some(element) = lt.pointer_element() {
             match (op, rt.kind()) {
                 (Add | Sub, kind) if kind.is_int() || kind.is_int_literal() => {
                     return Ok(lt.clone());
                 }
-                (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
+                (Sub, other) if other.pointer_element() == Some(element) => {
                     return Ok(Ty::int());
                 }
-                (Eq | Ne, TyKind::Pointer { element: other, .. }) if element == other => {
+                (Eq | Ne, other) if other.pointer_element() == Some(element) => {
                     return Ok(Ty::bool());
                 }
                 _ => {}
@@ -1106,7 +1108,7 @@ impl Checker {
             });
         }
         let (element, origin) = self.infer_place_address(span, &kwargs[0].value)?;
-        Ok(TyKind::Pointer { element, origin }.into())
+        Ok(Ty::pointer(element, origin))
     }
 
     /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a
@@ -1230,10 +1232,10 @@ impl Checker {
             }
             _ => {
                 let (ty, _) = self.pointer_type("Pointer", param_args)?;
-                let TyKind::Pointer { element, origin } = ty.kind() else {
+                let Some(pointer) = ty.as_pointer() else {
                     return Err(no_match(format!("'{ty}' is not a Pointer")));
                 };
-                Some((element.clone(), origin.clone()))
+                Some(pointer)
             }
         };
         let operand = self.infer(value)?;
@@ -1284,7 +1286,7 @@ impl Checker {
                 bitcast: false,
             },
         );
-        Ok(TyKind::Pointer { element, origin }.into())
+        Ok(Ty::pointer(element, origin))
     }
 
     /// The element and origin of the address of `value`, a place, as

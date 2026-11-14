@@ -186,43 +186,43 @@ pub(super) fn verify_subscript_instruction(
 /// untracked pointer values use allocation arithmetic and are not valid
 /// operands for `ReadRef`/`WriteRef`.
 pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
-    match ty.kind() {
-        TyKind::Ref(reference) => Some(ReferenceCapability {
-            target: &reference.referent,
-            permission: ReferencePermission::from_mutability(reference.mutability),
-        }),
-        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
-            let permission = match origin {
-                PointerOrigin::Place { mutable, .. } => {
-                    if *mutable {
-                        ReferencePermission::Mutable
-                    } else {
-                        ReferencePermission::Immutable
-                    }
-                }
-                PointerOrigin::Param { mutability, .. }
-                | PointerOrigin::SelfPlace { mutability, .. } => {
-                    ReferencePermission::from_mutability(*mutability)
-                }
-                // An untracked pointer addresses its pointee with the
-                // permission it is declared with, a `VariadicList`'s element
-                // pointer among them.
-                PointerOrigin::Untracked { mutable } => {
-                    if *mutable {
-                        ReferencePermission::Mutable
-                    } else {
-                        ReferencePermission::Immutable
-                    }
-                }
-                PointerOrigin::Static | PointerOrigin::UnsafeAny { .. } => return None,
-            };
-            Some(ReferenceCapability {
-                target: element,
-                permission,
-            })
+    let (element, origin) = match ty.kind() {
+        TyKind::Ref(reference) => {
+            return Some(ReferenceCapability {
+                target: &reference.referent,
+                permission: ReferencePermission::from_mutability(reference.mutability),
+            });
         }
-        _ => None,
-    }
+        TyKind::LitRef { element, origin } => (element, origin.clone()),
+        pointer => (pointer.pointer_element()?, pointer.pointer_origin()?),
+    };
+    let permission = match origin {
+        PointerOrigin::Place { mutable, .. } => {
+            if mutable {
+                ReferencePermission::Mutable
+            } else {
+                ReferencePermission::Immutable
+            }
+        }
+        PointerOrigin::Param { mutability, .. } | PointerOrigin::SelfPlace { mutability, .. } => {
+            ReferencePermission::from_mutability(mutability)
+        }
+        // An untracked pointer addresses its pointee with the
+        // permission it is declared with, a `VariadicList`'s element
+        // pointer among them.
+        PointerOrigin::Untracked { mutable } => {
+            if mutable {
+                ReferencePermission::Mutable
+            } else {
+                ReferencePermission::Immutable
+            }
+        }
+        PointerOrigin::Static | PointerOrigin::UnsafeAny { .. } => return None,
+    };
+    Some(ReferenceCapability {
+        target: element,
+        permission,
+    })
 }
 
 pub(super) fn verify_subscript_receiver_place(

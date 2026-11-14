@@ -360,12 +360,12 @@ pub(in crate::checker) fn field_carries_origin_param(
     use mojito_types::origin::{Origin, PointerOrigin};
     match ty.kind() {
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
-        TyKind::Pointer { origin, .. }
-        | TyKind::LitRef { origin, .. }
-        | TyKind::LitRefPack { origin, .. } => {
+        TyKind::LitRef { origin, .. } | TyKind::LitRefPack { origin, .. } => {
             matches!(origin, PointerOrigin::Param { id: k, .. } if *k == id)
         }
-        _ => false,
+        pointer => pointer
+            .pointer_origin()
+            .is_some_and(|origin| matches!(origin, PointerOrigin::Param { id: k, .. } if k == id)),
     }
 }
 
@@ -401,15 +401,15 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
         other => other.clone(),
     };
     match ty.kind() {
-        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
-            let element = substitute_pointer_origin_params(element, bindings);
-            let origin = bind(origin);
-            if matches!(ty.kind(), TyKind::LitRef { .. }) {
-                TyKind::LitRef { element, origin }.into()
-            } else {
-                TyKind::Pointer { element, origin }.into()
-            }
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: substitute_pointer_origin_params(element, bindings),
+            origin: bind(origin),
         }
+        .into(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => Ty::pointer(
+            substitute_pointer_origin_params(&element, bindings),
+            bind(&origin),
+        ),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements
                 .iter()
@@ -478,11 +478,9 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
                     .collect(),
             ))
         }
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
-            element: recur(element),
-            origin: origin.clone(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(recur(&element), origin)
         }
-        .into(),
         TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),

@@ -213,58 +213,39 @@ fn type_families_reprint_byte_identically() {
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
                 TyKind::PopArray {
                     size: mojito_types::types::ArraySize::Known(2),
-                    element: TyKind::Pointer {
-                        element: Ty::int(),
-                        origin: PointerOrigin::Untracked { mutable: false },
-                    }
-                    .into(),
+                    element: Ty::pointer(Ty::int(), PointerOrigin::Untracked { mutable: false }),
                 }
                 .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Place {
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Place {
                         place: OriginPlace {
                             root: OwnerId(0),
                             path: vec![OriginSeg::Subtree],
                         },
                         mutable: true,
                     },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Param {
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Param {
                         id: OriginParamId(2),
                         mutability: Mutability::Param(OriginParamId(3)),
                         interior: vec!["element".into()],
                         subtree: true,
                     },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::SelfPlace {
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::SelfPlace {
                         mutability: Mutability::Immutable,
                         interior: Vec::new(),
                         subtree: false,
                     },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Static,
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Untracked { mutable: false },
-                }
-                .into(),
-                TyKind::Pointer {
-                    element: Ty::int(),
-                    origin: PointerOrigin::UnsafeAny { mutable: true },
-                }
-                .into(),
+                ),
+                Ty::pointer(Ty::int(), PointerOrigin::Static),
+                Ty::pointer(Ty::int(), PointerOrigin::Untracked { mutable: false }),
+                Ty::pointer(Ty::int(), PointerOrigin::UnsafeAny { mutable: true }),
                 TyKind::KgenPointer(Ty::int()).into(),
                 TyKind::LitRef {
                     element: Ty::int(),
@@ -794,10 +775,10 @@ fn frozen_pointer_constant_round_trip() {
             offset: 1,
         },
     ];
-    let ty = TyKind::Pointer {
-        element: Ty::int(),
-        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-    };
+    let ty = Ty::pointer(
+        Ty::int(),
+        mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+    );
     let instructions = values
         .into_iter()
         .enumerate()
@@ -808,7 +789,7 @@ fn frozen_pointer_constant_round_trip() {
         .collect();
     let program = program_with(vec![(
         "frozen".into(),
-        function_with(vec![ty.into(); 3], instructions),
+        function_with(vec![ty; 3], instructions),
     )]);
     let text = write::program(&program);
     assert!(text.contains("ct_pointer"));
@@ -3018,10 +2999,7 @@ fn param_list_addresses_round_trip() {
         "values",
         MetaTy::ParamList(Box::new(MetaTy::int())),
     );
-    let pointer = Ty::new(TyKind::Pointer {
-        element: Ty::int(),
-        origin: mojito_types::origin::PointerOrigin::Static,
-    });
+    let pointer = Ty::pointer(Ty::int(), mojito_types::origin::PointerOrigin::Static);
     for values in [
         Const::Param(list),
         Const::Value(mojito_types::ct::CtValue::Tuple(vec![

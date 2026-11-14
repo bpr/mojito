@@ -506,10 +506,10 @@ impl Checker {
                     self.record_origin_places(access, origin, mutable);
                 }
             }
-            TyKind::Pointer { element, origin } => {
-                self.record_carried_places(access, element);
+            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                self.record_carried_places(access, &element);
                 if let PointerOrigin::Place { place, mutable } = origin {
-                    access.carry(place, *mutable);
+                    access.carry(&place, mutable);
                 }
             }
             TyKind::Ref(reference) => {

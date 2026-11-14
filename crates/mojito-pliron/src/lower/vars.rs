@@ -257,7 +257,7 @@ impl FnLowering<'_> {
         alignment: Option<Reg>,
     ) -> Result<(), PlironError> {
         let register_ty = self.func.reg_types.get(&dest.0).cloned();
-        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
+        let Some(element) = register_ty.as_ref().and_then(Ty::pointer_element) else {
             return Err(
                 self.unsupported_reg("allocation without a concrete pointer result".into(), dest)
             );

@@ -143,11 +143,8 @@ pub(super) fn unify(
         // A pointer pattern solves through its pointee (`Pointer[Self.T,
         // Self.origin]` against `Pointer[Int, …]` solves `T = Int`); the
         // provenance is bound separately (constructor origin binding).
-        TyKind::Pointer {
-            element: pattern_element,
-            ..
-        } => {
-            if let TyKind::Pointer { element, .. } = actual.kind() {
+        pointer if let Some(pattern_element) = pointer.pointer_element() => {
+            if let Some(element) = actual.pointer_element() {
                 unify(pattern_element, element, subst, deduce)?;
             }
             Ok(())
@@ -609,11 +606,9 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .collect(),
         )
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
-            element: substitute_self(element, replacement),
-            origin: origin.clone(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(substitute_self(&element, replacement), origin)
         }
-        .into(),
         TyKind::KgenPointer(element) => {
             TyKind::KgenPointer(substitute_self(element, replacement)).into()
         }
@@ -755,11 +750,9 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             args: map_args(args),
         }
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
-            element: recur(element),
-            origin: origin.clone(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(recur(&element), origin)
         }
-        .into(),
         TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
         TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: recur(element),
@@ -2242,13 +2235,13 @@ fn bind_pointer_origin_tails(
         bound.unwrap_or_else(|| origin.clone())
     };
     match ty.kind() {
-        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
-            let (element, origin) = (recur(element), bind(origin));
-            if matches!(ty.kind(), TyKind::LitRef { .. }) {
-                TyKind::LitRef { element, origin }.into()
-            } else {
-                TyKind::Pointer { element, origin }.into()
-            }
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: recur(element),
+            origin: bind(origin),
+        }
+        .into(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(recur(&element), bind(&origin))
         }
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),

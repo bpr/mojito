@@ -71,11 +71,7 @@ pub struct VariadicListConstruction {
 /// `Pointer[element_type, origin]`, its origin untracked, mutable for an
 /// owned list.
 pub fn element_pointer_type(element: &Ty, owned: bool) -> Ty {
-    TyKind::Pointer {
-        element: element.clone(),
-        origin: PointerOrigin::Untracked { mutable: owned },
-    }
-    .into()
+    Ty::pointer(element.clone(), PointerOrigin::Untracked { mutable: owned })
 }
 
 /// The `VariadicList[element, owned]` over `elements`, in order.
@@ -151,13 +147,10 @@ pub fn build_variadic_list(
         binding_ty: Some(array_ty.clone()),
         in_place: false,
     });
-    let first = tables.fresh_register(
-        TyKind::Pointer {
-            element: pointer_ty.clone(),
-            origin: PointerOrigin::Untracked { mutable: false },
-        }
-        .into(),
-    );
+    let first = tables.fresh_register(Ty::pointer(
+        pointer_ty.clone(),
+        PointerOrigin::Untracked { mutable: false },
+    ));
     let mut first_place = MirPlace::root(array_slot, Some(array_ty));
     first_place.project(Proj::ConstIndex(0), pointer_ty.clone());
     before.push(MirInstr::MakeRef {

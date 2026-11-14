@@ -14,12 +14,12 @@ impl Checker {
     /// unresolvable receivers pass through unchanged.
     pub(super) fn rebase_self_place_pointer(&self, ty: Ty, receiver: &Expr) -> Ty {
         use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
-        let TyKind::Pointer {
+        let Some((
             element,
-            origin: PointerOrigin::SelfPlace {
+            PointerOrigin::SelfPlace {
                 interior, subtree, ..
             },
-        } = ty.kind()
+        )) = ty.as_pointer()
         else {
             return ty;
         };
@@ -30,26 +30,25 @@ impl Checker {
             && let Some(PointerOrigin::Param { id, mutability, .. }) =
                 self.lookup_reference_parameter_binder(name)
         {
-            return TyKind::Pointer {
-                element: element.clone(),
-                origin: PointerOrigin::Param {
+            return Ty::pointer(
+                element,
+                PointerOrigin::Param {
                     id,
                     mutability,
-                    interior: interior.clone(),
-                    subtree: *subtree,
+                    interior,
+                    subtree,
                 },
-            }
-            .into();
+            );
         }
         let Ok(reference) = self.reference_actual(receiver) else {
             return ty;
         };
         let origin = match reference.origin {
             Origin::Place(mut place) => {
-                for tag in interior {
+                for tag in &interior {
                     place.path.push(OriginSeg::Interior(tag.clone()));
                 }
-                if *subtree {
+                if subtree {
                     place.path.push(OriginSeg::Subtree);
                 }
                 PointerOrigin::Place {
@@ -60,16 +59,12 @@ impl Checker {
             Origin::Param(id) => PointerOrigin::Param {
                 id,
                 mutability: reference.mutability,
-                interior: interior.clone(),
-                subtree: *subtree,
+                interior,
+                subtree,
             },
             _ => return ty,
         };
-        TyKind::Pointer {
-            element: element.clone(),
-            origin,
-        }
-        .into()
+        Ty::pointer(element, origin)
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method

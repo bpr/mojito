@@ -147,7 +147,7 @@ impl Checker {
                 let index = usize::try_from(self.eval_ct(index).ok()?.to_i64()?).ok()?;
                 elements.get(index).cloned()
             }
-            TyKind::Pointer { element, .. } => Some((*element).clone()),
+            pointer if let Some(element) = pointer.pointer_element() => Some(element.clone()),
             _ => None,
         }
     }
@@ -172,9 +172,7 @@ impl Checker {
             ExprKind::Member { object, field } => {
                 // The object must itself be a writable place (a struct value).
                 self.check_place(object)?;
-                if field == mojito_types::ct::MLIR_VALUE_FIELD
-                    && matches!((self.infer(object)?).kind(), TyKind::Pointer { .. })
-                {
+                if field == mojito_types::ct::MLIR_VALUE_FIELD && self.infer(object)?.is_pointer() {
                     return Err(TypeError::Unsupported(
                         "a write to a Pointer's '_mlir_value' field is not supported: the \
                          Pointer is a compiler built-in whose origin its address cannot change"
@@ -235,9 +233,9 @@ impl Checker {
                 if matches!(index.kind, ExprKind::EmptySubscript) {
                     let receiver = self.infer(object)?;
                     match receiver.kind() {
-                        TyKind::Pointer { element, origin } => {
-                            self.check_pointer_write(object, origin)?;
-                            return Ok((*element).clone());
+                        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                            self.check_pointer_write(object, &origin)?;
+                            return Ok(element);
                         }
                         _ if self.has_empty_subscript_getter(&receiver) => {}
                         other => {
@@ -254,7 +252,7 @@ impl Checker {
                 // writes through the parameter as upstream does.
                 let inferred = self.infer(object)?;
                 let obj_ty = match inferred.kind() {
-                    TyKind::Pointer { .. } => inferred,
+                    pointer if pointer.is_pointer() => inferred,
                     _ => self.check_place(object)?,
                 };
                 // A subscript-shaped Variant projection target (`storage[T] = x`
@@ -340,10 +338,10 @@ impl Checker {
                     // A pointer store `ptr[i] = e`: the target is the pointee type.
                     // An origin-bearing pointer designates one value and its
                     // provenance must carry mutable capability.
-                    TyKind::Pointer { element, origin } => {
-                        self.check_pointer_offset(origin, index)?;
-                        self.check_pointer_write(object, origin)?;
-                        (*element).clone()
+                    pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                        self.check_pointer_offset(&origin, index)?;
+                        self.check_pointer_write(object, &origin)?;
+                        element
                     }
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
@@ -366,10 +364,10 @@ impl Checker {
                 // dereference): the pointer store, exactly like `ptr[i] = e`.
                 if let Some((object, offset)) =
                     super::places::pointer_offset_keyword_subscript(place)
-                    && let TyKind::Pointer { element, origin } = (self.infer(object)?).kind()
+                    && let Some((element, origin)) = self.infer(object)?.as_pointer()
                 {
-                    self.check_pointer_offset(origin, offset)?;
-                    self.check_pointer_write(object, origin)?;
+                    self.check_pointer_offset(&origin, offset)?;
+                    self.check_pointer_write(object, &origin)?;
                     let idx_ty = self.infer(offset)?;
                     if !self.is_index_type(&idx_ty) {
                         return Err(TypeError::TypeMismatch {
@@ -380,7 +378,7 @@ impl Checker {
                     }
                     return Ok(match element.kind() {
                         TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => (*element).clone(),
+                        _ => element,
                     });
                 }
                 let object_type = self.check_place(object)?;
@@ -1148,11 +1146,11 @@ impl Checker {
         // `ptr[unsafe_offset=i]` is current Mojo's keyword spelling of the
         // indexed dereference (the positional `ptr[i]` is its deprecated
         // form). It is the only keyword subscript a pointer has.
-        if let TyKind::Pointer { element, origin } = object_type.kind() {
+        if let Some((element, origin)) = object_type.as_pointer() {
             if let [SubscriptArg::Keyword { name, value }] = arguments
                 && name == "unsafe_offset"
             {
-                self.check_pointer_offset(origin, value)?;
+                self.check_pointer_offset(&origin, value)?;
                 let index = self.infer(value)?;
                 if !self.is_index_type(&index) {
                     return Err(TypeError::TypeMismatch {
@@ -1162,7 +1160,7 @@ impl Checker {
                     });
                 }
                 self.materialize_temporary_holder(object, false);
-                return Ok((*element).clone());
+                return Ok(element);
             }
             return Err(TypeError::Unsupported(
                 "a Pointer keyword subscript is spelled exactly \
@@ -1286,7 +1284,7 @@ impl Checker {
                 );
             }
             return match obj_ty.kind() {
-                TyKind::Pointer { element, .. } => {
+                pointer if let Some(element) = pointer.pointer_element() => {
                     self.materialize_temporary_holder(object, false);
                     Ok((*element).clone())
                 }
@@ -1458,10 +1456,10 @@ impl Checker {
         }
         // The result of indexing a pointer: its pointee.
         let result = match obj_ty.kind() {
-            TyKind::Pointer { element, origin } => {
-                self.check_pointer_offset(origin, index)?;
+            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                self.check_pointer_offset(&origin, index)?;
                 self.materialize_temporary_holder(object, false);
-                (*element).clone()
+                element
             }
             _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
         };
@@ -1642,8 +1640,8 @@ impl Checker {
             ExprKind::Index { object, .. }
             | ExprKind::Slice { object, .. }
             | ExprKind::MultiIndex { object, .. } => {
-                if let TyKind::Pointer { origin, .. } = (self.infer(object)?).kind() {
-                    return self.check_pointer_write(object, origin);
+                if let Some(origin) = self.infer(object)?.kind().pointer_origin() {
+                    return self.check_pointer_write(object, &origin);
                 }
                 self.check_pointer_derefs(object)
             }
@@ -1759,10 +1757,7 @@ impl Checker {
             return Ok(());
         };
         let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
-            if matches!(
-                receiver.kind(),
-                TyKind::Pointer { .. } | TyKind::VariadicPack(_)
-            ) {
+            if receiver.is_pointer() || matches!(receiver.kind(), TyKind::VariadicPack(_)) {
                 self.record_at(expression.source_span()).implicit_conversion = Some(target);
             }
             return Ok(());
@@ -1961,7 +1956,7 @@ impl Checker {
         }
         // `p._mlir_value` is upstream's `!kgen.pointer` field of a `Pointer`.
         if field == mojito_types::ct::MLIR_VALUE_FIELD
-            && let TyKind::Pointer { element, .. } = obj_ty.kind()
+            && let Some(element) = obj_ty.pointer_element()
         {
             self.record_pointer_adjustment(
                 span,

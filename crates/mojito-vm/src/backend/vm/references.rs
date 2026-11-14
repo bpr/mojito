@@ -817,10 +817,7 @@ pub(super) fn pointer_element(
     let Value::Pointer { allocation, offset } = pointer else {
         return Ok(None);
     };
-    if !matches!(
-        place.root_ty.as_ref().map(Ty::kind),
-        Some(TyKind::Pointer { .. })
-    ) {
+    if !place.root_ty.as_ref().is_some_and(Ty::is_pointer) {
         return Ok(None);
     }
     let segments = place_projection_segments(place, registers)?;
@@ -849,10 +846,8 @@ pub(super) fn pointer_element(
 /// parameter without a multi-element interior domain). Indexing such storage
 /// is the offset-0 dereference, not element selection.
 pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
-    matches!(
-        ty.map(Ty::kind),
-        Some(TyKind::Pointer { origin, .. }) if origin.as_origin().is_some() && !origin.multi_element()
-    )
+    ty.and_then(|ty| ty.kind().pointer_origin())
+        .is_some_and(|origin| origin.as_origin().is_some() && !origin.multi_element())
 }
 
 /// Whether a place reaches a stored handle *below* its root: a `ref`-typed
@@ -870,7 +865,7 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
         .iter()
         .rev()
         .skip(1)
-        .any(|ty| matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. }))
+        .any(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
 }
 
 /// Whether a place designates one element slot of multi-element raw pointer
@@ -885,7 +880,7 @@ pub(super) fn pointer_element_slot(place: &MirPlace) -> bool {
         length => place.projection_tys.get(length - 2),
     };
     matches!(place.proj.last(), Some(Proj::Index(_)))
-        && matches!(base_ty.map(Ty::kind), Some(TyKind::Pointer { .. }))
+        && base_ty.is_some_and(Ty::is_pointer)
         && !single_pointee_pointer(base_ty)
 }
 

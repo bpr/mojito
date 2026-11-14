@@ -591,10 +591,7 @@ impl VmBackend {
                             "cannot freeze cyclic pointer memory".to_string(),
                         ));
                     }
-                    let element = match ty.map(Ty::kind) {
-                        Some(TyKind::Pointer { element, .. }) => Some(element),
-                        _ => None,
-                    };
+                    let element = ty.and_then(Ty::pointer_element);
                     let slots = region
                         .slots
                         .iter()
@@ -721,8 +718,7 @@ impl VmBackend {
                 let referent = self.read_reference(&value, FrameId(frame), roots)?;
                 let referent_ty = match ty.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(&reference.referent),
-                    Some(TyKind::Pointer { element, .. }) => Some(element),
-                    _ => None,
+                    _ => ty.and_then(Ty::pointer_element),
                 };
                 Ok(CtValue::StoreToMem(Box::new(self.freeze_value(
                     prog,
@@ -890,10 +886,7 @@ fn pointer_value_slots(
 ) -> HashSet<VarId> {
     use mojito_types::types::TyKind;
     let is_pointer = |ty: &Ty| {
-        matches!(
-            ty.kind(),
-            TyKind::Pointer { .. } | TyKind::KgenPointer(_) | TyKind::LitRef { .. }
-        )
+        ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer(_) | TyKind::LitRef { .. })
     };
     function
         .var_tys
@@ -2052,10 +2045,10 @@ mod pointer_storage_tests {
                 offset: 1
             }
         );
-        let ty = Ty::new(TyKind::Pointer {
-            element: Ty::int(),
-            origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-        });
+        let ty = Ty::pointer(
+            Ty::int(),
+            mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        );
         let first = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
         let second = vm
             .thaw(&empty_program(), &frozen, Some(&ty))

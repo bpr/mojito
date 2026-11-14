@@ -463,12 +463,7 @@ fn nominal_len_inlines_the_library_overload_to_a_resolved_dunder_call() {
 
 #[test]
 fn colliding_instances_share_only_modulo_pointer_elements() {
-    let pointer = |element: Ty| {
-        Ty::new(TyKind::Pointer {
-            element,
-            origin: mojito_types::origin::PointerOrigin::Static,
-        })
-    };
+    let pointer = |element: Ty| Ty::pointer(element, mojito_types::origin::PointerOrigin::Static);
     // The `_RawAlloc`/`List` shape: fields differing only behind a
     // pointer are one opaque word and drop inertly — benign to share.
     assert!(fields_equivalent(
@@ -2073,7 +2068,7 @@ fn struct_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
             })
             .collect(),
         TyKind::Ref(reference) => struct_origins(&reference.referent),
-        TyKind::Pointer { element, .. } => struct_origins(element),
+        pointer if let Some(element) = pointer.pointer_element() => struct_origins(element),
         _ => Vec::new(),
     }
 }
@@ -2340,7 +2335,7 @@ fn an_erased_pointer_field_points_to_none() {
         matches!(
             declared.fields.as_slice(),
             [(_, k), (_, p)] if *k == Ty::int()
-                && matches!(p.kind(), TyKind::Pointer { element, .. } if *element == Ty::none())
+                && p.pointer_element() == Some(&Ty::none())
         ),
         "the pointer field points to `None`: {:?}",
         declared.fields

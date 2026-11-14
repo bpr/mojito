@@ -1220,6 +1220,30 @@ impl Ty {
     pub fn simd(dtype: SimdDtype, width: SimdWidth) -> Self {
         simd_ty_from_slots(dtype.clone(), width.clone()).unwrap_or_else(|_| simd_node(dtype, width))
     }
+
+    /// A `Pointer[element, origin]`. Code outside this crate builds and
+    /// reads a `Pointer` only through this constructor and
+    /// [`TyKind::as_pointer`], [`TyKind::pointer_element`], and
+    /// [`TyKind::is_pointer`], so the type can become the struct
+    /// `std.memory.pointer` declares without touching its readers.
+    pub fn pointer(element: Self, origin: crate::origin::PointerOrigin) -> Self {
+        TyKind::Pointer { element, origin }.into()
+    }
+
+    /// The pointee and origin of a `Pointer` ([`TyKind::as_pointer`]).
+    pub fn as_pointer(&self) -> Option<(Self, crate::origin::PointerOrigin)> {
+        self.kind().as_pointer()
+    }
+
+    /// The pointee of a `Pointer` ([`TyKind::pointer_element`]).
+    pub fn pointer_element(&self) -> Option<&Self> {
+        self.kind().pointer_element()
+    }
+
+    /// Whether this is a `Pointer` ([`TyKind::is_pointer`]).
+    pub fn is_pointer(&self) -> bool {
+        self.kind().is_pointer()
+    }
 }
 
 impl TyKind {
@@ -1277,6 +1301,63 @@ impl TyKind {
     /// The dtype and width slots of a `SIMD` vector, symbolic or not.
     pub fn as_simd(&self) -> Option<(SimdDtype, SimdWidth)> {
         simd_struct_slots(self)
+    }
+
+    /// The pointee and origin of a `Pointer[T, origin]`, owned: the origin
+    /// is the struct's origin argument read with its `mut` one.
+    pub fn as_pointer(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
+        match self {
+            Self::Pointer { element, origin } => Some((element.clone(), origin.clone())),
+            _ => None,
+        }
+    }
+
+    /// The pointee of a `Pointer[T, origin]`, its type argument `T`.
+    pub const fn pointer_element(&self) -> Option<&Ty> {
+        match self {
+            Self::Pointer { element, .. } => Some(element),
+            _ => None,
+        }
+    }
+
+    /// The origin of a `Pointer[T, origin]`, owned
+    /// ([`TyKind::as_pointer`]).
+    pub fn pointer_origin(&self) -> Option<crate::origin::PointerOrigin> {
+        match self {
+            Self::Pointer { origin, .. } => Some(origin.clone()),
+            _ => None,
+        }
+    }
+
+    /// The pointee and origin of a `Pointer[T, origin]` or of the
+    /// `!lit.ref<T, origin>` a `Pointer` is built from, owned.
+    pub fn pointer_or_lit_ref(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
+        match self {
+            Self::LitRef { element, origin } => Some((element.clone(), origin.clone())),
+            pointer => pointer.as_pointer(),
+        }
+    }
+
+    /// The pointee and origin of `self` and of `other` when both are
+    /// `Pointer`s or both are `!lit.ref`s ([`TyKind::pointer_or_lit_ref`]).
+    pub fn matching_pointer_parts(
+        &self,
+        other: &Self,
+    ) -> Option<(
+        (Ty, crate::origin::PointerOrigin),
+        (Ty, crate::origin::PointerOrigin),
+    )> {
+        match (self, other) {
+            (Self::LitRef { .. }, Self::LitRef { .. }) => {
+                self.pointer_or_lit_ref().zip(other.pointer_or_lit_ref())
+            }
+            _ => self.as_pointer().zip(other.as_pointer()),
+        }
+    }
+
+    /// Whether this is a `Pointer[T, origin]`.
+    pub const fn is_pointer(&self) -> bool {
+        matches!(self, Self::Pointer { .. })
     }
 
     /// The dtype and lane count of a `SIMD` vector whose slots are both

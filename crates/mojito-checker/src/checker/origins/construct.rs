@@ -331,42 +331,27 @@ impl Checker {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
             let (
-                Some(
-                    TyKind::Pointer {
-                        origin:
-                            PointerOrigin::Param {
-                                id,
-                                mutability,
-                                interior,
-                                subtree,
-                            },
-                        ..
-                    }
-                    | TyKind::LitRef {
-                        origin:
-                            PointerOrigin::Param {
-                                id,
-                                mutability,
-                                interior,
-                                subtree,
-                            },
-                        ..
+                Some((
+                    _,
+                    PointerOrigin::Param {
+                        id,
+                        mutability,
+                        interior,
+                        subtree,
                     },
-                ),
-                TyKind::Pointer {
-                    origin: actual_origin,
-                    ..
-                }
-                | TyKind::LitRef {
-                    origin: actual_origin,
-                    ..
-                },
-            ) = (params.get(*index).map(Ty::kind), actual.kind())
+                )),
+                Some((_, actual_origin)),
+            ) = (
+                params
+                    .get(*index)
+                    .and_then(|param| param.kind().pointer_or_lit_ref()),
+                actual.kind().pointer_or_lit_ref(),
+            )
             else {
                 continue;
             };
             let parameter = names.get(*index).map_or("?", String::as_str);
-            if *mutability == Mutability::Mutable
+            if mutability == Mutability::Mutable
                 && actual_origin.statically_mutable() == Some(false)
             {
                 return Err(TypeError::TypeMismatch {
@@ -377,14 +362,14 @@ impl Checker {
                     context: format!("argument '{parameter}' to '{callee}'"),
                 });
             }
-            if !interior.is_empty() || *subtree {
+            if !interior.is_empty() || subtree {
                 continue;
             }
-            match bindings.get(id) {
+            match bindings.get(&id) {
                 None => {
-                    bindings.insert(*id, actual_origin.clone());
+                    bindings.insert(id, actual_origin);
                 }
-                Some(existing) if existing == actual_origin => {}
+                Some(existing) if *existing == actual_origin => {}
                 Some(_) => {
                     return Err(TypeError::BadCall {
                         func: callee.to_string(),
@@ -436,23 +421,21 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let slot_of = |id: &OriginParamId| source_params.get(id.0 as usize);
         match (pattern.kind(), actual.kind()) {
-            (
-                TyKind::Pointer {
-                    origin:
+            (pattern_kind, actual_kind)
+                if let (
+                    Some((
+                        _,
                         PointerOrigin::Param {
                             id,
                             interior,
                             subtree,
                             ..
                         },
-                    ..
-                },
-                TyKind::Pointer {
-                    origin: actual_origin,
-                    ..
-                },
-            ) => {
-                let Some(slot) = slot_of(id) else {
+                    )),
+                    Some((_, actual_origin)),
+                ) = (pattern_kind.as_pointer(), actual_kind.as_pointer()) =>
+            {
+                let Some(slot) = slot_of(&id) else {
                     return Ok(());
                 };
                 let requires_mut = matches!(
@@ -469,12 +452,12 @@ impl Checker {
                         context: context(),
                     });
                 }
-                if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id) {
+                if let Some(explicit) = explicit.iter().find(|origin| origin.id == id) {
                     let within = match actual_origin.as_origin() {
                         Some(actual) => origin_is_within(&actual, &explicit.origin),
                         None => {
                             matches!(explicit.origin, Origin::Untracked { .. })
-                                || (*actual_origin == PointerOrigin::Static
+                                || (actual_origin == PointerOrigin::Static
                                     && explicit.origin == Origin::Static)
                         }
                     };
@@ -491,10 +474,10 @@ impl Checker {
                 }
                 // A projected parameter origin (`Self.origin._get_owned_interior[..]`)
                 // names a domain below the binder; it is checked, not bound.
-                if !interior.is_empty() || *subtree {
+                if !interior.is_empty() || subtree {
                     return Ok(());
                 }
-                bindings.bind_pointer(*id, actual_origin, || {
+                bindings.bind_pointer(id, &actual_origin, || {
                     conflicting_binding(struct_name, &slot.name)
                 })
             }
@@ -590,14 +573,9 @@ impl Checker {
 /// a `ref[o]` referent, or a struct carrying `o` in its origin tail.
 pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
     mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
-        TyKind::Pointer {
-            origin: PointerOrigin::Param { .. },
-            ..
+        handle if let Some((_, origin)) = handle.pointer_or_lit_ref() => {
+            matches!(origin, PointerOrigin::Param { .. })
         }
-        | TyKind::LitRef {
-            origin: PointerOrigin::Param { .. },
-            ..
-        } => true,
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
             .iter()
@@ -616,6 +594,27 @@ fn bind_callable_tail_pattern(
     conflict: &dyn Fn() -> TypeError,
 ) -> Result<(), TypeError> {
     match (pattern.kind(), actual.kind()) {
+        // A pointer nested in a type argument (`Layout[Pointer[Int, o]]`)
+        // binds its binder from the actual's provenance; a projected binder
+        // (`o._get_owned_interior["element"]`) binds the provenance below
+        // the projection, and one the actual does not end in is checked by
+        // coercion, not bound.
+        (pattern_kind, actual_kind)
+            if let Some(((pattern_element, declared), (element, provenance))) =
+                pattern_kind.matching_pointer_parts(actual_kind) =>
+        {
+            if let PointerOrigin::Param {
+                id,
+                interior,
+                subtree,
+                ..
+            } = declared
+                && let Some(base) = provenance.without_projection(&interior, subtree)
+            {
+                bindings.bind_pointer(id, &base, conflict)?;
+            }
+            bind_callable_tail_pattern(&pattern_element, &element, bindings, conflict)
+        }
         (TyKind::Struct(pattern_name, pattern_args), TyKind::Struct(actual_name, actual_args))
             if !pattern.is_simd()
                 && pattern_name == actual_name
@@ -639,43 +638,6 @@ fn bind_callable_tail_pattern(
                 bindings.bind_origin(*id, &reference.origin, conflict)?;
             }
             bind_callable_tail_pattern(&declared.referent, &reference.referent, bindings, conflict)
-        }
-        // A pointer nested in a type argument (`Layout[Pointer[Int, o]]`)
-        // binds its binder from the actual's provenance; a projected binder
-        // (`o._get_owned_interior["element"]`) binds the provenance below
-        // the projection, and one the actual does not end in is checked by
-        // coercion, not bound.
-        (
-            TyKind::Pointer {
-                element: pattern_element,
-                origin: declared,
-            },
-            TyKind::Pointer {
-                element,
-                origin: provenance,
-            },
-        )
-        | (
-            TyKind::LitRef {
-                element: pattern_element,
-                origin: declared,
-            },
-            TyKind::LitRef {
-                element,
-                origin: provenance,
-            },
-        ) => {
-            if let PointerOrigin::Param {
-                id,
-                interior,
-                subtree,
-                ..
-            } = declared
-                && let Some(base) = provenance.without_projection(interior, *subtree)
-            {
-                bindings.bind_pointer(*id, &base, conflict)?;
-            }
-            bind_callable_tail_pattern(pattern_element, element, bindings, conflict)
         }
         (TyKind::Tuple(patterns), TyKind::Tuple(actuals)) if patterns.len() == actuals.len() => {
             for (pattern, actual) in patterns.iter().zip(actuals) {

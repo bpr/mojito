@@ -242,8 +242,10 @@ pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
         && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref());
     match place.root_ty.as_ref().map(Ty::kind) {
         Some(TyKind::Ref(reference)) if through_handle => Some(&reference.referent),
-        Some(TyKind::Pointer { element, .. })
-            if through_handle && place.through == Some(place.root) =>
+        Some(pointer)
+            if through_handle
+                && place.through == Some(place.root)
+                && let Some(element) = pointer.pointer_element() =>
         {
             Some(element)
         }
@@ -301,8 +303,10 @@ pub(super) fn verify_place(
                     });
             let local_handle = match function.var_tys.get(&through).map(Ty::kind) {
                 Some(TyKind::Ref(_)) => true,
-                Some(TyKind::Pointer { origin, .. }) => origin.as_origin().is_some(),
-                _ => false,
+                Some(pointer) => pointer
+                    .pointer_origin()
+                    .is_some_and(|origin| origin.as_origin().is_some()),
+                None => false,
             };
             if !parameter_handle && !receiver_handle && !local_handle {
                 let declared = function

@@ -163,10 +163,10 @@ pub fn lower_ty(
         } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
-        TyKind::Pointer { .. }
-        | TyKind::KgenPointer(_)
-        | TyKind::LitRef { .. }
-        | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
+        TyKind::KgenPointer(_) | TyKind::LitRef { .. } | TyKind::Ref(_) => {
+            Ok(LowerTy::Scalar(ScalarTy::Ptr))
+        }
+        pointer if pointer.is_pointer() => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
         // A `!kgen.generator` is a trivial register type that holds nothing,
         // and a `Never` register is never written: its call ends the block.
         TyKind::None | TyKind::Never | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),

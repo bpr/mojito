@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2203**.
+Next free ID: **R2213**.
 
 ## Ordered Work
 
@@ -7344,6 +7344,26 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2212 An origin-bearing `Pointer` rejects address arithmetic and
+  comparison, where the pin runs them**
+
+  Mojito rejects them as undefined on a pointer to one checked value,
+  where upstream's `Pointer` bodies have no such rule.
+  - Probe: `var p = Pointer(to=x)` then `print(p.unsafe_offset(0)[])` is
+    rejected ("not supported on an origin-bearing Pointer to a single
+    place", `infer_pointer_method`, `checker/method_calls/builtin_types.rs`);
+    the pin prints `4`.
+  - Probe: `print(Pointer(to=x) == Pointer(to=x))` is rejected ("not
+    supported on an origin-bearing Pointer", `infer_infix`,
+    `checker/operators.rs`); the pin prints `True`.
+  - `check_pointer_offset` (`checker/indexing.rs`) applies the same rule
+    to a non-zero `p[i]`.
+  - R2207 retires the rule with the checker's address members.
+  - Found while planning R1681 (2026-11-14).
+  - Ledger name: `pointer-origin-bearing-arithmetic`.
+  - Depends on R2207.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2196 A `Pointer` held in a place is addressed as its pointee, so
   a pointer to it reads or writes the wrong storage**
 
@@ -9931,35 +9951,203 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1681 `Pointer` is the compiler's `TyKind::Pointer`, where upstream
-  declares `struct Pointer` in `std/memory/pointer.mojo` over a
-  `!kgen.pointer` field**
+- [ ] **R2203 `__mlir_op` rejects upstream's pointer ops, which the bodies
+  of `struct Pointer` are written in**
 
-  Its members are checker rules here (`unsafe_origin_cast`, `unsafe_mut_cast`,
-  `_get_kgen_pointer`, the `_mlir_value` read, and both
-  `Pointer[T, o](_mlir_value=)` constructions in
-  `checker/method_calls/builtin_types.rs` and `checker/operators.rs`), where
-  upstream's are Mojo bodies over its one field.
-  - Probe: `p._mlir_value = k` is rejected as unsupported; the pin writes the
-    field.
-  - Probe: ``__mlir_op.`lit.ref.to_pointer`(r)`` and
-    ``__mlir_op.`lit.ref.from_pointer`[_type=…](k)`` are not accepted.
-  - Probe: the bracket spelling
-    ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, as, `>`]``
-    needs `Origin._mlir_origin`; only `Pointer[T, o]._mlir_lit_ref` reaches
-    the type.
-  - Address spaces wait on it: `Pointer` and `!kgen.pointer<T>` hold only
-    the default one.
-  - Probe: `#kgen.param.expr<variadic_ptr_map, L, 1: index>` is rejected as
-    outside the subset (`mlir_bracket_attribute`), since its pointers
-    would carry address space 1; only `0: index` is read.
-  - A `ref` binding's `TyKind::Ref` and a `!lit.ref` value
-    (`TyKind::LitRef`) are two types, where upstream's are one.
-  - R1679's display probe is part of it.
-  - The port spans sessions: this entry's session plans it and files the
-    slices as entries chained by Depends bullets, replacing this one.
-  - Depends on R221 (`pop.pointer.bitcast`, the body of `unsafe_bitcast`).
+  `Checker::infer_mlir_op` (`checker/method_calls/mlir_op.rs`) admits only
+  the `pop` and `index` ops of `SIMD`, `SIMDLength`, and `Bool` arithmetic,
+  so none of `Pointer`'s member bodies can be spelled.
+  - Probe: ``__mlir_op.`lit.ref.to_pointer`(__get_mvalue_as_litref(x))``
+    is "outside the subset"; the pin builds the `!kgen.pointer`.
+  - Probe: ``__mlir_op.`lit.ref.from_pointer`[_type=Pointer[Int, origin_of(x)]._mlir_lit_ref](p._mlir_value)``
+    is rejected the same way.
+  - Probe: ``__mlir_op.`pop.pointer.bitcast`[_type=…](p._mlir_value)``,
+    ``__mlir_op.`pop.offset`(p._mlir_value, i)``, and
+    ``__mlir_op.`pop.pointer_to_index`(p._mlir_value)`` are rejected the
+    same way.
+  - `pop.load` and `pop.store` (scalar or vector, with `alignment`) are
+    the rest of the vocabulary.
+  - Lever: a `pointer_ops.rs` beside `pop_ops.rs` in
+    `checker/method_calls/`, dispatched from `mlir_op.rs`.
+  - Lower onto what exists: `MirInstr::PointerConvert` for the two
+    `lit.ref` conversions, `PointerBitcast` for the bitcast, the pointer
+    offset lowering for `pop.offset`, `LoadIndirect` and `StoreToMem` for
+    `pop.load` and `pop.store`.
+  - `pop.pointer_to_index` over a place pointer fails on the VM until
+    R1665 lands; that is its explicit boundary, not this entry's.
+  - `__get_address_as_uninit_lvalue` is R2024's.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2204 `!kgen.pointer` has no address space, and `AddressSpace` is
+  not bundled**
+
+  Upstream's `Pointer` and `!kgen.pointer<T, as>` carry an address space,
+  where `TyKind::KgenPointer` holds only the element and the bundled
+  library declares no `std/memory/address_space.mojo`.
+  - Probe: `#kgen.param.expr<variadic_ptr_map, L, 1: index>` is rejected
+    as outside the subset (`mlir_bracket_attribute`,
+    `checker/constraints.rs`); only `0: index` is read.
+  - Probe: `p.unsafe_address_space_cast[AddressSpace.GENERIC]()` is
+    rejected.
+  - Bundle upstream's `AddressSpace` (`_value`, `.GENERIC`, comparisons)
+    and export it from `std.memory`.
+  - Give `TyKind::KgenPointer` its address-space argument and accept
+    ``__mlir_type[`!kgen.pointer<`, T, `, `, as._value._mlir_value, `>`]``.
+  - Both backends lay out and run only `GENERIC`; any other space fails
+    explicitly as `MirInstr::Unsupported`.
+  - Needs a package format bump.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2205 The bundled library declares no `struct Pointer`**
+
+  Upstream declares `struct Pointer` in `std/memory/pointer.mojo` over one
+  `!kgen.pointer` field, and `MutPointer`, `ImmPointer`, `OpaquePointer`,
+  and `UnsafePointer` as `comptime` aliases, where every one is a name
+  `type_resolution.rs` resolves (`pointer_type`).
+  - Declare the struct with upstream's header, its `_mlir_type` and
+    `_with_origin` comptimes, its field, and the members R2203 and R2204
+    make spellable, copied from the pin's file.
+  - Declare the aliases there and in `unsafe_pointer.mojo`, exported
+    through `std.memory` and the prelude, and resolve the names through
+    them.
+  - A `Pointer[...]` application still builds `TyKind::Pointer` (the
+    bridge), and the checker's member rules still win.
+  - A member with no checker rule resolves to the declared body.
+  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2209 gives
+    `Origin` its `_mlir_origin`.
+  - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
+  - Probe: R1463's `print(p)`.
+  - The base fixtures (`assets/ok/*pointer*`) keep their output on both
+    backends.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2203, R2204.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
+  upstream's are bodies of the declared struct**
+
+  `infer_pointer_method` (`checker/method_calls/builtin_types.rs`) and
+  `infer_pointer_from_mlir_value` (`checker/operators.rs`) type
+  `unsafe_origin_cast`, `unsafe_mut_cast`, `as_imm`, `unsafe_bitcast`,
+  `_get_kgen_pointer`, `copy`, the `_mlir_value` field, and both
+  `Pointer[T, o](_mlir_value=)` initializers.
+  - Probe: `p._mlir_value = k` is rejected ("a write to a Pointer's
+    '_mlir_value' field is not supported", `checker/indexing.rs`); the pin
+    writes the field.
+  - Retire those arms, `record_pointer_origin_cast`,
+    `infer_pointer_bitcast`, and the `PointerOriginCast` and
+    `PointerConvert` adjustments into the declared bodies.
+  - Re-probe R344 and R1215.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2205.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2207 `Pointer`'s address and memory members are checker rules,
+  where upstream's are bodies of the declared struct**
+
+  `__int__`, `unsafe_offset`, the comparisons, `unsafe_write`, `write`,
+  `unsafe_write_move_from`, `unsafe_take_pointee`,
+  `unsafe_deinit_pointee`, `free`, `load`, and `store` are arms of
+  `infer_pointer_method`, with five `SemanticAdjustment`s
+  (`PointerOffset`, `PointerWrite`, `PointerWriteMoveFrom`,
+  `PointerStorageTake`, `PointerStorageDestroy`).
+  - The declared `where` clauses (`Self.mut and conforms_to(Self.T,
+    Movable)`) replace `check_pointer_take_source` and
+    `check_pointer_overwrite`.
+  - Upstream's `__eq__` is `Int(self) == Int(rhs)` and its `unsafe_write`
+    goes through `Pointer(to=self[i])`, so both need the VM to address a
+    place pointer.
+  - Re-probe R2027.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2206, R1665, R2196, R2024.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2208 `Pointer(to=)` and `p[]` are checker rules, where upstream's
+  are the declared struct's `__init__` and `__getitem__`**
+
+  `infer_pointer_to` (`checker/operators.rs`) and the pointer arms of
+  `infer_index`, `infer_multi_subscript`, and `check_pointer_derefs` type
+  them, with the `PointerToPlace` adjustment and
+  `MirIntrinsicSubscript::Pointer`.
+  - Upstream's `__init__(out self, *, ref[Self.origin, …] to: Self.T)`
+    infers the origin through the ordinary `ref` argument.
+  - Upstream's `__getitem__` returns a reference, as `Span`'s does.
+  - Re-express the loan on the place, the materialized-borrow holder, and
+    write capability through the struct path, or delete them.
+  - If the ownership fixtures do not hold in one session, file the
+    materialized-holder rules as their own entry rather than keeping a
+    rule.
+  - Re-probe R133 and R537.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2207.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2209 A struct's `Origin` argument cannot hold a pointer's projected
+  or receiver origin**
+
+  `PointerOrigin` (`mojito-types/src/origin.rs`) holds a parameter's
+  interior and subtree projection, `SelfPlace`, `UnsafeAny`, and each
+  form's mutability, where a struct's `TyArg::Origin` holds none of them.
+  - Upstream has one `Origin[mut, _mlir_origin]`, with
+    `_get_owned_interior`, `_subtree`, and `unsafe_mut_cast` as comptime
+    members.
+  - Make `PointerOrigin` a view of an `Origin` plus the `mut` argument,
+    pinned by a `mojito-types` unit test that round-trips every form.
+  - Probe: ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, `0`, `>`]``
+    is rejected as an unsupported type spelling; the pin accepts it.
+  - Probe: `ImmOrigin(o)` is rejected ("struct 'Origin' has no
+    constructor").
+  - Needs a MIR text schema bump.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2139.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2210 A `Pointer` application is `TyKind::Pointer`, not the
+  declared struct**
+
+  Every reader outside `mojito-types` goes through `Ty::pointer`,
+  `as_pointer`, `pointer_element`, `pointer_origin`,
+  `pointer_or_lit_ref`, and `is_pointer`, so the flip changes those
+  accessors to read `TyKind::Struct("Pointer", …)` and deletes the
+  variant.
+  - Exhaustive matches still name the variant, and the compiler flags
+    them: `type_is_symbolic` (`checker/type_resolution.rs`),
+    `ScopeWalker::walk_in` (`mir/verify/scope.rs`), and the MIR text
+    writer and `type_spelling`.
+  - Check each `as_non_simd_struct` arm that a pointer guard follows,
+    which a struct-typed `Pointer` reaches first.
+  - Both backends hold the struct as its one `!kgen.pointer` field, as
+    for `Bool`.
+  - MIR text drops the `pointer` tag (schema bump), the package format
+    bumps, and `mojito-symbol` mangles through the struct path.
+  - Probe: `reflect[Pointer[Int, origin_of(x)]].name()` prints
+    `Pointer[Int, origin@…]`; the pin prints
+    `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`
+    (R1679's display probe, with R1680 and R762 for the spelling).
+  - Probe: `reflect[type_of(p)].field_count()` fails with "requires a
+    struct type"; the pin prints `1`.
+  - Re-probe R1502.
+  - If it does not fit one session, split it into a types-and-checker half
+    and a MIR, VM, and pliron half.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2208, R2209.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2211 A `ref` binding's `TyKind::Ref` and a `!lit.ref` value's
+  `TyKind::LitRef` are two types, where upstream's are one**
+
+  Upstream holds a `ref` binding as the `!lit.ref` a `Pointer` is built
+  from, where Mojito keeps two types with two sets of rules.
+  - It is cheaper after R2210, when `LitRef` is reached only through the
+    `lit.ref` ops.
+  - Its first session plans it and files the slices.
+  - Found while planning R1681 (2026-11-14).
+  - Depends on R2210.
+  - Model: Fable, Planned.
 
 - [ ] **R1314 The call builds a `VariadicList`'s span itself, where
   upstream calls the list's `@implicit` constructor from the `!pop.array`**

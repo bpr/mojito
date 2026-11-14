@@ -186,14 +186,13 @@ impl VmBackend {
             CtValue::StoreToMem(referent) => {
                 let referent_ty = match target.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(&reference.referent),
-                    Some(TyKind::Pointer { element, .. }) => Some(element),
-                    _ => target,
+                    _ => target.and_then(Ty::pointer_element).or(target),
                 };
                 let referent = self.thaw(prog, referent, referent_ty)?;
                 return Ok(self.store_to_comptime_memory(referent));
             }
             CtValue::Pointer { memory, offset } => {
-                let Some(TyKind::Pointer { element, .. }) = target.map(Ty::kind) else {
+                let Some(element) = target.and_then(Ty::pointer_element) else {
                     return Err(RuntimeError::Unsupported(
                         "frozen pointer has no checked element type".to_string(),
                     ));

@@ -2573,11 +2573,10 @@ impl Checker {
         self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamListAddress { values },
         ));
-        Ok(TyKind::Pointer {
+        Ok(Ty::pointer(
             element,
-            origin: mojito_types::origin::PointerOrigin::Static,
-        }
-        .into())
+            mojito_types::origin::PointerOrigin::Static,
+        ))
     }
 
     /// `_mojito_float_text(value, out)`, `std.builtin._format_float`'s
@@ -2593,10 +2592,11 @@ impl Checker {
                 context: "argument to '_mojito_float_text'".to_string(),
             });
         }
-        if !matches!(tys[1].kind(), TyKind::Pointer { element, .. }
-            if mojito_types::types::simd_slots(element)
-                .is_some_and(|(dtype, _)| dtype == mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::UInt8)))
-        {
+        if !tys[1].pointer_element().is_some_and(|element| {
+            mojito_types::types::simd_slots(element).is_some_and(|(dtype, _)| {
+                dtype == mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::UInt8)
+            })
+        }) {
             return Err(TypeError::TypeMismatch {
                 expected: "UnsafePointer[Byte]".to_string(),
                 found: tys[1].to_string(),

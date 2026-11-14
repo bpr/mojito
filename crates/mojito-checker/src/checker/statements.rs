@@ -2815,7 +2815,7 @@ impl Checker {
                     // A bare pointer return gets the pointer-specific
                     // diagnostic; an aggregate may mix reference and pointer
                     // loans and keeps the reference wording.
-                    if matches!(found.kind(), TyKind::Pointer { .. }) {
+                    if found.is_pointer() {
                         return Err(TypeError::PointerEscapesOrigin);
                     }
                     return Err(TypeError::ReturnsReferenceToLocal);

@@ -803,11 +803,10 @@ pub fn pointer_bitcast_preserves_pointee(
     from: Option<&mojito_types::types::Ty>,
     to: Option<&mojito_types::types::Ty>,
 ) -> Result<(), RuntimeError> {
-    use mojito_types::types::{TyKind, erase_origins};
-    let pointee = |ty: Option<&mojito_types::types::Ty>| match ty.map(mojito_types::types::Ty::kind)
-    {
-        Some(TyKind::Pointer { element, .. }) => Some(erase_origins(element)),
-        _ => None,
+    use mojito_types::types::erase_origins;
+    let pointee = |ty: Option<&mojito_types::types::Ty>| {
+        ty.and_then(mojito_types::types::Ty::pointer_element)
+            .map(erase_origins)
     };
     match (pointee(from), pointee(to)) {
         (Some(from), Some(to)) if from == to => Ok(()),

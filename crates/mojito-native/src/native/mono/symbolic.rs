@@ -299,6 +299,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         // A parametric function type closed over its own binders is a
         // concrete type argument (`OptionalReg[G]`).
         TyKind::GenericFunc(_) => mojito_types::types::has_free_binders(ty),
+        pointer if let Some(v) = pointer.pointer_element() => is_symbolic(v),
         struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
             !ty.is_closed() && args.iter().any(arg_has_symbolic)
         }
@@ -310,7 +311,6 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(v)
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
-        | TyKind::Pointer { element: v, .. }
         | TyKind::KgenPointer(v)
         | TyKind::LitRef { element: v, .. } => is_symbolic(v),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
@@ -503,13 +503,12 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
         | TyKind::PopArray { element: v, .. }
-        | TyKind::Pointer { element: v, .. }
         | TyKind::KgenPointer(v)
         | TyKind::LitRef { element: v, .. } => {
             output.push((*v).clone());
         }
         TyKind::Ref(v) => output.push(v.referent.clone()),
-        _ => {}
+        _ => output.extend(ty.pointer_element().cloned()),
     }
 }
 pub(super) fn nominal_template(name: &str) -> &str {

@@ -2546,8 +2546,7 @@ fn stores_handle(place: &MirPlace) -> bool {
 fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
     let referent = match handle_ty.kind() {
         TyKind::Ref(reference) => Some(reference.referent.clone()),
-        TyKind::Pointer { element, .. } => Some(element.clone()),
-        _ => None,
+        pointer => pointer.pointer_element().cloned(),
     };
     MirPlace {
         root: slot,
@@ -2583,7 +2582,7 @@ fn read_through_register<'f>(
                 _ => None,
             })?;
     let ty = caller.reg_types.get(&reference.0)?;
-    (matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
+    ((ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
         && block.instrs[read + 1..index].iter().all(|instruction| {
             matches!(
                 instruction,
@@ -2831,7 +2830,7 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
                 _ => place.projection_tys.get(at - 1),
             };
             matches!(step, Proj::Index(_) | Proj::ConstIndex(_))
-                && matches!(prefix.map(Ty::kind), Some(TyKind::Pointer { .. }))
+                && prefix.is_some_and(Ty::is_pointer)
         })
     };
     let is_static = |value: &Reg| {
@@ -3111,33 +3110,25 @@ impl TyRewrite for BoundMutabilities {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
         // A pointer the body derives from the parameter (`origin_of(self)`)
         // carries its binder as a reference does.
-        if let TyKind::Pointer {
+        if let Some((
             element,
-            origin:
-                origin @ (PointerOrigin::Param {
-                    mutability: Mutability::Param(id),
-                    ..
-                }
-                | PointerOrigin::SelfPlace {
-                    mutability: Mutability::Param(id),
-                    ..
-                }),
-        } = ty.kind()
+            mut origin @ (PointerOrigin::Param {
+                mutability: Mutability::Param(id),
+                ..
+            }
+            | PointerOrigin::SelfPlace {
+                mutability: Mutability::Param(id),
+                ..
+            }),
+        )) = ty.as_pointer()
         {
-            let bound = *self.0.get(id)?;
-            let mut origin = origin.clone();
+            let bound = *self.0.get(&id)?;
             if let PointerOrigin::Param { mutability, .. }
             | PointerOrigin::SelfPlace { mutability, .. } = &mut origin
             {
                 *mutability = bound;
             }
-            return Some(
-                TyKind::Pointer {
-                    element: rewrite_ty(element, self).ok()?,
-                    origin,
-                }
-                .into(),
-            );
+            return Some(Ty::pointer(rewrite_ty(&element, self).ok()?, origin));
         }
         let TyKind::Ref(reference) = ty.kind() else {
             return None;
@@ -3515,9 +3506,10 @@ fn access_bound_parameters_in_place<'b>(
             (Some(outer), Some(MirInstr::WriteRef { reference, value })) if reference == dest => {
                 let slot = outer.is_whole_root()
                     && outer.through.is_none()
-                    && !outer.root_ty.as_ref().is_some_and(|ty| {
-                        matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
-                    });
+                    && !outer
+                        .root_ty
+                        .as_ref()
+                        .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)));
                 Some(if slot {
                     MirInstr::DefVar {
                         var: outer.root,

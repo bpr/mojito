@@ -16,7 +16,7 @@ impl FnLowering<'_> {
         index: Reg,
     ) -> Result<(), PlironError> {
         let register_ty = self.func.reg_types.get(&base.0).cloned();
-        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
+        let Some(element) = register_ty.as_ref().and_then(Ty::pointer_element) else {
             return Err(
                 self.unsupported_reg("pointer subscript on a non-pointer base".into(), dest)
             );

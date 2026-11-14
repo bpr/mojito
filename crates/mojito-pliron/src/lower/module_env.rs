@@ -711,10 +711,10 @@ pub(super) fn reference_outcome(
     layout: &LayoutCx<'_>,
     referent: &Ty,
 ) -> Result<OutcomeAbi, LayoutError> {
-    let pointer = Ty::new(TyKind::Pointer {
-        element: referent.clone(),
-        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-    });
+    let pointer = Ty::pointer(
+        referent.clone(),
+        mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+    );
     let composed = layout.outcome_layout(&pointer)?;
     Ok(OutcomeAbi {
         layout: composed.layout,

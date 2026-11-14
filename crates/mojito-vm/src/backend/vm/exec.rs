@@ -248,12 +248,12 @@ impl VmBackend {
                 let mut segments = super::references::place_projection_segments(place, regs)?;
                 // An element index into a pointer the root holds moves the
                 // place pointer the root holds (`elements[unsafe_offset=i]`).
-                let root = match (root, place.root_ty.as_ref().map(Ty::kind), segments.first()) {
+                let root = match (root, place.root_ty.as_ref(), segments.first()) {
                     (
                         root @ Value::Ref { .. },
-                        Some(TyKind::Pointer { .. }),
+                        Some(root_ty),
                         Some(&RefProjection::Index(index)),
-                    ) => {
+                    ) if root_ty.is_pointer() => {
                         segments.remove(0);
                         super::references::offset_place_handle(root, index as i64)?
                     }
@@ -410,8 +410,8 @@ impl VmBackend {
                         "the parameter list `{values:?}` has no elements to address"
                     )));
                 };
-                let Some(TyKind::Pointer { element, .. }) =
-                    (prog.mir.functions[function].1.reg_types.get(&dest.0)).map(Ty::kind)
+                let Some(element) = (prog.mir.functions[function].1.reg_types.get(&dest.0))
+                    .and_then(Ty::pointer_element)
                 else {
                     return Err(RuntimeError::Unsupported(
                         "a parameter list's address needs a pointer register".to_string(),
@@ -1160,10 +1160,8 @@ impl VmBackend {
                     && resolved.is_none()
                     && args.is_empty()
                     && kwargs.is_empty()
-                    && matches!(
-                        (prog.mir.functions[function].1.reg_types.get(&recv.0)).map(Ty::kind),
-                        Some(TyKind::Pointer { .. })
-                    );
+                    && (prog.mir.functions[function].1.reg_types.get(&recv.0))
+                        .is_some_and(Ty::is_pointer);
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
                 } else {

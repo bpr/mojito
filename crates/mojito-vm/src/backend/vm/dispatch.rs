@@ -45,7 +45,11 @@ impl VmBackend {
     ) -> bool {
         match ty.kind() {
             TyKind::Ref(_) => true,
-            TyKind::Pointer { .. } if super::references::single_pointee_pointer(Some(ty)) => true,
+            pointer
+                if pointer.is_pointer() && super::references::single_pointee_pointer(Some(ty)) =>
+            {
+                true
+            }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 visited.insert(name.clone())
                     && prog.structs.get(name).is_some_and(|declaration| {

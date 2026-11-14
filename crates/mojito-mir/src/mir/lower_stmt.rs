@@ -1569,7 +1569,7 @@ impl<'a> Flatten<'a> {
             if object.is_origin_bearing_pointer() {
                 let reference = self.expr(object);
                 self.emit_interior_invalidations(place, None);
-                if let Some(TyKind::Pointer { element, .. }) = object.ty().as_ref().map(Ty::kind) {
+                if let Some(element) = object.ty().as_ref().and_then(Ty::pointer_element) {
                     self.destroy_pointee(place, reference, element);
                 }
                 self.emit(MirInstr::WriteRef {

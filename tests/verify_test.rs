@@ -122,17 +122,16 @@ fn reference_ty(referent: Ty, mutability: mojito::Mutability) -> Ty {
 }
 
 fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
-    TyKind::Pointer {
+    Ty::pointer(
         element,
-        origin: mojito::PointerOrigin::Place {
+        mojito::PointerOrigin::Place {
             place: mojito::OriginPlace {
                 root: mojito::OwnerId(0),
                 path: Vec::new(),
             },
             mutable,
         },
-    }
-    .into()
+    )
 }
 
 /// Every instruction of `block` that holds no region, at any depth, in
@@ -303,14 +302,7 @@ fn verifier_checks_make_ref_capability_types() {
             MirTerm::Return(None),
         ),
         1,
-        &[(
-            0,
-            TyKind::Pointer {
-                element: Ty::int(),
-                origin: mojito::PointerOrigin::Static,
-            }
-            .into(),
-        )],
+        &[(0, Ty::pointer(Ty::int(), mojito::PointerOrigin::Static))],
     );
     expect_finding(
         &program(raw_pointer),
@@ -1285,10 +1277,10 @@ fn verifier_checks_constant_array_element_projections() {
 
 #[test]
 fn verifier_rejects_malformed_dynamic_place_projections() {
-    let pointer = Ty::new(TyKind::Pointer {
-        element: Ty::int(),
-        origin: mojito::PointerOrigin::Untracked { mutable: true },
-    });
+    let pointer = Ty::pointer(
+        Ty::int(),
+        mojito::PointerOrigin::Untracked { mutable: true },
+    );
 
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));
     wrong_element.project(Proj::Index(Reg(0)), Ty::string_literal_of("s"));

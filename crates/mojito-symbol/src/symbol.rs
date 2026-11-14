@@ -1547,7 +1547,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                     // The origin tail erases from the runtime ABI, exactly as
                     // the annotation side (`ast_raw`) erases origin arguments:
                     // origin-differing types share a specialization and a
-                    // lowering, like `TyKind::Pointer` origins.
+                    // lowering, like a `Pointer`'s origin.
                     TyArg::Origin(_) => {}
                 }
             }
@@ -1576,7 +1576,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // user-facing name is `Pointer`: this string is internal callable
         // identity, and renaming it would churn every symbol golden for no
         // user-visible gain.
-        TyKind::Pointer { element, .. } => {
+        pointer if let Some(element) = pointer.pointer_element() => {
             format!("UnsafePointer${}", ty_raw_in(element, self_ty, mode))
         }
         TyKind::KgenPointer(element) => {
@@ -1595,7 +1595,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         ),
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
-        // which erase from the runtime ABI like `TyKind::Pointer` origins above.
+        // which erase from the runtime ABI like a `Pointer`'s origin above.
         TyKind::Assoc { base, name, args } => {
             let mut s = format!(
                 "Assoc${}${}",
@@ -1609,7 +1609,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                     TyArg::Val(v) => s.push_str(&value_argument_raw(v, mode)),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
-                    // specialization and a lowering, like `TyKind::Pointer` origins.
+                    // specialization and a lowering, like a `Pointer`'s origin.
                     TyArg::Origin(_) => s.push('O'),
                 }
             }
@@ -1760,7 +1760,7 @@ fn ast_raw(
         // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
         // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
         // aliases) mangles as `UnsafePointer$<element>` — the origin argument
-        // erases from the runtime ABI, so a call site's `TyKind::Pointer` key and
+        // erases from the runtime ABI, so a call site's `Pointer` type key and
         // the declaration agree.
         Type::Named(name, args)
             if matches!(
@@ -2744,16 +2744,15 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // A caller place a clone binder stands for spells as the first
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
-            element: respell(element),
-            origin: origin.clone_bindable_place().map_or_else(
+        pointer if let Some((element, origin)) = pointer.as_pointer() => Ty::pointer(
+            respell(&element),
+            origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
                 |projection| {
                     projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
-        }
-        .into(),
+        ),
         TyKind::KgenPointer(element) => TyKind::KgenPointer(respell(element)).into(),
         TyKind::LitRef { element, origin } => TyKind::LitRef {
             element: respell(element),

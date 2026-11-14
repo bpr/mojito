@@ -136,7 +136,7 @@ impl FnLowering<'_> {
             ));
         };
         let register_ty = self.func.reg_types.get(&dest.0).cloned();
-        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
+        let Some(element) = register_ty.as_ref().and_then(Ty::pointer_element) else {
             return Err(self.unsupported_reg(
                 "a parameter list's address needs a pointer register".to_string(),
                 dest,
@@ -423,7 +423,9 @@ impl FnLowering<'_> {
                 self.append(ctx, store.get_operation(), Some(dest));
                 return Ok(());
             }
-            (CtValue::Pointer { memory, offset }, TyKind::Pointer { element, .. }) => {
+            (CtValue::Pointer { memory, offset }, pointer)
+                if let Some(element) = pointer.pointer_element() =>
+            {
                 let layout = self.layout.layout_of(element).map_err(|error| {
                     self.unsupported_reg(format!("frozen pointer element layout ({error})"), dest)
                 })?;

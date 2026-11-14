@@ -1623,9 +1623,7 @@ impl Const {
             {
                 Some(Self::Value(value.clone()))
             }
-            CtValue::Pointer { .. }
-                if slot_ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Pointer { .. })) =>
-            {
+            CtValue::Pointer { .. } if slot_ty.is_some_and(Ty::is_pointer) => {
                 Some(Self::Value(value.clone()))
             }
             _ => None,
@@ -3256,10 +3254,12 @@ impl MirInstr {
             // upstream's lowering makes them one pointer.
             Self::PointerConvert { dest, value } => {
                 let address_element = |reg: &Reg| match reg_types.get(&reg.0)?.kind() {
-                    TyKind::LitRef { element, .. } | TyKind::Pointer { element, .. } => {
+                    TyKind::LitRef { element, .. } => {
                         Some(mojito_types::types::erase_origins(element))
                     }
-                    _ => None,
+                    pointer => pointer
+                        .pointer_element()
+                        .map(mojito_types::types::erase_origins),
                 };
                 (matches!(
                     reg_types.get(&dest.0).map(Ty::kind),

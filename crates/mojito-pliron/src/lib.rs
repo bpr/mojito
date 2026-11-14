@@ -564,7 +564,7 @@ pub enum RetKind {
     F64,
     /// `Bool` — i1 (read as u8, low bit significant).
     Bool,
-    /// `TyKind::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
+    /// A `Pointer` — an opaque pointer. Compiles; the value-comparing JIT
     /// harness refuses to read it (a raw address has no VM display analog).
     Ptr,
     /// A width-1 SIMD scalar alias (`Scalar[dtype]`): the
@@ -1005,10 +1005,12 @@ impl<'p> CallEdges<'p, '_> {
                 result_adapter,
                 ..
             } => {
-                if !matches!(
-                    self.function.reg_types.get(&recv.0).map(Ty::kind),
-                    Some(TyKind::Pointer { .. })
-                ) {
+                if !self
+                    .function
+                    .reg_types
+                    .get(&recv.0)
+                    .is_some_and(Ty::is_pointer)
+                {
                     self.push_named(resolved);
                 }
                 // Its result adapter copies the element out by the
@@ -1081,8 +1083,8 @@ impl<'p> CallEdges<'p, '_> {
                 dest,
                 values: mojito_mir::mir::Const::Value(mojito_types::ct::CtValue::Tuple(items)),
             } if self.function.reg_types.get(&dest.0).is_some_and(|ty| {
-                matches!(ty.kind(), TyKind::Pointer { element, .. }
-                    if matches!(element.kind(), TyKind::Func(_)))
+                ty.pointer_element()
+                    .is_some_and(|element| matches!(element.kind(), TyKind::Func(_)))
             }) =>
             {
                 for item in items {
@@ -1208,7 +1210,7 @@ fn collect_struct_types<'p>(
                 collect_struct_types(element, structs, seen, discovered);
             }
         }
-        TyKind::Pointer { element, .. } => {
+        pointer if let Some(element) = pointer.pointer_element() => {
             collect_struct_types(element, structs, seen, discovered);
         }
         TyKind::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),

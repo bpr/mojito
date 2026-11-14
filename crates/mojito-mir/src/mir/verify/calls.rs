@@ -671,9 +671,10 @@ pub(super) fn validate_dependent_bindings_in(
                     }
                 }
             }
-            TyKind::ComptimeList(element)
-            | TyKind::VariadicPack(element)
-            | TyKind::Pointer { element, .. } => {
+            TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
+                walk(element, bound, frames)?;
+            }
+            pointer if let Some(element) = pointer.pointer_element() => {
                 walk(element, bound, frames)?;
             }
             TyKind::Tuple(elements)
@@ -750,7 +751,7 @@ pub(super) fn make_ref_target<'p>(
         && place
             .root_ty
             .as_ref()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Pointer { .. } | TyKind::LitRef { .. }));
+            .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::LitRef { .. }));
     match (root_capability, place.is_whole_root()) {
         (Some(_), true) if pointer_value => place.ty.as_ref().map(|target| (target, None)),
         (Some(capability), true) => Some((capability.target, Some(capability.permission))),

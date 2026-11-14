@@ -1299,9 +1299,8 @@ mod native_abi_cross_checks {
                     kind if kind.is_bool() => LLVMInt1TypeInContext(self.ctx),
                     kind if kind.is_float64() => LLVMDoubleTypeInContext(self.ctx),
                     TyKind::None => self.strukt(&[]),
-                    TyKind::Pointer { .. } | TyKind::Ref(_) => {
-                        LLVMPointerTypeInContext(self.ctx, 0)
-                    }
+                    TyKind::Ref(_) => LLVMPointerTypeInContext(self.ctx, 0),
+                    pointer if pointer.is_pointer() => LLVMPointerTypeInContext(self.ctx, 0),
                     // Upstream's `StringLiteral[v]` has no fields: the text
                     // is its `value` parameter.
                     kind if kind.is_string_literal() => self.strukt(&[]),

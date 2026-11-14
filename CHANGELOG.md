@@ -794,6 +794,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every phase outside `mojito-types` now builds and reads a `Pointer`
+  type through accessors (`Ty::pointer`, `TyKind::{as_pointer,
+  pointer_element, pointer_origin, pointer_or_lit_ref, is_pointer}`)
+  instead of matching `TyKind::Pointer`. This is the first step of the
+  port to upstream's declared `struct Pointer`. Behaviour, MIR text, and
+  symbols are unchanged. The rest of the port is filed as R2203–R2211,
+  and the origin-bearing arithmetic rejection it removes as R2212 (R1681).
+
 - `VariadicPack.get_loaded_kgen_pack()` is upstream's declared member, a
   `kgen.struct.load_indirect` of `get_as_kgen_pack()`, instead of a
   compiler rule (R1922). The bundled `VariadicPack` declares upstream's

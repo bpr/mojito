@@ -3668,8 +3668,9 @@ impl<'a> Specializer<'a> {
                     dest,
                     values: Const::Value(CtValue::Tuple(items)),
                 } if function.reg_types.get(&dest.0).is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::Pointer { element, .. }
-                        if matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
+                    ty.pointer_element().is_some_and(|element| {
+                        matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                    })
                 }) =>
                 {
                     for item in items {
@@ -3906,7 +3907,7 @@ impl<'a> Specializer<'a> {
             }
             let mut nested = Vec::new();
             collect_nested_types(&ty, &mut nested);
-            let opaque = ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Pointer { .. });
+            let opaque = ty.is_non_simd_struct() || ty.is_pointer();
             types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
             if ty.kind().known_simd().is_some() {
                 self.declare_simd_instance(owner, &ty)?;

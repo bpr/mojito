@@ -84,11 +84,7 @@ impl Checker {
                     target
                 };
                 self.record_pointer_origin_cast(span, &target);
-                Ok(TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: target,
-                }
-                .into())
+                Ok(Ty::pointer(elem.clone(), target))
             }
             // Capability rebind (upstream's `unsafe_mut_cast[target_mut]`): the
             // runtime value is unchanged, as for an origin cast.
@@ -120,11 +116,7 @@ impl Checker {
                     origin.clone().immutable()
                 };
                 self.record_pointer_origin_cast(span, &target);
-                Ok(TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: target,
-                }
-                .into())
+                Ok(Ty::pointer(elem.clone(), target))
             }
             // Upstream's `unsafe_bitcast[U]()`: the same address and origin
             // retyped to a `U` pointee (`pop.pointer.bitcast`).
@@ -137,11 +129,7 @@ impl Checker {
             "copy" => {
                 no_arguments("copy", args)?;
                 self.record_pointer_origin_cast(span, origin);
-                Ok(TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: origin.clone(),
-                }
-                .into())
+                Ok(Ty::pointer(elem.clone(), origin.clone()))
             }
             // The `!kgen.pointer` the pointer wraps, its `_mlir_value`.
             "_get_kgen_pointer" => {
@@ -191,11 +179,7 @@ impl Checker {
                         materialized: None,
                     },
                 );
-                Ok(TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: origin.clone(),
-                }
-                .into())
+                Ok(Ty::pointer(elem.clone(), origin.clone()))
             }
             // `write` overwrites a pointee whose type has no destructor, so
             // it is `unsafe_write`'s store where upstream's `where
@@ -238,10 +222,7 @@ impl Checker {
                         context: "value written through 'Pointer.unsafe_write'".to_string(),
                     });
                 }
-                let receiver = Ty::new(TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: origin.clone(),
-                });
+                let receiver = Ty::pointer(elem.clone(), origin.clone());
                 let (name, slot, convention) = if copy {
                     ("copy", ArgSlot::Keyword(0), None)
                 } else {
@@ -332,11 +313,7 @@ impl Checker {
                 Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
-                object_type: TyKind::Pointer {
-                    element: elem.clone(),
-                    origin: origin.clone(),
-                }
-                .to_string(),
+                object_type: Ty::pointer(elem.clone(), origin.clone()).to_string(),
                 method: method.to_string(),
             }),
         }
@@ -672,22 +649,15 @@ impl Checker {
                 got: args.len(),
             });
         };
-        let receiver = Ty::new(TyKind::Pointer {
-            element: elem.clone(),
-            origin: origin.clone(),
-        });
+        let receiver = Ty::pointer(elem.clone(), origin.clone());
         let found = self.infer_with_expected(source, &receiver, true)?;
-        let TyKind::Pointer {
-            element: source_elem,
-            origin: source_origin,
-        } = found.kind()
-        else {
+        let Some((source_elem, source_origin)) = found.as_pointer() else {
             return Err(pointer_move_source_mismatch(elem, &found));
         };
-        if source_elem != elem {
+        if &source_elem != elem {
             return Err(pointer_move_source_mismatch(elem, &found));
         }
-        self.check_pointer_take_source(span, "unsafe_write_move_from", elem, source_origin)?;
+        self.check_pointer_take_source(span, "unsafe_write_move_from", elem, &source_origin)?;
         if !self.is_movable(elem) {
             return Err(TypeError::TraitNotSatisfied {
                 param: "T".to_string(),
@@ -755,11 +725,7 @@ impl Checker {
                 bitcast: true,
             },
         );
-        Ok(TyKind::Pointer {
-            element,
-            origin: origin.clone(),
-        }
-        .into())
+        Ok(Ty::pointer(element, origin.clone()))
     }
 
     /// Admit `method` taking the pointee `elem` out through a pointer of

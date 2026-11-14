@@ -71,12 +71,7 @@ impl<'a> Node<'a> {
     /// — as its pointer object and offset.
     pub(super) fn pointer_offset_subscript(self) -> Option<(Self, Self)> {
         match self.index_operands() {
-            Some((object, index))
-                if matches!(
-                    object.ty().as_ref().map(Ty::kind),
-                    Some(TyKind::Pointer { .. })
-                ) =>
-            {
+            Some((object, index)) if object.ty().as_ref().is_some_and(Ty::is_pointer) => {
                 Some((object, index))
             }
             Some(_) => None,
@@ -706,11 +701,12 @@ impl<'a> Node<'a> {
                     mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
                 )
             })
-            && !matches!(
-                self.checked.ty.as_ref().map(Ty::kind),
-                Some(TyKind::Pointer { origin, .. } | TyKind::LitRef { origin, .. })
-                    if origin.subtree()
-            )
+            && !self.checked.ty.as_ref().is_some_and(|ty| match ty.kind() {
+                TyKind::LitRef { origin, .. } => origin.subtree(),
+                pointer => pointer
+                    .pointer_origin()
+                    .is_some_and(|origin| origin.subtree()),
+            })
     }
 
     pub(super) fn resolved_callable(self) -> Option<String> {
@@ -950,7 +946,7 @@ impl<'a> Node<'a> {
         match ty.kind() {
             TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
             TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
-            TyKind::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
+            pointer if pointer.is_pointer() => Some(MirIntrinsicSubscript::Pointer),
             TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
             // `Slice.indices` has a public nominal Tuple type but crosses the
             // VM intrinsic boundary as compiler-private `Value::Tuple`
@@ -1450,16 +1446,11 @@ impl<'a> Flatten<'a> {
                     let source = node
                         .place_address_operand()
                         .expect("checked pointer construction has a place argument");
-                    if let Some(
-                        TyKind::Pointer {
-                            origin: mojito_types::origin::PointerOrigin::Place { place, .. },
-                            ..
-                        }
-                        | TyKind::LitRef {
-                            origin: mojito_types::origin::PointerOrigin::Place { place, .. },
-                            ..
-                        },
-                    ) = node.checked.ty.as_ref().map(Ty::kind)
+                    if let Some(mojito_types::origin::PointerOrigin::Place { place, .. }) =
+                        node.checked.ty.as_ref().and_then(|ty| match ty.kind() {
+                            TyKind::LitRef { origin, .. } => Some(origin.clone()),
+                            pointer => pointer.pointer_origin(),
+                        })
                         && matches!(
                             place.path.last(),
                             Some(mojito_types::origin::OriginSeg::Subtree)
@@ -1470,7 +1461,7 @@ impl<'a> Flatten<'a> {
                         // place and link instead of competing with the
                         // binding's own loan.
                         let source = self.place(source);
-                        return self.pointer_place_loan(place, *mutable, Some(source), true);
+                        return self.pointer_place_loan(&place, *mutable, Some(source), true);
                     }
                     let place = self.place(source);
                     return vec![MirLoan {
@@ -1606,12 +1597,10 @@ impl<'a> Flatten<'a> {
                 // shared alias, as `Pointer(to=place)` does: copies of the
                 // returned pointer coexist.
                 if let Some(contract) = node.call_contract()
-                    && let TyKind::Pointer {
-                        origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
-                        ..
-                    } = contract.result_ty.kind()
+                    && let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) =
+                        contract.result_ty.kind().pointer_origin()
                 {
-                    return self.pointer_place_loan(&place.clone(), *mutable, None, true);
+                    return self.pointer_place_loan(&place, mutable, None, true);
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.
@@ -1834,8 +1823,7 @@ fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigi
 fn carries_references(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::Ref(reference) => carries_references(&reference.referent),
-        TyKind::Pointer { .. }
-        | TyKind::LitRef { .. }
+        TyKind::LitRef { .. }
         | TyKind::LitRefPack { .. }
         | TyKind::Func(_)
         | TyKind::GenericFunc(_)
@@ -1845,6 +1833,7 @@ fn carries_references(ty: &Ty) -> bool {
         | TyKind::Dependent(_)
         | TyKind::SelfType
         | TyKind::Infer => true,
+        pointer if pointer.is_pointer() => true,
         struct_ty if let Some((_, args)) = struct_ty.as_non_simd_struct() => {
             args.iter().any(|arg| match arg {
                 mojito_types::types::TyArg::Ty(ty) => carries_references(ty),

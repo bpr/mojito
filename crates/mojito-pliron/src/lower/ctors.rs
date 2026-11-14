@@ -151,7 +151,7 @@ impl FnLowering<'_> {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(dest));
-            if matches!(reference.referent.kind(), TyKind::Pointer { .. }) {
+            if reference.referent.is_pointer() {
                 self.pointer_slot_refs.insert(dest.0);
             }
             self.reg_values.insert(dest.0, load.get_result(ctx));
@@ -161,14 +161,19 @@ impl FnLowering<'_> {
         // either spells, borrows its storage: a read of it is the pointer,
         // not its pointee.
         let borrows_pointer = match (self.func.reg_types.get(&dest.0).map(Ty::kind), ty.kind()) {
-            (Some(TyKind::Ref(reference)), TyKind::Pointer { element, .. }) => matches!(
-                reference.referent.kind(),
-                TyKind::Pointer { element: referent, .. }
-                    if erase_origin_arguments(referent) == erase_origin_arguments(element)
-            ),
+            (Some(TyKind::Ref(reference)), pointer)
+                if let Some(element) = pointer.pointer_element() =>
+            {
+                reference
+                    .referent
+                    .pointer_element()
+                    .is_some_and(|referent| {
+                        erase_origin_arguments(referent) == erase_origin_arguments(element)
+                    })
+            }
             _ => false,
         };
-        if matches!(ty.kind(), TyKind::Pointer { .. }) && !borrows_pointer {
+        if ty.is_pointer() && !borrows_pointer {
             self.pointer_slot_refs.insert(dest.0);
         }
         self.made_ref_places.insert(

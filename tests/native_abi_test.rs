@@ -260,11 +260,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
     structs.insert(
         "String".to_string(),
         vec![
-            TyKind::Pointer {
-                element: Ty::uint(),
-                origin: mojito::origin::PointerOrigin::Static,
-            }
-            .into(),
+            Ty::pointer(Ty::uint(), mojito::origin::PointerOrigin::Static),
             Ty::int(),
             Ty::int(),
         ],

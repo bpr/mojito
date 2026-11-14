@@ -746,13 +746,12 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             Some(_) => errors.push(format!("{prefix}: store_to_mem must yield a reference")),
         },
         MirInstr::ParamListAddress { dest, values } => {
-            if !matches!(
-                cx.reg_ty(*dest).map(Ty::kind),
-                None | Some(TyKind::Pointer {
-                    origin: mojito_types::origin::PointerOrigin::Static,
-                    ..
-                })
-            ) {
+            if !cx.reg_ty(*dest).is_none_or(|ty| {
+                matches!(
+                    ty.kind().pointer_origin(),
+                    Some(mojito_types::origin::PointerOrigin::Static)
+                )
+            }) {
                 errors.push(format!(
                     "{prefix}: a parameter list's address must be a static pointer"
                 ));
@@ -932,11 +931,10 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
                 );
             }
             match cx.reg_ty(*pointer).map(Ty::kind) {
-                Some(TyKind::Pointer {
-                    element: actual,
-                    origin,
-                }) if origin.statically_mutable() != Some(false)
-                    && types_compatible(actual, element) => {}
+                Some(pointer_ty)
+                    if let Some((actual, origin)) = pointer_ty.as_pointer()
+                        && origin.statically_mutable() != Some(false)
+                        && types_compatible(&actual, element) => {}
                 // An assignment through a handle destroys its pointee
                 // through the reference itself, an address as a pointer is.
                 Some(TyKind::Ref(reference))
@@ -1526,8 +1524,11 @@ fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &m
     }
     for (index, (operand, element)) in elems.iter().zip(elements).enumerate() {
         match cx.reg_ty(*operand).map(Ty::kind) {
-            Some(TyKind::Pointer { element: found, .. } | TyKind::LitRef { element: found, .. })
-                if types_compatible(found, element) => {}
+            Some(TyKind::LitRef { element: found, .. }) if types_compatible(found, element) => {}
+            Some(pointer_ty)
+                if pointer_ty
+                    .pointer_element()
+                    .is_some_and(|found| types_compatible(found, element)) => {}
             Some(TyKind::Ref(reference)) if types_compatible(&reference.referent, element) => {}
             Some(found) => errors.push(format!(
                 "{prefix}: lit.ref.pack.create operand {index} has type {found}, not a reference to {element}"
@@ -1670,12 +1671,10 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         return;
     };
     let element = |ty: &Ty| match ty.kind() {
-        TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => Some(element.clone()),
+        TyKind::KgenPointer(element) | TyKind::LitRef { element, .. } => Some(element.clone()),
         // A `ref` value is the `!lit.ref` upstream holds it as.
         TyKind::Ref(reference) => Some(reference.referent.clone()),
-        _ => None,
+        pointer => pointer.pointer_element().cloned(),
     };
     let (Some(to_element), Some(from_element)) = (element(to), element(from)) else {
         errors.push(format!(
@@ -1700,15 +1699,8 @@ fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;
     };
-    let (
-        TyKind::Pointer {
-            origin: to_origin, ..
-        },
-        TyKind::Pointer {
-            origin: from_origin,
-            ..
-        },
-    ) = (to.kind(), from.kind())
+    let (Some(to_origin), Some(from_origin)) =
+        (to.kind().pointer_origin(), from.kind().pointer_origin())
     else {
         errors.push(format!(
             "{}: pointer bitcast from {from} to {to} is not between two `Pointer`s",

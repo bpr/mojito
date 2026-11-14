@@ -747,11 +747,11 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::Pointer { .. }
-            | TyKind::KgenPointer(_)
+            TyKind::KgenPointer(_)
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
             | TyKind::Ref(_) => true,
+            pointer if pointer.is_pointer() => true,
             TyKind::Tuple(_) => true,
             TyKind::RuntimePack(items) => items
                 .iter()
@@ -1268,16 +1268,14 @@ pub fn mir_place_handle_ty(
     let root = place.root_ty.as_ref()?;
     let source_mutability = match root.kind() {
         TyKind::Ref(reference) => Some(reference.mutability),
-        TyKind::Pointer { origin, .. } => match origin {
-            mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if *mutable {
+        pointer if let Some(origin) = pointer.pointer_origin() => match origin {
+            mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if mutable {
                 mojito_types::origin::Mutability::Mutable
             } else {
                 mojito_types::origin::Mutability::Immutable
             }),
             mojito_types::origin::PointerOrigin::Param { mutability, .. }
-            | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => {
-                Some(*mutability)
-            }
+            | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => Some(mutability),
             mojito_types::origin::PointerOrigin::Static
             | mojito_types::origin::PointerOrigin::Untracked { .. }
             | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
@@ -3121,11 +3119,8 @@ fn constant_param_value(adjustments: &[mojito_checked::checked::SemanticAdjustme
 /// Whether checked type `ty` is a pointer whose provenance designates a
 /// single checked place.
 fn origin_bearing_pointer(ty: Option<&Ty>) -> bool {
-    matches!(
-        ty.map(Ty::kind),
-        Some(TyKind::Pointer { origin, .. })
-            if origin.as_origin().is_some() && !origin.multi_element()
-    )
+    ty.and_then(|ty| ty.kind().pointer_origin())
+        .is_some_and(|origin| origin.as_origin().is_some() && !origin.multi_element())
 }
 
 /// The application the check lifted an expression as, among the
@@ -3489,10 +3484,7 @@ impl<'a> Flatten<'a> {
     /// `mut p: Pointer[...]` parameter, whose slot is bound with the caller's
     /// pointer rather than aliasing the caller's variable.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
-        matches!(
-            self.var_types.get(&var).map(Ty::kind),
-            Some(TyKind::Pointer { .. })
-        )
+        self.var_types.get(&var).is_some_and(Ty::is_pointer)
     }
 
     /// The statically known address behind a stably bound origin-bearing
@@ -3547,11 +3539,11 @@ impl<'a> Flatten<'a> {
         {
             return None;
         }
-        let pointer_ty = object
-            .ty()
-            .filter(|ty| matches!(ty.kind(), TyKind::Pointer { .. }))?;
-        let subtree =
-            matches!(pointer_ty.kind(), TyKind::Pointer { origin, .. } if origin.subtree());
+        let pointer_ty = object.ty().filter(Ty::is_pointer)?;
+        let subtree = pointer_ty
+            .kind()
+            .pointer_origin()
+            .is_some_and(|origin| origin.subtree());
         let loans = self.aggregate_borrows(object);
         let owner = match loans.as_slice() {
             [] => return None,
@@ -5276,7 +5268,9 @@ fn close_register_types(
                         .cloned()
                         .map(|ty| match ty.kind() {
                             TyKind::Ref(reference) => reference.referent.clone(),
-                            TyKind::Pointer { element, .. } => (*element).clone(),
+                            pointer if let Some(element) = pointer.pointer_element() => {
+                                element.clone()
+                            }
                             _ => ty,
                         }),
                 )),
@@ -5322,7 +5316,9 @@ fn close_register_types(
                 } => Some((
                     dest,
                     reg_types.get(&base.0).and_then(|base| match base.kind() {
-                        TyKind::Pointer { element, .. } => Some(element.clone()),
+                        pointer if let Some(element) = pointer.pointer_element() => {
+                            Some(element.clone())
+                        }
                         kind if let Some((dtype, _)) = kind.as_simd() => {
                             Some(Ty::simd(dtype, mojito_types::types::SimdWidth::Known(1)))
                         }

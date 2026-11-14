@@ -757,28 +757,14 @@ impl Checker {
                         ),
                     }
             }
-            (
-                TyKind::Pointer {
-                    element: actual_element,
-                    origin: actual_origin,
-                },
-                TyKind::Pointer {
-                    element: expected_element,
-                    origin: expected_origin,
-                },
-            )
-            | (
-                TyKind::LitRef {
-                    element: actual_element,
-                    origin: actual_origin,
-                },
-                TyKind::LitRef {
-                    element: expected_element,
-                    origin: expected_origin,
-                },
-            ) => {
-                coerces(actual_element, expected_element)
-                    && match (actual_origin, expected_origin) {
+            (actual_kind, expected_kind)
+                if let Some((
+                    (actual_element, actual_origin),
+                    (expected_element, expected_origin),
+                )) = actual_kind.matching_pointer_parts(expected_kind) =>
+            {
+                coerces(&actual_element, &expected_element)
+                    && match (&actual_origin, &expected_origin) {
                         // A concrete place provenance may bind a declared origin
                         // parameter, but storage must not invent mutable
                         // capability an immutable place never had: only a
@@ -789,7 +775,7 @@ impl Checker {
                             mojito_types::origin::PointerOrigin::Place { mutable, .. },
                             expected @ mojito_types::origin::PointerOrigin::Param { .. },
                         ) => *mutable || expected.statically_mutable() != Some(true),
-                        _ => actual_origin.coerces_to(expected_origin),
+                        _ => actual_origin.coerces_to(&expected_origin),
                     }
             }
             (actual, expected)

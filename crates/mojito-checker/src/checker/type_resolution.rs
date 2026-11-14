@@ -2859,11 +2859,9 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
-            TyKind::Pointer { element, origin } => TyKind::Pointer {
-                element: self.resolve_dependent_ty(element, values)?,
-                origin: origin.clone(),
+            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                Ty::pointer(self.resolve_dependent_ty(&element, values)?, origin)
             }
-            .into(),
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
                 referent: self.resolve_dependent_ty(&reference.referent, values)?,
                 origin: reference.origin.clone(),
@@ -3000,15 +2998,19 @@ impl Checker {
             // A pointer's raw MLIR types: the `!kgen.pointer` it wraps and
             // the `!lit.ref` it is built from, as upstream's `Pointer`
             // declares them.
-            TyKind::Pointer { element, .. } if name == "_mlir_type" && args.is_empty() => {
+            pointer
+                if name == "_mlir_type"
+                    && args.is_empty()
+                    && let Some(element) = pointer.pointer_element() =>
+            {
                 Ok(TyKind::KgenPointer(element.clone()).into())
             }
-            TyKind::Pointer { element, origin } if name == "_mlir_lit_ref" && args.is_empty() => {
-                Ok(TyKind::LitRef {
-                    element: element.clone(),
-                    origin: origin.clone(),
-                }
-                .into())
+            pointer
+                if name == "_mlir_lit_ref"
+                    && args.is_empty()
+                    && let Some((element, origin)) = pointer.as_pointer() =>
+            {
+                Ok(TyKind::LitRef { element, origin }.into())
             }
             // A member alias `SIMD` declares, over the vector's parameters,
             // or one a literal's struct declares (`StringLiteral._from`).
@@ -3475,11 +3477,9 @@ impl Checker {
                     .collect(),
             )
             .into(),
-            TyKind::Pointer { element, origin } => TyKind::Pointer {
-                element: self.resolve_assoc_ty(element),
-                origin: origin.clone(),
+            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+                Ty::pointer(self.resolve_assoc_ty(&element), origin)
             }
-            .into(),
             TyKind::Func(func) => {
                 let FuncTy {
                     environment,
@@ -4249,14 +4249,7 @@ impl Checker {
             _ => POINTER_PARAMS,
         };
         let attributes = DeclaredAttributes::of_builtin(name, params, args, attributes)?;
-        Ok((
-            TyKind::Pointer {
-                element: elem,
-                origin,
-            }
-            .into(),
-            attributes,
-        ))
+        Ok((Ty::pointer(elem, origin), attributes))
     }
 
     pub(super) fn pointer_origin_arg(

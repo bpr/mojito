@@ -177,10 +177,13 @@ impl Checker {
         // exact `ref[ImmUntrackedOrigin]` clause binds — while a tracked one
         // keeps the holder's place identity for loans.
         if let Some(pointer) = dereferenced_pointer(expr)
-            && let Ok(TyKind::Pointer { origin, .. }) = self.infer(pointer).as_ref().map(Ty::kind)
+            && let Some(origin) = self
+                .infer(pointer)
+                .ok()
+                .and_then(|ty| ty.kind().pointer_origin())
         {
             use mojito_types::origin::PointerOrigin;
-            let mutability = match (self.pointer_write_capability(pointer, origin), &origin) {
+            let mutability = match (self.pointer_write_capability(pointer, &origin), &origin) {
                 (Some(true), _) => Mutability::Mutable,
                 (Some(false), _) => Mutability::Immutable,
                 (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
@@ -189,7 +192,7 @@ impl Checker {
             self.materialize_temporary_holder(pointer, mutability == Mutability::Mutable);
             let origin = match origin {
                 PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-                    Origin::Untracked { mutable: *mutable }
+                    Origin::Untracked { mutable }
                 }
                 PointerOrigin::Static => Origin::Static,
                 PointerOrigin::Place { .. }
@@ -523,8 +526,8 @@ impl Checker {
             root.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         ) && match self.infer(root).as_ref().map(Ty::kind) {
+            Ok(kind) if kind.is_pointer() => formed_pointer(),
             Ok(kind) if kind.is_non_simd_struct() => true,
-            Ok(TyKind::Pointer { .. }) => formed_pointer(),
             _ => false,
         } {
             let _ = self.materialize_borrow_owner(root, mutable);
@@ -689,12 +692,12 @@ impl Checker {
             // the parameter directly from its declared origin; the VM re-roots the
             // returned handle at the pointee and forwards the offset-0 index.
             ExprKind::Index { object, .. } => {
-                if let Ok(TyKind::Pointer {
-                    origin: mojito_types::origin::PointerOrigin::Param { id, .. },
-                    ..
-                }) = self.infer(object).as_ref().map(Ty::kind)
+                if let Some(mojito_types::origin::PointerOrigin::Param { id, .. }) = self
+                    .infer(object)
+                    .ok()
+                    .and_then(|ty| ty.kind().pointer_origin())
                 {
-                    return Some(Origin::Param(*id));
+                    return Some(Origin::Param(id));
                 }
                 self.returned_reference_parameter_origin(object)
             }
@@ -702,12 +705,12 @@ impl Checker {
                 if let Some((object, _)) =
                     crate::checker::places::pointer_offset_keyword_subscript(expr) =>
             {
-                if let Ok(TyKind::Pointer {
-                    origin: mojito_types::origin::PointerOrigin::Param { id, .. },
-                    ..
-                }) = self.infer(object).as_ref().map(Ty::kind)
+                if let Some(mojito_types::origin::PointerOrigin::Param { id, .. }) = self
+                    .infer(object)
+                    .ok()
+                    .and_then(|ty| ty.kind().pointer_origin())
                 {
-                    return Some(Origin::Param(*id));
+                    return Some(Origin::Param(id));
                 }
                 self.returned_reference_parameter_origin(object)
             }
@@ -835,9 +838,7 @@ impl Checker {
             return self.returned_pointer_dereference_origin(&spelled, self_place);
         }
         let pointer = dereferenced_pointer(expr)?;
-        let TyKind::Pointer { origin, .. } = self.infer(pointer).ok()?.into_kind() else {
-            return None;
-        };
+        let origin = self.infer(pointer).ok()?.kind().pointer_origin()?;
         match origin {
             PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
             PointerOrigin::SelfPlace {

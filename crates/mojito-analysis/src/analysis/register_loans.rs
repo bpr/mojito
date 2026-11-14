@@ -632,10 +632,10 @@ fn tracked_pointer_result(
     register_types: &HashMap<u32, mojito_types::types::Ty>,
     dest: &Reg,
 ) -> bool {
-    matches!(
-        register_types.get(&dest.0).map(mojito_types::types::Ty::kind),
-        Some(mojito_types::types::TyKind::Pointer { origin, .. }) if origin.as_origin().is_some()
-    )
+    register_types
+        .get(&dest.0)
+        .and_then(|ty| ty.kind().pointer_origin())
+        .is_some_and(|origin| origin.as_origin().is_some())
 }
 
 /// One SSA instruction's transfer of transient owner provenance, whose

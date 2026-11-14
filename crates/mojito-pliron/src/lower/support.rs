@@ -265,7 +265,8 @@ pub fn scalar_type(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(ScalarTy::of_dtype(*dtype)),
-        TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(ScalarTy::Ptr),
+        TyKind::Ref(_) => Ok(ScalarTy::Ptr),
+        pointer if pointer.is_pointer() => Ok(ScalarTy::Ptr),
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {

@@ -5,7 +5,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Execute one function, returning its return value plus the final variable
@@ -515,7 +514,7 @@ impl VmBackend {
             && resolved.is_none()
             && args.is_empty()
             && kwargs.is_empty()
-            && matches!(receiver_ty.map(Ty::kind), Some(TyKind::Pointer { .. }));
+            && receiver_ty.is_some_and(Ty::is_pointer);
         if pointer_copy {
             return Ok(None);
         }

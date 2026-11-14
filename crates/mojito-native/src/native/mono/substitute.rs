@@ -441,11 +441,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             TyKind::Tuple(sub_types(elements, bindings)?).into()
         }
         TyKind::VariadicPack(v) => TyKind::VariadicPack(substitute_ty(v, bindings)?).into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
-            element: substitute_ty(element, bindings)?,
-            origin: origin.clone(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(substitute_ty(&element, bindings)?, origin)
         }
-        .into(),
         TyKind::KgenPointer(element) => {
             TyKind::KgenPointer(substitute_ty(element, bindings)?).into()
         }
@@ -779,28 +777,20 @@ pub(super) fn substitute_func_ref(
 /// lowers a pointer field's pointee: the instance's layout holds its
 /// address alone, and no layout of the pointee is needed.
 pub(super) fn substitute_field(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
-    let TyKind::Pointer { element, origin } = ty.kind() else {
+    let Some((element, origin)) = ty.as_pointer() else {
         return substitute_ty(ty, bindings);
-    };
-    let erased = || TyKind::Pointer {
-        element: Ty::none(),
-        origin: origin.clone(),
     };
     if bindings
         .removed
         .iter()
-        .any(|binder| mojito_types::types::names_binder(element, binder))
+        .any(|binder| mojito_types::types::names_binder(&element, binder))
     {
-        return substitute_ty(&erased().into(), bindings);
+        return substitute_ty(&Ty::pointer(Ty::none(), origin), bindings);
     }
     let substituted = substitute_ty(ty, bindings)?;
-    match substituted.kind() {
-        TyKind::Pointer { element, origin } if mojito_types::types::erases_an_argument(element) => {
-            Ok(TyKind::Pointer {
-                element: Ty::none(),
-                origin: origin.clone(),
-            }
-            .into())
+    match substituted.as_pointer() {
+        Some((element, origin)) if mojito_types::types::erases_an_argument(&element) => {
+            Ok(Ty::pointer(Ty::none(), origin))
         }
         _ => Ok(substituted),
     }
@@ -827,9 +817,11 @@ pub(super) fn removed_parameter_read(binder: &ParamRef) -> String {
 fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
         match ty.kind() {
+            pointer if let Some(element) = pointer.pointer_element() => {
+                names_outside_structs(element, removed)
+            }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,
-            TyKind::Pointer { element, .. }
-            | TyKind::KgenPointer(element)
+            TyKind::KgenPointer(element)
             | TyKind::LitRef { element, .. }
             | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),

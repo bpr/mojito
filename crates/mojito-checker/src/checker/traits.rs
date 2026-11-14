@@ -1823,7 +1823,8 @@ impl Checker {
         ) -> Result<(), TypeError> {
             match ty.kind() {
                 // A handle or pointer breaks the by-value containment chain.
-                TyKind::Ref(_) | TyKind::Pointer { .. } => Ok(()),
+                TyKind::Ref(_) => Ok(()),
+                pointer if pointer.is_pointer() => Ok(()),
                 _ => visit_struct(checker, root, ty, visiting),
             }
         }
@@ -3096,9 +3097,8 @@ impl Checker {
         let mut fieldwise = Some(capability?);
         for (_, field_ty) in &info.fields {
             let decided = if mojito_types::types::is_symbolic(field_ty) {
-                ((field_ty.is_simd() || matches!(field_ty.kind(), TyKind::Pointer { .. }))
-                    && self.is_trivially(kind, field_ty))
-                .then_some(true)
+                ((field_ty.is_simd() || field_ty.is_pointer()) && self.is_trivially(kind, field_ty))
+                    .then_some(true)
             } else {
                 Some(self.is_trivially(kind, field_ty))
             };

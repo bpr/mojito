@@ -367,10 +367,7 @@ impl<'a> Flatten<'a> {
         self.close_call_setup(None);
         // A pointer's offset converts at `Int`, as upstream's
         // `UnsafePointer.__add__` reads `index(offset)`.
-        if matches!(
-            self.f.reg_types.get(&ra.0).map(Ty::kind),
-            Some(TyKind::Pointer { .. })
-        ) {
+        if self.f.reg_types.get(&ra.0).is_some_and(Ty::is_pointer) {
             rb = self.materialize_register(rb, &Ty::int(), b.location());
         }
         let dispatch = OperatorDispatch {

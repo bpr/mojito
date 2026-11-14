@@ -3,7 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::mlir::PopOp;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn lower_binop(
@@ -54,9 +53,9 @@ impl FnLowering<'_> {
         // `pointer + i` — provenance-preserving element arithmetic (the MIR
         // form of `unsafe_offset`): the address `i * sizeof(element)` bytes
         // on (the VM adds `i` to its element-counted offset).
-        if let Some(TyKind::Pointer { element, .. }) = (self.func.reg_types.get(&a.0).cloned())
+        if let Some(element) = (self.func.reg_types.get(&a.0).cloned())
             .as_ref()
-            .map(Ty::kind)
+            .and_then(Ty::pointer_element)
         {
             if !matches!(op, InfixOp::Add) {
                 return Err(

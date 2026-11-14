@@ -133,12 +133,12 @@ impl Checker {
                 .map(|(object, _)| object),
         };
         if let Some(object) = pointer_object
-            && let Ok(TyKind::Pointer {
-                origin: mojito_types::origin::PointerOrigin::Place { place: origin, .. },
-                ..
-            }) = self.infer(object).as_ref().map(Ty::kind)
+            && let Some(mojito_types::origin::PointerOrigin::Place { place: origin, .. }) = self
+                .infer(object)
+                .ok()
+                .and_then(|ty| ty.kind().pointer_origin())
         {
-            self.record_origin_invalidation(site, origin.clone(), None);
+            self.record_origin_invalidation(site, origin, None);
             return;
         }
 
@@ -552,11 +552,8 @@ impl Checker {
                     // storage of a forwarded `ref[Self.o]` parameter.
                     let origin_bearing = matches!(field_ty.kind(), TyKind::Ref(_))
                         || matches!(
-                            field_ty.kind(),
-                            TyKind::Pointer {
-                                origin: mojito_types::origin::PointerOrigin::Param { .. },
-                                ..
-                            }
+                            field_ty.kind().pointer_origin(),
+                            Some(mojito_types::origin::PointerOrigin::Param { .. })
                         );
                     if !origin_bearing {
                         continue;

@@ -806,10 +806,7 @@ impl<'a> Flatten<'a> {
 
 /// Whether `object` is a pointer, whose subscript reads its pointee.
 fn is_pointer(object: Node<'_>) -> bool {
-    matches!(
-        object.ty().as_ref().map(Ty::kind),
-        Some(TyKind::Pointer { .. })
-    )
+    object.ty().as_ref().is_some_and(Ty::is_pointer)
 }
 
 /// Whether `node` carries the checked value-copy boundary.

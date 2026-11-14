@@ -87,44 +87,47 @@ impl FnLowering<'_> {
         // pointer.
         let designated_ty = match root_ty.kind() {
             TyKind::Ref(reference) => reference.referent.clone(),
-            TyKind::Pointer { element, .. }
-                if place.through == Some(place.root) && !ref_param_root =>
+            pointer
+                if place.through == Some(place.root)
+                    && !ref_param_root
+                    && let Some(element) = pointer.pointer_element() =>
             {
                 element.clone()
             }
             _ => root_ty.clone(),
         };
-        let (mut ty, mut address, projected) =
-            if let Some((recorded_ty, projected)) = recorded_prefix {
-                let handle = ScalarTy::Ptr.handle(ctx);
-                let load = LoadOp::new(ctx, through_slot, handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                (recorded_ty, load.get_result(ctx), projected)
-            } else if place.through.is_some() || matches!(root_ty.kind(), TyKind::Ref(_)) {
-                let (ty, address) = match through_ty.kind() {
-                    // A `mut`/`ref` parameter is typed as its referent and its
-                    // aliased slot already IS the referent address.
-                    TyKind::Pointer { .. } if ref_param_root => (designated_ty, through_slot),
-                    TyKind::Ref(_) | TyKind::Pointer { .. } => {
-                        let handle = ScalarTy::Ptr.handle(ctx);
-                        let load = LoadOp::new(ctx, through_slot, handle);
-                        self.append(ctx, load.get_operation(), Some(dest));
-                        (designated_ty, load.get_result(ctx))
-                    }
-                    // A `mut`/`ref` parameter is typed as its referent and its
-                    // aliased slot already IS the referent address.
-                    _ if ref_param_root => (designated_ty, through_slot),
-                    _ => {
-                        return Err(self.unsupported_reg(
-                            format!("place through non-reference handle `{through_ty}`"),
-                            dest,
-                        ));
-                    }
-                };
-                (ty, address, 0)
-            } else {
-                (root_ty, root_slot, 0)
+        let (mut ty, mut address, projected) = if let Some((recorded_ty, projected)) =
+            recorded_prefix
+        {
+            let handle = ScalarTy::Ptr.handle(ctx);
+            let load = LoadOp::new(ctx, through_slot, handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            (recorded_ty, load.get_result(ctx), projected)
+        } else if place.through.is_some() || matches!(root_ty.kind(), TyKind::Ref(_)) {
+            let (ty, address) = match through_ty.kind() {
+                // A `mut`/`ref` parameter is typed as its referent and its
+                // aliased slot already IS the referent address.
+                pointer if pointer.is_pointer() && ref_param_root => (designated_ty, through_slot),
+                kind if kind.is_pointer() || matches!(kind, TyKind::Ref(_)) => {
+                    let handle = ScalarTy::Ptr.handle(ctx);
+                    let load = LoadOp::new(ctx, through_slot, handle);
+                    self.append(ctx, load.get_operation(), Some(dest));
+                    (designated_ty, load.get_result(ctx))
+                }
+                // A `mut`/`ref` parameter is typed as its referent and its
+                // aliased slot already IS the referent address.
+                _ if ref_param_root => (designated_ty, through_slot),
+                _ => {
+                    return Err(self.unsupported_reg(
+                        format!("place through non-reference handle `{through_ty}`"),
+                        dest,
+                    ));
+                }
             };
+            (ty, address, 0)
+        } else {
+            (root_ty, root_slot, 0)
+        };
         let mut offset: u64 = 0;
         for (step, proj) in place.proj.iter().enumerate().skip(projected) {
             while let TyKind::Ref(reference) = ty.kind() {
@@ -146,8 +149,8 @@ impl FnLowering<'_> {
                     // field's pointee as `None`; the place records the
                     // pointee a subscript through the field strides by.
                     ty = match (field_ty.kind(), place.projection_tys.get(step)) {
-                        (TyKind::Pointer { .. }, Some(recorded))
-                            if matches!(recorded.kind(), TyKind::Pointer { .. }) =>
+                        (field_kind, Some(recorded))
+                            if field_kind.is_pointer() && recorded.is_pointer() =>
                         {
                             recorded.clone()
                         }
@@ -235,7 +238,7 @@ impl FnLowering<'_> {
                         ty = first.clone();
                         continue;
                     }
-                    let TyKind::Pointer { element, .. } = ty.kind() else {
+                    let Some(element) = ty.pointer_element() else {
                         return Err(
                             self.unsupported_reg(format!("subscript projection on `{ty}`"), dest)
                         );
