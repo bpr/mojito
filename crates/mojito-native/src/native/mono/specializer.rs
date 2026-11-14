@@ -1516,6 +1516,14 @@ impl<'a> Specializer<'a> {
             )
         })?;
         let result_ty = declaration.ret_ty.clone();
+        // A nested `def`'s generator is applied to the binders in scope where
+        // it is declared before its own arguments, as the pin applies
+        // `outer.mk`'s generator to `outer`'s parameters.
+        let scope = declaration
+            .enclosing
+            .is_some()
+            .then(|| self.nested_application_scope(function));
+        let (enclosing, args) = args.split_at(scope.as_ref().map_or(0, Vec::len).min(args.len()));
         // A method's receiver is its first runtime argument; an
         // `__init__`'s `out self` is its result.
         let receives = declaration.has_receiver
@@ -1540,6 +1548,7 @@ impl<'a> Specializer<'a> {
         // is the owner when the application leads with that instance past
         // the method's own arity.
         let owner = mojito_symbol::symbol::split_method_symbol(function)
+            .filter(|_| scope.is_none())
             .and_then(|(name, _)| self.structs.get(name).map(|owner| (name, owner)))
             .filter(|(name, owner)| {
                 !owner.param_decls.is_empty()
@@ -1615,13 +1624,20 @@ impl<'a> Specializer<'a> {
                 ParamDecl::Value { .. } => self.argument_value(template, arg, bindings),
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let (mut instance_bindings, mut arguments) = match &scope {
+            Some(scope) => {
+                let bound =
+                    self.enclosing_bindings(template, function, scope, enclosing, bindings)?;
+                self.nested_bindings(function, &bound, false)?
+            }
+            None => (self.base_bindings(), Vec::new()),
+        };
         let unresolved = |what: &str, arg: &ParamExpr| {
             self.error(
                 Some(template),
                 format!("compile-time application `{function}` reads {what} `{arg}`"),
             )
         };
-        let mut instance_bindings = self.base_bindings();
         if let Some((owner, instance)) = instance {
             let ty = match instance.kind() {
                 ParamKind::TypeShape(ty) => substitute_ty(ty, bindings).ok(),
@@ -1637,7 +1653,6 @@ impl<'a> Specializer<'a> {
             let template_name = nominal_template(name).to_string();
             instance_bindings.self_instance = Some((template_name, ty));
         }
-        let mut arguments = Vec::new();
         for ((decl, arg), value) in own_decls.iter().zip(args).zip(parameter_values) {
             let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
@@ -1789,6 +1804,102 @@ impl<'a> Specializer<'a> {
         Ok(eval_ct(&applied, bindings)
             .ok()
             .or_else(|| applied.frozen_struct()))
+    }
+
+    /// The binders a compile-time application of the nested body
+    /// `function` binds before its own parameters: the struct parameters of
+    /// the method it is nested in, then its enclosing scope's binders
+    /// ([`Self::binder_scope`]), origins erased, each once.
+    fn nested_application_scope(&self, function: &str) -> Vec<ParamDecl> {
+        let mut root = function;
+        while let Some(enclosing) = self
+            .declarations
+            .get(root)
+            .and_then(|declaration| declaration.enclosing.as_deref())
+        {
+            root = enclosing;
+        }
+        let owner = mojito_symbol::symbol::split_method_symbol(root)
+            .and_then(|(owner, _)| self.structs.get(owner))
+            .map(|owner| owner.param_decls.clone())
+            .unwrap_or_default();
+        let mut scope = self.binder_scope(function);
+        let own = self
+            .declarations
+            .get(function)
+            .map_or(0, |declaration| declaration.param_decls.len());
+        scope.truncate(scope.len().saturating_sub(own));
+        let mut seen = std::collections::HashSet::new();
+        owner
+            .into_iter()
+            .chain(scope)
+            .filter(|decl| !matches!(decl, ParamDecl::Origin { .. }))
+            .filter(|decl| seen.insert(decl.id().clone()))
+            .collect()
+    }
+
+    /// The bindings of the binders `scope` of the nested body `function` to
+    /// the leading arguments `args` of its application under `bindings`
+    /// ([`Self::nested_application_scope`]).
+    fn enclosing_bindings(
+        &mut self,
+        template: &str,
+        function: &str,
+        scope: &[ParamDecl],
+        args: &[ParamExpr],
+        bindings: &Bindings,
+    ) -> Result<Bindings, MonoError> {
+        let mut bound = self.base_bindings();
+        if scope.len() != args.len() {
+            return Err(self.error(
+                Some(template),
+                format!(
+                    "compile-time application of `{function}` binds {} of its {} enclosing binders",
+                    args.len(),
+                    scope.len(),
+                ),
+            ));
+        }
+        for (decl, arg) in scope.iter().zip(args) {
+            let binder = decl.binder();
+            match decl {
+                ParamDecl::Type { .. } => {
+                    let ty = match arg.kind() {
+                        ParamKind::DeclRef(reference) => bindings.types.get(reference).cloned(),
+                        ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+                            substitute_ty(ty, bindings).ok()
+                        }
+                        _ => None,
+                    };
+                    let ty = ty.ok_or_else(|| {
+                        self.error(
+                            Some(template),
+                            format!(
+                                "compile-time application `{function}` reads an unresolved \
+                                 type `{arg}`"
+                            ),
+                        )
+                    })?;
+                    bound.types.insert(binder, ty);
+                }
+                ParamDecl::Value { .. } => {
+                    let value = self
+                        .argument_value(template, arg, bindings)?
+                        .ok_or_else(|| {
+                            self.error(
+                                Some(template),
+                                format!(
+                                    "compile-time application `{function}` reads an unresolved \
+                                 value `{arg}`"
+                                ),
+                            )
+                        })?;
+                    bound.values.insert(binder, value);
+                }
+                ParamDecl::Origin { .. } => {}
+            }
+        }
+        Ok(bound)
     }
 
     fn verified_fragment(&mut self, template: &str, name: &str) -> Result<ConcreteMir, MonoError> {

@@ -1295,6 +1295,11 @@ module `def` or a static method over compile-time values lifts nothing:
 it is the application of that callable to the parameter expressions of its
 arguments (`Checker::called_application`, over the `applicable_functions`
 collected before any declaration is checked), as the pin's call node is.
+A call of a nested `def` that captures nothing is likewise the application
+of its generator: the check lists the `def` when it binds it
+(`Checker::list_nested_application`) under the symbol MIR gives it, the
+application leading with the binders in scope at the declaration, which
+`Specializer::demand_application` binds as `nested_bindings` does.
 The application names the MIR declaration of the one overload the
 arguments select, and lists the callee's own compile-time arguments, then
 its runtime ones in declared order with a declared default where the call

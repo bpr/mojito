@@ -3187,6 +3187,9 @@ impl Checker {
         if !predeclared {
             self.bind_def(stmt, lambda, &signature)?;
         }
+        if !lambda && !self.function_bases.is_empty() {
+            self.list_nested_application(stmt);
+        }
         let DefSignature {
             owner,
             decls,
@@ -3347,6 +3350,15 @@ impl Checker {
             self.record_declaration_verdict(site, verdict);
         }
         let module_level = self.function_bases.is_empty() && !lambda;
+        let (nested_symbol, nested_binders) = if module_level {
+            (
+                Some(owner.clone()),
+                self.self_decls.iter().chain(&decls).cloned().collect(),
+            )
+        } else {
+            self.nested_body_scope(name, lambda, captures.is_some(), &decls)
+        };
+        self.enter_nested_scope(nested_symbol, nested_binders, body);
         self.push_scope();
         self.function_bases.push(self.scopes.len() - 1);
         if let Some(policy) = capture_policy {
@@ -3691,6 +3703,7 @@ impl Checker {
         }
         self.pop_scope();
         self.function_bases.pop();
+        self.leave_nested_scope();
         if !self.function_bases.is_empty() {
             self.capture_contexts.borrow_mut().pop();
         }

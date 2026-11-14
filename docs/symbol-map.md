@@ -2313,7 +2313,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `applicable_functions` (`checker/comptime_validation.rs`, run by
   `check_program`) collects every
   overload under the name a call spells (`ApplicableFunction`, built by
-  `ApplicableShape::applicable`) before any declaration is checked,
+  `ApplicableShape::applicable`) before any declaration is checked, and
+  `Checker::list_nested_application` lists a nested `def` as it is bound
+  (`nested_applications`, under the body symbol and binder scope its
+  `NestedScope` tracks; its `enclosing` binders lead the application,
+  bound by `Specializer::nested_application_scope`),
   `classify_applicable_signatures` classifies each one's own compile-time
   parameters as its check does, under the same binder owner, into its
   `AppliedSignature` (with its result and its `SlotType::Declared`

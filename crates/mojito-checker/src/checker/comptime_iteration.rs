@@ -58,7 +58,7 @@ impl Checker {
         self.record_spelled_construction(source, call, &iterator_ty);
         self.record_at(source.source_span()).comptime_iteration =
             Some(Box::new(mojito_checked::checked::ComptimeIteration {
-                binder: reference,
+                binder: reference.clone(),
                 initial,
                 has_next,
                 next_iter,
@@ -78,9 +78,19 @@ impl Checker {
         self.edit_innermost_value_scope(|scope| {
             scope.insert(key.clone(), binder);
         });
+        let index = mojito_types::types::ParamDecl::Value {
+            id: reference.id.clone(),
+            name: reference.name.to_string(),
+            ty: iterator_ty,
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        };
         let result = self.declare_immutable(var, element_ty).and_then(|()| {
             self.record_statement_binding(stmt, var);
-            self.check_block(body, ret, true)
+            self.in_comptime_loop(index, |checker| checker.check_block(body, ret, true))
         });
         self.edit_innermost_value_scope(|scope| {
             scope.remove(&key);

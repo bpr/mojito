@@ -728,6 +728,15 @@ pub struct Checker {
     /// expression may call when it captures nothing
     /// ([`Self::compile_time_callee`]).
     nested_function_owners: HashSet<mojito_types::origin::OwnerId>,
+    /// The bodies being checked, innermost last, each with the symbol and
+    /// binder scope a nested `def` it declares is applied under
+    /// ([`comptime_validation::NestedScope`]).
+    nested_scopes: Vec<comptime_validation::NestedScope>,
+    /// The nested `def`s a compile-time call applies by name, as the pin
+    /// applies a nested function's generator to the enclosing parameters,
+    /// by the binding each declares ([`Self::list_nested_application`]).
+    nested_applications:
+        HashMap<mojito_types::origin::OwnerId, Vec<comptime_validation::ApplicableFunction>>,
     /// The loop and comprehension binders not declared `var`: each binds
     /// the yielded element by reference, as upstream, so it is no tracked
     /// root a `^` may move out of.
@@ -1138,6 +1147,8 @@ impl Checker {
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
             nested_function_owners: HashSet::new(),
+            nested_scopes: Vec::new(),
+            nested_applications: HashMap::new(),
             reference_binders: HashSet::new(),
             owned_collectors: declaration_table::DeclarationTable::default(),
             collector_names: declaration_table::DeclarationTable::default(),

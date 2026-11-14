@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2171**.
+Next free ID: **R2172**.
 
 ## Ordered Work
 
@@ -4820,31 +4820,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1693 A compile-time call of a nested `def` applies a lifted
-  thunk, where the pin applies the nested `def`'s generator**
+- [ ] **R2171 A compile-time call of a nested `def` the check cannot
+  name ahead of `collect_closure_uses` still applies a lifted thunk**
 
-  `first[mk()]()` and `comptime t = mk()` over a nested `def` that
-  captures nothing denote `$comptime$outer$c0[length]`, a function the
-  check lifts whose body calls `outer$mk`, where the pin applies
-  `outer.mk`'s generator to the enclosing parameters.
-  - Cause: a parameter expression's application names its function by
-    lowered symbol, and a nested `def`'s symbol (`CheckedDef::symbol`) is
-    named only by the check's last step (`collect_closure_uses`), after
-    the application is selected.
-  - `Checker::selected_application` skips a local callee
-    (`binding_scope == 0`), and `applicable_functions` lists module
-    declarations only.
-  - Lever: list a captureless nested `def` as an `ApplicableFunction`
-    under the symbol MIR gives it, its enclosing binders leading in
-    `binder_scope` order, and bind them in
-    `Specializer::demand_application` as `nested_bindings` does.
-  - Trap: `split_method_symbol` of `W.go$mk` names `W`, so
-    `demand_application`'s owner arm would read the first argument as a
-    `W` instance.
-  - No output differs. Probe: the MIR of
-    `assets/ok/nested_def_comptime_struct_result.mojo` applies
-    `$comptime$outer$c…` functions where it should apply `outer$mk`.
-  - Found while landing R1686 (2026-10-30).
+  The check lists a captureless nested `def` for compile-time application
+  under the symbol it spells itself (`Checker::list_nested_application`),
+  which it can only do where that symbol is decidable while the body is
+  checked; elsewhere `first[mk()]()` denotes `$comptime$f$c<k>`, where the
+  pin applies the nested function's generator.
+  - Cause: `collect_closure_uses` names a repeated spelling by its ordinal
+    among the scope's *live* declarations (`nested_lifted_declaration_name`
+    over `live_statements`), and a capture-list body's children under its
+    storage method (`closure_method_name`); the check sees neither.
+  - Lever: have the check record the nested symbol it applies per
+    declaration, and let `collect_closure_uses` take that name (or reject a
+    mismatch), so the two cannot drift.
+  - Probe: `def dup()` declared in both arms of an `if`, each called in a
+    `comptime` initializer, emits `$comptime$generic$c1`/`c2` applications.
+  - Probe: a `def` nested in a capture-list `def` (`def outerc() {x}:`) or
+    in a lambda applies a lifted thunk.
+  - Probe: a `def` nested in a function over a pack or callable binder
+    (`count[*Ts: AnyType]`) applies a lifted thunk: an application
+    argument holds no such binder (`NestedScope::symbol`).
+  - No output differs.
+  - Found while landing R1693 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

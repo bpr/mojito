@@ -166,6 +166,11 @@ pub(in crate::checker) struct ApplicableFunction {
     /// signature, once it has: an overloaded module `def` or method is
     /// listed before any signature is typed.
     lowered: Option<String>,
+    /// The enclosing binders a nested `def`'s generator is applied to
+    /// before its own arguments, in the elaborator's order
+    /// ([`NestedScope::binders`]); empty for a module declaration.
+    #[serde(skip)]
+    enclosing: Vec<ParamExpr>,
     /// Whether it is a static method or an `__init__` of a generic struct,
     /// which is applied to the instance it is called on, or constructs,
     /// before any other argument.
@@ -569,6 +574,200 @@ pub(super) struct ApplicableDeclaration<'a> {
     pub(super) owner: Option<&'a Stmt>,
     /// Its own compile-time parameters as it declares them.
     type_params: &'a [mojito_ast::ast::TypeParam],
+}
+
+/// A body being checked, as a nested `def` it declares is applied at
+/// compile time ([`Checker::list_nested_application`]): the pin applies
+/// the nested function's generator to the enclosing parameters.
+pub(in crate::checker) struct NestedScope {
+    /// The symbol the body lowers to, which names each `def` nested in it
+    /// (`outer$mk`); `None` for a body none of whose nested `def`s a
+    /// compile-time call names: a lambda's, one its scope spells more than
+    /// once, one with a capture list, or one over a binder no application
+    /// argument holds.
+    symbol: Option<String>,
+    /// The binders in scope in the body, as the elaborator reads a nested
+    /// body's generator: a method's struct's, then each enclosing
+    /// declaration's `comptime for` indices and own binders, outermost
+    /// first, origins erased.
+    binders: Vec<ParamDecl>,
+    /// How many times the body spells each nested `def`'s name.
+    spellings: HashMap<String, usize>,
+    /// The index binders of the body's own `comptime for` loops around
+    /// the statement being checked, outermost first.
+    loops: Vec<ParamDecl>,
+    /// How many function bodies are open while this one is checked.
+    depth: usize,
+}
+
+impl Checker {
+    /// Open the body `body` lowering to `symbol`, whose binders in scope are
+    /// `binders` ([`NestedScope`]), before its function scope opens.
+    pub(super) fn enter_nested_scope(
+        &mut self,
+        symbol: Option<String>,
+        binders: Vec<ParamDecl>,
+        body: &[Stmt],
+    ) {
+        let applicable = binders.iter().all(|decl| match decl {
+            ParamDecl::Type { variadic, .. } => !variadic,
+            ParamDecl::Value {
+                variadic,
+                callable_default,
+                ..
+            } => !variadic && callable_default.is_none() && !decl.binds_callables(),
+            ParamDecl::Origin { .. } => true,
+        });
+        let mut binders: Vec<ParamDecl> = binders
+            .into_iter()
+            .filter(|decl| !matches!(decl, ParamDecl::Origin { .. }))
+            .collect();
+        let mut seen = HashSet::new();
+        binders.retain(|decl| seen.insert(decl.id().clone()));
+        // A body a failed check left open is no longer being checked.
+        let depth = self.function_bases.len();
+        self.nested_scopes.retain(|scope| scope.depth <= depth);
+        self.nested_scopes.push(NestedScope {
+            symbol: symbol.filter(|_| applicable),
+            binders,
+            spellings: nested_def_spellings(body),
+            loops: Vec::new(),
+            depth: self.function_bases.len() + 1,
+        });
+    }
+
+    /// Close the body [`Self::enter_nested_scope`] opened last.
+    pub(super) fn leave_nested_scope(&mut self) {
+        self.nested_scopes.pop();
+    }
+
+    /// The symbol and binders of the body of the nested `def` `name`, whose
+    /// own binders are `decls`, declared in the body being checked: under
+    /// that body's symbol, as the check names it once its uses are
+    /// collected (`nested_lifted_name`).
+    pub(super) fn nested_body_scope(
+        &self,
+        name: &str,
+        lambda: bool,
+        capture_list: bool,
+        decls: &[ParamDecl],
+    ) -> (Option<String>, Vec<ParamDecl>) {
+        let Some(parent) = self
+            .nested_scopes
+            .last()
+            .filter(|scope| scope.depth == self.function_bases.len())
+        else {
+            return (None, Vec::new());
+        };
+        let symbol = parent
+            .symbol
+            .as_deref()
+            .filter(|_| !lambda && !capture_list && parent.spellings.get(name) == Some(&1))
+            .map(|parent| mojito_symbol::symbol::nested_lifted_name(parent, name));
+        let binders = parent
+            .binders
+            .iter()
+            .chain(&parent.loops)
+            .chain(decls)
+            .cloned()
+            .collect();
+        (symbol, binders)
+    }
+
+    /// `f` run inside a `comptime for` of the body being checked whose
+    /// index is the binder `index`, over which the `def`s nested in the
+    /// loop are generators too.
+    pub(super) fn in_comptime_loop<T>(
+        &mut self,
+        index: ParamDecl,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let depth = self.function_bases.len();
+        let counted = self
+            .nested_scopes
+            .last_mut()
+            .filter(|scope| scope.depth == depth)
+            .map(|scope| scope.loops.push(index))
+            .is_some();
+        let result = f(self);
+        if counted && let Some(scope) = self.nested_scopes.last_mut() {
+            scope.loops.pop();
+        }
+        result
+    }
+
+    /// List the nested `def` `stmt`, just bound in the body being checked,
+    /// as a callable a compile-time call applies by name: the generator the
+    /// elaborator runs under the symbol MIR gives it, applied to the
+    /// binders in scope where it is declared before its own arguments
+    /// ([`ApplicableFunction::enclosing`]). Whether a call captures nothing
+    /// is the call's question ([`Self::compile_time_callee`]).
+    pub(super) fn list_nested_application(&mut self, stmt: &Stmt) {
+        let StmtKind::Def { name, captures, .. } = &stmt.kind else {
+            return;
+        };
+        let (Some(symbol), enclosing) =
+            self.nested_body_scope(name, false, captures.is_some(), &[])
+        else {
+            return;
+        };
+        let Some(binding) = self.lookup_owner(name) else {
+            return;
+        };
+        let Some(mut declaration) = applicable_declarations(
+            std::slice::from_ref(stmt),
+            &*self.overload_sets,
+            &*self.program_constants,
+        )
+        .pop() else {
+            return;
+        };
+        let function = &mut declaration.function;
+        // Its own binders are owned by its name, as its check owns them.
+        function.key.clone_from(name);
+        function.lowered = Some(symbol);
+        function.enclosing = enclosing
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Value { ty, .. } => super::annotations::value_parameter_expr(decl, ty),
+                _ => self.param_context.decl_ref(
+                    decl.id().clone(),
+                    decl.spelling(),
+                    mojito_types::param_expr::MetaTy::Type,
+                ),
+            })
+            .collect();
+        let Some((signature, params)) = self.applied_signature(&declaration) else {
+            return;
+        };
+        classify_entry(&mut declaration.function, signature, params);
+        if declaration.function.constraints.is_none() {
+            declaration.function.constraints =
+                self.in_signature_clause_scope(&declaration, |checker, _| {
+                    declaration
+                        .function
+                        .where_clauses()
+                        .iter()
+                        .map(|clause| checker.compile_where_clause(clause))
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()
+                });
+        }
+        self.nested_applications
+            .insert(binding, vec![declaration.function]);
+    }
+
+    /// The nested `def` a call of `name` applies, when `name` is a nested
+    /// `def` that captures nothing the check listed
+    /// ([`Self::list_nested_application`]).
+    fn nested_application(&self, name: &str) -> Option<&[ApplicableFunction]> {
+        if !self.compile_time_callee(name) {
+            return None;
+        }
+        self.nested_applications
+            .get(&self.lookup_owner(name)?)
+            .map(Vec::as_slice)
+    }
 }
 
 /// Whether a compile-time value declared of type `ty` may be a type: `ty`
@@ -2450,24 +2649,7 @@ impl Checker {
                     return true;
                 };
                 if let Some(entry) = self.applicable_entry(declaration) {
-                    // A value pack's implicit list binder is a slot too.
-                    entry.binders = signature
-                        .decls
-                        .iter()
-                        .map(|decl| decl.name().to_string())
-                        .collect();
-                    entry.signature = Some(signature);
-                    let slots = entry.params.iter_mut().map(|param| &mut param.ty).chain(
-                        entry
-                            .collector
-                            .as_mut()
-                            .map(|collector| &mut collector.element),
-                    );
-                    for (slot, ty) in slots.zip(params) {
-                        if let SlotType::Declared(_, declared) = slot {
-                            *declared = ty;
-                        }
-                    }
+                    classify_entry(entry, signature, params);
                 }
                 false
             });
@@ -2918,20 +3100,25 @@ impl Checker {
                 args,
                 kwargs,
             ),
-            // A local of the name shadows the module function.
+            // A local of the name shadows the module function, but a
+            // nested `def` that captures nothing is applied as its generator.
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
-            } if self.binding_scope(name).is_none_or(|scope| scope == 0) => (
-                name.clone(),
-                None,
-                None,
-                param_args.as_slice(),
-                args,
-                kwargs,
-            ),
+            } if self.binding_scope(name).is_none_or(|scope| scope == 0)
+                || self.nested_application(name).is_some() =>
+            {
+                (
+                    name.clone(),
+                    None,
+                    None,
+                    param_args.as_slice(),
+                    args,
+                    kwargs,
+                )
+            }
             ExprKind::MethodCall {
                 object,
                 method,
@@ -2973,9 +3160,11 @@ impl Checker {
                 .get_or_init(|| self.run_time_type(expr))
                 .clone()
         };
-        let mut selected = self
-            .applicable_functions
-            .get(&name)?
+        let overloads = match &expr.kind {
+            ExprKind::Call { .. } if let Some(nested) = self.nested_application(&name) => nested,
+            _ => self.applicable_functions.get(&name)?,
+        };
+        let mut selected = overloads
             .iter()
             .filter(|function| function.takes_self() == receiver.is_some())
             .filter(|function| explicit_initializer.is_none() || function.constructs())
@@ -3373,7 +3562,8 @@ impl Checker {
         if function.raises {
             return None;
         }
-        let mut applied = Vec::with_capacity(arguments.len() + 1);
+        let mut applied = function.enclosing.clone();
+        applied.reserve(arguments.len() + 1);
         if function.on_instance {
             applied.push(self.param_context.type_shape(instance.clone()?));
         }
@@ -6926,6 +7116,7 @@ impl ApplicableShape<'_> {
             key: symbol,
             site: Some(site),
             lowered: None,
+            enclosing: Vec::new(),
             on_instance,
             self_slot,
             binders,
@@ -7610,4 +7801,59 @@ fn generator_result_traits(expr: &ParamExpr) -> Option<Vec<String>> {
         TyKind::Trait(traits) if args.iter().all(Option::is_some) => Some(traits.clone()),
         _ => None,
     }
+}
+
+/// Record `signature` and the declared types `params` of its runtime
+/// parameters, its collector's element last, on `entry`
+/// ([`Checker::classify_applicable_signatures`]).
+fn classify_entry(
+    entry: &mut ApplicableFunction,
+    signature: AppliedSignature,
+    params: Vec<Option<Ty>>,
+) {
+    // A value pack's implicit list binder is a slot too.
+    entry.binders = signature
+        .decls
+        .iter()
+        .map(|decl| decl.name().to_string())
+        .collect();
+    entry.signature = Some(signature);
+    let slots = entry.params.iter_mut().map(|param| &mut param.ty).chain(
+        entry
+            .collector
+            .as_mut()
+            .map(|collector| &mut collector.element),
+    );
+    for (slot, ty) in slots.zip(params) {
+        if let SlotType::Declared(_, declared) = slot {
+            *declared = ty;
+        }
+    }
+}
+
+/// How many times the function body `body` spells each nested `def`'s
+/// name, in its blocks but not inside another declaration, as the check
+/// counts a scope's spellings when it names them.
+fn nested_def_spellings(body: &[Stmt]) -> HashMap<String, usize> {
+    struct Spellings {
+        counts: HashMap<String, usize>,
+        declaration: bool,
+    }
+    impl mojito_ast::visit::Visitor for Spellings {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::Def { name, .. } = &statement.kind {
+                *self.counts.entry(name.clone()).or_default() += 1;
+                self.declaration = true;
+            }
+        }
+        fn enter_scope(&mut self, _names: &[&str]) -> bool {
+            !std::mem::take(&mut self.declaration)
+        }
+    }
+    let mut spellings = Spellings {
+        counts: HashMap::new(),
+        declaration: false,
+    };
+    mojito_ast::visit::walk_block(&mut spellings, body);
+    spellings.counts
 }

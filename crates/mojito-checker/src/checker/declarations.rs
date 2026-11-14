@@ -1947,8 +1947,16 @@ impl Checker {
         } else {
             let start = site.as_ref().map(|(key, _)| self.enter_body_site(key));
             let enclosing = self.lifting_owner.replace(effect_key.clone());
+            let binders = self
+                .self_decls
+                .iter()
+                .chain(&method_decls)
+                .cloned()
+                .collect();
+            self.enter_nested_scope(Some(effect_key.clone()), binders, &m.body);
             let checked =
                 self.bind_and_check_method(self_ty, m, owner, &ret_ty, ref_return, effect_key);
+            self.leave_nested_scope();
             self.lifting_owner = enclosing;
             if let (Some((key, display)), Some(start)) = (site, start) {
                 self.leave_body_site(key, &display, &start);

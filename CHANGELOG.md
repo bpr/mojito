@@ -688,6 +688,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time call of a nested `def` that captures nothing is now the
+  application of the nested function's generator, as at the pin:
+  `first[mk()]()` and `comptime t = mk()` apply `outer$mk` to the binders
+  in scope where `mk` is declared (a method's struct parameters, enclosing
+  parameters, `comptime for` indices), where the check lifted a function
+  around the call whose body called `mk` (R1693). No output changes. A
+  name its scope spells twice, or a `def` nested in a lambda or capture-list
+  `def`, still lifts (R2171).
 - An annotation's `None`, `Self`, and `Self.<member>` atoms parse
   through the expression grammar and convert in the annotation's type
   context (`Expr::annotation_type`), as upstream parses an annotation as
