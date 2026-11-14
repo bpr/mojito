@@ -1394,14 +1394,14 @@ mod tests {
         );
     }
 
-    /// A raising `+` of the two `Int` registers into `%r1`, its flag `%r3`
-    /// and error `%r4`, then `after`, in a raising body whose error slot
-    /// is `$v1`.
+    /// A raising `+` of the two `Int` registers into `%r1`, its flag `%r3`,
+    /// writing its error into the body's error slot `$v1`, then `after`,
+    /// in a raising body.
     fn raising_with(after: Vec<MirInstr>) -> MirFunction {
         let raises = crate::mir::Raises {
             ty: Ty::error(),
             flag: Reg(3),
-            error: Reg(4),
+            error: 1,
         };
         let mut instrs = vec![MirInstr::BinOp {
             op: mojito_ast::ast::InfixOp::Add,
@@ -1415,10 +1415,8 @@ mod tests {
         }];
         instrs.extend(after);
         let mut function = function_with(instrs);
-        function.n_regs = 5;
-        function
-            .reg_types
-            .extend([(3, Ty::bool()), (4, Ty::error())]);
+        function.n_regs = 4;
+        function.reg_types.insert(3, Ty::bool());
         function.raises = true;
         function.error_ty = Some(Ty::error());
         function.n_vars = 2;
@@ -1428,21 +1426,13 @@ mod tests {
         function
     }
 
-    /// The error region on `%r3`, its `then` region raising `error` out of
-    /// the function through its error slot.
-    fn error_region(error: Reg) -> MirInstr {
+    /// The error region on `%r3`, its `then` region raising out of the
+    /// function through the error slot the instruction wrote.
+    fn error_region() -> MirInstr {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(3),
-            then: Box::new(one(
-                vec![MirInstr::DefVar {
-                    var: 1,
-                    src: error,
-                    binding_ty: None,
-                    in_place: false,
-                }],
-                MirTerm::ErrorReturn,
-            )),
+            then: Box::new(one(Vec::new(), MirTerm::ErrorReturn)),
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: Box::new(one(Vec::new(), MirTerm::Yield(Vec::new()))),
@@ -1451,7 +1441,7 @@ mod tests {
 
     #[test]
     fn a_raising_instruction_followed_by_its_error_region_verifies() {
-        let found = findings(&raising_with(vec![error_region(Reg(4))]));
+        let found = findings(&raising_with(vec![error_region()]));
         assert!(
             !found.iter().any(|finding| finding.contains("error region")),
             "{found:?}"
@@ -1468,9 +1458,20 @@ mod tests {
     }
 
     #[test]
-    fn an_error_region_raising_another_value_is_a_finding() {
-        let found = findings(&raising_with(vec![error_region(Reg(2))]));
-        assert_finding(&found, "error region on %r3 does not hand on %r4");
+    fn a_terminator_carrying_the_flag_out_is_the_error_region() {
+        let mut function = raising_with(Vec::new());
+        function.body = one(
+            std::mem::take(&mut function.body.instrs),
+            MirTerm::Break {
+                label: None,
+                values: vec![Reg(3)],
+            },
+        );
+        let found = findings(&function);
+        assert!(
+            !found.iter().any(|finding| finding.contains("error region")),
+            "{found:?}"
+        );
     }
 
     #[test]
@@ -1606,7 +1607,7 @@ mod tests {
             binding_ty: None,
             in_place: false,
         };
-        let found = findings(&raising_with(vec![read, error_region(Reg(4))]));
+        let found = findings(&raising_with(vec![read, error_region()]));
         assert_finding(
             &found,
             "%r1 is read before the error region decides it is defined",

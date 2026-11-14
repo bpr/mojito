@@ -56,6 +56,7 @@ impl Decoder {
         let spans = self.locations(self.field(fields, "locations").ok()?);
         self.unlabelled_tries = false;
         self.legacy_raises = false;
+        self.legacy_edge_errors.clear();
         let mut body = self.body(self.field(fields, "blocks").ok()?, &name)?;
         let unlabelled = std::mem::take(&mut self.unlabelled_tries);
         if unlabelled {
@@ -162,6 +163,10 @@ impl Decoder {
         }
         if function.error_slot.is_none() {
             upgrade_function_error_slot(&mut function);
+        }
+        let edge_errors = std::mem::take(&mut self.legacy_edge_errors);
+        if !edge_errors.is_empty() {
+            upgrade_edge_errors(&mut function, &edge_errors);
         }
         if self.minor < 170 {
             upgrade_struct_literal_targets(&mut function);
@@ -1474,6 +1479,24 @@ pub(super) fn upgrade_function_error_slot(function: &mut MirFunction) {
     function.error_slot = Some(slot);
 }
 
+/// The placeholder slot the raise edge older than MIR 1.193 read
+/// `index`-th in its function names until [`upgrade_edge_errors`] gives it
+/// a slot.
+pub(super) fn legacy_edge_slot(index: usize) -> VarId {
+    LEGACY_FUNCTION_ERROR_SLOT - 1 - VarId::try_from(index).unwrap_or(0)
+}
+
+/// Give each raise edge of `function`, read from text older than MIR
+/// 1.193, where the edge defined its error in the register `errors` holds
+/// at its index, the slot the edge writes: a fresh `$edge_error<N>` typed
+/// as its error, which its error region marks initialized and moves into
+/// that register before the region's old body stores it on.
+pub(super) fn upgrade_edge_errors(function: &mut MirFunction, errors: &[crate::mir::Reg]) {
+    let mut blocks = std::mem::take(&mut function.body);
+    edge_error_slots(&mut blocks, function, errors);
+    function.body = blocks;
+}
+
 /// Convert each literal `function`, read from text older than MIR 1.170,
 /// materializes at a `SIMD` struct at that struct's `!kgen.simd` storage,
 /// as upstream's `#pop.int_literal_convert` is typed, into a fresh storage
@@ -1818,5 +1841,51 @@ impl Decoder {
                 PackQuery::Length,
             )),
         }
+    }
+}
+
+/// [`upgrade_edge_errors`] over `block` and its regions.
+fn edge_error_slots(block: &mut MirBlock, function: &mut MirFunction, errors: &[crate::mir::Reg]) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+            edge_error_slots(region, function, errors);
+        }
+        let legacy = block.instrs[index].raise_edge().and_then(|raises| {
+            let placeholder = LEGACY_FUNCTION_ERROR_SLOT - 1 - raises.error;
+            errors
+                .get(usize::try_from(placeholder).ok()?)
+                .map(|error| (*error, raises.flag, raises.ty.clone()))
+        });
+        if let Some((error, flag, ty)) = legacy {
+            let slot = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
+            function.n_vars += 1;
+            function
+                .var_names
+                .push(format!("$edge_error{error}", error = error.0));
+            function.var_tys.insert(slot, ty.clone());
+            if let Some(raises) = block.instrs[index].raise_edge_mut() {
+                raises.error = slot;
+            }
+            if let Some(MirInstr::If { cond, then, .. }) = block.instrs.get_mut(index + 1)
+                && *cond == flag
+            {
+                then.instrs.splice(
+                    0..0,
+                    [
+                        MirInstr::MarkInitialized {
+                            place: crate::mir::MirPlace::root(slot, Some(ty)),
+                        },
+                        MirInstr::UseVar {
+                            dest: error,
+                            var: slot,
+                            mode: crate::mir::UseMode::Move,
+                            constructor: None,
+                        },
+                    ],
+                );
+            }
+        }
+        index += 1;
     }
 }

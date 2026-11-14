@@ -427,13 +427,17 @@ fn effects(
     instr: &MirInstr,
     uses: &RegisterUses,
 ) -> Effects {
+    let marked_whole = marked_whole(instr);
     let mut effects = Effects {
-        def: var_def(instr),
+        def: var_def(instr).or(marked_whole),
         ..Effects::default()
     };
     if let Some(def) = effects.def {
         values.clear_all(live, def);
         effects.defined.push(values.range(def));
+    }
+    if marked_whole.is_some() {
+        return effects;
     }
     for part in &uses.defined {
         for bit in part.bits() {
@@ -503,6 +507,17 @@ fn effects(
         effects.marked.push(values.mark_ref(live, *part));
     }
     effects
+}
+
+/// The slot a `ownership.mark_initialized` of a whole slot initializes,
+/// as upstream's `checkDef` takes the mark: a definition reading nothing,
+/// such as an error region's mark of the error slot its raising call
+/// wrote.
+fn marked_whole(instr: &MirInstr) -> Option<VarId> {
+    match instr {
+        MirInstr::MarkInitialized { place } if place.is_whole_root() => Some(place.root),
+        _ => None,
+    }
 }
 
 impl Effects {

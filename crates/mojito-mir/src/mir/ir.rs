@@ -1002,9 +1002,10 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
 ///
 /// Those are its place roots and `through` slots, its capture-access
 /// roots, loan and interior roots, the slot operands of the variable and
-/// iterator instructions, and a `try`'s error slot; the caller walks a
-/// region op's blocks itself. [`for_each_instruction_slot_mut`]
-/// visits the same slots in the same order.
+/// iterator instructions, a `try`'s error slot, and the error slot a
+/// raise edge writes; the caller walks a region op's blocks itself.
+/// [`for_each_instruction_slot_mut`] visits the same slots in the same
+/// order.
 pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
     let mut out = Vec::new();
     for place in super::verify::instruction_places(instruction) {
@@ -1047,6 +1048,7 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         MirInstr::Try { error, .. } => out.extend(*error),
         _ => {}
     }
+    out.extend(instruction.raise_edge().map(|raises| raises.error));
     out
 }
 
@@ -1103,6 +1105,9 @@ pub fn for_each_instruction_slot_mut(
             error: Some(error), ..
         } => visit(error),
         _ => {}
+    }
+    if let Some(raises) = instruction.raise_edge_mut() {
+        visit(&mut raises.error);
     }
 }
 
@@ -1316,10 +1321,10 @@ fn param_arg_regs_mut<'a>(args: &'a mut [MirParamArg], out: &mut Vec<&'a mut Reg
     out.extend(args.iter_mut().filter_map(|arg| arg.value.as_mut()));
 }
 
-/// A raise edge's flag and error, mutably.
+/// A raise edge's flag, mutably.
 fn raise_edge_regs_mut<'a>(raises: &'a mut Option<Raises>, out: &mut Vec<&'a mut Reg>) {
-    if let Some(Raises { flag, error, .. }) = raises {
-        out.extend([flag, error]);
+    if let Some(Raises { flag, .. }) = raises {
+        out.push(flag);
     }
 }
 
@@ -1876,20 +1881,23 @@ pub struct MirSubscriptCall {
 /// A raising instruction's error contract and its raise edge.
 ///
 /// Upstream's throwing `lit.call` returns an `i1` error flag as its result
-/// 0 and writes the error into an out-memory operand. MIR lowering follows the
-/// instruction with an `if` on `flag` whose `then` region ends in a
-/// `raise` of `error` (`addErrorRegions`), so each raise point is its own
-/// region exit; `flag` and `error` are results of the instruction, read
-/// only by that `if`. On the normal path `error` is undefined, and on the
-/// raise path the instruction's other results are.
+/// 0 and takes the error slot `findNearestErrorSlot` returns as its
+/// `ByRefError` argument, which the callee's raise writes. MIR lowering
+/// follows the instruction with an `if` on `flag` whose `then` region
+/// marks `error` initialized and raises (`addErrorRegions`), so each raise
+/// point is its own region exit; `flag` is a result of the instruction,
+/// read only by that `if`. On the normal path `error` is untouched, and on
+/// the raise path the instruction's other results are undefined.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Raises {
     /// The checked error type.
     pub ty: Ty,
     /// The `Bool` that is true when the instruction raised.
     pub flag: Reg,
-    /// The raised error, of type `ty`.
-    pub error: Reg,
+    /// The error slot the instruction writes its error of type `ty` into
+    /// when it raises: the nearest `try`'s, the function's, or a temporary
+    /// whose error region converts it into the nearest.
+    pub error: VarId,
 }
 
 /// A single three-address instruction. Each value-producing instruction writes a
@@ -4920,7 +4928,7 @@ mod tests {
             raises: Some(Raises {
                 ty: ty(Ty::int().kind().clone()),
                 flag: Reg(3),
-                error: Reg(4),
+                error: 0,
             }),
             refined_bound: None,
             fastmath: None,

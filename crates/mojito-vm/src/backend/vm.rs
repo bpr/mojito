@@ -821,14 +821,10 @@ struct Prog {
     mir: MirProgram,
     structs: HashMap<String, StructDef>,
     sigs: HashMap<String, FnSig>,
-    /// Per function, the error registers of its raise edges: a `raise` of
-    /// one propagates the error its instruction raised, as upstream's
-    /// `lit.try.raise` carries no new error, so the trace records no second
-    /// raise.
-    edge_errors: Vec<HashSet<u32>>,
     /// Per function, the error slots of its `try`s: a store into one is a
     /// raise's, staging the error as the raise stages it
-    /// ([`VmBackend::stage_error`]).
+    /// ([`VmBackend::stage_error`]), and a raise edge writing one is the
+    /// `try` catching the error.
     error_slots: Vec<HashSet<VarId>>,
     /// Per function, the slots whose own type is a pointer value
     /// ([`pointer_value_slots`]): their whole place is the pointer, never
@@ -949,15 +945,6 @@ fn hold_register_fields(structs: &HashMap<String, StructDef>, block: &mut MirBlo
 
 impl Prog {
     fn new(mir: MirProgram) -> Self {
-        let edge_errors = mir
-            .functions
-            .iter()
-            .map(|(_, function)| {
-                let mut errors = HashSet::new();
-                edge_errors(&function.body, &mut errors);
-                errors
-            })
-            .collect();
         let error_slots = mir
             .functions
             .iter()
@@ -985,7 +972,6 @@ impl Prog {
             structs,
             sigs: build_sigs(&mir.declarations),
             mir,
-            edge_errors,
             error_slots,
             pointer_slots,
         }
@@ -1622,19 +1608,6 @@ struct ContinuationAdapter {
     returns_reference: bool,
 }
 
-/// Add to `errors` the error register of every raise edge in `blocks`, at
-/// any depth.
-fn edge_errors(block: &MirBlock, errors: &mut HashSet<u32>) {
-    for instruction in &block.instrs {
-        if let Some(raises) = instruction.raise_edge() {
-            errors.insert(raises.error.0);
-        }
-        for region in mojito_mir::mir::instruction_regions(instruction) {
-            edge_errors(region, errors);
-        }
-    }
-}
-
 /// Build the VM registry from declaration metadata carried by MIR. Every
 /// instance of a template is held or none is: each has the template's
 /// unconditional register-passability, so instances disagree only through
@@ -2045,8 +2018,8 @@ mod pointer_storage_tests {
             },
             structs: HashMap::new(),
             sigs: HashMap::new(),
-            edge_errors: Vec::new(),
             error_slots: Vec::new(),
+            pointer_slots: Vec::new(),
         }
     }
 

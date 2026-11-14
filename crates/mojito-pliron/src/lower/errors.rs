@@ -240,8 +240,7 @@ impl FnLowering<'_> {
     /// `try` it raises to, which catches it. A slot holding an `Error` (or
     /// a String, which a raise converts to one) holds the raised error as
     /// an owned `MjError`, as the staging slot does, and logs the catch;
-    /// a typed error is the value itself, a raise edge's `MjError`, whose
-    /// message names only the type, released on arrival.
+    /// a typed error is the value itself, of no fields.
     pub(super) fn stage_error(
         &mut self,
         ctx: &mut Context,
@@ -249,58 +248,88 @@ impl FnLowering<'_> {
         src: Reg,
     ) -> Result<(), PlironError> {
         let slot = self.var_slots[var as usize];
-        let message = match self.func.var_tys.get(&var).map(Ty::kind) {
-            Some(kind) if kind.is_error() => true,
-            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                mojito_symbol::symbol::is_stdlib_string_struct(name)
-            }
-            _ => false,
-        };
-        if message {
+        if self.holds_message(var) {
             self.store_raised(ctx, slot, src)?;
             if self.trace_lifecycle {
                 self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_CATCH, slot);
             }
             return Ok(());
         }
+        self.fieldless_error(var, src).map(drop)
+    }
+
+    /// Land the error the callee of the raise edge `raises` raised, the
+    /// `MjError` its outcome's error area held, copied to `storage`, in
+    /// the slot the edge writes, as upstream's callee writes its
+    /// `ByRefError` argument: the function's staged error, or a slot
+    /// holding an `Error` (or a String), takes it whole, a `try`'s
+    /// logging the catch; a typed error is the value itself, of no
+    /// fields, and the `MjError` naming its type is released on arrival.
+    pub(super) fn land_edge_error(
+        &mut self,
+        ctx: &mut Context,
+        raises: &Raises,
+        storage: Value,
+    ) -> Result<(), PlironError> {
+        let var = raises.error;
+        if self.func.error_slot == Some(var) {
+            let err_slot = self.ensure_err_slot(ctx);
+            self.mem_copy(ctx, err_slot, storage, 24, raises.flag);
+            return Ok(());
+        }
+        if self.holds_message(var) {
+            let slot = self.var_slots[var as usize];
+            self.mem_copy(ctx, slot, storage, 24, raises.flag);
+            if self.trace_lifecycle && self.error_slots.contains(&var) {
+                self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_CATCH, slot);
+            }
+            return Ok(());
+        }
+        self.fieldless_error(var, raises.flag)?;
+        self.emit_release_storage(ctx, storage, &Ty::error())
+    }
+
+    /// Whether the slot `var` holds its error as an owned `MjError`: an
+    /// `Error`, or a String, which a raise converts to one.
+    fn holds_message(&self, var: u32) -> bool {
+        match self.func.var_tys.get(&var).map(Ty::kind) {
+            Some(kind) if kind.is_error() => true,
+            Some(struct_ty) if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                mojito_symbol::symbol::is_stdlib_string_struct(name)
+            }
+            _ => false,
+        }
+    }
+
+    /// Refuse a slot `var` holding a typed error with fields, which the
+    /// error ABI carries no value of, at the register `at`.
+    fn fieldless_error(&self, var: u32, at: Reg) -> Result<(), PlironError> {
         let ty = self
             .func
             .var_tys
             .get(&var)
             .cloned()
             .unwrap_or_else(Ty::error);
-        if !self
+        if self
             .layout
             .layout_of(&ty)
             .is_ok_and(|layout| layout.size == 0)
         {
-            return Err(
-                self.unsupported_reg(format!("a caught error of type `{ty}` with fields"), src)
-            );
+            Ok(())
+        } else {
+            Err(self.unsupported_reg(format!("a caught error of type `{ty}` with fields"), at))
         }
-        if self.edge_errors.contains(&src.0) {
-            let storage = self.reg_ptr(ctx, src)?;
-            self.emit_release_storage(ctx, storage, &Ty::error())?;
-        }
-        Ok(())
     }
 
     /// Materialize the raised register `src` as an owned `MjError` in
-    /// `storage`: a raise edge's error is the error its call raised,
-    /// copied whole and traced once, where it was raised; any other value
-    /// converts as [`Self::store_error_into`] converts it, logging the
-    /// raise.
+    /// `storage`, converting it as [`Self::store_error_into`] converts it
+    /// and logging the raise.
     fn store_raised(
         &mut self,
         ctx: &mut Context,
         storage: Value,
         src: Reg,
     ) -> Result<(), PlironError> {
-        if self.edge_errors.contains(&src.0) {
-            let error = self.reg_ptr(ctx, src)?;
-            self.mem_copy(ctx, storage, error, 24, src);
-            return Ok(());
-        }
         self.store_error_into(ctx, storage, src)?;
         // The VM's lifecycle log records only raises of `Error` (a raised
         // string converts to one); another error struct (`raise

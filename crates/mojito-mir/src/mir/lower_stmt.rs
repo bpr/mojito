@@ -756,7 +756,7 @@ impl<'a> Flatten<'a> {
             target.location(),
         );
         self.convert_raised(
-            getter_call.raises.as_ref(),
+            getter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -884,7 +884,7 @@ impl<'a> Flatten<'a> {
                 target.location(),
             );
             self.convert_raised(
-                getter_call.raises.as_ref(),
+                getter_call.raises.as_mut(),
                 target.raise_conversion(),
                 target.location(),
             );
@@ -925,7 +925,7 @@ impl<'a> Flatten<'a> {
             target.location(),
         );
         self.convert_raised(
-            getter_call.raises.as_ref(),
+            getter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -976,7 +976,7 @@ impl<'a> Flatten<'a> {
             target.location(),
         );
         self.convert_raised(
-            setter_call.raises.as_ref(),
+            setter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -1017,10 +1017,10 @@ impl<'a> Flatten<'a> {
         } = *store;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let (argument, argument_place) = self.slice_set_argument(target, descriptor, bounds);
-        let getter_call =
+        let mut getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
         self.convert_raised(
-            getter_call.raises.as_ref(),
+            getter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -1058,9 +1058,10 @@ impl<'a> Flatten<'a> {
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
-        let setter_call = self.mir_subscript_call_contract(setter.clone(), &[], target.location());
+        let mut setter_call =
+            self.mir_subscript_call_contract(setter.clone(), &[], target.location());
         self.convert_raised(
-            setter_call.raises.as_ref(),
+            setter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -1170,13 +1171,13 @@ impl<'a> Flatten<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let getter_call = self.mir_subscript_call_contract(
+        let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &spanned_operands(&source_spans, &getter_args),
             target.location(),
         );
         self.convert_raised(
-            getter_call.raises.as_ref(),
+            getter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
@@ -1261,13 +1262,13 @@ impl<'a> Flatten<'a> {
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
-        let setter_call = self.mir_subscript_call_contract(
+        let mut setter_call = self.mir_subscript_call_contract(
             setter.clone(),
             &spanned_operands(&source_spans, &setter_args),
             target.location(),
         );
         self.convert_raised(
-            setter_call.raises.as_ref(),
+            setter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );

@@ -4084,31 +4084,45 @@ it, what the handler does not read, as upstream's `DestructorInsertion`
 does at each raise exit. A raising
 instruction (a call, method or indirect call, operator, or subscript whose
 callee raises) carries its error contract as `Raises { ty, flag, error }`
-(MIR text 1.91): its error flag and error are results of the instruction,
-as upstream's throwing `lit.call` returns an `i1` flag and writes its
-error out. MIR lowering follows it, past its call tail (keep-alives,
-transferred loans, an explicit destructor's consume of its receiver), with
-its error region, an `if` on the flag whose `then` region raises the
-error (`Flatten::error_region`, upstream's `addErrorRegions`), so every
-raise point is a `raise` terminator and drop elaboration destroys at that
-arm's entry what the raise holds, out of the function too. The verifier
-requires the region after each raising instruction in its block, nothing
-between them reading the instruction's results, its `then` region handing
-the error on: storing it, or a value its region converts it to. A call
-raising a type other than the one its context propagates carries the
-checker's conversion (`SemanticAdjustment::RaiseConversion`, recorded by
+(MIR text 1.91, 1.193): its error flag is a result of the instruction, and
+`error` is the slot it writes its error into when it raises, the one
+upstream's `findNearestErrorSlot` returns and its throwing `lit.call`
+passes as the callee's `ByRefError` argument: the enclosing `try`'s error
+slot, else the function's (`Flatten::raises`). MIR lowering follows it,
+past its call tail (keep-alives, transferred loans, an explicit
+destructor's consume of its receiver), with its error region, an `if` on
+the flag whose `then` region marks the slot initialized
+(`ownership.mark_initialized`, which drop elaboration's liveness takes as
+a definition and `lower-lit` erases) and raises through it, storing
+nothing (`Flatten::error_region`, upstream's `addErrorRegions`), so every
+raise point is a `raise` terminator, the ownership walks see the slot
+initialized on the raise path alone, and drop elaboration destroys at
+that arm's entry what the raise holds, out of the function too. After
+`lower-lit`, the slot-end verifier (`verify/drops.rs`) enters an `if`
+whose `then` region raises through a slot it stores nothing into holding
+that slot, as an inlined body's write of it lies before the break
+carrying the flag. The verifier requires an `if` on the flag after each
+raising instruction in its block, or a block terminator carrying the flag
+out to the error region past an inlined body, nothing between them
+reading the instruction's results; inlining and its folds may turn the
+region's raise into a break, the handler of a `try` they elide, or an
+`if` selecting a result's value. A call raising a type other than the one
+its context propagates carries the checker's conversion
+(`SemanticAdjustment::RaiseConversion`, recorded by
 `Checker::require_call_error` from the context type's `@implicit`
-initializers), and its region calls that initializer on the error before
-the raise (`Flatten::convert_raised`), as upstream's `emitRaise` converts
-the raised value to its error slot's type. The VM sets the flag and error when the instruction raises,
-a child frame's `raise` popping into its caller's call; Pliron joins the
-callee's outcome branch after the instruction and branches on the flag;
-`inline-parametric` routes an inlined body's raises out of the callee into
-the call's flag and error through the wrapper loop's results, taking each
-raise's error back out of its store into the callee's error slot, a raise
-naming a `try` of the callee staying. A raising call still hands its
-error back in a register, where upstream passes its nearest error slot as
-the callee's error argument (R1438).
+initializers): its edge writes a slot of its own (`$edge_error<N>`), and
+its region moves the error out of it and calls that initializer on it
+before storing it into the nearest slot and raising
+(`Flatten::convert_raised`), as upstream's `emitRaise` converts the
+raised value to its error slot's type. The VM sets the flag and writes
+the slot when the instruction raises, a child frame's `raise` popping
+into its caller's call; Pliron joins the callee's outcome branch after
+the instruction, its raise path copying the outcome's error area into
+the slot (`FnLowering::land_edge_error`), and branches on the flag;
+`inline-parametric` binds an inlined callee's error slot to the call's
+edge slot (the caller's own when the call has no edge), so the body's
+raises write it and break the wrapper loop with the flag, whose results
+carry it, a raise naming a `try` of the callee staying.
 
 A `try` holds no `finally`: at the end of `Flatten::emit_try`, MIR lowering
 copies the lowered `finally` before every terminator of the body, handler,

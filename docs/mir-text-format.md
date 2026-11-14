@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.192
+# Mojito Textual MIR Format, Version 1.193
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.192 is implemented end to end for inspection and loading: canonical
+Version 1.193 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.192
+mojito-mir 1.193
 ```
 
-The writer emits 1.192. The reader accepts 1.0 through 1.192; *Schema 1.0*
+The writer emits 1.193. The reader accepts 1.0 through 1.193; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -397,7 +397,8 @@ on (a `raise` of it until inlining makes it a break), nothing between them
 reading the instruction's results. An `iterator_call`'s `raises` stays
 `option<type>`. The reader still accepts an older minor whose instructions
 raise nothing, and names a `present(<type>)` it meets as an expected
-`raises` record.
+`raises` record. Schema 1.193 replaces the error register by the error
+slot the instruction writes (below).
 
 Minor version 92 labels each `try` and each raise, as `LowerSemanticCF`
 labels each `lit.try` `try<N>` and lowers a raise to `lit.try.raise
@@ -1181,6 +1182,21 @@ contract holds its compile-time arguments per declared parameter
 (`CheckedCallParameter`), a run-time operand named by its source
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
+
+Schema 1.193 makes a raise edge's `error` the slot the instruction writes
+its error into when it raises, `present(raises { type, flag: %rN, error:
+$vM })`, as upstream's throwing `lit.call` takes the slot
+`findNearestErrorSlot` returns as its `ByRefError` argument (R1438): the
+enclosing `try`'s error slot, the function's, or, when the error converts
+to the error type its context raises, a slot of its own (`$edge_error<N>`)
+that the error region reads with a `move` `var.use` and converts into the
+nearest. The error region's `then` region opens with an
+`ownership.mark_initialized` of the slot, which `lower-lit` erases, and
+raises through it with nothing stored. The flag stays the instruction's
+one raise-edge result. An older edge's error register is upgraded as it
+loads: the edge writes a fresh `$edge_error<N>` slot, and its error
+region opens by marking that slot initialized and moving it into the
+register, which the region's old body stores on.
 
 Schema 1.192 passes every `mut` or `ref` argument of a `call` or resolved
 `call.method` that binds by its callee's declaration as a reference to the
@@ -2309,7 +2325,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`; schema 1.91: `raises` is `option<raises { type, flag, error }>`, as a call's; schema 1.181: `binary` adds an optional `fastmath` constant, a `pop.add`/`sub`/`mul`'s `fastmathFlags`) |
-| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.100: `receiver_convention: option<convention>` after `recv_writes`, the callee's receiver convention: a `deinit` one consumes `recv_place`, and with no `recv_place` a `var` or `deinit` one consumes `recv`; schema 1.98 spelled `deinit_receiver: bool`; schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.114: a `call.method` selected through a refined archetype bound carries `refined_bound: [<symbol>, …]` last; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
+| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.100: `receiver_convention: option<convention>` after `recv_writes`, the callee's receiver convention: a `deinit` one consumes `recv_place`, and with no `recv_place` a `var` or `deinit` one consumes `recv`; schema 1.98 spelled `deinit_receiver: bool`; schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.114: a `call.method` selected through a refined archetype bound carries `refined_bound: [<symbol>, …]` last; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises; schema 1.193: `error: $vM`, the error slot the instruction writes when it raises) |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` — a `pointer.destroy` carries `destructor: "<symbol>"` after `element` when it names the element's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`; `lower-lit` erases it, so concrete MIR holds none) |

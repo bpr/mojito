@@ -2387,9 +2387,9 @@ const DROP_X: MirInstr = MirInstr::DropVar {
     destructor: None,
 };
 
-/// A raise point: a raising call and its error region, whose `then`
-/// region stores the call's error into [`try_region`]'s error slot, `$v1`,
-/// and raises to it.
+/// A raise point: a raising call writing its error into [`try_region`]'s
+/// error slot, `$v1`, and its error region, whose `then` region raises to
+/// it.
 fn raising_call() -> Vec<MirInstr> {
     vec![
         MirInstr::Call {
@@ -2398,7 +2398,7 @@ fn raising_call() -> Vec<MirInstr> {
             raises: Some(Raises {
                 ty: Ty::int(),
                 flag: Reg(3),
-                error: Reg(4),
+                error: 1,
             }),
             args: Vec::new(),
             kwargs: Vec::new(),
@@ -2414,12 +2414,7 @@ fn raising_call() -> Vec<MirInstr> {
             results: Vec::new(),
             cond: Reg(3),
             then: Box::new(block(
-                vec![MirInstr::DefVar {
-                    var: 1,
-                    src: Reg(4),
-                    binding_ty: Some(Ty::int()),
-                    in_place: false,
-                }],
+                Vec::new(),
                 MirTerm::TryRaise {
                     label: TRY,
                     values: Vec::new(),

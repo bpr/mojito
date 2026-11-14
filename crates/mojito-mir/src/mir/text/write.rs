@@ -2211,7 +2211,7 @@ fn raises_value(value: &Raises) -> String {
         &[
             ("type", ty_value(&value.ty)),
             ("flag", reg_value(value.flag)),
-            ("error", reg_value(value.error)),
+            ("error", var_value(value.error)),
         ],
     )
 }

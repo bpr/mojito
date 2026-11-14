@@ -682,12 +682,12 @@ impl VmBackend {
                 regs[dest.0 as usize] = value;
             }
             MirInstr::DefVar { var, src, .. } if prog.error_slots[function].contains(var) => {
-                vars[*var as usize] = self.stage_error(prog, function, regs, *src)?;
+                vars[*var as usize] = self.stage_error(regs, *src)?;
             }
             MirInstr::DefVar { var, src, .. }
                 if prog.mir.functions[function].1.error_slot == Some(*var) =>
             {
-                vars[*var as usize] = match self.raise_register(prog, function, regs, *src) {
+                vars[*var as usize] = match self.raise(&regs[src.0 as usize]) {
                     RuntimeError::Raised(error) => error,
                     raised => return Err(raised),
                 };
@@ -2255,40 +2255,20 @@ impl VmBackend {
     }
 
     /// The error a raise naming a `try` stores into its slot from register
-    /// `src` of `function`: the error [`Self::raise_register`] makes, which
-    /// the `try` catches.
-    fn stage_error(
-        &mut self,
-        prog: &Prog,
-        function: usize,
-        registers: &[Value],
-        src: Reg,
-    ) -> Result<Value, RuntimeError> {
-        let error = match self.raise_register(prog, function, registers, src) {
+    /// `src`: the error [`Self::raise`] makes, which the `try` catches.
+    fn stage_error(&mut self, registers: &[Value], src: Reg) -> Result<Value, RuntimeError> {
+        let error = match self.raise(&registers[src.0 as usize]) {
             RuntimeError::Raised(error) => error,
             raised => return Err(raised),
         };
-        if let Some(message) = self.error_text(&error) {
-            self.record_lifecycle(format!("catch {message}"));
-        }
+        self.record_catch(&error);
         Ok(error)
     }
 
-    /// The error a `raise` of register `src` of `function` propagates as:
-    /// a raise edge's error as it was raised, any other value as
-    /// [`Self::raise`] makes it.
-    pub(super) fn raise_register(
-        &mut self,
-        prog: &Prog,
-        function: usize,
-        registers: &[Value],
-        src: Reg,
-    ) -> RuntimeError {
-        let value = &registers[src.0 as usize];
-        if prog.edge_errors[function].contains(&src.0) {
-            RuntimeError::Raised(value.clone())
-        } else {
-            self.raise(value)
+    /// Record that a `try` caught `error` into its slot.
+    pub(super) fn record_catch(&mut self, error: &Value) {
+        if let Some(message) = self.error_text(error) {
+            self.record_lifecycle(format!("catch {message}"));
         }
     }
 

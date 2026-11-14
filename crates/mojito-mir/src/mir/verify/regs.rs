@@ -113,7 +113,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         _ => {}
     }
     if let Some(raises) = instruction.raise_edge() {
-        out.extend([raises.flag, raises.error]);
+        out.push(raises.flag);
     }
 }
 

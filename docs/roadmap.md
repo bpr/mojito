@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2192**.
+Next free ID: **R2193**.
 
 ## Ordered Work
 
@@ -9185,6 +9185,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R2192 An inlined body keeps a slot for each callee slot the splice
+  binds to a caller's, where upstream's inliner maps the callee's value
+  to the caller's**
+
+  `inline-parametric`'s splice appends every callee slot to the caller
+  (`n_vars += callee.n_vars`), though `Inliner::inlined_blocks` renumbers
+  a `Binding::Slot` parameter, and the callee's error slot, to a caller
+  slot, so the appended slot is never named.
+  - Probe: `emit-mir` of `assets/ok/os_path_functions.mojo` lists
+    `$error$inline3` in `os.path.exists`'s `var_names` (and `isdir`'s,
+    `isfile`'s, `islink`'s, `lexists`'s siblings), though no instruction
+    names it.
+  - Fix: retire the bound slots after the splice (`mir::retire_slots`),
+    keeping the `CleanSplice` var ranges consistent.
+  - Found while landing R1438 (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1335 The MIR verifier does not reject an owned register no path
   ends**
 
@@ -9818,35 +9836,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fix: MIR lowering emits both stubs, `handler` and `orelse` stop being
     `Option`, and those special cases go.
   - Found while landing R1264 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1438 A raising call hands its callee's error back in a register,
-  where upstream passes its nearest error slot as the callee's error
-  argument**
-
-  `Raises { ty, flag, error }` makes the error a result of the raising
-  instruction, and its error region stores that register into the nearest
-  error slot (`Flatten::error_region`), where upstream's call passes the
-  slot `findNearestErrorSlot` returns as its `ByRefError` argument and the
-  callee's raise writes it there.
-  - Every raise already stores into its nearest slot, a `try`'s (R1293) or
-    the function's (R1437); the call is the one left.
-  - The call then initializes the slot on its raise path alone, which
-    upstream's `addErrorRegions` exists to show `CheckLifetimes`: the
-    ownership walks (`region_walk.rs`, `drops.rs`, `verify/drops.rs`) must
-    see the slot initialized at the error region's entry.
-  - The VM's `raise_into_caller` writes the edge's error register; it
-    would write the caller's slot. Pliron copies the outcome's error area
-    into the edge's storage (`close_edge`); it would copy it into the slot,
-    with no ABI change.
-  - `inline-parametric` then binds the callee's error slot to the call's,
-    instead of taking each raise's error back out of its store
-    (`raised_store`) and leaving the inlined `$error$inline<N>` slot dead.
-  - Probe: `emit-mir` of `def h(x: Int) raises -> Int: return g(x)` for a
-    raising `g` shows `call g` defining `raises { flag: %rA, error: %rB }`
-    and its error region storing `%rB` into `$error`.
-  - Found while landing R1437 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -32,7 +32,10 @@
 //! arms, a loop or `comptime for` iterates its body to a fixpoint and
 //! leaves in the join of its `break`s, a `match` case enters the next as
 //! its `match.next`s join, and a `try`'s handler enters as the raises
-//! naming it join. A `break`, `continue`, or `match` exit resolves to its
+//! naming it join; an `if`'s `then` region that raises through a slot it
+//! stores nothing into is a raising instruction's error region, entered
+//! holding the slot the instruction wrote ([`Walk::error_region_slot`]). A
+//! `break`, `continue`, or `match` exit resolves to its
 //! region op through [`RegionFrame`] and [`region_exit`], and a labelled
 //! `raise` to its `try`'s body frame. A function enters holding its
 //! parameters and every slot no `var.def` or `var.declare` begins that an
@@ -50,8 +53,8 @@ use super::{
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
-    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, UseMode, VarId,
-    instruction_regions, instruction_slots, region_exit, terminator_regs,
+    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, TryLabel, UseMode,
+    VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -268,6 +271,9 @@ struct Walk<'a> {
     /// region ops nested in it, so without the memo the walks multiply
     /// with each loop of the nest.
     memo: Memo,
+    /// The label and error slot of each `try` whose body encloses the
+    /// region being walked, innermost last.
+    try_slots: Vec<(TryLabel, Option<VarId>)>,
 }
 
 impl<'a> Walk<'a> {
@@ -282,7 +288,33 @@ impl<'a> Walk<'a> {
             findings: Vec::new(),
             frames: Vec::new(),
             memo: HashMap::new(),
+            try_slots: Vec::new(),
         }
+    }
+
+    /// The error slot an `if`'s `then` region `block` enters holding when
+    /// it is a raising instruction's error region: it raises through that
+    /// slot, the nearest `try`'s or the function's, storing nothing into
+    /// it, so the instruction wrote it, as upstream's callee writes the
+    /// `ByRefError` argument on its raise path alone. A body inlined at
+    /// the instruction wrote it before the break carrying the flag, a
+    /// correlation the join after the body cannot see.
+    fn error_region_slot(&self, block: &MirBlock) -> Option<VarId> {
+        let slot = match block.term {
+            MirTerm::TryRaise { label, .. } => self
+                .try_slots
+                .iter()
+                .rev()
+                .find(|(at, _)| *at == label)
+                .and_then(|(_, slot)| *slot),
+            MirTerm::ErrorReturn => self.function.error_slot,
+            _ => None,
+        }?;
+        let stores = block
+            .instrs
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == slot));
+        (!stores).then_some(slot)
     }
 
     /// Walk `block`, a region's one block, from `entry`, reporting when
@@ -398,7 +430,11 @@ impl<'a> Walk<'a> {
                 orelse,
                 ..
             } => {
-                let arm = self.enter(&mut flow, &state, then, report);
+                let mut entry = state.clone();
+                if let Some(slot) = self.error_region_slot(then) {
+                    entry.fill(slot, &[]);
+                }
+                let arm = self.enter(&mut flow, &entry, then, report);
                 meet(&mut flow.normal, arm.as_ref());
                 let mut rest = Some(state);
                 for elif in elifs {
@@ -527,6 +563,7 @@ impl<'a> Walk<'a> {
     fn try_regions(&mut self, entry: Held, instruction: &'a MirInstr, report: bool) -> Flow {
         let MirInstr::Try {
             label,
+            error,
             body,
             handler_args,
             handler,
@@ -542,7 +579,9 @@ impl<'a> Walk<'a> {
         };
         let depth = self.frames.len();
         self.frames.push(RegionFrame::Try(*label));
+        self.try_slots.push((*label, *error));
         let mut body_flow = self.region(&entry, body, report);
+        self.try_slots.pop();
         self.frames.pop();
         let (body_raises, _) = body_flow.take_frame(depth);
         let body_normal = body_flow.normal.take();

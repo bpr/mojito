@@ -469,13 +469,15 @@ The encoded operation carries more information than the compact spelling shows:
 - optional compile-time value-parameter registers
 - the checker-resolved lowered symbol for overloaded calls
 - for a raising call, its raise edge: the checker-selected concrete error
-  type, and the error flag and error registers the call defines
+  type, the error flag register the call defines, and the error slot it
+  writes
 
 A raising call does not raise itself: as upstream's throwing call returns
-its error flag, it sets its flag to `True` and its error to the raised
-value when the callee raises, and the flag to `False` when it returns, its
-result then defined. Its error region follows it in the block, an `if` on
-the flag whose `then` region raises the error; a child frame's `raise`
+its error flag having written its `ByRefError` argument, it sets its flag
+to `True` and writes the raised value into its error slot when the callee
+raises, and sets the flag to `False` when it returns, its result then
+defined. Its error region follows it in the block, an `if` on the flag
+whose `then` region raises through that slot; a child frame's `raise`
 pops into the caller's call so. Every raising instruction — `call.indirect`,
 `call.method`, an operator whose dunder raises, a subscript whose accessor
 does — has a raise edge the same way.
@@ -972,8 +974,9 @@ the current function (`lit.error_return`), moving it out of the slot. The
 raise stored it there first, as upstream's raise outside every `try`
 stores into the raising function's error argument: a store into the
 function's error slot stages the raise, as a store into a `try`'s slot
-does, an `Error` or `String` supplying the message, a raise edge's error
-passing whole, and another value its runtime type, but logs no catch. It
+does, an `Error` or `String` supplying the message and another value its
+runtime type, but logs no catch. A raise edge writes its slot whole,
+logging the catch when it is a `try`'s. It
 ends any region, as upstream's `raise` ends its block.
 
 ## Call ABI and Function Metadata

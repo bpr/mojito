@@ -19,6 +19,7 @@ impl Decoder {
             bare_literal_rows: false,
             minor,
             pack_upgrades: packs::PackUpgrades::default(),
+            legacy_edge_errors: Vec::new(),
         }
     }
 

@@ -34,7 +34,7 @@ pub(super) fn verify_block(
         }
         verify_in_place_binding(name, &block.instrs[..index], instruction, errors);
         if let Some(raises) = instruction.raise_edge() {
-            verify_error_region(name, &block.instrs, index, raises, errors);
+            verify_error_region(name, block, index, raises, errors);
         }
     }
     verify_terminator(name, function, &block.term, context, errors);
@@ -1253,72 +1253,41 @@ fn verify_in_place_binding(
 
 /// A raising instruction is followed, in its block, by its error region,
 /// as upstream's `addErrorRegions` follows each throwing call: an `if` on
-/// its flag whose `then` region hands its error on, by a `raise`, or, once
-/// inlining has made the raise a break of the inlined body, by the values
-/// it leaves with. Nothing between the two reads its results, which the
-/// raise path leaves undefined.
+/// its flag, whose `then` region the instruction enters having written its
+/// error into its error slot. Lowering raises from there; inlining and its
+/// folds may make that raise a break of the inlined body, or the handler
+/// of a `try` they elide, may fold the region into an `if` deciding which
+/// value a result of the instruction has, and may fold an inlined body's
+/// region into the block's terminator, which carries the flag out to the
+/// error region after the body. Nothing between the instruction and the
+/// first `if` on its flag, or the terminator carrying it, reads its
+/// results, which the raise path leaves undefined.
 fn verify_error_region(
     name: &str,
-    instrs: &[MirInstr],
+    block: &MirBlock,
     index: usize,
     raises: &crate::mir::Raises,
     errors: &mut Vec<String>,
 ) {
     let prefix = format!("{name}: instruction {index}");
-    let Some(offset) = instrs[index + 1..].iter().position(
-        |instruction| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag),
-    ) else {
+    let on_flag = |instruction: &MirInstr| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag);
+    let rest = &block.instrs[index + 1..];
+    let carried = || {
+        crate::mir::terminator_regs(&block.term)
+            .contains(&raises.flag)
+            .then_some(rest.len())
+    };
+    let Some(region) = rest.iter().position(on_flag).or_else(carried) else {
         errors.push(format!(
             "{prefix}: raising instruction has no error region on its flag %r{}",
             raises.flag.0
         ));
         return;
     };
-    // The `then` region hands the error on, by storing it into the error
-    // slot its raise leaves through, the slot of the `try` its `try.raise`
-    // names or the function's for its `lit.error_return`, or, once
-    // inlining and its folds have run, by the values its terminator
-    // carries; a `finally` copied before the raise that ends in an exit of
-    // its own replaces the raise, as `lowerTryFinally` erases the
-    // terminator it pastes over. The value stored may be the error
-    // converted to the error type the raise leaves with, which reads the
-    // error, as upstream's `emitRaise` converts the raised value to its
-    // slot's type.
-    let reads_error = |block: &MirBlock| {
-        let mut reads = Vec::new();
-        block.instrs.iter().any(|instruction| {
-            reads.clear();
-            instruction_operand_regs(instruction, &mut reads);
-            reads.contains(&raises.error)
-        })
-    };
-    let hands_on = |block: &MirBlock| {
-        crate::mir::terminator_regs(&block.term).contains(&raises.error)
-            || matches!(
-                block.term,
-                MirTerm::Return(_)
-                    | MirTerm::Break { .. }
-                    | MirTerm::Continue { .. }
-                    | MirTerm::Unreachable
-            )
-            || matches!(block.term, MirTerm::TryRaise { .. } | MirTerm::ErrorReturn)
-                && block.instrs.iter().any(|instruction| {
-                    matches!(instruction, MirInstr::DefVar { src, .. } if *src == raises.error)
-                        || matches!(instruction, MirInstr::DefVar { .. }) && reads_error(block)
-                })
-    };
-    if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]
-        && (!elifs.is_empty() || !hands_on(then))
-    {
-        errors.push(format!(
-            "{prefix}: error region on %r{} does not hand on %r{}",
-            raises.flag.0, raises.error.0
-        ));
-    }
     let mut results = Vec::new();
-    instruction_result_regs(&instrs[index], &mut results);
+    instruction_result_regs(&block.instrs[index], &mut results);
     let mut reads = Vec::new();
-    for between in &instrs[index + 1..index + 1 + offset] {
+    for between in &rest[..region] {
         reads.clear();
         instruction_operand_regs(between, &mut reads);
         if let Some(read) = reads.iter().find(|read| results.contains(read)) {

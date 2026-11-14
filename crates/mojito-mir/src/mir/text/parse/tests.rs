@@ -883,7 +883,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
         raises: Some(Raises {
             ty: Ty::error(),
             flag: Reg(60),
-            error: Reg(61),
+            error: 3,
         }),
         result_ty: Ty::int(),
         receiver_requires_place: true,
@@ -1039,7 +1039,7 @@ fn instruction_families_reprint_byte_identically() {
             raises: Some(Raises {
                 ty: Ty::error(),
                 flag: Reg(64),
-                error: Reg(65),
+                error: 3,
             }),
         },
         MirInstr::UnOp {
@@ -1057,7 +1057,7 @@ fn instruction_families_reprint_byte_identically() {
             raises: Some(Raises {
                 ty: Ty::error(),
                 flag: Reg(66),
-                error: Reg(67),
+                error: 3,
             }),
             refined_bound: None,
             fastmath: None,
@@ -1068,7 +1068,7 @@ fn instruction_families_reprint_byte_identically() {
             raises: Some(Raises {
                 ty: Ty::error(),
                 flag: Reg(68),
-                error: Reg(69),
+                error: 3,
             }),
             args: vec![Reg(1), Reg(2)],
             kwargs: vec![("sep".into(), Reg(3))],
@@ -4604,6 +4604,93 @@ fn a_bare_literal_register_type_reads_from_its_const_before_1_172() {
             .message
             .contains("carries its value since MIR 1.172")),
         "{error:?}"
+    );
+}
+
+/// A raise edge older than schema 1.193 defines its error in a register,
+/// which its error region stores on; it loads writing a slot of its own,
+/// which the region marks initialized and moves into that register, as
+/// upstream's call writes the `ByRefError` argument it passes.
+#[test]
+fn older_raise_edge_writes_a_slot_of_its_own() {
+    let mut raising = function_with(
+        vec![Ty::int(), Ty::bool()],
+        vec![
+            MirInstr::Call {
+                dest: Reg(0),
+                func: FuncRef("g".into()),
+                raises: Some(Raises {
+                    ty: Ty::error(),
+                    flag: Reg(1),
+                    error: 0,
+                }),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                receiver: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            },
+            MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(1),
+                then: Box::new(MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::ErrorReturn,
+                }),
+                elifs: Vec::new(),
+                else_args: Vec::new(),
+                orelse: Box::new(MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Yield(Vec::new()),
+                }),
+            },
+        ],
+    );
+    raising.body.term = MirTerm::Return(None);
+    raising.raises = true;
+    raising.error_ty = Some(Ty::error());
+    raising.error_slot = Some(0);
+    raising.n_vars = 1;
+    raising.var_names = vec!["$error".into()];
+    raising.var_tys.insert(0, Ty::error());
+    let program = program_with(vec![("f".into(), raising)]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program)
+        .replacen(&current, "mojito-mir 1.192", 1)
+        .replacen("error: $v0 }", "error: %r2 }", 1)
+        .replacen(
+            "then: [bb0 { instructions: []",
+            "then: [bb0 { instructions: [var.store { var: $v0, src: %r2, \
+             binding_type: absent, in_place: false }]",
+            1,
+        );
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, f) = &parsed.program.functions[0];
+    assert_eq!(f.n_vars, 2);
+    assert_eq!(f.var_names[1], "$edge_error2");
+    assert!(
+        matches!(f.body.instrs[0].raise_edge(), Some(Raises { error: 1, .. })),
+        "{:?}",
+        f.body.instrs[0]
+    );
+    let MirInstr::If { then, .. } = &f.body.instrs[1] else {
+        panic!("{:?}", f.body.instrs[1]);
+    };
+    assert!(
+        matches!(
+            then.instrs.as_slice(),
+            [
+                MirInstr::MarkInitialized { place },
+                MirInstr::UseVar { dest: Reg(2), var: 1, mode: UseMode::Move, .. },
+                MirInstr::DefVar { var: 0, src: Reg(2), .. },
+            ] if place.root == 1
+        ),
+        "{:?}",
+        then.instrs
     );
 }
 

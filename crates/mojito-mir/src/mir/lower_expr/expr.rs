@@ -403,8 +403,8 @@ impl<'a> Flatten<'a> {
             method,
             contract,
         } = dispatch;
-        let raises = self.raises(raises, location.clone());
-        self.convert_raised(raises.as_ref(), raise_conversion, location.clone());
+        let mut raises = self.raises(raises, location.clone());
+        self.convert_raised(raises.as_mut(), raise_conversion, location.clone());
         let d = self.fresh(location, None);
         let (contract, refined_bound) = contract.map_or((None, None), |mut contract| {
             let refined_bound = contract.refined_bound.take().map(MirRefinedBound::boxed);

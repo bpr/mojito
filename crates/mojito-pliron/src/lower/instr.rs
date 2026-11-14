@@ -141,33 +141,47 @@ impl FnLowering<'_> {
         lowered?;
         let mut results = Vec::new();
         mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
-        if let Some(edge) = edge {
-            self.close_edge(ctx, edge, &results);
+        match edge {
+            Some(edge) => self.close_edge(ctx, edge, &results),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Join the paths of `edge`'s instruction, whose result registers are
     /// `results`: the values the normal path defined for the results cross
-    /// the join, the raise path passing poison, and the join's first
-    /// argument is the flag. The error register is the edge's storage. A
-    /// callee with no outcome never raises, so its flag is false.
-    fn close_edge(&mut self, ctx: &mut Context, edge: OpenEdge, results: &[Reg]) {
+    /// the join, the raise path, having landed the callee's error in the
+    /// edge's slot ([`Self::land_edge_error`]), passing poison, and the
+    /// join's first argument is the flag. A callee with no outcome never
+    /// raises: its raise path is a branch on a false constant, so the slot
+    /// is written on a path as on every edge's, and its storage is never
+    /// promoted to a value no store defines.
+    fn close_edge(
+        &mut self,
+        ctx: &mut Context,
+        edge: OpenEdge,
+        results: &[Reg],
+    ) -> Result<(), PlironError> {
         let OpenEdge {
             raises,
             storage,
             error_block,
         } = edge;
-        self.reg_values.insert(raises.error.0, storage);
-        let Some(error_block) = error_block else {
-            let flag = self.bool_constant(ctx, false);
-            self.reg_values.insert(raises.flag.0, flag);
-            return;
-        };
+        let region = self.region.expect("lowering is inside a function");
+        let error_block = error_block.unwrap_or_else(|| {
+            let never = self.bool_constant(ctx, false);
+            let raised = BasicBlock::new(ctx, None, vec![]);
+            raised.insert_at_back(region, ctx);
+            let completed = BasicBlock::new(ctx, None, vec![]);
+            completed.insert_at_back(region, ctx);
+            let branch = CondBrOp::new(ctx, never, raised, vec![], completed, vec![]);
+            self.append(ctx, branch.get_operation(), Some(raises.flag));
+            self.current = Some(completed);
+            raised
+        });
         let results: Vec<Reg> = results
             .iter()
             .copied()
-            .filter(|result| *result != raises.flag && *result != raises.error)
+            .filter(|result| *result != raises.flag)
             .collect();
         let mut normal = vec![self.bool_constant(ctx, false)];
         for result in &results {
@@ -177,12 +191,12 @@ impl FnLowering<'_> {
             }
         }
         let types: Vec<TypeHandle> = normal.iter().map(|value| value.get_type(ctx)).collect();
-        let region = self.region.expect("lowering is inside a function");
         let join = BasicBlock::new(ctx, None, types.clone());
         join.insert_at_back(region, ctx);
         let completed = BrOp::new(ctx, join, normal);
         self.append(ctx, completed.get_operation(), Some(raises.flag));
         self.current = Some(error_block);
+        self.land_edge_error(ctx, &raises, storage)?;
         let mut raised = vec![self.bool_constant(ctx, true)];
         for ty in &types[1..] {
             let poison = PoisonOp::new(ctx, *ty);
@@ -209,6 +223,7 @@ impl FnLowering<'_> {
                 string.len = len;
             }
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]

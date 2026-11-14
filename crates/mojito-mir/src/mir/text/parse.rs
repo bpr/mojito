@@ -178,6 +178,11 @@ struct Decoder {
     /// The parameter lists of an artifact older than MIR 1.160 that
     /// declare a pack as one binder, which reads as two.
     pack_upgrades: packs::PackUpgrades,
+    /// The error registers of the raise edges older than MIR 1.193 read
+    /// in the function being read, in order: each edge names the
+    /// placeholder slot [`instrs::legacy_edge_slot`] gives its index until
+    /// [`instrs::upgrade_edge_errors`] gives it a slot of its own.
+    legacy_edge_errors: Vec<crate::mir::Reg>,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

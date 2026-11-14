@@ -1097,13 +1097,14 @@ fn lower_storage_call_witness(
         |reference| TyKind::Ref(reference).into(),
     ));
     let error_ty = method.error_ty.clone().unwrap_or_else(Ty::error);
+    // The witness's error slot follows `self` and the method's parameters,
+    // and the call raises into it.
+    let error_slot = (parameters.len() + 1) as VarId;
     let raises = method.raises.then(|| Raises {
         ty: error_ty.clone(),
         flag: register(&Ty::bool()),
-        error: register(&error_ty),
+        error: error_slot,
     });
-    // The witness's error slot follows `self` and the method's parameters.
-    let error_slot = (parameters.len() + 1) as VarId;
     let writes_self = declarations
         .structure(name)
         .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
@@ -1139,11 +1140,8 @@ fn lower_storage_call_witness(
             results: Vec::new(),
             cond: raises.flag,
             then: region(
-                vec![MirInstr::DefVar {
-                    var: error_slot,
-                    src: raises.error,
-                    binding_ty: Some(error_ty.clone()),
-                    in_place: false,
+                vec![MirInstr::MarkInitialized {
+                    place: root(error_slot as usize, &error_ty),
                 }],
                 MirTerm::ErrorReturn,
             ),

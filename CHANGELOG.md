@@ -765,6 +765,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raising call now writes its callee's error into the nearest error
+  slot, the enclosing `try`'s or the function's, as upstream's call
+  passes the slot `findNearestErrorSlot` returns as the callee's
+  `ByRefError` argument, where it defined the error as a register its
+  error region stored on (R1438). The raise edge's `error` is that slot
+  (`raises { flag: %rA, error: $vB }`), and its error region marks it
+  initialized and raises through it; a call whose error converts to its
+  context's error type writes a slot of its own, which its region
+  converts into the nearest. Drop elaboration's liveness takes a whole
+  slot's `ownership.mark_initialized` as a definition. The VM writes the
+  caller's slot on a raise, Pliron copies the outcome's error area into
+  it on the raise path, and `inline-parametric` binds an inlined callee's
+  error slot to the call's instead of taking each raise's error back out
+  of its store. MIR text moves to 1.193, and an older artifact's edges
+  are upgraded as it loads. Behavior is unchanged.
+
 - A raising callee's non-`None` result is now returned through memory
   (`IndirectResult`) whatever its type, and a raising implicit
   conversion's (`ConversionIndirectResult`), as upstream's throwing

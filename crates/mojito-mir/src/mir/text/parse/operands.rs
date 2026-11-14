@@ -448,13 +448,22 @@ impl Decoder {
     }
 
     /// A raising instruction's `raises` field: `absent`, or
-    /// `present(raises { type, flag, error })`.
+    /// `present(raises { type, flag, error })`. An edge older than MIR
+    /// 1.193 names its error register, which the edge's placeholder slot
+    /// stands for until [`super::instrs::upgrade_edge_errors`] runs.
     pub(super) fn option_raises(&mut self, value: &Value) -> Option<Raises> {
         let value = self.option_value(Some(value))?;
         let fields = self.record(value, "raises").ok()?;
         let ty = self.req(value, fields, "type", Self::ty);
         let flag = self.req(value, fields, "flag", Self::reg);
-        let error = self.req(value, fields, "error", Self::reg);
+        let error = if self.minor < 193 {
+            self.req(value, fields, "error", Self::reg).map(|error| {
+                self.legacy_edge_errors.push(error);
+                super::instrs::legacy_edge_slot(self.legacy_edge_errors.len() - 1)
+            })
+        } else {
+            self.req(value, fields, "error", Self::var)
+        };
         self.unknown(fields, &["type", "flag", "error"]);
         Some(Raises {
             ty: ty?,

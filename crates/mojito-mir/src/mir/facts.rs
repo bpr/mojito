@@ -1154,7 +1154,7 @@ impl<'a> Flatten<'a> {
         let contract = node.call_contract()?;
         let mut call = self.mir_subscript_call_contract(contract, operands, node.location());
         self.convert_raised(
-            call.raises.as_ref(),
+            call.raises.as_mut(),
             node.raise_conversion(),
             node.location(),
         );

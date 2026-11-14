@@ -935,6 +935,11 @@ impl<'c> Inliner<'_, 'c> {
             }
             let store = self.setter_call(&mut caller.instrs[index]);
             let (regs, vars) = (self.function.n_regs, self.function.n_vars);
+            let raises = caller.instrs[index].raise_edge().cloned();
+            let error = raises
+                .as_ref()
+                .map(|raises| raises.error)
+                .or(self.function.error_slot);
             if let Some(Inlinable {
                 dest,
                 mut callee,
@@ -945,23 +950,16 @@ impl<'c> Inliner<'_, 'c> {
                 rebinds,
                 clean,
             }) = self.inlinable(caller, index)
-                && let Some(mut blocks) =
-                    self.inlined_blocks(callee.to_mut(), &bindings).or_else(|| {
+                && raises
+                    .as_ref()
+                    .is_none_or(|raises| raises_into(&callee, raises))
+                && let Some(mut blocks) = self
+                    .inlined_blocks(callee.to_mut(), &bindings, error)
+                    .or_else(|| {
                         demote_parts(&mut bindings)
-                            .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
+                            .then(|| self.inlined_blocks(callee.to_mut(), &bindings, error))
                             .flatten()
                     })
-                && let raises = caller.instrs[index].raise_edge().cloned()
-                && raises.as_ref().is_none_or(|raises| {
-                    routes_raises(
-                        &blocks,
-                        raises,
-                        callee
-                            .error_slot
-                            .map(|slot| slot + self.function.n_vars as VarId),
-                        (&callee.reg_types, self.function.n_regs),
-                    )
-                })
             {
                 self.dropped_operands |= dropped || passes_value_arguments(&caller.instrs[index]);
                 self.rebinds += rebinds;
@@ -1765,13 +1763,25 @@ impl<'c> Inliner<'_, 'c> {
     /// a place's root or as the whole value a copy or an iteration reads,
     /// or a place reached through a reference other than the parameter's
     /// composes with a caller's place reached through one. A copy of a
-    /// place-bound parameter takes a fresh register of `callee`.
-    fn inlined_blocks(&self, callee: &mut MirFunction, bindings: &[Binding]) -> Option<MirBlock> {
+    /// place-bound parameter takes a fresh register of `callee`. The
+    /// callee's error slot is bound to `error`, the slot the call's raise
+    /// edge writes, or the caller's own when the call has no edge, as the
+    /// callee's raises write the error argument the call passes it.
+    fn inlined_blocks(
+        &self,
+        callee: &mut MirFunction,
+        bindings: &[Binding],
+        error: Option<VarId>,
+    ) -> Option<MirBlock> {
         let base = self.function.n_vars as VarId;
         let mut blocks = callee.body.clone();
+        let callee_error = callee.error_slot.zip(error);
         renumber_block_slots(&mut blocks, &|var| match bindings.get(var as usize) {
             Some(Binding::Slot(slot)) => *slot,
-            _ => var + base,
+            _ => match callee_error {
+                Some((slot, error)) if slot == var => error,
+                _ => var + base,
+            },
         });
         let handles: Vec<Option<MirPlace>> = bindings
             .iter()
@@ -1867,7 +1877,6 @@ impl<'c> Inliner<'_, 'c> {
             result,
             dest,
             raises: raises.clone(),
-            error_slot: callee.error_slot.map(|slot| slot + var_base),
         };
 
         // A reference the body's breaks carry is the call's, of the
@@ -2187,20 +2196,18 @@ fn splice_region(
 struct ReturnExit {
     result: Returned,
     dest: Reg,
-    /// The call's raise edge, whose flag and error the wrapper loop's
-    /// results define after the call's register, as upstream's inlined
+    /// The call's raise edge, whose flag the wrapper loop's results
+    /// define after the call's register, as upstream's inlined
     /// `lit.error_return` returns the error flag: a return breaks with the
-    /// flag false, a `raise` with it true and its error, and the call's
-    /// error region after the loop destroys what the caller holds.
+    /// flag false, a `raise` with it true, its error in the edge's slot the
+    /// callee's error slot is bound to, and the call's error region after
+    /// the loop destroys what the caller holds.
     raises: Option<Raises>,
-    /// The callee's error slot, numbered past the caller's, which each
-    /// raise out of the body stores its error into first.
-    error_slot: Option<VarId>,
 }
 
 impl ReturnExit {
     /// The wrapper loop's results: the call's register when the body
-    /// returns a value, then the raise edge's flag and error.
+    /// returns a value, then the raise edge's flag.
     fn results(&self) -> Vec<Reg> {
         let mut results = if self.result == Returned::Value {
             vec![self.dest]
@@ -2208,7 +2215,7 @@ impl ReturnExit {
             Vec::new()
         };
         if let Some(raises) = &self.raises {
-            results.extend([raises.flag, raises.error]);
+            results.push(raises.flag);
         }
         results
     }
@@ -2219,11 +2226,10 @@ impl ReturnExit {
     /// checker's unreachable fall-off; a break carrying no value cannot
     /// leave a loop with a result, so it is unreachable there. A raise out
     /// of the callee (`lit.error_return`) breaks the loop too when the call
-    /// has a raise edge, carrying its error, and leaves the body as it left the callee
-    /// when it has none, its store into the callee's error slot storing
-    /// into the caller's instead; a raise naming a `try` of the callee
-    /// stays. A value the path does not define is upstream's
-    /// `#interp.uninitmem`.
+    /// has a raise edge, and leaves the body as it left the callee when it
+    /// has none, either way through the slot the callee's error slot is
+    /// bound to; a raise naming a `try` of the callee stays. A value the
+    /// path does not define is upstream's `#interp.uninitmem`.
     fn rewrite(&self, function: &mut MirFunction, block: &mut MirBlock) {
         let span = function
             .spans
@@ -2236,15 +2242,6 @@ impl ReturnExit {
             dest
         };
         let raised = matches!(block.term, MirTerm::ErrorReturn);
-        let stored = raised
-            .then(|| raised_store(block, self.error_slot))
-            .flatten();
-        if let (Some(store), None) = (stored, &self.raises)
-            && let MirInstr::DefVar { var, .. } = &mut block.instrs[store]
-            && let Some(slot) = function.error_slot
-        {
-            *var = slot;
-        }
         let mut values = match &block.term {
             MirTerm::Return(Some(value)) if self.result == Returned::Value => vec![*value],
             MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
@@ -2268,13 +2265,8 @@ impl ReturnExit {
             }
             _ => return,
         };
-        if let Some(raises) = &self.raises {
+        if self.raises.is_some() {
             values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
-            let error = match stored.map(|store| block.instrs.remove(store)) {
-                Some(MirInstr::DefVar { src: error, .. }) => error,
-                _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
-            };
-            values.push(error);
         }
         block.term = MirTerm::Break {
             label: Some(LoopLabel::INLINED_CF_SCOPE),
@@ -2293,42 +2285,14 @@ impl ReturnExit {
     }
 }
 
-/// The index in `block`, which raises out of the callee, of the store of
-/// its error into the callee's error slot `slot`.
-fn raised_store(block: &MirBlock, slot: Option<VarId>) -> Option<usize> {
-    let slot = slot?;
-    block.instrs.iter().rposition(
-        |instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == slot),
-    )
-}
-
-/// Whether a body inlined at a call whose raise edge is `raises` can route
-/// each raise out of the callee in `blocks` into it: one storing into the
-/// callee's error slot `slot` a value of the edge's error type.
-/// `reg_types` are the callee's, whose registers the body numbers from
-/// `base`.
-fn routes_raises(
-    block: &MirBlock,
-    raises: &Raises,
-    slot: Option<VarId>,
-    (reg_types, base): (&HashMap<u32, Ty>, u32),
-) -> bool {
-    {
-        let routed = !matches!(block.term, MirTerm::ErrorReturn)
-            || raised_store(block, slot).is_some_and(|store| {
-                matches!(&block.instrs[store], MirInstr::DefVar { src, .. } if src
-                    .0
-                    .checked_sub(base)
-                    .and_then(|callee| reg_types.get(&callee))
-                    .is_some_and(|ty| *ty == raises.ty))
-            });
-        routed
-            && block
-                .instrs
-                .iter()
-                .flat_map(instruction_regions)
-                .all(|region| routes_raises(region, raises, slot, (reg_types, base)))
-    }
+/// Whether `callee`'s raises can write the slot of the raise edge
+/// `raises` its error slot is bound to: its error slot holds the edge's
+/// error type.
+fn raises_into(callee: &MirFunction, raises: &Raises) -> bool {
+    callee
+        .error_slot
+        .and_then(|slot| callee.var_tys.get(&slot))
+        .is_none_or(|ty| *ty == raises.ty)
 }
 
 /// Retype each read of `var`, a callable slot bound to a caller's closure,

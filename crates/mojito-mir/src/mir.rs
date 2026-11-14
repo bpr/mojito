@@ -3245,11 +3245,11 @@ struct Flatten<'a> {
     /// A borrowed loop's retained-source slot to the place it borrows, until
     /// `GetIter` reads it: a raising `__iter__` is called on it.
     iteration_sources: HashMap<VarId, MirPlace>,
-    /// A raise edge's error register to the conversion its error takes to
+    /// A raise edge's error slot to the conversion its error takes to
     /// the error type the context propagates, which its error region runs
     /// before the raise.
     raise_conversions: HashMap<
-        u32,
+        VarId,
         (
             mojito_checked::checked::ConversionMaterialization,
             SourceSpan,
@@ -3913,59 +3913,90 @@ impl<'a> Flatten<'a> {
     }
 
     /// The raise edge of a raising instruction about to be lowered, from its
-    /// checked error type: fresh `flag` and `error` registers the
-    /// instruction defines, as upstream's throwing call returns its error
-    /// flag and writes its error out. `None` for a non-raising instruction.
+    /// checked error type: a fresh `flag` register the instruction defines
+    /// and the error slot it writes, the one `findNearestErrorSlot` finds,
+    /// as upstream's throwing call returns its error flag and takes that
+    /// slot as its `ByRefError` argument. The first raise naming a `try`
+    /// types its slot. `None` for a non-raising instruction.
     fn raises(&mut self, ty: Option<Ty>, span: SourceSpan) -> Option<Raises> {
         let ty = ty?;
-        let flag = self.fresh_typed(span.clone(), None, Ty::bool());
-        let error = self.fresh_typed(span, None, ty.clone());
+        let flag = self.fresh_typed(span, None, Ty::bool());
+        let error = match self.raise_target {
+            Some((_, slot)) => Some(slot),
+            None => self.f.error_slot,
+        }
+        .unwrap_or_else(|| self.edge_error_slot(flag, &ty));
+        self.var_types.entry(error).or_insert_with(|| ty.clone());
         Some(Raises { ty, flag, error })
+    }
+
+    /// A fresh slot of type `ty` for the error of the raise edge on
+    /// `flag` to write, which its error region reads on from.
+    fn edge_error_slot(&mut self, flag: Reg, ty: &Ty) -> VarId {
+        let slot = self.var(&format!("$edge_error{}", flag.0));
+        self.var_types.insert(slot, ty.clone());
+        slot
     }
 
     /// The raise edge of the raising call `call`, as [`Self::raises`]
     /// builds it from the error `ty` the call raises, with the conversion
     /// the checker recorded for its error to the context's error type.
     fn call_raises(&mut self, call: Node<'_>, ty: Option<Ty>) -> Option<Raises> {
-        let raises = self.raises(ty, call.location());
-        self.convert_raised(raises.as_ref(), call.raise_conversion(), call.location());
+        let mut raises = self.raises(ty, call.location());
+        self.convert_raised(raises.as_mut(), call.raise_conversion(), call.location());
         raises
     }
 
     /// Have the error region of `raises` convert its error by
     /// `conversion`, the checker's conversion of it to the error type the
-    /// context propagates, at `site`.
+    /// context propagates, at `site`: the edge writes a slot of its own,
+    /// which the region reads and converts into the nearest error slot.
     fn convert_raised(
         &mut self,
-        raises: Option<&Raises>,
+        raises: Option<&mut Raises>,
         conversion: Option<mojito_checked::checked::ConversionMaterialization>,
         site: SourceSpan,
     ) {
         if let (Some(raises), Some(conversion)) = (raises, conversion) {
+            raises.error = self.edge_error_slot(raises.flag, &raises.ty.clone());
             self.raise_conversions
-                .insert(raises.error.0, (conversion, site));
+                .insert(raises.error, (conversion, site));
         }
     }
 
     /// Emit a raising instruction's error region once its call tail
     /// (keep-alives, transferred loans, a consumed receiver) is in place:
-    /// an `if` on its flag whose `then` region raises its error, as
-    /// upstream's `addErrorRegions` follows each throwing call. The raise
-    /// names the `try` whose body encloses it, or leaves the function; drop
-    /// elaboration destroys at the arm's entry what that raise holds.
+    /// an `if` on its flag whose `then` region marks the error slot the
+    /// instruction wrote initialized and raises, as upstream's
+    /// `addErrorRegions` follows each throwing call, so `CheckLifetimes`
+    /// sees the slot initialized on the raise path alone. The raise names
+    /// the `try` whose body encloses it, or leaves the function, through
+    /// the slot the instruction wrote, or, when its error converts, through
+    /// the nearest slot, which the region stores the converted error into;
+    /// drop elaboration destroys at the arm's entry what that raise holds.
     fn error_region(&mut self, raises: Option<Raises>) {
         let Some(raises) = raises else {
             return;
         };
-        let (instrs, term) = match self.raise_conversions.remove(&raises.error.0) {
+        let outer = std::mem::take(&mut self.f.body.instrs);
+        self.f.body.instrs.push(MirInstr::MarkInitialized {
+            place: MirPlace::root(raises.error, Some(raises.ty.clone())),
+        });
+        let term = match self.raise_conversions.remove(&raises.error) {
             Some((conversion, site)) => {
-                let outer = std::mem::take(&mut self.f.body.instrs);
+                let raised = self.fresh_typed(site.clone(), None, raises.ty.clone());
+                self.emit(MirInstr::UseVar {
+                    dest: raised,
+                    var: raises.error,
+                    mode: UseMode::Move,
+                    constructor: None,
+                });
                 let error = self.fresh_typed(site, None, conversion.ty.clone());
                 self.emit(MirInstr::Call {
                     dest: error,
                     func: FuncRef::named(&conversion.constructor),
                     raises: None,
-                    args: vec![raises.error],
+                    args: vec![raised],
                     kwargs: Vec::new(),
                     arg_places: vec![None],
                     kwarg_places: Vec::new(),
@@ -3977,12 +4008,12 @@ impl<'a> Flatten<'a> {
                 });
                 self.record_call(error, Some(conversion.constructor), 0);
                 let (exit, term) = self.raise_exit(error);
-                let mut instrs = std::mem::replace(&mut self.f.body.instrs, outer);
-                instrs.extend(exit);
-                (instrs, term)
+                self.f.body.instrs.extend(exit);
+                term
             }
-            None => self.raise_exit(raises.error),
+            None => self.raise_term(),
         };
+        let instrs = std::mem::replace(&mut self.f.body.instrs, outer);
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
@@ -3996,27 +4027,34 @@ impl<'a> Flatten<'a> {
         });
     }
 
+    /// The terminator raising from where lowering stands, once the error
+    /// is in the nearest error slot: inside a `try` body, `lit.try.raise`
+    /// to its handler, and outside every body, `lit.error_return` through
+    /// the function's error slot.
+    const fn raise_term(&self) -> MirTerm {
+        match self.raise_target {
+            Some((label, _)) => MirTerm::TryRaise {
+                label,
+                values: Vec::new(),
+            },
+            None => MirTerm::ErrorReturn,
+        }
+    }
+
     /// The exit raising the error `src` from where lowering stands, as
     /// `emitRaise` lowers a raise after the error is in the nearest error
     /// slot `findNearestErrorSlot` finds: the store of `src` into that
-    /// slot, then, inside a `try` body, `lit.try.raise` to its handler,
-    /// and outside every body, `lit.error_return` through the function's
-    /// error slot. The first raise naming a `try` types its slot, as
-    /// upstream's first raise resolves `__try_error__`'s type; a string
-    /// raised into an `Error` slot converts to `Error` first, as the raise
-    /// converts its value to the slot's type. A raise out of a nonraising
-    /// function, which has no slot, stores nothing, and `verify` reports
-    /// it.
+    /// slot, then [`Self::raise_term`]. The first raise naming a `try`
+    /// types its slot, as upstream's first raise resolves
+    /// `__try_error__`'s type; a string raised into an `Error` slot
+    /// converts to `Error` first, as the raise converts its value to the
+    /// slot's type. A raise out of a nonraising function, which has no
+    /// slot, stores nothing, and `verify` reports it.
     fn raise_exit(&mut self, src: Reg) -> (Vec<MirInstr>, MirTerm) {
-        let (slot, term) = match self.raise_target {
-            Some((label, slot)) => (
-                Some(slot),
-                MirTerm::TryRaise {
-                    label,
-                    values: Vec::new(),
-                },
-            ),
-            None => (self.f.error_slot, MirTerm::ErrorReturn),
+        let term = self.raise_term();
+        let slot = match self.raise_target {
+            Some((_, slot)) => Some(slot),
+            None => self.f.error_slot,
         };
         let Some(slot) = slot else {
             return (Vec::new(), term);

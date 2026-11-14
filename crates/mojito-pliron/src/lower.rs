@@ -287,7 +287,6 @@ pub fn lower_body(
         outcome_ptr: None,
         err_slot: None,
         propagate_block: None,
-        edge_errors: edge_errors(&func.body),
         error_slots: error_slots(&func.body),
         open_edge: None,
         current: None,
@@ -457,10 +456,6 @@ struct FnLowering<'a> {
     /// destructor — the VM abandons raising frames), and returns. Created
     /// lazily.
     propagate_block: Option<Ptr<BasicBlock>>,
-    /// The error registers of the function's raise edges: a `raise` of one
-    /// hands on, whole, the error its instruction raised, and traces no new
-    /// raise.
-    edge_errors: HashSet<u32>,
     /// The error slots of the function's `try`s: a store into one is a
     /// raise's, staging the error as an `MjError` when the slot holds an
     /// `Error` ([`FnLowering::stage_error`]).
@@ -471,9 +466,9 @@ struct FnLowering<'a> {
 }
 
 /// The raise edge of a raising instruction while it lowers: its flag and
-/// error registers, the storage its error lands in, and, once its call has
-/// branched on the callee's outcome, the block the error path continues
-/// in.
+/// error slot, the storage the callee's error lands in before the error
+/// path writes it to the slot, and, once its call has branched on the
+/// callee's outcome, the block the error path continues in.
 struct OpenEdge {
     raises: Raises,
     storage: Value,
@@ -489,19 +484,4 @@ fn error_slots(block: &MirBlock) -> HashSet<u32> {
             _ => None,
         })
         .collect()
-}
-
-/// The error register of every raise edge in `blocks`, at any depth.
-fn edge_errors(body: &MirBlock) -> HashSet<u32> {
-    let mut errors = HashSet::new();
-    let mut pending: Vec<&MirBlock> = vec![body];
-    while let Some(block) = pending.pop() {
-        for instruction in &block.instrs {
-            if let Some(raises) = instruction.raise_edge() {
-                errors.insert(raises.error.0);
-            }
-            pending.extend(mojito_mir::mir::instruction_regions(instruction));
-        }
-    }
-    errors
 }

@@ -124,7 +124,14 @@ impl VmBackend {
                     &mut frame.registers,
                     &mut frame.variables,
                 );
-                raise_into_edge(instruction, outcome, &mut frame.registers)?;
+                self.raise_into_edge(
+                    prog,
+                    frame.function,
+                    instruction,
+                    outcome,
+                    &mut frame.registers,
+                    &mut frame.variables,
+                )?;
             }
             self.burn_ctfe()?;
             let returned = match frame
@@ -166,7 +173,7 @@ impl VmBackend {
                                     .as_ref()
                                     .is_some_and(|continuation| continuation.raises.is_some()) =>
                         {
-                            self.raise_into_caller(frame, error)?;
+                            self.raise_into_caller(prog, frame, error)?;
                             continue;
                         }
                         raised => return Err(raised),
@@ -727,10 +734,16 @@ impl VmBackend {
     }
 
     /// Pop a child frame a `raise` leaves into its caller, whose call has
-    /// a raise edge: set the edge's flag and error, as upstream's throwing
-    /// call returns its error flag, and apply the call's write-backs, so
-    /// the caller goes on to its error region.
-    fn raise_into_caller(&mut self, frame: Frame, error: Value) -> Result<(), RuntimeError> {
+    /// a raise edge: set the edge's flag and write its error slot, as
+    /// upstream's throwing call returns its error flag having written its
+    /// `ByRefError` argument, and apply the call's write-backs, so the
+    /// caller goes on to its error region.
+    fn raise_into_caller(
+        &mut self,
+        prog: &Prog,
+        frame: Frame,
+        error: Value,
+    ) -> Result<(), RuntimeError> {
         let continuation = frame.continuation.ok_or_else(|| {
             RuntimeError::Unsupported("vm: child frame has no return continuation".to_string())
         })?;
@@ -743,42 +756,75 @@ impl VmBackend {
                 (place, written)
             })
             .collect();
-        let caller = self.frames.last_mut().ok_or_else(|| {
+        let mut caller = self.frames.pop().ok_or_else(|| {
             RuntimeError::Unsupported("vm: raising child has no caller frame".to_string())
         })?;
         if let Some(raises) = &continuation.raises {
-            caller.registers[raises.flag.0 as usize] = Value::Bool(true);
-            caller.registers[raises.error.0 as usize] = error;
+            self.write_edge_error(
+                prog,
+                caller.function,
+                raises,
+                error,
+                &mut caller.registers,
+                &mut caller.variables,
+            );
         }
+        self.frames.push(caller);
+        let caller = self.frames.last_mut().ok_or_else(|| {
+            RuntimeError::Unsupported("vm: raising child has no caller frame".to_string())
+        })?;
         for (place, written) in writebacks {
             *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
         }
         Ok(())
     }
-}
 
-/// The outcome of `instruction` once its raise edge has taken a raise: a
-/// raise sets its error flag and error, as upstream's throwing call returns
-/// its flag, and completion clears the flag. An instruction with no raise
-/// edge, and an error that is no raise, pass through.
-fn raise_into_edge(
-    instruction: &MirInstr,
-    outcome: Result<(), RuntimeError>,
-    registers: &mut [Value],
-) -> Result<(), RuntimeError> {
-    let Some(raises) = instruction.raise_edge() else {
-        return outcome;
-    };
-    match outcome {
-        Err(RuntimeError::Raised(error)) => {
-            registers[raises.flag.0 as usize] = Value::Bool(true);
-            registers[raises.error.0 as usize] = error;
-            Ok(())
+    /// The outcome of `instruction` once its raise edge has taken a raise:
+    /// a raise sets its error flag and writes its error slot
+    /// ([`Self::write_edge_error`]), as upstream's throwing call returns
+    /// its flag, and completion clears the flag. An instruction with no
+    /// raise edge, and an error that is no raise, pass through.
+    fn raise_into_edge(
+        &mut self,
+        prog: &Prog,
+        function: usize,
+        instruction: &MirInstr,
+        outcome: Result<(), RuntimeError>,
+        registers: &mut [Value],
+        variables: &mut [Value],
+    ) -> Result<(), RuntimeError> {
+        let Some(raises) = instruction.raise_edge() else {
+            return outcome;
+        };
+        match outcome {
+            Err(RuntimeError::Raised(error)) => {
+                self.write_edge_error(prog, function, raises, error, registers, variables);
+                Ok(())
+            }
+            Ok(()) => {
+                registers[raises.flag.0 as usize] = Value::Bool(false);
+                Ok(())
+            }
+            Err(other) => Err(other),
         }
-        Ok(()) => {
-            registers[raises.flag.0 as usize] = Value::Bool(false);
-            Ok(())
+    }
+
+    /// Take the raise `error` along the raise edge `raises` of `function`:
+    /// set its flag and write the error into its slot, which a `try`'s
+    /// slot catches.
+    fn write_edge_error(
+        &mut self,
+        prog: &Prog,
+        function: usize,
+        raises: &Raises,
+        error: Value,
+        registers: &mut [Value],
+        variables: &mut [Value],
+    ) {
+        if prog.error_slots[function].contains(&raises.error) {
+            self.record_catch(&error);
         }
-        Err(other) => Err(other),
+        registers[raises.flag.0 as usize] = Value::Bool(true);
+        variables[raises.error as usize] = error;
     }
 }
