@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2214**.
+Next free ID: **R2215**.
 
 ## Ordered Work
 
@@ -834,6 +834,34 @@ the `pmir` track, staged in
     shrinks the total.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2214 Concrete instructions grew 1.49% in batch 8**
+
+  The elaborated corpus grew from 4,789,227 to 4,860,575 concrete
+  instructions (+71,348) between the batch-7 baseline (c65a41f57) and
+  batch 8's head (6877d13be), across 1,742 shared fixtures, 1,634 of which
+  moved.
+  - Unlike R2193's growth, this is in the templates: generator
+    instructions grew 2,054,121 to 2,106,412 (+52,291) while generator and
+    instance counts fell by 19.
+  - Largest per-fixture growth, all under `assets/ok/`:
+    `display_argument_built_at_call_setup` +510,
+    `template_method_bound_display_argument` +371, `simd_cast_matrix`
+    +333, `simd_shifts_masked` +333, `simd_reductions_int` +319,
+    `display_element_read_at_construction` +316, `simd_dtypes_int_lanes`
+    +316, `template_method_subscripted_receiver` +316,
+    `simd_floordiv_mod` +308, and `llvm_intrinsic_math` +290.
+  - Suspected cause: the declared `VariadicPack` and `VariadicList`
+    members replacing builtins (807c45c40, a2f187b81, 6877d13be), whose
+    bodies every `print` and `*xs` call now carries until the cleanup
+    passes fold them.
+  - Lever: compare a top fixture's `run --timings` counters at each
+    commit after c65a41f57, then fold what the bundled members leave
+    behind in the pass that should remove it. Keep the declared members,
+    which follow upstream.
+  - The growth is accepted in `benchmarks/instantiation.tsv` (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2030 The elaborator's cost grows with a template's
   `inlined_cf_scope` wrapper regions and superlinearly with its length**
