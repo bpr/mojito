@@ -58,13 +58,12 @@ pub(super) fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops
 /// The required kind/type of a trait `comptime NAME: Annotation` member.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum CtMemberReq {
-    /// A compile-time value whose value type must match this type.
+    /// A compile-time value whose value type must match this type. A
+    /// parameterized one (`comptime get[idx: Int]: Int`) is typed, as
+    /// upstream types it, by the generator type `__generator_type[idx: Int]
+    /// Int` ([`TyKind::Generator`]), which a conformer's member converts to
+    /// position by position, names aside.
     Value(Ty),
-    /// A parameterized compile-time value (`comptime get[idx: Int]: Int`),
-    /// upstream's generator type `__generator_type[idx: Int] Int`: its
-    /// classified parameters, owned by `Trait.member`, and its result type.
-    /// A conformer's member matches it position by position, names aside.
-    Generator { params: Vec<ParamDecl>, result: Ty },
     /// A compile-time type value whose type must conform to these trait bounds.
     /// `params` is non-empty for a parameterized associated type such as
     /// `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:

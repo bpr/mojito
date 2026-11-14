@@ -1987,17 +1987,10 @@ impl Checker {
             if let Some(parameterized) = struct_info.parameterized_associated.get(member) {
                 // A parameterized value witnesses a generator requirement
                 // when its signature and result type match it.
-                if let (
-                    CtMemberReq::Generator { params, result },
-                    MemberTemplate::Value { decls, body },
-                ) = (req, &parameterized.template)
+                if let (CtMemberReq::Value(expected), MemberTemplate::Value { decls, body }) =
+                    (req, &parameterized.template)
                 {
-                    if !same_generator_signature(params, decls)
-                        || !generator_result_satisfies(
-                            body,
-                            &rebind_generator_result(result, params, decls),
-                        )
-                    {
+                    if !generator_witnesses(decls, body, expected) {
                         return Err(TypeError::TraitComptimeMemberMismatch {
                             struct_name: name.to_string(),
                             trait_name: tr.to_string(),
@@ -2332,9 +2325,10 @@ impl Checker {
             // A literal witnesses the type it materializes as (`comptime
             // NAME = "a"` for `comptime NAME: String`).
             CtMemberReq::Value(expected) => {
-                self.ct_value_ty(value, self_ty)
-                    .is_some_and(|actual| coerces(&actual, expected))
-                    || value.clone().materialize_as(expected).is_some()
+                self.ct_value_ty(value, self_ty).is_some_and(|actual| {
+                    coerces(&actual, expected)
+                        || mojito_types::types::generator_converts(&actual, expected)
+                }) || value.clone().materialize_as(expected).is_some()
                     || self.open_type_list_satisfies(value, expected)
             }
             CtMemberReq::Type { bounds, .. } => {
@@ -2345,8 +2339,6 @@ impl Checker {
                     self.conforms_to_under_assumption(ty, bound, conformance_assumption)
                 })
             }
-            // An unparameterized member is no generator.
-            CtMemberReq::Generator { .. } => false,
         }
     }
 
@@ -4122,9 +4114,9 @@ impl Checker {
             .iter()
             .filter_map(|b| self.traits.get(b))
             .find_map(|info| match info.comptime_members.get(member) {
-                Some(CtMemberReq::Generator { params, result }) => {
-                    Some((params.as_slice(), result))
-                }
+                Some(CtMemberReq::Value(ty)) => ty
+                    .as_generator()
+                    .map(|generator| (generator.params.as_slice(), &generator.result)),
                 _ => None,
             })
     }
@@ -4356,7 +4348,7 @@ impl Checker {
         {
             constraints.extend(compiled.iter().cloned());
         }
-        Ok((CtMemberReq::Generator { params, result }, compiled))
+        Ok((CtMemberReq::Value(Ty::generator(params, result)), compiled))
     }
 
     fn parameter_default_shape(&self, default: &Expr, decls: &[ParamDecl]) -> bool {
@@ -4543,16 +4535,34 @@ fn is_lifecycle_trait(name: &str) -> bool {
 /// and complete for the accepted subset: only the direct self-rooted field
 /// subscript form is a legal write target through such a field (alias forms
 /// stay rejected by the reborrow rules), so no checked facts are needed.
-/// Whether a parameterized value member's `body` is of the generator
-/// requirement's `result` type: its value type coerces to it, or its
-/// literal materializes as it (`comptime get[idx: Int] = 8` for `Int`).
-fn generator_result_satisfies(body: &ParamExpr, result: &Ty) -> bool {
+/// Whether the parameterized value member over `decls` whose body is
+/// `body` witnesses the generator-typed requirement `expected`: the
+/// generator it declares converts to it ([`generator_converts`]), and a
+/// literal body takes the requirement's result type, as upstream's
+/// generator conversion converts the body (`comptime get[idx: Int] = 8`
+/// for `comptime get[idx: Int]: Int`).
+fn generator_witnesses(decls: &[ParamDecl], body: &ParamExpr, expected: &Ty) -> bool {
+    let Some(required) = expected.as_generator() else {
+        return false;
+    };
+    let actual = mojito_types::ct::GeneratorValue {
+        params: decls.to_vec(),
+        body: body.clone(),
+    }
+    .ty();
     match body.as_constant() {
-        Some(value) => value.clone().materialize_as(result).is_some(),
-        None => body
-            .meta()
-            .as_value()
-            .is_some_and(|actual| coerces(actual, result)),
+        Some(value) => {
+            same_generator_signature(&required.params, decls)
+                && value
+                    .clone()
+                    .materialize_as(&rebind_generator_result(
+                        &required.result,
+                        &required.params,
+                        decls,
+                    ))
+                    .is_some()
+        }
+        None => mojito_types::types::generator_converts(&actual, expected),
     }
 }
 

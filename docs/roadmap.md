@@ -5843,23 +5843,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1488 A trait's parameterized value requirement is not a
-  generator-typed value requirement**
-
-  Problem: upstream types `comptime get[idx: Int]: Int` as a value
-  requirement of type `__generator_type[idx: Int] Int`, where Mojito keeps
-  a requirement form of its own, `CtMemberReq::Generator { params, result
-  }`, beside `CtMemberReq::Value`.
-  - `TyKind::Generator` now types a generator value and a generator
-    parameter; folding the requirement into
-    `CtMemberReq::Value(Ty::generator(..))` gives all three one type, and
-    witness matching becomes `generator_converts`.
-  - `Checker::lookup_trait_generator` and the witness comparison in
-    `traits.rs` are the readers to move.
-  - Found while landing R808 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R396 A signature that converts a computed value or calls a method
   on a struct value is rejected**
 

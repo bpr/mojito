@@ -819,7 +819,7 @@ impl Checker {
                         .values()
                         .filter_map(|member| match member {
                             CtMemberReq::Type { bounds, .. } => Some(bounds),
-                            CtMemberReq::Value(_) | CtMemberReq::Generator { .. } => None,
+                            CtMemberReq::Value(_) => None,
                         })
                         .flatten()
                         .map(String::as_str),

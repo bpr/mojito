@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait's parameterized value requirement (`comptime get[idx: Int]:
+  Int`) is now a value requirement of generator type, as at the pin
+  (R1488), so a conformer's `comptime get = K.k` witnesses it and
+  `T.get[2]` applies that generator, a trait default may read
+  `Self.get` unapplied, and a `comptime` member declared at a generator
+  type accepts a generator whose binders are named differently. These
+  stopped with a member mismatch, an elaboration error, and a type
+  mismatch.
+
 - A generator type's binder may be bounded by an enclosing trait-valued
   binder and its result may name one (`G: __generator_type[From: F] T`
   over `F, T: type_of(AnyType)`), a later parameter may be typed by an

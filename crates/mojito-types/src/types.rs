@@ -1017,6 +1017,15 @@ impl Ty {
         Self::new(TyKind::Generator(Box::new(GeneratorTy { params, result })))
     }
 
+    /// This type's generator signature, when it is a generator type
+    /// ([`TyKind::Generator`]).
+    pub fn as_generator(&self) -> Option<&GeneratorTy> {
+        match self.kind() {
+            TyKind::Generator(generator) => Some(generator),
+            _ => None,
+        }
+    }
+
     /// The type of the string literal `text`, `StringLiteral[text]`.
     pub fn string_literal_of(text: &str) -> Self {
         Self::string_literal_at(CtValue::KgenString(text.to_string()))

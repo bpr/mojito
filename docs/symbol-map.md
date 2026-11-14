@@ -2857,9 +2857,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   application is expanded to it first (`type_member_application`, through
   `ParamContext::expand_type_members`, from `Specializer::applied`) and run
   like any compile-time application. A trait's parameterized value requirement is
-  `CtMemberReq::Generator` (`checker/overload_support.rs`, built by
-  `Checker::generator_requirement` in `traits.rs`, merged and matched by
-  `same_generator_signature` in `traits_support.rs`); a read through a
+  a value requirement of generator type,
+  `CtMemberReq::Value(Ty::generator(..))` (`checker/overload_support.rs`,
+  built by `Checker::generator_requirement` in `traits.rs`, merged by
+  `same_generator_type` in `traits_support.rs`, witnessed by
+  `generator_witnesses` in `traits.rs` or, for a generator-valued member,
+  `generator_converts` in `ct_member_satisfies`); a read through a
   bound (`T.get[0]`) is `Checker::generator_application`
   (`constraints.rs`, from `parameterized_member_application` over
   `lookup_trait_generator`), a `TypeMember` node with the bound
@@ -2869,7 +2872,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConformanceFacts::parameterized_values` →
   `MirStructDeclaration::parameterized_associated_values`, and
   `type_member_answer` binds the arguments to its parameters by position
-  (`parameterized_associated_values`). A read's declared type is
+  (`member_body`, `mono/symbolic.rs`), or to the generator a
+  generator-valued member (`comptime get = K.k`) evaluates to. A read's declared type is
   `Checker::member_value_type`: the bound's requirement, or on a struct
   the annotation `StructInfo::associated_value_types` keeps (or an
   unannotated raw-list body's own type), at the application's arguments.

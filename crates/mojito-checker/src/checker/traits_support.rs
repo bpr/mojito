@@ -5,8 +5,8 @@ use super::overload_support::explicit_parameter_names;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::fold::comparison_holds;
-use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, TransferSet};
+use mojito_types::types::{GeneratorTy, TyKind};
 
 pub(super) use mojito_types::types::same_generator_signature;
 
@@ -38,22 +38,13 @@ pub(super) fn merge_associated_requirement(
             }
             true
         }
-        (CtMemberReq::Type { .. }, CtMemberReq::Type { .. })
-        | (CtMemberReq::Value(_), CtMemberReq::Value(_)) => *existing == *incoming,
-        (
-            CtMemberReq::Generator { params, result },
-            CtMemberReq::Generator {
-                params: more_params,
-                result: more_result,
-            },
-        ) => {
-            *result == rebind_generator_result(more_result, more_params, params)
-                && same_generator_signature(params, more_params)
-                && params
-                    .iter()
-                    .zip(more_params)
-                    .all(|(left, right)| left.name() == right.name())
+        (CtMemberReq::Value(ty), CtMemberReq::Value(more)) => {
+            match (ty.as_generator(), more.as_generator()) {
+                (Some(generator), Some(more)) => same_generator_type(generator, more),
+                _ => ty == more,
+            }
         }
+        (CtMemberReq::Type { .. }, CtMemberReq::Type { .. }) => *existing == *incoming,
         _ => false,
     };
     if agrees {
@@ -374,9 +365,6 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
 fn requirement_type(requirement: &CtMemberReq) -> String {
     match requirement {
         CtMemberReq::Value(ty) => ty.to_string(),
-        CtMemberReq::Generator { params, result } => {
-            Ty::generator(params.clone(), result.clone()).to_string()
-        }
         CtMemberReq::Type { bounds, params } => {
             let bounds = if bounds.is_empty() {
                 "AnyType".to_string()
@@ -425,4 +413,19 @@ fn generic_callable_shapes_match(actual: &Ty, expected: &Ty) -> bool {
                 && coerces(&actual, &expected)
                 && coerces(&expected, &actual)
         })
+}
+
+/// Whether two declarations of one parameterized value requirement state
+/// the same generator type: the same signature position by position, the
+/// same binder names (the type spells them, so a refinement may not rename
+/// one), and one result over the binders both own. Their `where` clauses
+/// compare as every inherited member's constraints do, by implication.
+fn same_generator_type(left: &GeneratorTy, right: &GeneratorTy) -> bool {
+    left.result == right.result
+        && same_generator_signature(&left.params, &right.params)
+        && left
+            .params
+            .iter()
+            .zip(&right.params)
+            .all(|(left, right)| left.name() == right.name())
 }

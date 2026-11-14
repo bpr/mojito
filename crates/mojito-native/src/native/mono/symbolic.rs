@@ -188,16 +188,33 @@ fn member_body(
             .ok_or_else(absent)?;
         return Ok(Some((value.clone(), instance.bindings)));
     }
-    let member = instance
+    // A parameterized member is a generator template; any other member
+    // applied is a generator value (`comptime get = K.k`), bound to `args`
+    // as upstream's `#kgen.bind_params` binds it.
+    let (params, body) = instance
         .declaration
         .parameterized_associated_values
         .iter()
         .find(|member| member.name == name)
-        .ok_or_else(absent)?;
-    if member.params.len() != args.len() {
+        .map_or_else(
+            || {
+                let (_, value) = instance
+                    .declaration
+                    .associated_values
+                    .iter()
+                    .find(|(member, _)| member == name)
+                    .ok_or_else(absent)?;
+                match eval_ct(value, &instance.bindings).map_err(unsupported)? {
+                    CtValue::Generator(generator) => Ok((generator.params, generator.body)),
+                    _ => Err(absent()),
+                }
+            },
+            |member| Ok((member.params.clone(), member.body.clone())),
+        )?;
+    if params.len() != args.len() {
         return Err(ParamError::Unsupported(format!(
             "`{subject}.{name}` takes {} compile-time argument(s), got {}",
-            member.params.len(),
+            params.len(),
             args.len()
         )));
     }
@@ -215,10 +232,9 @@ fn member_body(
         };
         arguments.push(argument);
     }
-    let mut member_bindings = instance.bindings.clone();
-    bind_ty_args(&member.params, &arguments, &mut member_bindings)
-        .map_err(ParamError::Unsupported)?;
-    Ok(Some((member.body.clone(), member_bindings)))
+    let mut member_bindings = instance.bindings;
+    bind_ty_args(&params, &arguments, &mut member_bindings).map_err(ParamError::Unsupported)?;
+    Ok(Some((body, member_bindings)))
 }
 
 pub(super) fn is_symbolic(ty: &Ty) -> bool {

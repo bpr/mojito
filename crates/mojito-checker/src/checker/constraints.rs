@@ -659,10 +659,13 @@ impl Checker {
             return Ok(value);
         };
         // A raw list is `check_raw_list_member`'s; a compile-time string
-        // is the `String` it materializes to.
+        // is the `String` it materializes to; a generator converts as a
+        // generator argument does, binder names aside, unlike a run-time
+        // generator value.
         let accepted = matches!(found.kind(), TyKind::ParamList(_))
             || matches!(declared.kind(), TyKind::ParamList(_))
             || coerces(found, declared)
+            || mojito_types::types::generator_converts(found, declared)
             || mojito_types::types::is_nominal_string(declared)
                 && matches!(compiled.as_constant(), Some(CtValue::Str(_)));
         if !accepted {
@@ -1060,12 +1063,17 @@ impl Checker {
                 return Some(self.generator_application(&subject, field, params, result, args));
             }
             TyKind::SelfType => {
-                let CtMemberReq::Generator { params, result } =
-                    self.trait_self_comptime.last()?.get(field)?
-                else {
+                let CtMemberReq::Value(ty) = self.trait_self_comptime.last()?.get(field)? else {
                     return None;
                 };
-                return Some(self.generator_application(&subject, field, params, result, args));
+                let generator = ty.as_generator()?;
+                return Some(self.generator_application(
+                    &subject,
+                    field,
+                    &generator.params,
+                    &generator.result,
+                    args,
+                ));
             }
             _ => {}
         }
@@ -4230,6 +4238,9 @@ impl Checker {
         match subject.kind() {
             TyKind::Param { .. } => {
                 let bounds = self.refined_bound(&subject).unwrap_or_default();
+                // A parameterized requirement is generator-typed, so read
+                // unapplied it is the generator the instance's member is
+                // (`comptime g = T.get`).
                 if let Some(ty) = self.lookup_trait_assoc_value_ty(&bounds, field) {
                     let subject = self.param_context.type_shape(subject.clone());
                     return Some(Ok(self.param_context.type_member(
@@ -4237,20 +4248,6 @@ impl Checker {
                         field,
                         &[],
                         mojito_types::param_expr::MetaTy::value(ty),
-                    )));
-                }
-                // A parameterized requirement read unapplied is the
-                // generator the instance's member is (`comptime g = T.get`).
-                if let Some((params, result)) = self.lookup_trait_generator(&bounds, field) {
-                    let subject = self.param_context.type_shape(subject.clone());
-                    return Some(Ok(self.param_context.type_member(
-                        &subject,
-                        field,
-                        &[],
-                        mojito_types::param_expr::MetaTy::value(Ty::generator(
-                            params.to_vec(),
-                            result.clone(),
-                        )),
                     )));
                 }
                 let declared = bounds
@@ -6434,16 +6431,14 @@ impl Checker {
     fn subject_generator_member(&self, subject: &Ty, field: &str) -> Option<ParamExpr> {
         match subject.kind() {
             TyKind::Param { .. } => {
-                let (params, result) =
-                    self.lookup_trait_generator(&self.refined_bound(subject)?, field)?;
+                let ty = self
+                    .lookup_trait_assoc_value_ty(&self.refined_bound(subject)?, field)
+                    .filter(|ty| ty.as_generator().is_some())?;
                 Some(self.param_context.type_member(
                     &self.param_context.type_shape(subject.clone()),
                     field,
                     &[],
-                    mojito_types::param_expr::MetaTy::value(Ty::generator(
-                        params.to_vec(),
-                        result.clone(),
-                    )),
+                    mojito_types::param_expr::MetaTy::value(ty),
                 ))
             }
             _ if !subject.is_simd() => {
@@ -6464,7 +6459,7 @@ impl Checker {
     fn trait_self_value_ty(&self, field: &str) -> Option<Ty> {
         match self.trait_self_comptime.last()?.get(field)? {
             CtMemberReq::Value(ty) => Some(ty.clone()),
-            CtMemberReq::Type { .. } | CtMemberReq::Generator { .. } => None,
+            CtMemberReq::Type { .. } => None,
         }
     }
 

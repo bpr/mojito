@@ -1533,6 +1533,7 @@ assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_parameter_markers.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_comptime_default.mojo	main	exe-differential	sanitized
+assets/ok/trait_parameterized_value_generator_witness.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanitized
 assets/ok/trait_reads_module_struct_member.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
