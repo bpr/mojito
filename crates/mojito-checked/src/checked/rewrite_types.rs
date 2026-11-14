@@ -718,8 +718,7 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::CompileTimeLoad
             | Self::RetainCallPlace
             | Self::BorrowReadArgument
-            | Self::ReadTemporaryArgument
-            | Self::ForwardedArgument
+            | Self::CallConventions(_)
             | Self::CallableCaptureAccesses {
                 captures: _,
                 materialized: _,

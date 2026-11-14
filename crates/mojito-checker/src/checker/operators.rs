@@ -82,6 +82,11 @@ impl Checker {
         if op == PrefixOp::Not && self.param_has_bound(&t, "Boolable") {
             self.borrow_operator_operand(operand, &t);
             self.record_read_temporary_argument(operand);
+            self.record_operand_convention(
+                &span,
+                mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
+                None,
+            );
             return Ok(Ty::bool());
         }
         // A user struct's `-x`, `~x`, and `+x` are its dunder calls
@@ -102,20 +107,24 @@ impl Checker {
             let signature = self
                 .struct_dunder_signature_for(&t, op.dunder(), &[])
                 .map(|(_, sig, _)| sig);
+            let convention = signature.map(|sig| sig.self_convention);
+            if convention.is_some_and(reads) {
+                self.borrow_operator_operand(operand, &t);
+                self.record_read_temporary_argument(operand);
+            }
+            if let Some(convention) = convention {
+                self.record_operand_convention(
+                    &span,
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
+                    convention,
+                );
+            }
             if let Some(error) = signature.and_then(dunder_error) {
                 self.require_call_error(
                     span,
                     format!("raising operator '{}'", op.symbol()),
                     error,
                 )?;
-            }
-            let convention = signature.map(|sig| sig.self_convention);
-            if convention.is_some_and(reads) {
-                self.borrow_operator_operand(operand, &t);
-                self.record_read_temporary_argument(operand);
-            }
-            if convention.is_some_and(owns_argument) {
-                self.record_forwarded_operand(operand);
             }
             return require_dunder_ret(ret, &Ty::bool(), "__bool__");
         }

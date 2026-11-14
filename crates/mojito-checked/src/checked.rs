@@ -75,6 +75,15 @@ pub struct CheckedCallArgument {
     pub convention: Option<mojito_ast::ast::ArgConvention>,
 }
 
+/// One run-time argument of a call and the effective convention of the
+/// parameter its selected callee binds it to
+/// ([`SemanticAdjustment::CallConventions`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedArgumentConvention {
+    pub source: CheckedCallArgumentSource,
+    pub convention: Option<mojito_ast::ast::ArgConvention>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedCallArgumentSource {
     Positional(usize),
@@ -879,20 +888,15 @@ pub enum SemanticAdjustment {
     /// access in the same call intentionally omit this marker — their implicit
     /// copy is what makes the call's exclusivity check pass.
     BorrowReadArgument,
-    /// This actual argument (or receiver) is an owned temporary (a call
-    /// result, a construction, a converted literal) bound to a
-    /// read-convention parameter: the callee borrows it, so the caller destroys it once the
-    /// call returns. A temporary at a `var`/`deinit` slot moves into the
-    /// callee and omits this marker.
-    ReadTemporaryArgument,
-    /// The owned sibling of `ReadTemporaryArgument`: this actual argument
-    /// (or receiver, or operator operand) binds a regular `var`/`deinit`
-    /// parameter, which takes the caller's storage. A `^` transfer of a
-    /// whole local hands its slot to the callee without the move
-    /// initializer, as Mojo's owned argument convention does. A discarded
-    /// `^` transfer (`_ = x^`, or `x^` as a statement) carries it too: the
-    /// discard destroys the caller's storage without the move initializer.
-    ForwardedArgument,
+    /// The effective conventions the selected callee's signature binds a
+    /// call's run-time arguments by, one per argument, the elements its
+    /// `*args` collector gathers included, for a call that records no
+    /// [`CheckedCallContract`] (whose [`CheckedCallContract::arguments`]
+    /// carry them): a free function's, a construction's, a builtin's, or
+    /// the operand of a `not` the operand's `__bool__` or `Bool(x)` takes.
+    /// Lowering reads or takes each operand by it, as upstream's call
+    /// emission reads each argument's convention off the callee's signature.
+    CallConventions(Vec<CheckedArgumentConvention>),
     /// Concrete owner accesses performed by a callable environment during this
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
@@ -943,8 +947,8 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
-    /// A [`Self::BorrowReadArgument`], a [`Self::ReadTemporaryArgument`],
-    /// or a place receiver of a `read self`, whose type is proven
+    /// A [`Self::BorrowReadArgument`], a temporary bound to a `read`
+    /// parameter, or a place receiver of a `read self`, whose type is proven
     /// register-passable, which upstream passes to a `read` parameter by
     /// value. Any other read argument is memory-only and passed by address:
     /// lowering retains its place, or a temporary's storage, so the callee
@@ -7191,11 +7195,8 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.borrowed_read_call_place {
         adjustments.push(SemanticAdjustment::BorrowReadArgument);
     }
-    if facts.read_temporary_argument {
-        adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
-    }
-    if facts.forwarded_argument {
-        adjustments.push(SemanticAdjustment::ForwardedArgument);
+    if let Some(conventions) = &facts.call_conventions {
+        adjustments.push(SemanticAdjustment::CallConventions(conventions.clone()));
     }
     if let Some(links) = &facts.compare_links {
         adjustments.push(SemanticAdjustment::CompareLinks(links.clone()));
@@ -7503,6 +7504,8 @@ node_facts! {
         binding_ty: Ty,
         effects: EffectFacts,
         selected_call: Box<CheckedCallContract>,
+        /// See [`SemanticAdjustment::CallConventions`].
+        call_conventions: Vec<CheckedArgumentConvention>,
         subscript_descriptor: (Vec<Option<CheckedSliceLiteral>>, Option<String>),
         iteration_protocol: Box<IterationProtocol>,
         /// The protocol a `comptime for` steps the construction spelled
@@ -7561,12 +7564,15 @@ node_facts! {
         compile_time_load,
         call_place_use,
         borrowed_read_call_place,
+        /// An owned temporary (a call result, a construction, a converted
+        /// literal) bound to a read-convention parameter or receiver, which
+        /// the caller destroys once the call returns: the check's own
+        /// record, which decides [`SemanticAdjustment::RegisterPassableRead`].
         read_temporary_argument,
         /// A place receiver whose declared convention is a read, which a
         /// register-passable type passes by value
         /// ([`SemanticAdjustment::RegisterPassableRead`]).
         read_place_receiver,
-        forwarded_argument,
         implicitly_copied_consuming_receiver,
         /// See [`SemanticAdjustment::ReflectedOperator`].
         reflected_operator,

@@ -7,7 +7,10 @@
 use super::calls::owns_droppable_storage;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::{CheckedOp, SemanticAdjustment};
+use mojito_ast::ast::ArgConvention;
+use mojito_checked::checked::{
+    CheckedCallArgumentSource, CheckedCallContract, CheckedOp, SemanticAdjustment,
+};
 use mojito_types::types::TyKind;
 
 /// A lowered expression's value, as upstream's `CValue` is an rvalue or an
@@ -17,6 +20,57 @@ use mojito_types::types::TyKind;
 pub(super) enum CValue {
     Value(Reg),
     Slot(VarId),
+}
+
+/// How a call operand binds the parameter its call's selected callee
+/// declares for it, as upstream's call emission reads each argument's
+/// convention off the callee's signature. An operand no binding names (a
+/// `mut`, `ref`, or `out` parameter's, or one no recorded signature covers)
+/// is taken.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum OperandBinding {
+    /// A `read` parameter or receiver borrows the operand: a temporary is
+    /// read in its storage, which the caller destroys once the call
+    /// returns.
+    Read,
+    /// A `var`/`deinit` parameter or receiver, or an owning collector, takes
+    /// the operand's storage: a `^` transfer of a whole local hands its slot
+    /// over without the move initializer.
+    Owned,
+}
+
+impl OperandBinding {
+    /// The binding of a parameter of effective convention `convention`.
+    pub(super) const fn of(convention: Option<ArgConvention>) -> Option<Self> {
+        match convention {
+            None | Some(ArgConvention::Imm) => Some(Self::Read),
+            Some(ArgConvention::Var | ArgConvention::Deinit) => Some(Self::Owned),
+            Some(ArgConvention::Mut | ArgConvention::Ref | ArgConvention::Out) => None,
+        }
+    }
+
+    /// The binding of the run-time argument `source` of the call
+    /// `contract` selected ([`CheckedCallContract::arguments`]).
+    pub(super) fn of_argument(
+        contract: &CheckedCallContract,
+        source: CheckedCallArgumentSource,
+    ) -> Option<Self> {
+        contract
+            .arguments
+            .iter()
+            .find(|argument| argument.source == source)
+            .and_then(|argument| Self::of(argument.convention))
+    }
+
+    /// The binding of method call `contract`'s receiver: its declared
+    /// convention's, a `ref self` taking none whatever its effective
+    /// access.
+    pub(super) const fn of_receiver(contract: &CheckedCallContract) -> Option<Self> {
+        if contract.receiver_requires_place {
+            return None;
+        }
+        Self::of(contract.receiver_convention)
+    }
 }
 
 impl<'a> Flatten<'a> {
@@ -228,23 +282,107 @@ impl<'a> Flatten<'a> {
     }
 
     /// `value`, call operand `expression` (an argument, receiver, or
-    /// operator operand), used by the convention the checker recorded for
-    /// it: one it marked `ReadTemporaryArgument` (or any, when `reads`) is
-    /// read, with the storage it was read from, the slot whose address a
-    /// by-address `read` parameter binds
-    /// ([`crate::mir::address_call_operands`]); any other is taken, as an
-    /// owned operand the checker marked `ForwardedArgument` is, and has no
-    /// place.
+    /// operator operand), used by the binding its call recorded for it
+    /// ([`Self::operand_reads`]): a read one is read, with the storage it
+    /// was read from, the slot whose address a by-address `read` parameter
+    /// binds ([`crate::mir::address_call_operands`]); any other is taken,
+    /// and has no place.
     pub(super) fn operand_c(
         &mut self,
         expression: Node<'a>,
         value: CValue,
         reads: bool,
     ) -> (Reg, Option<MirPlace>) {
-        if operand_reads(expression, reads) {
+        if self.operand_reads(expression, reads) {
             return self.read_c(expression, value);
         }
         (self.take_c(expression, value), None)
+    }
+
+    /// Record how `call`'s positional `args`, the first at position
+    /// `first`, and its keyword `kwargs` bind their parameters: by the
+    /// effective conventions its selected callee declares
+    /// ([`Node::argument_binding`]).
+    pub(super) fn bind_call_operands(
+        &mut self,
+        call: Node<'a>,
+        first: usize,
+        args: &[Node<'a>],
+        kwargs: &[(&str, Node<'a>)],
+    ) {
+        for (index, &argument) in args.iter().enumerate() {
+            let binding =
+                call.argument_binding(CheckedCallArgumentSource::Positional(first + index));
+            self.bind_operand(argument, binding);
+        }
+        for (index, &(_, argument)) in kwargs.iter().enumerate() {
+            let binding = call.argument_binding(CheckedCallArgumentSource::Keyword(index));
+            self.bind_operand(argument, binding);
+        }
+    }
+
+    /// [`Self::bind_call_operands`] for subscript `subscript`'s arguments
+    /// `args`, each run-time index or keyword value its accessor's argument
+    /// of that position (a slice occupies one) or keyword, `operand`
+    /// resolving a node.
+    pub(super) fn bind_subscript_operands(
+        &mut self,
+        subscript: Node<'a>,
+        args: &[mojito_checked::checked::CheckedSubscriptArg],
+        operand: impl Fn(mojito_checked::checked::CheckedNodeId) -> Node<'a>,
+    ) {
+        use mojito_checked::checked::CheckedSubscriptArg;
+        let (mut positional, mut keyword) = (0, 0);
+        for argument in args {
+            let (source, value) = match argument {
+                CheckedSubscriptArg::Index(value) => (
+                    CheckedCallArgumentSource::Positional(positional),
+                    Some(*value),
+                ),
+                CheckedSubscriptArg::Slice { .. } => {
+                    (CheckedCallArgumentSource::Positional(positional), None)
+                }
+                CheckedSubscriptArg::Keyword { value, .. } => {
+                    (CheckedCallArgumentSource::Keyword(keyword), Some(*value))
+                }
+                CheckedSubscriptArg::KeywordSlice { .. } => {
+                    (CheckedCallArgumentSource::Keyword(keyword), None)
+                }
+            };
+            match source {
+                CheckedCallArgumentSource::Keyword(_) => keyword += 1,
+                _ => positional += 1,
+            }
+            if let Some(value) = value {
+                let binding = subscript.argument_binding(source);
+                self.bind_operand(operand(value), binding);
+            }
+        }
+    }
+
+    /// Record `binding` as how operand `operand` binds its parameter.
+    pub(super) fn bind_operand(&mut self, operand: Node<'a>, binding: Option<OperandBinding>) {
+        match binding {
+            Some(binding) => self.operand_bindings.insert(operand.address(), binding),
+            None => self.operand_bindings.remove(&operand.address()),
+        };
+    }
+
+    /// The binding recorded for operand `operand` ([`Self::bind_operand`]).
+    pub(super) fn operand_binding(&self, operand: Node<'a>) -> Option<OperandBinding> {
+        self.operand_bindings.get(&operand.address()).copied()
+    }
+
+    /// Whether call operand `expression` is read rather than taken: it is
+    /// not bound owned, and it is a temporary its call binds to a `read`
+    /// parameter ([`Node::binds_temporary`]), or the consumer `reads` any
+    /// operand.
+    pub(super) fn operand_reads(&self, expression: Node<'a>, reads: bool) -> bool {
+        match self.operand_binding(expression) {
+            Some(OperandBinding::Owned) => false,
+            Some(OperandBinding::Read) => reads || expression.binds_temporary(),
+            None => reads,
+        }
     }
 
     /// A condition's `Bool`: its value, or, for a `Boolable` struct the
@@ -356,18 +494,4 @@ impl<'a> Flatten<'a> {
         self.var_types.entry(slot).or_insert(ty);
         Some(slot)
     }
-}
-
-/// Whether call operand `expression` is read rather than taken: the checker
-/// marked it `ReadTemporaryArgument` (or the consumer `reads` any operand),
-/// and it is not a `ForwardedArgument`.
-pub(super) fn operand_reads(expression: Node<'_>, reads: bool) -> bool {
-    let adjustments = expression.adjustments();
-    !adjustments
-        .iter()
-        .any(|adjustment| matches!(adjustment, SemanticAdjustment::ForwardedArgument))
-        && (reads
-            || adjustments
-                .iter()
-                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ReadTemporaryArgument)))
 }

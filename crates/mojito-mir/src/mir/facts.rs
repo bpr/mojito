@@ -514,30 +514,56 @@ impl<'a> Node<'a> {
 
     /// The selected callee's receiver convention, which a method call
     /// records as upstream's call carries each operand's: a `deinit` one
-    /// consumes its receiver place (upstream's `DeinitMem`). A call the
-    /// check recorded no contract for takes its receiver `var` when the
-    /// check marked `receiver` as taken by an owned receiver.
-    pub(super) fn receiver_convention(
-        self,
-        receiver: Node<'_>,
-    ) -> Option<mojito_ast::ast::ArgConvention> {
-        match self.call_contract() {
-            Some(contract) => contract.receiver_convention,
-            None => receiver
-                .forwarded()
-                .then_some(mojito_ast::ast::ArgConvention::Var),
-        }
+    /// consumes its receiver place (upstream's `DeinitMem`).
+    pub(super) fn receiver_convention(self) -> Option<mojito_ast::ast::ArgConvention> {
+        self.call_contract()
+            .and_then(|contract| contract.receiver_convention)
     }
 
-    /// Whether the check marked this operand as taken by an owned
-    /// parameter, receiver, or operator operand (`ForwardedArgument`).
-    pub(super) fn forwarded(self) -> bool {
-        self.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ForwardedArgument
-            )
-        })
+    /// How this call binds its run-time argument `source`: by the effective
+    /// convention of the parameter its selected callee binds it to, its
+    /// contract's ([`mojito_checked::checked::CheckedCallContract::arguments`])
+    /// or, for a call that records none, its recorded conventions'
+    /// ([`mojito_checked::checked::SemanticAdjustment::CallConventions`]).
+    /// `None` when neither names the argument or its parameter neither
+    /// reads nor owns it.
+    pub(super) fn argument_binding(
+        self,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+    ) -> Option<super::call_results::OperandBinding> {
+        use super::call_results::OperandBinding;
+        if let Some(contract) = self.call_contract() {
+            return OperandBinding::of_argument(&contract, source);
+        }
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::CallConventions(conventions) => {
+                    Some(conventions)
+                }
+                _ => None,
+            })?
+            .iter()
+            .find(|argument| argument.source == source)
+            .and_then(|argument| OperandBinding::of(argument.convention))
+    }
+
+    /// Whether this operand is a temporary its consumer binds rather than
+    /// a place it names: anything but a binding, a field, or a subscript
+    /// whose selected getter returns a reference (or that is a pointer's),
+    /// and any implicitly converted operand, whose argument is the
+    /// conversion's result. A `^` transfer is neither: a read parameter
+    /// lends its place.
+    pub(super) fn binds_temporary(self) -> bool {
+        let place = match self.op() {
+            CheckedOp::Identifier(_) | CheckedOp::Member { .. } => true,
+            CheckedOp::Index { .. } => self
+                .call_contract()
+                .is_none_or(|contract| contract.reference_result.is_some()),
+            CheckedOp::MultiIndex { .. } => self.pointer_keyword_subscript().is_some(),
+            _ => false,
+        };
+        self.transfer_operand().is_none() && (self.implicit_conversion().is_some() || !place)
     }
 
     /// Whether a callable-value (indirect) or method call's argument list

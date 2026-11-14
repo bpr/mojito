@@ -260,6 +260,7 @@ impl Checker {
                 // slot: a place is lent where it lies, so the write's copy
                 // is the one copy.
                 if copy {
+                    self.record_call_conventions(span, &[slot], &[convention], Gathered::NONE);
                     self.record_argument_borrows(
                         &[slot],
                         &[convention],

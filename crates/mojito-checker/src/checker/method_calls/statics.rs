@@ -716,6 +716,12 @@ impl Checker {
             args,
             kwargs,
         )?;
+        self.record_call_conventions(
+            &span,
+            &selected.slots,
+            &effective_conventions,
+            selected.gathered_arguments(),
+        );
         self.record_argument_borrows(
             &selected.slots,
             &effective_conventions,

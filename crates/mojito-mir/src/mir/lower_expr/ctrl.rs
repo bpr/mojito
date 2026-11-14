@@ -4,8 +4,10 @@
 use super::expr::OperatorDispatch;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_results::OperandBinding;
 use mojito_checked::checked::{
-    CheckedComprehensionClause, CheckedExpr, CheckedOp, DictLiteral, SemanticAdjustment,
+    CheckedCallArgumentSource, CheckedComprehensionClause, CheckedExpr, CheckedOp, DictLiteral,
+    SemanticAdjustment,
 };
 
 /// The construction the checker selected for display or comprehension
@@ -1081,6 +1083,41 @@ impl<'a> Flatten<'a> {
         self.apply_call_value_adjustments(adjustments, parameter_ty, value, site.clone())
     }
 
+    /// Record how link `index` of a chain binds its fresh operands, as
+    /// each link's selected dunder `links` declares: the first operand as
+    /// the first link's receiver, and the last as the last link's argument.
+    /// A middle operand, held for the next link, is never read in its
+    /// call-result slot; one an owned parameter or receiver of either of
+    /// its links takes is taken.
+    fn bind_chain_operands(
+        &mut self,
+        links: &[mojito_checked::checked::CheckedCompareLink],
+        first: Node<'a>,
+        rest: &[(InfixOp, Node<'a>)],
+        index: usize,
+    ) {
+        let call = |index: usize| links.get(index).and_then(|link| link.call.as_ref());
+        let argument = |index: usize| {
+            call(index).and_then(|contract| {
+                OperandBinding::of_argument(contract, CheckedCallArgumentSource::Positional(0))
+            })
+        };
+        if index == 0 {
+            let binding = call(0).and_then(|contract| OperandBinding::of_receiver(contract));
+            self.bind_operand(first, binding);
+        }
+        let binding = if index + 1 == rest.len() {
+            argument(index)
+        } else {
+            let receiver =
+                call(index + 1).and_then(|contract| OperandBinding::of_receiver(contract));
+            [argument(index), receiver]
+                .contains(&Some(OperandBinding::Owned))
+                .then_some(OperandBinding::Owned)
+        };
+        self.bind_operand(rest[index].1, binding);
+    }
+
     /// Lower link `index` of chain `chain` and every link after it, the
     /// left operand read from `prev` (`first` for the first link): the
     /// comparison, and for a link before the last an `if` on it whose then
@@ -1096,6 +1133,7 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let sp = chain.location();
         let (op, operand) = rest[index];
+        self.bind_chain_operands(links, first, rest, index);
         self.open_call_setup();
         let left = match prev {
             None => self.lower_operator_operand(chain, first),

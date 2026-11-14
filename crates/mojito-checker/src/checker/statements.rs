@@ -1770,7 +1770,6 @@ impl Checker {
                         .borrow_mut()
                         .insert(value.source_span());
                     self.check_consuming(value, &found, "discard assignment")?;
-                    self.record_discarded_transfer(value);
                     // The discard destroys the value implicitly: a linear
                     // one is abandoned there, as a statement expression's is.
                     self.record_unconsumed_temporary(value);
@@ -2937,7 +2936,6 @@ impl Checker {
                     .borrow_mut()
                     .insert(expr.source_span());
                 self.record_unconsumed_temporary(expr);
-                self.record_discarded_transfer(expr);
                 Ok(())
             }
         }

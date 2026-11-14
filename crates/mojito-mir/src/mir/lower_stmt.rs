@@ -2,7 +2,7 @@
 //! including the `lower_stmt`/`lower_instr` dispatchers.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
-use super::call_results::CValue;
+use super::call_results::{CValue, OperandBinding};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{
@@ -699,7 +699,7 @@ impl<'a> Flatten<'a> {
             return false;
         };
         let receiver = self.lower_call_receiver(place);
-        let operand = self.lower_in_place_operand(rhs_expression);
+        let operand = self.lower_in_place_operand(&contract, rhs_expression);
         self.emit_interior_invalidations(place, None);
         self.emit_in_place_dunder(place, receiver, &contract, op, operand);
         true
@@ -896,7 +896,7 @@ impl<'a> Flatten<'a> {
 
         // Value-getter ordering is raw receiver/index, RHS, accessor
         // adaptation/getter, operator, setter adaptation/setter.
-        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.is_some());
+        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
         let getter_index = self.apply_checked_call_value_adjustments(
             &plan.getter,
             index_source,
@@ -1022,7 +1022,7 @@ impl<'a> Flatten<'a> {
             return;
         }
 
-        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.is_some());
+        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.emit_slice_read(
@@ -1123,11 +1123,10 @@ impl<'a> Flatten<'a> {
         // Value getters defer every call-local argument adaptation
         // until after the RHS. Building the raw descriptor/index list
         // above has already performed each source evaluation once.
-        let inplace = plan.inplace.is_some();
         let value_rhs = plan
             .setter
             .as_ref()
-            .map(|_| self.lower_augmented_rhs(rhs_expression, inplace));
+            .map(|_| self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref()));
         let getter_args = raw_args
             .iter()
             .enumerate()
@@ -1271,16 +1270,16 @@ impl<'a> Flatten<'a> {
         });
     }
 
-    /// An augmented store's right-hand side: read by its in-place dunder's
-    /// convention, its place retained, when `inplace`; otherwise the native
-    /// operator's value operand.
+    /// An augmented store's right-hand side: read by its in-place dunder
+    /// `inplace`'s convention, its place retained, when there is one;
+    /// otherwise the native operator's value operand.
     fn lower_augmented_rhs(
         &mut self,
         rhs_expression: Node<'a>,
-        inplace: bool,
+        inplace: Option<&mojito_checked::checked::CheckedCallContract>,
     ) -> AugmentedOperand<'a> {
-        if inplace {
-            return self.lower_in_place_operand(rhs_expression);
+        if let Some(inplace) = inplace {
+            return self.lower_in_place_operand(inplace, rhs_expression);
         }
         AugmentedOperand {
             expression: rhs_expression,
@@ -1289,10 +1288,20 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// The right-hand side of `place OP= rhs` lowered as its in-place dunder's
-    /// argument. A view temporary operand (`s += t.rstrip()`) anchors its
-    /// borrowed source through the call, as an ordinary method argument does.
-    fn lower_in_place_operand(&mut self, rhs_expression: Node<'a>) -> AugmentedOperand<'a> {
+    /// The right-hand side of `place OP= rhs` lowered as the argument of
+    /// its in-place dunder `contract`. A view temporary operand
+    /// (`s += t.rstrip()`) anchors its borrowed source through the call, as
+    /// an ordinary method argument does.
+    fn lower_in_place_operand(
+        &mut self,
+        contract: &mojito_checked::checked::CheckedCallContract,
+        rhs_expression: Node<'a>,
+    ) -> AugmentedOperand<'a> {
+        let binding = OperandBinding::of_argument(
+            contract,
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
+        );
+        self.bind_operand(rhs_expression, binding);
         let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
         let (args, places) = self.lower_call_arguments(&[rhs_expression], false);
         self.allow_argument_anchors = saved_anchor_permission;
@@ -1384,7 +1393,7 @@ impl<'a> Flatten<'a> {
                 dest: recv,
                 place: place.clone(),
             });
-            let operand = self.lower_in_place_operand(rhs_expression);
+            let operand = self.lower_in_place_operand(inplace, rhs_expression);
             self.emit_interior_invalidations(target, None);
             self.emit_in_place_dunder(target, (recv, Some(place)), inplace, op, operand);
             return;
@@ -1615,6 +1624,15 @@ impl<'a> Flatten<'a> {
         if target.call_contract().is_none() {
             return false;
         }
+        // A value of the element type is the setter's `value` argument
+        // itself; a converted one is not, its setter argument keyed at the
+        // store's own site.
+        if value_expression.implicit_conversion().is_none() {
+            let binding = target.argument_binding(
+                mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
+            );
+            self.bind_operand(value_expression, binding);
+        }
         let Some((setter, (value, value_place))) = self.lower_subscript_setter(target, |this| {
             this.outside_call_setup(|this| {
                 let value = this.lower_assignment_value(target, value_expression);
@@ -1799,39 +1817,49 @@ impl<'a> Flatten<'a> {
         let mut evaluated = Vec::new();
         let args = match source_arguments {
             SetArguments::Index(index) => {
+                self.bind_call_operands(target, 0, &[index], &[]);
                 let (register, place) = self.lower_call_argument(index);
                 arg_places.push(place);
                 indices.push(index);
                 evaluated.push((Some(index.location()), MirSubscriptArg::Index(register)));
                 vec![MirSubscriptArg::Index(register)]
             }
-            SetArguments::Multi(arguments) => arguments
-                .iter()
-                .zip(descriptors)
-                .map(|(argument, descriptor)| match argument {
-                    mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
-                        debug_assert!(descriptor.is_none());
-                        let index = Self::subscript_operand(target, *value);
-                        let (register, place) = self.lower_call_argument(index);
-                        arg_places.push(place);
-                        indices.push(index);
-                        evaluated.push((Some(index.location()), MirSubscriptArg::Index(register)));
-                        MirSubscriptArg::Index(register)
-                    }
-                    mojito_checked::checked::CheckedSubscriptArg::Slice {
-                        lower,
-                        upper,
-                        step,
-                        ..
-                    } => {
-                        let (argument, place) =
-                            self.slice_set_argument(target, descriptor, [*lower, *upper, *step]);
-                        arg_places.push(place);
-                        argument
-                    }
-                    _ => unreachable!("keyword subscript assignment is rejected at checking"),
-                })
-                .collect(),
+            SetArguments::Multi(arguments) => {
+                self.bind_subscript_operands(target, arguments, |value| {
+                    Self::subscript_operand(target, value)
+                });
+                arguments
+                    .iter()
+                    .zip(descriptors)
+                    .map(|(argument, descriptor)| match argument {
+                        mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
+                            debug_assert!(descriptor.is_none());
+                            let index = Self::subscript_operand(target, *value);
+                            let (register, place) = self.lower_call_argument(index);
+                            arg_places.push(place);
+                            indices.push(index);
+                            evaluated
+                                .push((Some(index.location()), MirSubscriptArg::Index(register)));
+                            MirSubscriptArg::Index(register)
+                        }
+                        mojito_checked::checked::CheckedSubscriptArg::Slice {
+                            lower,
+                            upper,
+                            step,
+                            ..
+                        } => {
+                            let (argument, place) = self.slice_set_argument(
+                                target,
+                                descriptor,
+                                [*lower, *upper, *step],
+                            );
+                            arg_places.push(place);
+                            argument
+                        }
+                        _ => unreachable!("keyword subscript assignment is rejected at checking"),
+                    })
+                    .collect()
+            }
             SetArguments::Slice([lower, upper, step]) => {
                 let (argument, place) = self.slice_set_argument(
                     target,
@@ -3577,6 +3605,13 @@ impl<'a> Flatten<'a> {
         binding_ty: Option<&Ty>,
         binding: Option<mojito_types::origin::OwnerId>,
     ) {
+        if self
+            .vars
+            .get(dest as usize)
+            .is_some_and(|name| name.starts_with(mojito_hir::hir::DISCARD_SLOT))
+        {
+            self.bind_operand(value, Some(OperandBinding::Owned));
+        }
         let mut src = self.expr(value);
         if let Some(target) = binding_ty {
             src = self.materialize_register(src, target, value.location());

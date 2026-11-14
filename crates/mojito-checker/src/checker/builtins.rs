@@ -98,7 +98,7 @@ impl Checker {
     /// the nominal `String`, and the call raises `Error` at end of input.
     pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
-        self.bind_read_builtin_argument(&args[0], &tys[0]);
+        self.bind_read_builtin_argument(&span, &args[0], &tys[0]);
         let nominal_prompt = (tys[0])
             .kind()
             .as_non_simd_struct()
@@ -159,11 +159,16 @@ impl Checker {
     /// `Error`) binds it: a named place or a reference result is read where
     /// it lies, and an owned temporary is read in its call-result slot,
     /// which the caller destroys once the call returns.
-    pub(super) fn bind_read_builtin_argument(&self, argument: &Expr, ty: &Ty) {
+    pub(super) fn bind_read_builtin_argument(&self, site: &SourceSpan, argument: &Expr, ty: &Ty) {
         self.borrow_reference_result_argument(argument);
         self.borrow_nominal_place_argument(argument, ty);
         self.borrow_parameter_place_argument(argument, ty);
         self.record_read_temporary_argument(argument);
+        self.record_operand_convention(
+            site,
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
+            None,
+        );
     }
 
     /// A read-only builtin (`len`, `print`) over a named nominal place reads

@@ -136,6 +136,9 @@ impl<'a> Flatten<'a> {
         let lends_reads = call.lends_read_arguments();
         let (mut regs, mut arg_places) = (Vec::new(), Vec::new());
         self.open_call_setup();
+        let first = usize::from(leading.is_some());
+        self.bind_call_operands(call, 0, leading.as_slice(), &[]);
+        self.bind_call_operands(call, first, args, kwargs);
         for slice in [leading.as_slice(), args] {
             let (slice_regs, slice_places) = self.lower_call_arguments(slice, lends_reads);
             regs.extend(slice_regs);
@@ -208,6 +211,7 @@ impl<'a> Flatten<'a> {
                 })
                 .cloned()
         {
+            self.bind_call_operands(call, 0, &[], kwargs);
             let (kwargs, kwarg_places) = self
                 .copy_construction_keywords(kwargs)
                 .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
@@ -742,6 +746,7 @@ impl<'a> Flatten<'a> {
         let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
+        self.bind_call_operands(call, 0, args, kwargs);
         let positional = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let keywords = self.lower_call_keywords(kwargs, lends_reads);
@@ -813,7 +818,7 @@ impl<'a> Flatten<'a> {
             // implicitly copied receiver's place is its copy's slot.
             recv_place: recv_place.map(Box::new),
             recv_writes: call.receiver_writes(),
-            receiver_convention: call.receiver_convention(object),
+            receiver_convention: call.receiver_convention(),
             arg_places,
             kwarg_places,
             capture_accesses,

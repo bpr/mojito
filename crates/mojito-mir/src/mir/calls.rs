@@ -3,7 +3,7 @@
 //! invalidation emission.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
-use super::call_results::{CValue, operand_reads};
+use super::call_results::{CValue, OperandBinding};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::CheckedCallArgumentSource;
@@ -1581,9 +1581,9 @@ impl<'a> Flatten<'a> {
 
     /// [`Self::lower_call_receiver`] for the receiver of method call `call`.
     /// A temporary receiver returned through memory is used in its
-    /// call-result slot: a `var`/`deinit` receiver takes it, a read receiver
-    /// the checker marked `ReadTemporaryArgument` reads it, and any other (a
-    /// `ref self`) reads it and binds the slot's place, exactly as a named
+    /// call-result slot: a `var`/`deinit` receiver takes it, a declared
+    /// `read` receiver reads it, and any other (a `ref self`) reads it and
+    /// binds the slot's place, exactly as a named
     /// receiver retains its own; such a receiver returned in registers is
     /// materialized ([`Self::materialize_receiver`]). A slot's last use is
     /// the call, so drop elaboration destroys the temporary right after it
@@ -1594,12 +1594,11 @@ impl<'a> Flatten<'a> {
         call: Node<'a>,
         receiver: Node<'a>,
     ) -> (Reg, Option<MirPlace>) {
-        let owned = call.call_contract().is_some_and(|contract| {
-            matches!(
-                contract.receiver_convention,
-                Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
-            )
-        });
+        let binding = call
+            .call_contract()
+            .and_then(|contract| OperandBinding::of_receiver(&contract));
+        self.bind_operand(receiver, binding);
+        let owned = binding == Some(OperandBinding::Owned);
         // `^` over a temporary transfers nothing: the owned receiver is the
         // temporary itself (`pk(x^)^.release()`).
         if owned
@@ -1612,12 +1611,7 @@ impl<'a> Flatten<'a> {
         if place.is_some() {
             return (value, place);
         }
-        let read = receiver.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
-            )
-        });
+        let read = binding == Some(OperandBinding::Read) && receiver.binds_temporary();
         match self.call_result(receiver, value) {
             CValue::Value(value) if owned || read || !receiver.is_fresh_temporary() => {
                 (value, None)
@@ -1998,6 +1992,9 @@ impl<'a> Flatten<'a> {
             });
             return;
         }
+        // The discard takes the transferred storage and destroys it in
+        // place, as an owned parameter takes it.
+        self.bind_operand(handle, Some(OperandBinding::Owned));
         let value = self.expr_hir(expression);
         let Some(ty) = self
             .f
@@ -2141,7 +2138,10 @@ impl<'a> Flatten<'a> {
             self.anchor_borrowing_temporary(expression, value, loans, "$arg_loan_r");
         self.pending_argument_anchors
             .extend(place.as_ref().map(|place| place.root));
-        (read, place.filter(|_| operand_reads(expression, reads)))
+        (
+            read,
+            place.filter(|_| self.operand_reads(expression, reads)),
+        )
     }
 
     /// Bind a loan-carrying temporary into a hidden retained slot whose loans
@@ -2487,7 +2487,7 @@ impl<'a> Flatten<'a> {
         converted: bool,
         reads: bool,
     ) -> (Reg, Option<MirPlace>) {
-        let by_address = read_by_address(expression);
+        let by_address = self.read_by_address(expression);
         let value = match self.operand_expr_c(expression) {
             CValue::Value(value) => {
                 if let Some((read, place)) = self.anchor_temporary_argument(
@@ -2508,6 +2508,16 @@ impl<'a> Flatten<'a> {
         };
         let (read, place) = self.operand_c(expression, value, reads);
         (read, place.filter(|_| by_address))
+    }
+
+    /// Whether call operand `expression` is a `read` temporary upstream
+    /// passes by address: its call reads it ([`Self::operand_reads`]), and
+    /// the check did not prove its type register-passable
+    /// (`RegisterPassableRead`).
+    fn read_by_address(&self, expression: Node<'a>) -> bool {
+        expression.ty().is_some()
+            && !expression.register_passable_read()
+            && self.operand_reads(expression, false)
     }
 
     /// Materialize `value`, a fresh temporary its call returned in
@@ -2542,16 +2552,6 @@ impl<'a> Flatten<'a> {
         });
         (loaded, Some(place))
     }
-}
-
-/// Whether call operand `expression` is a `read` temporary upstream passes
-/// by address: the checker marked it `ReadTemporaryArgument`, not
-/// `ForwardedArgument`, and did not prove its type register-passable
-/// (`RegisterPassableRead`).
-fn read_by_address(expression: Node<'_>) -> bool {
-    expression.ty().is_some()
-        && !expression.register_passable_read()
-        && operand_reads(expression, false)
 }
 
 /// Whether method call `call` reads or owns its receiver by value, so the

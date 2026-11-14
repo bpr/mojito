@@ -1361,11 +1361,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bind the same way, a collector's positions and convention spelled
   `Gathered` by `Checker::gathered_arguments`,
   `MethodCallResolution::gathered_arguments`, and
-  `ConstructorBinding::of_signature`; the arguments and receiver a regular
-  `var`/`deinit` parameter owns, and the elements an owning collector
-  gathers, are marked `ForwardedArgument`, `forwarded_arguments`, and
-  so is an operator operand an owned dunder parameter takes,
-  `record_forwarded_operand` from `checker/operators.rs`; a construction binds through it from
+  `ConstructorBinding::of_signature`; a call that records no contract
+  records the conventions it binds its arguments by,
+  `SemanticAdjustment::CallConventions`, through `record_call_conventions`
+  (`argument_conventions`), as
+  `record_operand_convention` records a `not`'s operand, a copy
+  construction's `copy` source, and a read builtin's argument; a construction binds through it from
   `Checker::record_constructor_call` in `checker/declarations.rs`, which
   also makes a raising `__init__` a raising call and alias-checks the
   arguments as an initializer call through `check_free_call_aliasing`).
@@ -1527,8 +1528,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `slice_literal_argument` (`lower_expr/expr_access.rs`) binds a slice
   literal whose `CheckedSliceLiteral::indirect_result` the checker set,
   handing its subscript the slot's place — and the
-  consumer readers `read_c`, `take_c`, `operand_c` (by the checker's
-  `ReadTemporaryArgument`/`ForwardedArgument` marker), and
+  consumer readers `read_c`, `take_c`, `operand_c` (by the binding its
+  call recorded for the operand: `OperandBinding`, `bind_call_operands`,
+  `bind_subscript_operands`, and `bind_operand` read each operand's
+  parameter convention off the call's contract or its `CallConventions`,
+  `Node::argument_binding`, and `operand_reads` reads a temporary,
+  `Node::binds_temporary`, bound to a `read` parameter), and
   `read_operand` (a `BorrowReadArgument` place where it lies, as
   `condition_value` and a `copy=` pointer write read their operand), and
   `read_conversion_source`, the source of an implicit conversion the
@@ -1548,7 +1553,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   setup (`defer_to_setup`). `operand_c` answers the slot a read operand
   was read from beside its register, and `calls.rs`'s `temporary_operand`
   returns it as the operand's place when `read_by_address` holds (a
-  memory-only `ReadTemporaryArgument`), so `address_call_operands` passes
+  memory-only temporary its call reads), so `address_call_operands` passes
   its address. `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field` (a field read, a chain

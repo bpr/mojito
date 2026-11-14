@@ -2406,8 +2406,8 @@ where an instance's substitution makes the parameter register-passable
 the call. The place stays in `arg_places`, which the VM and Pliron still
 bind a parameter from, and the VM loads an addressed operand's place for
 a callee taking the value (R1920). A memory-only `read` temporary (one
-the checker marked `ReadTemporaryArgument` and did not prove
-register-passable, `RegisterPassableRead`, judged at its converted type
+its call binds to a `read` parameter, `Flatten::operand_reads`, that the
+checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
 its call-result slot, argument-anchor slot, or a capturing lambda's
 storage slot (`Flatten::temporary_operand`), so the rewrite passes that
@@ -4558,13 +4558,15 @@ borrows without reparsing expressions. `Move` and `Forward` both end the slot
 storage, so it runs the type's move initializer. `Forward` hands the slot's
 storage to an owned (`var`/`deinit`) parameter of the call that consumes the
 register, so no move initializer runs, as Mojo's owned argument convention
-binds the caller's storage. MIR emits `Forward` for a whole-slot `x^` the
-checker marked `SemanticAdjustment::ForwardedArgument`: an argument, a
-receiver, or an operator operand bound to a regular owned parameter
-(`checker/places.rs`, `forwarded_arguments`), and an element an owning
-(`var *xs`) collector gathers (`Gathered`, in `record_argument_borrows`), so
-the pack holds the caller's storage as upstream's owned `VariadicList`
-does. MIR also emits `Forward` for a conditional expression's merge read
+binds the caller's storage. MIR emits `Forward` for a whole-slot `x^` its
+consumer binds `OperandBinding::Owned` (`Flatten::bind_operand`): an
+argument, a receiver, or an operator operand whose call's selected callee
+declares a regular owned parameter for it, read off the call's checked
+contract or its `SemanticAdjustment::CallConventions`
+(`Flatten::bind_call_operands`), an element an owning (`var *xs`)
+collector gathers, so the pack holds the caller's storage as upstream's
+owned `VariadicList` does, a discarded transfer (`_ = x^`, `x^` as a
+statement), and a `Variant` payload. MIR also emits `Forward` for a conditional expression's merge read
 (`Flatten::ternary`): each arm initializes the result temporary (a `^` arm
 by a move, a place arm by a copy the checker marks
 `copy_place_value_use`), and the consumer takes it as any other rvalue.
@@ -6057,13 +6059,18 @@ current Mojo:
   as an explicit `Bool(x)` argument is read), and a discarded
   statement leaves it dead at its definition (`discard_result`). The call
   is the slot's last use, so its `DropVar` follows the call, before the
-  enclosing expression continues. A call operand's convention is the
-  checker's marker: `read_temporary_arguments` (`checker/places.rs`) marks
-  each non-place argument bound to a read convention
-  `ReadTemporaryArgument`, `record_argument_borrows` marks a method's
-  non-place receiver by its declared convention
-  (`read_temporary_receiver`), and an owned one is `ForwardedArgument`
-  (`Flatten::operand_c`). A receiver returned in registers that a `ref
+  enclosing expression continues. A call operand's convention is its
+  call's, as upstream's call emission reads each argument's off the
+  callee's signature: a method call's contract carries each argument's
+  effective convention (`CheckedCallContract::arguments`, a collector's
+  for each element it gathers) and its receiver's, and a call that records
+  no contract — a free function's, a construction's, a builtin's, a
+  `not`'s — records `SemanticAdjustment::CallConventions`
+  (`record_call_conventions`, `record_operand_convention` in
+  `checker/places.rs`). Lowering binds each operand by it before lowering
+  it (`Flatten::bind_call_operands`, `OperandBinding`), and
+  `Flatten::operand_c` reads a temporary (`Node::binds_temporary`) its
+  call binds to a `read` parameter and takes any other. A receiver returned in registers that a `ref
   self` binds is materialized in a `$mat_r` slot, as upstream's
   `getLValueForResult` gives an rvalue storage. An implicitly copied
   `deinit self` receiver owning droppable storage is copied into a slot
@@ -6112,11 +6119,12 @@ current Mojo:
   collector gathers (`Tuple(Span(xs), Span(xs))`) is judged by its own type
   (`signature_collected_arguments`).
 - A struct operator is its dunder's method call, so its operands bind as a
-  receiver and an argument do. A comparison through a bound marks each
-  non-place operand its requirement reads `ReadTemporaryArgument`, and
-  `lower_operator_operand` reads a marked one in its call-result slot, so it
-  dies when the requirement returns. A chained comparison's middles carry no
-  marker: the chain owns them (`chain_middle`). A place operand a chain
+  receiver and an argument do. An operand a comparison's requirement, a
+  `not`'s `__bool__`, or a chain link's dunder binds to a `read`
+  parameter or receiver is read by `lower_operator_operand` in its
+  call-result slot when it is a temporary, so it dies when the dunder
+  returns. A chained comparison's middles are never read so: the chain
+  owns them (`chain_middle`, `bind_chain_operands`). A place operand a chain
   link's dunder or a bound's requirement reads — a named struct, or an
   element an accessor returns by reference (`xs[0]`, `t[0]`) — is marked
   `BorrowReadArgument` (`borrow_operator_operand`, which a link applies to

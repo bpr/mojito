@@ -3710,16 +3710,20 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
 
 #[test]
 fn read_temporaries_record_register_passability() {
-    // A `read` temporary of a register-passable type is passed by value
-    // (`RegisterPassableRead`); a memory-only one is passed by address.
+    // A `read` temporary of a register-passable type (the literal `3` the
+    // `Int` construction reads) is passed by value (`RegisterPassableRead`);
+    // a memory-only one (`String("ab")`) is passed by address. The
+    // free calls binding them record their parameters' `read` convention
+    // (`CallConventions`), which lowering reads them by.
     let source = "def show(s: String) -> Int:\n    return s.byte_length()\n\ndef bump(x: Int) -> Int:\n    return x + 1\n\ndef main():\n    print(show(String(\"ab\")))\n    print(bump(Int(3)))\n";
     let checked = checked_with_std(source).expect("check");
     let read_temporaries = own_expressions(&checked)
-        .filter(|expression| {
-            expression
-                .adjustments
-                .iter()
-                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ReadTemporaryArgument))
+        .filter(|expression| match &expression.op {
+            mojito::checked::CheckedOp::Call { name, .. } => {
+                !["show", "bump", "print"].contains(&name.as_str())
+            }
+            mojito::checked::CheckedOp::Int(_) | mojito::checked::CheckedOp::Str(_) => true,
+            _ => false,
         })
         .map(|expression| {
             (
@@ -3742,6 +3746,23 @@ fn read_temporaries_record_register_passability() {
             .any(|(ty, by_value)| ty.contains("Int") && *by_value),
         "{read_temporaries:#?}"
     );
+    let reads_its_argument = |callee: &str| {
+        own_expressions(&checked).any(|expression| {
+            matches!(&expression.op, mojito::checked::CheckedOp::Call { name, .. } if name == callee)
+                && expression.adjustments.iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        SemanticAdjustment::CallConventions(conventions)
+                            if conventions.iter().any(|argument| {
+                                argument.source
+                                    == mojito::checked::CheckedCallArgumentSource::Positional(0)
+                                    && argument.convention.is_none()
+                            })
+                    )
+                })
+        })
+    };
+    assert!(reads_its_argument("show") && reads_its_argument("bump"));
 }
 
 #[test]

@@ -3113,13 +3113,6 @@ impl Checker {
             });
         }
         self.check_consuming(&args[0], &actual, "enum case payload")?;
-        // The payload binds the storage's owned slot as an argument binds a
-        // `var` parameter: a transferred local hands over its storage, and
-        // the construction moves it in once, as upstream's
-        // `init_pointee_move` does.
-        if matches!(args[0].kind, ExprKind::Transfer(_)) {
-            self.record_at(args[0].source_span()).forwarded_argument = true;
-        }
         self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ConstructVariant {
                 alternatives: alternatives.clone(),

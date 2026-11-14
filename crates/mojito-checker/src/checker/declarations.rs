@@ -2518,6 +2518,7 @@ impl Checker {
             args,
             kwargs,
         )?;
+        self.record_call_conventions(span, binding.slots, &effective, binding.collected);
         self.record_argument_borrows(
             binding.slots,
             &effective,
@@ -5100,6 +5101,11 @@ impl Checker {
                 }
                 let found = self.copy_argument(name, &instance, &kwargs[0])?;
                 self.record_read_temporary_argument(&kwargs[0].value);
+                self.record_operand_convention(
+                    span,
+                    mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
+                    None,
+                );
                 // A source already of the instance keeps its origin tail.
                 return Ok(
                     if coerces(&found, &instance)
@@ -5114,6 +5120,11 @@ impl Checker {
             }
             let arg_ty = self.infer(&kwargs[0].value)?;
             self.record_read_temporary_argument(&kwargs[0].value);
+            self.record_operand_convention(
+                span,
+                mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
+                None,
+            );
             return match nominal_parts(&arg_ty) {
                 Some((actual, _)) if actual == name => Ok(arg_ty),
                 _ => Err(TypeError::TypeMismatch {
@@ -5128,6 +5139,11 @@ impl Checker {
         let decls = info.decls().into_owned();
         let arg_ty = self.infer(&kwargs[0].value)?;
         self.record_read_temporary_argument(&kwargs[0].value);
+        self.record_operand_convention(
+            span,
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
+            None,
+        );
         let BoundParameters {
             subst,
             arguments: tyargs,

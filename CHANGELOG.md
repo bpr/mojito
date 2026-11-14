@@ -756,6 +756,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR reads or takes a call operand by the convention the call's selected
+  callee declares for it, as upstream's call emission reads the callee's
+  signature: a free function, a construction, a read builtin, and a `not`
+  record their argument conventions (`SemanticAdjustment::CallConventions`),
+  a method contract's collector elements carry the collector's convention,
+  and the checker's per-operand `ReadTemporaryArgument` and
+  `ForwardedArgument` markers are gone; the package format moves to 217
+  (R1419).
+
 - A constant constrained by a `where` clause is a generator type, as at
   the pin (R509): the declaration checks no clause, so `comptime C: Int
   where (f(1) > 5, "big only") = f(1)` with nothing reading it no longer

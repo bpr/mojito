@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_results::OperandBinding;
 use mojito_checked::checked::{
     CheckedExpr, CheckedNodeId, CheckedOp, CheckedParamArg, DictLiteral,
 };
@@ -232,13 +233,9 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::MovePlace { dest: d, place });
                 return d;
             }
-            // An owned parameter takes the slot's storage itself.
-            let forwarded = e.adjustments().iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ForwardedArgument
-                )
-            });
+            // An owned parameter, or a discard, takes the slot's storage
+            // itself.
+            let forwarded = self.operand_binding(e) == Some(OperandBinding::Owned);
             let d = self.fresh(e.location(), Some(var));
             self.emit(MirInstr::UseVar {
                 dest: d,
@@ -278,6 +275,7 @@ impl<'a> Flatten<'a> {
         value: Node<'a>,
         container: Node<'a>,
     ) -> Reg {
+        self.bind_call_operands(node, 0, &[value], &[]);
         let (argument, arg_place) = self.lower_call_argument(value);
         let (recv, recv_place) = self.lower_receiver_value(node, container, false);
         let contains = self.fresh_typed(node.location(), None, Ty::bool());
@@ -307,7 +305,7 @@ impl<'a> Flatten<'a> {
             kwargs: Vec::new(),
             recv_place: recv_place.map(Box::new),
             recv_writes: node.receiver_writes(),
-            receiver_convention: node.receiver_convention(container),
+            receiver_convention: node.receiver_convention(),
             arg_places: vec![arg_place],
             kwarg_places: Vec::new(),
             capture_accesses: self.call_capture_accesses(node),
@@ -890,6 +888,7 @@ impl<'a> Flatten<'a> {
         if op != PrefixOp::Not && node.call_contract().is_some() {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
+        self.bind_call_operands(node, 0, &[value], &[]);
         let ra = self.lower_operator_operand(node, value);
         let ra = self.field_referent(value, ra);
         // `not x` on a struct, a string literal, a numeric scalar, a

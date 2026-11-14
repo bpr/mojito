@@ -641,7 +641,8 @@ which names the upstream pass each one follows. Each is measured by the
     consumed (`check_consuming`, "collection display element").
   - MIR's `display_elements` (`mir/calls.rs`) lowers each element as a
     plain value, without the facts a call argument carries
-    (`BorrowReadArgument`, `ReadTemporaryArgument`, `ForwardedArgument`).
+    (`BorrowReadArgument`, and the conventions `bind_call_operands` binds
+    a call's operands by).
   - So only an owning collector (`var *values`) works. A read collector
     (`*ts`) leaks each element temporary and copies each place element.
   - Lever: bind the elements through the call-argument recording
@@ -1524,8 +1525,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
   Problem: `f(S(20)^)` over `def f(s: S)` prints `f 20` and no `del`,
   where the pin prints `f 20, del 20`.
-  - A `^` argument is excluded from `read_temporary_arguments`, so its
-    owned operand gets no call-result slot (`Flatten::operand_c`).
+  - A `^` argument is never a temporary its call reads
+    (`Node::binds_temporary`, as the checker's `read_temporary_arguments`),
+    so its owned operand is taken out of its call-result slot rather than
+    read (`Flatten::operand_c`).
   - Found while landing R713 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1542,6 +1545,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The Mojo-shaped fix records the `mojito_ast::call` binding's slot order
     on the checked direct call, as a checked fact rather than a MIR
     re-binding.
+  - A direct call's `SemanticAdjustment::CallConventions` already lists
+    its arguments in slot order (`argument_conventions`,
+    `checker/places.rs`), the record `close_call_setup` could order by.
+  - A full contract on a direct call, a construction, and a read builtin
+    would also retire `CallConventions`, which stands in for its
+    `arguments` today (`Node::argument_binding`).
   - Found while landing R681 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9141,23 +9150,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok` and `assets/ownership_ok`, with `MOJITO_PRE_ELABORATION=0`
     too, since the rule runs after every pass in a debug build. File any
     new shape's cause.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1419 MIR reads a call operand's convention off the checker's
-  argument markers, where upstream reads the callee's signature**
-
-  `Flatten::operand_c` (`mir/call_results.rs`) reads or takes a call-result
-  slot by the checker's `ReadTemporaryArgument` and `ForwardedArgument`
-  markers (`checker/places.rs`), which restate the selected callee's
-  conventions.
-  - A method call's contract already carries them
-    (`CheckedCallContract::arguments`, `receiver_convention`), but a free
-    call records no contract.
-  - An operand neither marker names falls back to taking its slot.
-  - Fix: record each call's argument conventions in its checked contract,
-    read them in `operand_c`, and delete the two markers; the package
-    format moves.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

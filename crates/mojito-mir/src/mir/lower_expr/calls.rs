@@ -3,7 +3,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::CheckedOp;
+use crate::mir::call_results::OperandBinding;
+use mojito_checked::checked::{CheckedCallArgumentSource, CheckedOp};
 use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
@@ -42,6 +43,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
@@ -97,6 +99,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
@@ -172,7 +175,12 @@ impl<'a> Flatten<'a> {
         let receiver_root = base_place.as_ref().map(|place| place.root);
         let mut index_regs = Vec::with_capacity(indices.len());
         let mut index_places = Vec::with_capacity(indices.len());
-        for index in indices {
+        for (position, index) in indices.iter().enumerate() {
+            let binding = OperandBinding::of_argument(
+                &plan.getter,
+                CheckedCallArgumentSource::Positional(position),
+            );
+            self.bind_operand(*index, binding);
             let (register, place) = self.lower_call_argument(*index);
             index_regs.push(register);
             index_places.push(place);
@@ -288,6 +296,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
@@ -403,6 +412,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));

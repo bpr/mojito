@@ -356,6 +356,13 @@ pub struct BasicBlock {
     pub term: Option<Terminator>,
 }
 
+/// The name prefix of a `_ = value` discard's fresh slot.
+///
+/// The discard binds its value to the slot ([`HirInstr::Bind`]), which takes
+/// the value's storage, so a `^` transfer hands its source's slot over
+/// without the move initializer.
+pub const DISCARD_SLOT: &str = "$discard_s";
+
 /// The region tree for one function body / statement list: [`Cfg::g`] is the
 /// block arena, and holds no edges.
 #[derive(Debug)]
@@ -1002,7 +1009,7 @@ impl Lower {
             // `_` discards: each statement binds a fresh unnamed slot.
             CheckedStmtOp::Assign { name, value } if name == "_" => {
                 let value = self.expr(*value);
-                let dest = self.var(&format!("$discard_s{}", self.vars.len()));
+                let dest = self.var(&format!("{DISCARD_SLOT}{}", self.vars.len()));
                 self.push(HirInstr::Bind {
                     dest,
                     expr: value,

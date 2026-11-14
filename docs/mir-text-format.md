@@ -1160,6 +1160,12 @@ source (`ConversionMaterializesSource`, and the call boundary's
 constructor call before the converting one (R1864). The MIR text is
 unchanged.
 
+The package format moves to `mojito-package 217` when a call that
+records no contract records the conventions its selected callee binds its
+arguments by (`SemanticAdjustment::CallConventions`), and the per-operand
+`ReadTemporaryArgument` and `ForwardedArgument` adjustments are gone
+(R1419). The MIR text is unchanged.
+
 The package format moves to `mojito-package 210` when a checked slice
 literal records how the `None` it passes as `__slice_literal__` reaches
 the marker's `NoneType` parameter (`CheckedSliceLiteral::marker`), as an

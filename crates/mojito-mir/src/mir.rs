@@ -3292,6 +3292,11 @@ struct Flatten<'a> {
     /// borrow or transfer destinations; anchoring there adds a conflicting
     /// duplicate borrow.
     allow_argument_anchors: bool,
+    /// How each call operand lowered so far binds its parameter, keyed by
+    /// node address: the convention its call's selected callee declares
+    /// for it, which the call records before its operands are lowered
+    /// ([`Flatten::bind_call_operands`]).
+    operand_bindings: HashMap<usize, call_results::OperandBinding>,
     /// Accumulated transferred loans per interior destination domain
     /// (`(root, path)`), so repeated transfers into one domain merge while
     /// sibling domains keep independent generations.
@@ -4933,6 +4938,7 @@ fn lower_cfg_nested(
             setup_reference: None,
             argument_depth: 0,
             allow_argument_anchors: false,
+            operand_bindings: HashMap::new(),
             transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,

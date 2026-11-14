@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_results::OperandBinding;
 use mojito_checked::checked::CheckedExpr;
 use mojito_types::types::TyKind;
 
@@ -172,6 +173,7 @@ impl<'a> Flatten<'a> {
                 })
                 .cloned()
         {
+            self.bind_call_operands(call, 0, &[], kwargs);
             let (kwargs, kwarg_places) = self
                 .copy_construction_keywords(kwargs)
                 .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
@@ -271,11 +273,15 @@ impl<'a> Flatten<'a> {
             })
             .cloned()
         {
-            let value = self.expr(
-                *args
-                    .first()
-                    .expect("checked Variant construction has one payload"),
-            );
+            // The payload binds the storage's owned slot as an argument
+            // binds a `var` parameter: a transferred local hands over its
+            // storage, and the construction moves it in once, as upstream's
+            // `init_pointee_move` does.
+            let payload = *args
+                .first()
+                .expect("checked Variant construction has one payload");
+            self.bind_operand(payload, Some(OperandBinding::Owned));
+            let value = self.expr(payload);
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::MakeVariant {
                 dest,
@@ -545,6 +551,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
@@ -626,6 +633,7 @@ impl<'a> Flatten<'a> {
             .is_none_or(|(constructed, _)| *constructed != *name)
             && call.call_anchors_arguments();
         self.open_call_setup();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
@@ -819,6 +827,7 @@ impl<'a> Flatten<'a> {
             self.allow_argument_anchors = call.call_anchors_arguments();
             let lends_reads = call.lends_read_arguments();
             self.open_call_setup();
+            self.bind_call_operands(call, 0, args, kwargs);
             let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
             self.allow_argument_anchors = saved_anchor_permission;
             let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
@@ -875,6 +884,7 @@ impl<'a> Flatten<'a> {
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
+        self.bind_call_operands(call, 0, args, kwargs);
         let (argument_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
@@ -904,7 +914,7 @@ impl<'a> Flatten<'a> {
             kwargs: keyword_regs,
             recv_place: recv_place.map(Box::new),
             recv_writes: call.receiver_writes(),
-            receiver_convention: call.receiver_convention(object),
+            receiver_convention: call.receiver_convention(),
             arg_places,
             kwarg_places,
             capture_accesses: self.call_capture_accesses(call),

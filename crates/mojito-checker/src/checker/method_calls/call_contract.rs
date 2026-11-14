@@ -255,6 +255,10 @@ fn checked_call_arguments(
             convention: effective_conventions.get(index).copied().flatten(),
         })
         .collect::<Vec<_>>();
+    // An owning (`var`/`deinit`) collector takes each element it gathers.
+    let collector = resolved
+        .variadic_convention
+        .filter(|convention| matches!(convention, ArgConvention::Var | ArgConvention::Deinit));
     if let Some(element) = &resolved.variadic_element {
         arguments.extend(resolved.positional_overflow.iter().enumerate().map(
             |(pack_index, position)| CheckedCallArgument {
@@ -266,7 +270,7 @@ fn checked_call_arguments(
                     _ => element.clone(),
                 },
                 requires_place: false,
-                convention: None,
+                convention: collector,
             },
         ));
     }

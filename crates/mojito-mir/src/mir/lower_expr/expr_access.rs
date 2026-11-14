@@ -319,7 +319,7 @@ impl<'a> Flatten<'a> {
             kwargs: Vec::new(),
             recv_place: recv_place.map(Box::new),
             recv_writes: e.receiver_writes(),
-            receiver_convention: e.receiver_convention(object),
+            receiver_convention: e.receiver_convention(),
             arg_places: Vec::new(),
             kwarg_places: Vec::new(),
             capture_accesses: self.call_capture_accesses(e),
@@ -378,6 +378,7 @@ impl<'a> Flatten<'a> {
         } else {
             (self.expr(object), self.simple_place(object))
         };
+        self.bind_call_operands(e, 0, &[index], &[]);
         let (mut idx, index_place) = self.lower_call_argument(index);
         if has_call {
             self.close_call_setup(None);
@@ -545,6 +546,7 @@ impl<'a> Flatten<'a> {
         };
         let descriptors =
             slice_descriptors(e.checked).expect("checked multi-subscript has descriptor metadata");
+        self.bind_subscript_operands(e, args, operand);
         let mut arg_places = Vec::with_capacity(args.len());
         let mut kwargs = Vec::new();
         let mut kwarg_places = Vec::new();

@@ -35,10 +35,6 @@ impl Checker {
     /// receiver whose declared convention is a read
     /// ([`read_temporary_receiver`]); such a place receiver is marked so a
     /// register-passable one is passed by value ([`read_place_receiver`]).
-    /// It also records the arguments
-    /// and the receiver that bind an owned parameter, among them the
-    /// elements an owning (`var`) collector gathers
-    /// ([`forwarded_arguments`]).
     pub(super) fn record_argument_borrows(
         &self,
         slots: &[ArgSlot],
@@ -105,20 +101,21 @@ impl Checker {
         if let Some(span) = read_place_receiver(receiver, designates_place) {
             self.record_at(span).read_place_receiver = true;
         }
-        let owned_receiver = receiver
-            .filter(|(_, convention)| owns_argument(*convention))
-            .map(|(receiver, _)| receiver.source_span());
-        let owned_elements = gathered
-            .owned()
-            .iter()
-            .map(|position| args[*position].source_span());
-        for span in forwarded_arguments(slots, conventions, args, kwargs)
-            .into_iter()
-            .chain(owned_elements)
-            .chain(owned_receiver)
-        {
-            self.record_at(span).forwarded_argument = true;
-        }
+    }
+
+    /// Record the conventions `site`, a call that records no contract,
+    /// binds its arguments by: each bound slot's effective convention, and
+    /// a gathering collector's for each element it gathers
+    /// ([`SemanticAdjustment::CallConventions`]).
+    pub(super) fn record_call_conventions(
+        &self,
+        site: &SourceSpan,
+        slots: &[ArgSlot],
+        conventions: &[Option<ArgConvention>],
+        gathered: Gathered<'_>,
+    ) {
+        self.record_at(site.clone()).call_conventions =
+            Some(argument_conventions(slots, conventions, gathered));
     }
 
     /// Bind each nominal subscript passed to a `mut` parameter of `func` as
@@ -210,20 +207,26 @@ impl Checker {
         self.record_unconsumed_temporary(expr);
     }
 
-    /// Record an operand an operator's dunder binds to an owned (`var`/
-    /// `deinit`) receiver or parameter, as [`forwarded_arguments`] records
-    /// a call's.
-    pub(super) fn record_forwarded_operand(&self, expr: &Expr) {
-        self.record_at(expr.source_span()).forwarded_argument = true;
-    }
-
-    /// Record a discarded `^` transfer (`_ = x^`, or `x^` as a statement):
-    /// the discard takes the transferred storage and destroys it in place,
-    /// as an owned parameter takes it, with no move initializer.
-    pub(super) fn record_discarded_transfer(&self, expr: &Expr) {
-        if matches!(expr.kind, ExprKind::Transfer(_)) {
-            self.record_forwarded_operand(expr);
-        }
+    /// Record the convention `site` binds its one run-time operand
+    /// `source` by, where no selected signature records it: a `not` over a
+    /// struct or a `Boolable` type parameter binds its operand as its
+    /// `__bool__`'s receiver or the `read` value of upstream's
+    /// `Bool.__init__[T: Boolable]`, a copy construction its `copy`
+    /// source as the copy initializer's `read` parameter, and a builtin
+    /// standing for a library function (`input`, `abort`) its argument as
+    /// that function's `read` parameter
+    /// ([`SemanticAdjustment::CallConventions`]).
+    pub(super) fn record_operand_convention(
+        &self,
+        site: &SourceSpan,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+        convention: Option<ArgConvention>,
+    ) {
+        self.record_at(site.clone()).call_conventions =
+            Some(vec![mojito_checked::checked::CheckedArgumentConvention {
+                source,
+                convention,
+            }]);
     }
 
     /// Record a temporary the enclosing body owns but cannot destroy — a
@@ -486,16 +489,6 @@ impl<'a> Gathered<'a> {
     const fn read(self) -> &'a [usize] {
         if self.owning { &[] } else { self.positions }
     }
-
-    /// The positions an owning collector gathers; none for a read one.
-    const fn owned(self) -> &'a [usize] {
-        if self.owning { self.positions } else { &[] }
-    }
-}
-
-/// Whether a parameter convention owns its argument: `var` or `deinit`.
-pub(super) const fn owns_argument(convention: Option<ArgConvention>) -> bool {
-    matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
 }
 
 pub(super) fn is_place_expr(e: &Expr) -> bool {
@@ -671,26 +664,38 @@ pub(super) fn read_temporary_arguments(
         .collect()
 }
 
-/// Arguments a call binds to regular owned (`var`/`deinit`) parameters,
-/// which take the caller's storage: a `^` transfer among them hands its
-/// slot over without the move initializer. An owning collector's elements
-/// are added by [`Checker::record_argument_borrows`].
-pub(super) fn forwarded_arguments(
+/// The conventions a call binds its run-time arguments by
+/// ([`Checker::record_call_conventions`]).
+pub(super) fn argument_conventions(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
-    args: &[Expr],
-    kwargs: &[mojito_ast::ast::KwArg],
-) -> Vec<SourceSpan> {
+    gathered: Gathered<'_>,
+) -> Vec<mojito_checked::checked::CheckedArgumentConvention> {
+    use mojito_checked::checked::{CheckedArgumentConvention, CheckedCallArgumentSource};
+    let collector = gathered.owning.then_some(ArgConvention::Var);
     slots
         .iter()
         .enumerate()
-        .filter(|(index, _)| owns_argument(conventions.get(*index).copied().flatten()))
-        .filter_map(|(_, slot)| match slot {
-            ArgSlot::Positional(position) => Some(&args[*position]),
-            ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
-            ArgSlot::Default => None,
+        .filter_map(|(index, slot)| {
+            let source = match slot {
+                ArgSlot::Positional(position) => CheckedCallArgumentSource::Positional(*position),
+                ArgSlot::Keyword(position) => CheckedCallArgumentSource::Keyword(*position),
+                ArgSlot::Default => return None,
+            };
+            Some(CheckedArgumentConvention {
+                source,
+                convention: conventions.get(index).copied().flatten(),
+            })
         })
-        .map(Expr::source_span)
+        .chain(
+            gathered
+                .positions
+                .iter()
+                .map(|position| CheckedArgumentConvention {
+                    source: CheckedCallArgumentSource::Positional(*position),
+                    convention: collector,
+                }),
+        )
         .collect()
 }
 
