@@ -658,8 +658,9 @@ fn folded_callee<'c, 'd>(
 }
 
 /// Rewrite the `call.indirect` `instruction` into the direct call of
-/// `callee`, declared as `declaration`, returning the loads of its
-/// captured places the call now takes first.
+/// `callee`, declared as `declaration`, returning the reads of its
+/// captured places the call now takes first: their addresses, or a
+/// closure method's storage.
 ///
 /// A closure's method is called on its storage, passed at its place when
 /// memory-only, as a capture-list `def` called by name is; any other
@@ -731,6 +732,20 @@ fn direct_call(
             refined_bound: None,
         };
         return loads;
+    }
+    // Each captured place binds a reference parameter, so the call passes
+    // its address, as upstream's `lit.call` takes a `!lit.ref` of it.
+    for ((address, place), load) in operands.iter().zip(&mut loads) {
+        if let Some(handle) = mojito_mir::mir::mir_place_handle_ty(
+            place,
+            Some(mojito_types::origin::Mutability::Mutable),
+        ) {
+            function.reg_types.insert(address.0, handle);
+        }
+        *load = MirInstr::MakeRef {
+            dest: *address,
+            place: (*place).clone(),
+        };
     }
     let mut accesses = std::mem::take(capture_accesses);
     let mut places = Vec::with_capacity(operands.len() + arg_places.len());

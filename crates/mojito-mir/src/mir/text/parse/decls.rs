@@ -104,6 +104,12 @@ impl Decoder {
         if self.minor < 175 {
             declarations.decide_register_passability();
         }
+        // Schema 1.192 passes each operand a callee takes by address as a
+        // reference to the caller's storage; an older call may pass a
+        // value beside the place it reads.
+        if self.minor < 192 {
+            crate::mir::upgrade_call_operands(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

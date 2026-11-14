@@ -1,4 +1,4 @@
-mojito-mir 1.170
+mojito-mir 1.192
 artifact {
   features: [],
   files: [
@@ -32,12 +32,12 @@ artifact {
         return_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }, reg_type { reg: %r1, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 77, end: 78, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 70, end: 79, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent } },
               type.construct { dest: %r1, owner: "dup", slot: 0, param: T, kwargs: [keyword { name: copy, value: %r0 }], kwarg_places: [present(place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent })], element: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -119,12 +119,12 @@ artifact {
         return_type: present(struct_type { name: Counter, arguments: [] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Counter, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 82, end: 244, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 82, end: 244, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } },
               call { dest: %r1, func: "Counter.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }

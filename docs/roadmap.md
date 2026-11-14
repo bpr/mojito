@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2185**.
+Next free ID: **R2192**.
 
 ## Ordered Work
 
@@ -9228,32 +9228,146 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1920 A call keeps `arg_places` beside its address operand, and
-  the backends recover the address from the place**
+- [ ] **R2185 Receivers, subscript operands, and memory-only `read`
+  arguments get their address from a post-lowering pass, not from lowering**
 
-  Upstream's `lit.call` has no side table of places: the operand is the
-  address.
-  - The VM loads an addressed operand's place back into a value
-    (`addressed_by`, `vm/exec.rs`) and rebinds a reference parameter from
-    the place (`reference_argument`), and Pliron reads the place
-    (`place_backed_arg_value`, `lower/abi.rs`).
-  - The verifier accepts either a reference or a value at a non-owned
-    slot (`verify_direct_call`), so an artifact written before the
-    rewrite still runs.
-  - The rewrite runs after lowering (`mir::address_call_operands`, called
-    from `lower_program` and the package's unit lowering), where upstream
-    emits the address as the operand is lowered.
-  - A place ending in a `ref` field keeps its load, which reads the stored
-    handle's referent.
-  - The inliner's lookbacks (`loaded_place`, `read_through_register`,
-    `inline_parametric.rs`) still reverse-engineer a place for an operand
-    with none.
-  - Fix: emit the `ref.make` in `lower_call_operand`, derive each place
-    from the operand's `ref.make`, keep only a per-operand "lends to the
-    result" bit for `loans.rs`, delete the place-based argument paths, make
-    the verifier require a reference at a by-address slot, and move the MIR
-    text version with an upgrade of older calls.
-  - Depends on R1917, R1919, R2177, R2178, R2179, R1269, R2180.
+  Upstream emits a by-address operand's `!lit.ref` while lowering it.
+  Mojito's lowering does so only for a `mut`/`ref` call argument
+  (`Flatten::address_operand`) and a destructured tuple's element
+  extraction. Every other by-address operand is rewritten after lowering by
+  `mir::address_call_operands`, run from `lower_program` and
+  `lower_package_unit`.
+  - Shapes: a method receiver (`lower_receiver_value`,
+    `lower_method_receiver`), a subscript's base, indices, and stored value
+    (`expr_access.rs`, `lower_stmt.rs`, `write_back.rs`), a memory-only
+    `read` argument (`lower_call_operand`'s borrowed-read and temporary
+    arms), a `def(...)` callee's operands, and `T(copy=x)`'s source.
+  - The pass needs `MirDeclarations` to decide each convention, which a
+    body's lowering does not have yet: the checked call contract and
+    `RegisterPassableRead` must carry it to the operand instead.
+  - Augmented subscripts reuse one receiver register for getter and setter
+    (`subscript_write_back.mojo`), which the pass can address only with a
+    fresh `ref.make` before each call.
+  - Fix: emit the address at each site, then drop the pass from both
+    pipelines, keeping it as `mir::upgrade_call_operands`' body.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2186 A memory-only `read` argument with no retained place is
+  passed as a value**
+
+  Upstream passes every `read` argument of a memory-only type as a
+  `!lit.ref`, materializing a temporary when the operand has no storage.
+  Mojito passes some such operands as a loaded value with no place, so the
+  verifier can require a reference only at `mut`/`ref` slots
+  (`verify_direct_call`).
+  - Probe: `show(p[])` over `var p = Pointer(to=b)` and `show(b: Big)`
+    passes a `Big` value.
+  - Probe: a template's `read x: T` slot passed a register-passable
+    argument (`Bool.__init__$ov$T$Boolable` from `FloatLiteral.__eq__`,
+    `floor`/`abs` over `SIMD[dtype, width]`, `len$ov$T$Sized` over
+    `Array[T, length]`) passes a value, where the declared type is
+    memory-only until an instance substitutes it.
+  - Probe: `StringSpan.__eq__$ov$String` from `_assert_enabled`,
+    `repr$ov$T$Writable` from `Array.write_repr_to`, and
+    `Tuple.__contains__` from a `comptime` thunk pass values.
+  - Fix: decide a template slot's convention as upstream does for a
+    parametric `read` (by address until `LowerArgConventions` sees the
+    instance), materialize an addressless operand, then make the verifier
+    require a reference at every by-address slot.
+  - Depends on R2185.
+  - Model: Fable, Planned.
+
+- [ ] **R2187 An argument whose place holds a reference passes the load
+  through it, not the stored handle**
+
+  Upstream passes a `ref` field's or `ref` binding's `!lit.ref` value as
+  the operand of a by-address parameter. Mojito loads through the stored
+  handle and keeps the place beside the value, so `address_call_operands`
+  and `Flatten::address_operand` skip it and the verifier exempts it.
+  - Probe: `joined_path += cur_path` in `os.path.join`, over a `ref`
+    binding of a `*paths` element, passes a `String` value to
+    `StringSpan.__init__$ov$String`'s `ref` parameter.
+  - Probe: a `ref` field argument (`lower_call_operand`'s `simple_place`
+    arm retypes the load to the referent).
+  - Fix: pass the place's load typed as the stored reference, and teach
+    the VM's and Pliron's place-based binding to take it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2188 The VM binds a by-address parameter from the call's place
+  table, not from its reference operand**
+
+  Upstream's callee binds the `!lit.ref` operand itself. The VM loads an
+  addressed operand's place back into a value (`addressed_operand_values`,
+  `addressed_operand`, `addressed_by`, `vm/exec.rs`) and rebinds a
+  `mut`/`ref` parameter from the place (`reference_argument`,
+  `bound_argument_place`, `caller_handle_place`).
+  - Sites: `prepare_direct_call`, `prepare_method_call` (`vm/frames.rs`),
+    `call_with_writeback` and the method arms (`vm/invoke.rs`), the
+    constructor arm (`vm/exec.rs`).
+  - Fix: bind a `Value::Ref` operand directly, read a memory-only `read`
+    through it, and keep `reference_argument` only for a consumed
+    receiver.
+  - Stop when `rg 'arg_places|recv_place|base_place' crates/mojito-vm`
+    finds only the consumed receiver.
+  - Depends on R2185, R2186, R2187.
+  - Model: Fable, Planned.
+
+- [ ] **R2189 Pliron reads a by-address argument from its place, not from
+  its reference operand**
+
+  Upstream's LLVM lowering passes the `!lit.ref` operand's pointer.
+  `place_backed_arg_value` (`lower/abi.rs`) loads a scalar addressed
+  operand from its place (`addresses_place`) and falls back to
+  `loaded_places` for a borrowed aggregate.
+  - Callers: `lower/calls.rs`, `lower/methods.rs`, `lower/closures.rs`
+    (`contract_arg_value`), `lower/subscripts.rs`
+    (`lower_subscript_call`).
+  - Fix: lower a `Ref` operand to its address, loading it for a scalar
+    by-value slot, and drop the place parameter.
+  - Depends on R2185, R2186, R2187.
+  - Model: Fable, Planned.
+
+- [ ] **R2190 The loan analysis and the inliner read a call's place table
+  rather than its reference operands**
+
+  Upstream's origin and exclusivity checking read the `!lit.ref` operand
+  and derive a result's loans from the origin its result type names.
+  `loans.rs`, `register_loans.rs`, `scan.rs`, `interior.rs`,
+  `copy_elision.rs`, `canonicalize.rs`, `unused_params.rs`,
+  `register_ends.rs`, and `verify/places.rs` read `arg_places` and its
+  siblings.
+  - The inliner's `read` binding still reverse-engineers a place with
+    `loaded_place` and `read_through_register` (`inline_parametric.rs`).
+  - Probe: `tests/mir_passes/inline-parametric/tuple_reverse_closed.mir`
+    no longer inlines `Tuple.__getitem_param__` or `Tuple.__len__` once
+    their `Tuple` receiver is a `ref.make`, the shape every fresh compile
+    has.
+  - A register-passable `read` the result borrows
+    (`Flatten::lends_read_arguments`) keeps a place only to root the
+    result's loans: derive those from the result type's origin instead.
+  - Fix: one helper finds the `ref.make` defining an operand, and every
+    reader uses it.
+  - Depends on R2185, R2186, R2187.
+  - Model: Fable, Planned.
+
+- [ ] **R2191 Every call-shaped instruction carries place tables beside
+  its reference operands**
+
+  Upstream's `lit.call` has no side table of places. `call`,
+  `call.indirect`, `call.method`, `type.construct`, `index.get`,
+  `index.multi`, and `index.multi_set` carry `arg_places`,
+  `kwarg_places`, `recv_place`, `callee_place`, `base_place`,
+  `index_place`, `object_place`, `receiver_place`, and `value_place`.
+  - A `var`/`deinit` receiver's `recv_place` is the place the call
+    consumes, and the inliner forwards an owned argument's slot by
+    `loaded_place`: upstream's call takes ownership of the operand value
+    instead.
+  - Fix: delete the tables, constructors and text fields included, with a
+    MIR text bump whose upgrade runs `mir::upgrade_call_operands` first.
+  - The `tests/mir_passes` expectations need a bless the owner approves.
+  - Depends on R2188, R2189, R2190.
   - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,

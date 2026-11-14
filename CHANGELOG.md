@@ -765,6 +765,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `mut` or `ref` call argument is now lowered as its place's address, a
+  `ref.make` emitted as the operand is lowered, as upstream emits the
+  `!lit.ref` (R1920). `inc(i)` over `mut x: Int`, which used to pass a
+  copy of `i` beside its place, now passes `i`'s address, and each element
+  extraction of a destructured tuple place (`var head, tail = pair`)
+  passes the tuple's address. `mir::address_call_operands` now addresses
+  every by-address operand it binds, with a fresh `ref.make` before the
+  call where it cannot rewrite the operand's own read. `canonicalize`
+  passes a devirtualized closure's captured places as addresses. The
+  verifier rejects a value at a `mut`/`ref` slot of a call bound by its
+  callee's declaration. MIR text moves to 1.192, and an older artifact's
+  calls are upgraded as it loads (`mir::upgrade_call_operands`). Places
+  holding a reference (R2187), memory-only `read` operands with no place
+  (R2186), receivers and subscripts (R2185), and the place tables the
+  backends bind from (R2188, R2189, R2190, R2191) remain.
+
 - `x.copy()` through a `Copyable` bound, an `ImplicitlyCopyable` one, or
   a trait refining `Copyable` binds `Copyable`'s `copy(self) -> Self`
   requirement, as upstream's `std.builtin` declares it, so a memory-only

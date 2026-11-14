@@ -4606,3 +4606,78 @@ fn a_bare_literal_register_type_reads_from_its_const_before_1_172() {
         "{error:?}"
     );
 }
+
+/// An artifact older than schema 1.192 may pass a `mut` argument as a load
+/// of the place its call retains; it loads as that place's address, as
+/// upstream's `lit.call` takes a `!lit.ref` of the caller's storage.
+#[test]
+fn older_mut_argument_loads_as_its_address() {
+    let place = MirPlace::root(0, Some(Ty::int()));
+    let mut main = function_with(
+        vec![Ty::int(), Ty::none()],
+        vec![
+            MirInstr::LoadPlace {
+                dest: Reg(0),
+                place: place.clone(),
+            },
+            MirInstr::Call {
+                dest: Reg(1),
+                func: FuncRef("inc".into()),
+                raises: None,
+                args: vec![Reg(0)],
+                kwargs: Vec::new(),
+                arg_places: vec![Some(place)],
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                receiver: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            },
+        ],
+    );
+    main.n_vars = 1;
+    main.var_names = vec!["i".into()];
+    main.var_tys.insert(0, Ty::int());
+    let mut program = program_with(vec![("main".into(), main)]);
+    program.declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: "inc".into(),
+        param_names: vec!["x".into()],
+        param_types: vec![Ty::int()],
+        defaults: vec![None],
+        required: vec![true],
+        variadic: None,
+        variadic_convention: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_convention: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: Vec::new(),
+        has_receiver: false,
+        receiver_convention: None,
+        param_conventions: vec![Some(ArgConvention::Mut)],
+        ret_ty: Ty::none(),
+        returns_reference: false,
+        raises: false,
+        error_ty: None,
+        ref_params: vec![true],
+        param_writes: vec![true],
+        availability: Vec::new(),
+        enclosing: None,
+        region_binders: Vec::new(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
+    });
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, main) = &parsed.program.functions[0];
+    assert!(
+        matches!(main.body.instrs[0], MirInstr::MakeRef { dest: Reg(0), .. }),
+        "{:?}",
+        main.body.instrs[0]
+    );
+    assert!(matches!(main.reg_types[&0].kind(), TyKind::Ref(_)));
+}

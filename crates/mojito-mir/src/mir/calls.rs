@@ -491,7 +491,151 @@ impl<'a> Flatten<'a> {
     /// [`Self::lower_call_argument_with`] one argument depth down. `setup` is
     /// the argument's source when the innermost setup frame is its call's,
     /// so a copied-value read of a simple place defers to setup.
+    ///
+    /// An argument the checker bound to a `mut` or `ref` parameter
+    /// (`RetainCallPlace`) is the address of its place, a `ref.make`, as
+    /// upstream emits the `!lit.ref` while lowering the operand
+    /// ([`Self::address_operand`]).
     fn lower_call_operand(
+        &mut self,
+        expression: Node<'a>,
+        lends_reads: bool,
+        setup: Option<CheckedCallArgumentSource>,
+    ) -> (Reg, Option<MirPlace>) {
+        let lowered = self.lower_call_operand_value(expression, lends_reads, setup);
+        let by_reference = expression.spread_operand().is_none()
+            && expression.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::RetainCallPlace
+                )
+            });
+        if by_reference {
+            return self.address_operand(
+                expression,
+                lowered,
+                mojito_types::origin::Mutability::Mutable,
+            );
+        }
+        lowered
+    }
+
+    /// Pass the operand `lowered`, a value read from its place, as the
+    /// place's address instead: the instruction that read it becomes a
+    /// `ref.make` of the place, or, where the read is not the operand's own
+    /// load, a fresh `ref.make` follows it. The reference is as mutable as
+    /// `wanted` and the place allow: a `read` parameter's storage, or a
+    /// place reached through an immutable reference, lends an immutable
+    /// one, as upstream's `ref` binds its operand's own mutability. A place
+    /// ending in a `ref` field, whose load reads through the stored handle,
+    /// keeps its load.
+    fn address_operand(
+        &mut self,
+        expression: Node<'a>,
+        lowered: (Reg, Option<MirPlace>),
+        wanted: mojito_types::origin::Mutability,
+    ) -> (Reg, Option<MirPlace>) {
+        let (register, Some(place)) = &lowered else {
+            return lowered;
+        };
+        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
+        if place.ty.is_none()
+            || is_reference(place.ty.as_ref())
+            || is_reference(self.f.reg_types.get(&register.0))
+        {
+            return lowered;
+        }
+        let handle = self.place_handle_ty(place, wanted);
+        let (register, place) = (*register, place.clone());
+        if self.address_definition(register, &place) {
+            self.f.reg_types.insert(register.0, handle);
+            return (register, Some(place));
+        }
+        let address = self.place_address(expression.location(), &place, wanted);
+        (address, Some(place))
+    }
+
+    /// Emit a `ref.make` of `place` for a callee that wants a reference as
+    /// mutable as `wanted` ([`Self::place_handle_ty`]).
+    pub(super) fn place_address(
+        &mut self,
+        location: SourceSpan,
+        place: &MirPlace,
+        wanted: mojito_types::origin::Mutability,
+    ) -> Reg {
+        let handle = self.place_handle_ty(place, wanted);
+        let address = self.fresh_typed(location, Some(place.root), handle);
+        self.emit(MirInstr::MakeRef {
+            dest: address,
+            place: place.clone(),
+        });
+        address
+    }
+
+    /// The type of a reference to `place` as mutable as `wanted` and the
+    /// place allow: a `read` parameter's storage, or a place reached
+    /// through an immutable reference, lends an immutable one.
+    fn place_handle_ty(&self, place: &MirPlace, wanted: mojito_types::origin::Mutability) -> Ty {
+        let immutable_root = matches!(
+            place.root_ty.as_ref().map(Ty::kind),
+            Some(TyKind::Ref(reference))
+                if reference.mutability == mojito_types::origin::Mutability::Immutable
+        );
+        let mutability = if self.read_parameters.contains(&place.root) || immutable_root {
+            mojito_types::origin::Mutability::Immutable
+        } else {
+            wanted
+        };
+        mir_place_handle_ty(place, Some(mutability)).unwrap_or_else(Ty::error)
+    }
+
+    /// Turn the read defining `register`, emitted for an operand of the
+    /// call being lowered (in the body or deferred to an open call's
+    /// setup), into a `ref.make` of `place` when it reads that storage
+    /// whole: a `place.load` of it, or a slot use of a whole root.
+    fn address_definition(&mut self, register: Reg, place: &MirPlace) -> bool {
+        let addresses = |instruction: &MirInstr| match instruction {
+            MirInstr::LoadPlace { dest, place: read } => {
+                *dest == register
+                    && crate::mir::call_addresses::same_storage(read, place)
+                    && read.through == place.through
+            }
+            MirInstr::UseVar { dest, var, .. } => {
+                *dest == register
+                    && place.is_whole_root()
+                    && place.root == *var
+                    && place.through.is_none()
+            }
+            _ => false,
+        };
+        let setups = self.call_setups.iter_mut().flat_map(|setup| {
+            setup
+                .reads
+                .iter_mut()
+                .chain(setup.forwards.iter_mut())
+                .flat_map(|(_, instructions)| instructions.iter_mut())
+        });
+        let found = self
+            .f
+            .body
+            .instrs
+            .iter_mut()
+            .rev()
+            .chain(setups)
+            .find(|instruction| addresses(instruction));
+        let Some(instruction) = found else {
+            return false;
+        };
+        *instruction = MirInstr::MakeRef {
+            dest: register,
+            place: place.clone(),
+        };
+        true
+    }
+
+    /// The value [`Self::lower_call_operand`] passes, before a by-address
+    /// operand becomes its place's address.
+    fn lower_call_operand_value(
         &mut self,
         expression: Node<'a>,
         lends_reads: bool,
@@ -511,7 +655,7 @@ impl<'a> Flatten<'a> {
                 )
             })
         {
-            return self.lower_call_operand(inner, lends_reads, setup);
+            return self.lower_call_operand_value(inner, lends_reads, setup);
         }
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and

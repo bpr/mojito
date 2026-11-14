@@ -2388,14 +2388,31 @@ default reading an enclosing value parameter reads it as a parameter, as
 its body does. The checker rejects a default naming runtime storage, as the
 pin does.
 
-Once the omitted arguments are written, `mir::address_call_operands`
-(`mir/call_addresses.rs`, R1425) passes each by-address argument of a
-direct `call` or resolved `call.method` as its address, as upstream's `lit.call` takes a `!lit.ref`
+A call argument the checker bound to a `mut` or `ref` parameter
+(`RetainCallPlace`) is lowered as its place's address, a `ref.make`, as
+upstream emits the `!lit.ref` while lowering the operand
+(`Flatten::address_operand`, `mir/calls.rs`): the read that lowered it
+becomes the `ref.make`, or a fresh one follows it, as mutable as a `read`
+parameter's storage or an immutable reference the place is reached
+through allows. A destructured tuple place is addressed per element
+extraction (`Flatten::destructured_base`, `mir/lower_stmt.rs`). Once the
+omitted arguments are written, `mir::address_call_operands`
+(`mir/call_addresses.rs`, R1425) addresses every other by-address operand
+of a direct `call` or resolved `call.method`, as upstream's `lit.call` takes a `!lit.ref`
 operand and loads nothing: a `mut`/`ref` parameter, or a `read` one of a
 memory-only declared type (`mir::by_address_parameter`), whose operand is
 a whole load of the place the call's `arg_places` entry retains (or a
 `ref.read` of a `ref.make` of it) becomes a `ref.make` of that place,
-typed a reference to it. `mir::call_operand_parameters` maps each operand
+typed a reference to it, and one whose read another use shares, or that
+is no whole read of the place, is passed as a fresh `ref.make` of it just
+before its call. The verifier (`verify_direct_call`) rejects a value at a
+`mut`/`ref` slot of a `call` or `call.method` that binds by its callee's
+declaration, except where the retained place holds a reference (a `ref`
+field or `ref` binding), whose operand is still the load through the
+stored handle (R2187). A memory-only `read` operand with no retained place
+(a reference result's referent, a generic `read x: T` before elaboration)
+is still a value (R2186). A MIR text artifact older than 1.192 is upgraded
+as it loads (`mir::upgrade_call_operands`). `mir::call_operand_parameters` maps each operand
 to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a
 memory-only type, with a retained `recv_place` becomes a `ref.make` of it,
@@ -2417,7 +2434,7 @@ receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
 referent. The place stays in `arg_places`, which the VM and Pliron still
 bind a parameter from, and the VM loads an addressed operand's place for
-a callee taking the value (R1920). A memory-only `read` temporary (one
+a callee taking the value (R2188, R2189). A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:

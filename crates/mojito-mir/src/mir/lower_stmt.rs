@@ -22,6 +22,22 @@ struct DestructureFrame<'a, 'p> {
     value: Node<'a>,
 }
 
+/// A destructured tuple: a value no place holds, or the place its
+/// elements are extracted from.
+enum TupleSource {
+    Value(Reg),
+    Place(MirPlace),
+}
+
+impl TupleSource {
+    const fn place(&self) -> Option<&MirPlace> {
+        match self {
+            Self::Value(_) => None,
+            Self::Place(place) => Some(place),
+        }
+    }
+}
+
 /// A destructuring place leaf's destination, evaluated before the value as
 /// upstream forms each element's lvalue first: a place written directly, or
 /// a nominal subscript's setter, which the element is passed to.
@@ -2994,52 +3010,29 @@ impl<'a> Flatten<'a> {
                 ))
             })
             .collect();
-        let mut base_place = self.simple_place(value);
         // A tuple place is read where it stands, as upstream's unpacking
         // projects each element from the tuple's address; only a temporary
         // is evaluated.
-        let mut tuple = match &base_place {
-            Some(place) => {
-                let loaded = self.fresh_typed(
-                    value.location(),
-                    Some(place.root),
-                    value
-                        .ty()
-                        .or_else(|| place.ty.clone())
-                        .unwrap_or_else(Ty::error),
-                );
-                self.emit(MirInstr::LoadPlace {
-                    dest: loaded,
-                    place: place.clone(),
-                });
-                loaded
-            }
-            None => self.expr(value),
+        let mut tuple = match self.simple_place(value) {
+            Some(place) => TupleSource::Place(place),
+            None => TupleSource::Value(self.expr(value)),
         };
         // A temporary read through element references lives in a hidden
         // slot under the owner the checker minted for it, the root those
         // references name.
-        if base_place.is_none()
+        if let TupleSource::Value(evaluated) = tuple
             && let Some(owner) = plan.first().and_then(|element| element.temporary)
             && !self.owner_vars.contains_key(&owner)
         {
-            let hidden = self.temporary_storage(value, tuple, value.indirect_result(), "$mat_r");
+            let hidden =
+                self.temporary_storage(value, evaluated, value.indirect_result(), "$mat_r");
             let ty = self.var_types.get(&hidden).cloned();
             self.owner_vars.insert(owner, hidden);
             // The slot now owns the tuple, so its elements are read from
             // the slot, not from the register the store consumed.
-            let place = MirPlace::root(hidden, ty);
-            tuple = self.fresh_typed(
-                value.location(),
-                Some(hidden),
-                place.ty.clone().unwrap_or_else(Ty::error),
-            );
-            self.emit(MirInstr::LoadPlace {
-                dest: tuple,
-                place: place.clone(),
-            });
-            base_place = Some(place);
+            tuple = TupleSource::Place(MirPlace::root(hidden, ty));
         }
+        let base_place = tuple.place().cloned();
         // A loan-carrying element (a view into the unpacked value's source)
         // inherits the value's loans, exactly as binding the whole value
         // would: otherwise the source dies at the call that produced the
@@ -3056,22 +3049,49 @@ impl<'a> Flatten<'a> {
             lowered,
             next: 0,
             loans,
-            root_place: base_place.clone(),
+            root_place: base_place,
             value,
         };
-        self.lower_destructure_elements(items, &plan, tuple, base_place.as_ref(), &mut frame);
+        self.lower_destructure_elements(items, &plan, &tuple, &mut frame);
     }
 
-    /// Bind each of `items` from its element of the tuple in `base`
-    /// (`base_place` when it is a place), per `plan`.
+    /// The tuple operand one element's extraction from `place` passes: the
+    /// place's address for an accessor returning a reference, whose
+    /// `ref self` receiver is by address as upstream's unpacking projects
+    /// each element from the tuple's address, and a read of the place for
+    /// any other, each element its own.
+    fn destructured_base(
+        &mut self,
+        place: &MirPlace,
+        extraction: &CheckedTupleUnpackElement,
+        location: SourceSpan,
+    ) -> Reg {
+        if extraction.accessor.is_some()
+            && let Some(reference) = &extraction.reference
+        {
+            return self.place_address(location, place, reference.mutability);
+        }
+        let loaded = self.fresh_typed(
+            location,
+            Some(place.root),
+            place.ty.clone().unwrap_or_else(Ty::error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place: place.clone(),
+        });
+        loaded
+    }
+
+    /// Bind each of `items` from its element of `tuple`, per `plan`.
     fn lower_destructure_elements(
         &mut self,
         items: &[CheckedTarget],
         plan: &[CheckedTupleUnpackElement],
-        base: Reg,
-        base_place: Option<&MirPlace>,
+        tuple: &TupleSource,
         frame: &mut DestructureFrame<'a, '_>,
     ) {
+        let base_place = tuple.place();
         assert_eq!(
             plan.len(),
             items.len(),
@@ -3127,6 +3147,12 @@ impl<'a> Flatten<'a> {
                 .is_none()
                 .then(|| frame.value.intrinsic_index_dispatch())
                 .flatten();
+            let base = match tuple {
+                TupleSource::Value(base) => *base,
+                TupleSource::Place(place) => {
+                    self.destructured_base(place, extraction, location.clone())
+                }
+            };
             self.emit(MirInstr::Index {
                 dest: raw,
                 base,
@@ -3140,27 +3166,16 @@ impl<'a> Flatten<'a> {
             // reference; a `ref` leaf keeps the reference itself.
             match &item.kind {
                 CheckedTargetKind::Tuple(inner) => {
-                    let (inner_base, inner_place) = match &extraction.reference {
-                        Some(reference) => {
-                            let place = self.destructured_reference_place(raw, reference, frame);
-                            let loaded = self.fresh_typed(
-                                location.clone(),
-                                Some(place.root),
-                                reference.referent.clone(),
-                            );
-                            self.emit(MirInstr::LoadPlace {
-                                dest: loaded,
-                                place: place.clone(),
-                            });
-                            (loaded, Some(place))
-                        }
-                        None => (raw, None),
+                    let inner_tuple = match &extraction.reference {
+                        Some(reference) => TupleSource::Place(
+                            self.destructured_reference_place(raw, reference, frame),
+                        ),
+                        None => TupleSource::Value(raw),
                     };
                     self.lower_destructure_elements(
                         inner,
                         &extraction.elements,
-                        inner_base,
-                        inner_place.as_ref(),
+                        &inner_tuple,
                         frame,
                     );
                     continue;

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.191
+# Mojito Textual MIR Format, Version 1.192
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.191 is implemented end to end for inspection and loading: canonical
+Version 1.192 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.191
+mojito-mir 1.192
 ```
 
-The writer emits 1.191. The reader accepts 1.0 through 1.191; *Schema 1.0*
+The writer emits 1.192. The reader accepts 1.0 through 1.192; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1181,6 +1181,17 @@ contract holds its compile-time arguments per declared parameter
 (`CheckedCallParameter`), a run-time operand named by its source
 occurrence rather than its bracket position (R2121). The MIR text is
 unchanged.
+
+Schema 1.192 passes every `mut` or `ref` argument of a `call` or resolved
+`call.method` that binds by its callee's declaration as a reference to the
+caller's storage, a `ref.make` of the place the call retains, as upstream's
+`lit.call` takes a `!lit.ref` operand; the verifier rejects a value there
+(R1920). The syntax is unchanged. An older artifact's calls are upgraded as
+it loads (`mir::upgrade_call_operands`): each by-address operand its
+contract binds becomes a reference (`mir::address_call_operands`), and an
+argument no contract binds (a requirement call over a pack element's
+receiver) becomes one where it reads back a `ref.make` of its retained
+place or loads a memory-only one.
 
 Schema 1.190 adds the type `any_struct(type)`, upstream's struct metatype
 `AnyStruct[S]`, the type of a struct type read as a value (R2115). It is

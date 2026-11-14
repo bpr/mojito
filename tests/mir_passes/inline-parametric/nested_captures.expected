@@ -14,7 +14,7 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(3))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(3))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
         blocks: [
           bb0 {
@@ -24,7 +24,7 @@
               const { dest: %r1, value: int_literal(3) },
               literal.materialize { dest: %r5, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r5] },
-              place.load { dest: %r3, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ref.make { dest: %r3, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               var.store { var: $v3, src: %r2, binding_type: present(Int), in_place: false },
               loop { results: [%r4], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r6, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } }, var.use { dest: %r8, var: $v3, mode: copy }, binary { op: add, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r9] } }] },
               drop.var { var: $v1 }
@@ -77,7 +77,7 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r13, type: kgen_simd { dtype: int, width: 1 } }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(0))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(1))] } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r13, type: kgen_simd { dtype: int, width: 1 } }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }],
         blocks: [
           bb0 {
@@ -86,7 +86,7 @@
               literal.materialize { dest: %r5, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r5] },
               var.store { var: $v0, src: %r1, binding_type: present(Int), in_place: false },
-              place.load { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              ref.make { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } }, const { dest: %r8, value: int_literal(1) }, literal.materialize { dest: %r13, value: %r8, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r9, fields: [%r13] }, binary { op: add, dest: %r10, a: %r6, b: %r9, resolved: absent, raises: absent }, var.store { var: $v0, src: %r10, binding_type: absent, in_place: false }], terminator: break { label: present(loop4294967295), values: [] } }] },
               const { dest: %r3, value: none },
               var.use { dest: %r4, var: $v0, mode: copy },

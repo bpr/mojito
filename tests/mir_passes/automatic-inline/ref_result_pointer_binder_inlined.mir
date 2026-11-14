@@ -1,4 +1,4 @@
-mojito-mir 1.183
+mojito-mir 1.192
 artifact {
   features: [],
   files: [
@@ -63,12 +63,12 @@ artifact {
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: Box, arguments: [] } }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Box, arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 286, end: 287, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 286, end: 293, origin: absent }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 286, end: 293, origin: present($v2) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 296, end: 297, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 286, end: 297, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
               call.method { dest: %r1, recv: %r0, method: get, resolved: present("Box.get"), raises: absent, reference_result: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: present(imm), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               var.store { var: $v2, src: %r1, binding_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), in_place: false },
               place.load { dest: %r3, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), projections: [], type: present(Int), through: present($v2) } },

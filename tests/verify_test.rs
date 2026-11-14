@@ -803,6 +803,48 @@ fn verifier_rejects_a_literal_materialized_at_a_struct() {
     );
 }
 
+/// A `mut` argument of a direct call is its place's address, as
+/// upstream's `lit.call` takes a `!lit.ref` of the caller's storage; the
+/// verifier rejects the value read from the place in its stead.
+#[test]
+fn verifier_requires_a_reference_at_a_mut_argument() {
+    let source = "def inc(mut x: Int):\n    x += 1\n\ndef main():\n    var i = 3\n    inc(i)\n    print(i)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(errors.is_empty(), "the lowered call verifies: {errors:?}");
+    let (_, main) = mir
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main is lowered");
+    let argument = leaf_instructions_mut(&mut main.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == "inc" => Some(args[0]),
+            _ => None,
+        })
+        .expect("main calls inc");
+    let address = leaf_instructions_mut(&mut main.body)
+        .into_iter()
+        .find(|instruction| {
+            matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == argument)
+        })
+        .expect("the argument is a ref.make of the place");
+    let load = match &*address {
+        MirInstr::MakeRef { dest, place } => MirInstr::LoadPlace {
+            dest: *dest,
+            place: place.clone(),
+        },
+        other => other.clone(),
+    };
+    *address = load;
+    main.reg_types.insert(argument.0, Ty::int());
+    expect_finding(
+        &mir,
+        "argument 0 of 'inc' is a `mut` or `ref` parameter but passes a Int value",
+    );
+}
+
 #[test]
 fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
     let f = function(

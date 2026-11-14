@@ -14,12 +14,12 @@
         return_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }, reg_type { reg: %r1, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 77, end: 78, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 70, end: 79, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent } },
               type.construct { dest: %r1, owner: "dup", slot: 0, param: T, kwargs: [keyword { name: copy, value: %r0 }], kwarg_places: [present(place { root: $v0, root_type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), projections: [], type: present(param { owner: "dup", slot: 0, name: T, bounds: [Copyable], callable_bound: absent }), through: absent })], element: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -101,12 +101,12 @@
         return_type: present(struct_type { name: Counter, arguments: [] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Counter, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 82, end: 244, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 82, end: 244, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } },
               call { dest: %r1, func: "Counter.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -115,7 +115,7 @@
       },
       fn {
         name: main,
-        registers: 11,
+        registers: 12,
         vars: 5,
         var_names: [a, c, d, "x$inline3", "x$inline4"],
         params: 0,
@@ -128,8 +128,8 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r10, type: struct_type { name: Counter, arguments: [] } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 290, end: 299, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 316, end: 317, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(7))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r6, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r7, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: ref { referent: struct_type { name: Counter, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r11, type: struct_type { name: Counter, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 290, end: 299, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 316, end: 317, origin: present($v1) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 275, end: 276, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 271, end: 277, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 312, end: 318, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -137,13 +137,13 @@
               literal.materialize { dest: %r6, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r6] },
               var.store { var: $v3, src: %r1, binding_type: present(Int), in_place: false },
-              loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r7, place: place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent } }, value.copy { dest: %r8, value: %r7 }], terminator: break { label: present(loop4294967295), values: [%r8] } }] },
+              loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [ref.make { dest: %r7, place: place { root: $v3, root_type: present(Int), projections: [], type: present(Int), through: absent } }, ref.read { dest: %r9, reference: %r7 }, value.copy { dest: %r8, value: %r9 }], terminator: break { label: present(loop4294967295), values: [%r8] } }] },
               var.store { var: $v0, src: %r2, binding_type: present(Int), in_place: false },
               drop.var { var: $v0 },
               call { dest: %r3, func: "Counter.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: Counter, arguments: [] }), in_place: true },
               place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } },
-              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r9, place: place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } }, call { dest: %r10, func: "Counter.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r9 }], arg_places: [], kwarg_places: [present(place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r10] } }] },
+              loop { results: [%r5], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [ref.make { dest: %r10, place: place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent } }, call { dest: %r11, func: "Counter.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r10 }], arg_places: [], kwarg_places: [present(place { root: $v1, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [], type: present(struct_type { name: Counter, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r11] } }] },
               var.store { var: $v2, src: %r5, binding_type: present(struct_type { name: Counter, arguments: [] }), in_place: false },
               drop.var { var: $v2 },
               drop.var { var: $v1 }

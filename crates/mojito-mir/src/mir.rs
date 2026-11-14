@@ -61,6 +61,7 @@ mod call_addresses;
 pub use call_addresses::{
     address_call_operands, by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, operand_value_ty, read_addressed_operands,
+    upgrade_call_operands,
 };
 mod call_defaults;
 pub use call_defaults::fill_omitted_arguments;
@@ -143,6 +144,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &HashMap::new(),
         &std::sync::Arc::default(),
         false,
+        &[],
         &[],
         &CaptureSlots::default(),
         &EnclosingBinders::default(),
@@ -1254,6 +1256,54 @@ pub fn lower_package_unit(
     }
 }
 
+/// The executable capability a `MakeRef` of the complete typed `place`
+/// produces.
+///
+/// A projection through an existing capability preserves that
+/// capability's permission; borrowing ordinary storage creates a new handle
+/// with the requested permission (mutable for legacy unchecked HIR).
+pub fn mir_place_handle_ty(
+    place: &MirPlace,
+    requested: Option<mojito_types::origin::Mutability>,
+) -> Option<Ty> {
+    let storage = place.ty.clone()?;
+    let root = place.root_ty.as_ref()?;
+    let source_mutability = match root.kind() {
+        TyKind::Ref(reference) => Some(reference.mutability),
+        TyKind::Pointer { origin, .. } => match origin {
+            mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if *mutable {
+                mojito_types::origin::Mutability::Mutable
+            } else {
+                mojito_types::origin::Mutability::Immutable
+            }),
+            mojito_types::origin::PointerOrigin::Param { mutability, .. }
+            | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => {
+                Some(*mutability)
+            }
+            mojito_types::origin::PointerOrigin::Static
+            | mojito_types::origin::PointerOrigin::Untracked { .. }
+            | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
+        },
+        _ => None,
+    };
+    if source_mutability.is_some() && place.is_whole_root() {
+        return Some(root.clone());
+    }
+    let mutability = source_mutability
+        .or(requested)
+        .unwrap_or(mojito_types::origin::Mutability::Mutable);
+    Some(
+        TyKind::Ref(mojito_types::origin::RefTy {
+            referent: storage,
+            origin: mojito_types::origin::Origin::Untracked {
+                mutable: mutability != mojito_types::origin::Mutability::Immutable,
+            },
+            mutability,
+        })
+        .into(),
+    )
+}
+
 fn lower_program(
     checked: &CheckedProgram,
     package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
@@ -1317,6 +1367,7 @@ fn lower_program(
             &HashMap::new(),
             overloads,
             false,
+            &[],
             &[],
             &CaptureSlots::default(),
             &EnclosingBinders::default(),
@@ -3144,52 +3195,6 @@ fn effect_or_record(
     })
 }
 
-/// Derive the executable capability produced by `MakeRef` from the complete
-/// typed place. A projection through an existing capability preserves that
-/// capability's permission; borrowing ordinary storage creates a new handle
-/// with the requested permission (mutable for legacy unchecked HIR).
-pub(crate) fn mir_place_handle_ty(
-    place: &MirPlace,
-    requested: Option<mojito_types::origin::Mutability>,
-) -> Option<Ty> {
-    let storage = place.ty.clone()?;
-    let root = place.root_ty.as_ref()?;
-    let source_mutability = match root.kind() {
-        TyKind::Ref(reference) => Some(reference.mutability),
-        TyKind::Pointer { origin, .. } => match origin {
-            mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if *mutable {
-                mojito_types::origin::Mutability::Mutable
-            } else {
-                mojito_types::origin::Mutability::Immutable
-            }),
-            mojito_types::origin::PointerOrigin::Param { mutability, .. }
-            | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => {
-                Some(*mutability)
-            }
-            mojito_types::origin::PointerOrigin::Static
-            | mojito_types::origin::PointerOrigin::Untracked { .. }
-            | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
-        },
-        _ => None,
-    };
-    if source_mutability.is_some() && place.is_whole_root() {
-        return Some(root.clone());
-    }
-    let mutability = source_mutability
-        .or(requested)
-        .unwrap_or(mojito_types::origin::Mutability::Mutable);
-    Some(
-        TyKind::Ref(mojito_types::origin::RefTy {
-            referent: storage,
-            origin: mojito_types::origin::Origin::Untracked {
-                mutable: mutability != mojito_types::origin::Mutability::Immutable,
-            },
-            mutability,
-        })
-        .into(),
-    )
-}
-
 /// A walrus over a place whose stored value is being lowered: its value
 /// node, the walrus's type, and the copy of the value it yields, taken once
 /// the store lowers that value.
@@ -3251,6 +3256,9 @@ struct Flatten<'a> {
         ),
     >,
     runtime_aliases: std::collections::HashSet<VarId>,
+    /// The frame's `read` parameters, whose storage lends only an
+    /// immutable reference.
+    read_parameters: std::collections::HashSet<VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
@@ -4862,6 +4870,7 @@ fn lower_cfg_nested(
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     returns_reference: bool,
     reference_parameters: &[bool],
+    owned_parameters: &[bool],
     captures: &CaptureSlots,
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
@@ -4932,6 +4941,15 @@ fn lower_cfg_nested(
                 .take(cfg.n_params)
                 .enumerate()
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
+                .collect(),
+            read_parameters: reference_parameters
+                .iter()
+                .zip(owned_parameters)
+                .take(cfg.n_params)
+                .enumerate()
+                .filter_map(|(slot, (reference, owned))| {
+                    (!reference && !owned).then_some(slot as VarId)
+                })
                 .collect(),
             aggregate_loans: HashMap::new(),
             pointer_addresses: HashMap::new(),
