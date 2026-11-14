@@ -147,7 +147,7 @@ diagnostic wording, the compile-time memory model) is demand-driven.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R1244 --task R1147 --task R1650
+  --task R1244 --task R1650
 ```
 
 ## 7. The MIR call op as upstream's `lit.call` (6 entries)

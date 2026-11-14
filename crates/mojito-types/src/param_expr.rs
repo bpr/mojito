@@ -1633,6 +1633,31 @@ impl ParamContext {
         self.answer_queries(expr, &mut |node| self.conformance_answer(node, oracle))
     }
 
+    /// Rebuild `expr` with every proposition `oracle` answers (a
+    /// `conforms_to` query, an `IsTrivially*` query, or a pack's
+    /// conformance, predicate, or membership query) replaced by its `Bool`,
+    /// through the folding constructors, as upstream's elaborator folds
+    /// each `#kgen.type_conforms_to_trait` and lifecycle query over a
+    /// concrete type and then the `ParamOperatorAttr`s above it
+    /// (`not IsTriviallyCopyable[T]`, `conforms_to(T, A) or
+    /// conforms_to(T, B)`). A proposition the oracle leaves (`None`) is
+    /// rebuilt as it is.
+    pub fn answer_propositions(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut dyn FnMut(&ParamExpr) -> Option<bool>,
+    ) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| match node.kind() {
+            ParamKind::Conforms { .. }
+            | ParamKind::Trivial { .. }
+            | ParamKind::PackQuery {
+                query: PackQuery::Conforms(_) | PackQuery::Predicate { .. } | PackQuery::Contains(_),
+                ..
+            } => self.constant_answer(oracle(node).map(CtValue::Bool)),
+            _ => Ok(None),
+        })
+    }
+
     /// Rebuild `ty` with every `conforms_to` query `oracle` answers in the
     /// parameter expressions it embeds replaced by its `Bool`
     /// (`Box[conforms_to(T, Copyable)]`), as [`Self::answer_conformances`]
@@ -1836,6 +1861,10 @@ impl ParamContext {
                 subject,
                 trait_name,
             } => self.conforms(&self.answer_queries(subject, answer)?, trait_name)?,
+            ParamKind::Trivial { lifecycle, subject } => {
+                self.trivial(*lifecycle, &self.answer_queries(subject, answer)?)?
+            }
+            ParamKind::PackQuery { .. } => expr.clone(),
             ParamKind::Select { elements, index } => {
                 return self.select(elements.clone(), &self.answer_queries(index, answer)?);
             }

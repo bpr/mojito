@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2176**.
+Next free ID: **R2177**.
 
 ## Ordered Work
 
@@ -6210,27 +6210,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R8 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1147 A type proposition over a type parameter is not a runtime
-  value**
-
-  Problem: `return conforms_to(T, Copyable)` in `def f[T: AnyType]() ->
-  Bool` reports "Undefined variable 'conforms_to'", and `return
-  IsSmallCopy[T]` over a predicate alias reports "the Bool-valued comptime
-  alias 'IsSmallCopy' read as a value over a type parameter", where the pin
-  prints each instance's answer.
-  - A closed application (`IsSmallCopy[Int]`) and one over value
-    parameters (`positive[k]`) already read as values.
-  - `Checker::constraint_proposition` decides a `Conforms` or `Trivial` leaf
-    over an unbound type parameter as an unknown hole instead of building
-    `ParamContext::conforms` over the parameter's type shape, which the
-    elaborator answers per instance.
-  - A bare `conforms_to(...)` call has no value inference arm at all, so
-    even a closed `print(conforms_to(Int, Copyable))` reports "Undefined
-    variable 'conforms_to'" where the pin prints `True`.
-  - Found while landing R801 (2026-10-19).
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R271 A `field_types()` result in a runtime position is rejected**
 

@@ -1995,8 +1995,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bound to its parameter expression, a constant one through
   `Checker::closed_constant_expression`; `conforms_to(T, Tr)` is a `Bool`
   parameter value (`Checker::conformance_query`, closed for a closed
-  type, a `Conforms` node `native::mono` decides per instance through
-  `Specializer::decided_conformance`); and a vector-annotated scalar is
+  type, a `Conforms` node `native::mono` decides per instance, with every
+  other proposition of a parameter constant and the operators above it,
+  through `ParamContext::answer_propositions` in
+  `Specializer::param_constant`; a predicate alias read as a value binds
+  every in-scope type binder, the enclosing struct's included, through
+  `Checker::in_scope_type_binders`, and `Checker::constraint_proposition`
+  states a type identity over an open binder as `ParamContext::identical`
+  for the instance to decide); and a vector-annotated scalar is
   its splat (`Checker::splat_at_annotation` for a module constant, the
   materialized slot for a local, `lower_comptime_binding`). A crossing
   (`materialize[X]()`, `comptime(e)`) is the check's alone
@@ -3460,7 +3466,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   once the shells stand, before the builtin bodies fold, so `std.simd`'s
   `Scalar` above `struct SIMD` and `std.ffi`'s `c_int = Int32` resolve. The elaborator decides a
   `conforms_to` over a type that nests the current target
-  (`Specializer::answer_conformance_subjects`, `decided_conformance`).
+  (`Specializer::answer_conformance_subjects`, `subject_conforms`).
 - Upstream's MLIR builtin `__mlir_type.index` is `TyKind::Index`
   (`Ty::index()`, displayed `types::MLIR_INDEX_TYPE_SPELLING`), resolved
   by `types::mlir_type_named`, which also reads

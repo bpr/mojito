@@ -5300,9 +5300,9 @@ impl Checker {
         // reference, a type binder the type it denotes, whose conformance
         // and triviality stay the propositions the instance answers.
         let types: Vec<(ParamId, TyArg)> = self
-            .open_type_binders()
+            .in_scope_type_binders()
             .into_iter()
-            .map(|(binder, ty)| (binder.id, TyArg::Ty(ty)))
+            .map(|(id, ty)| (id, TyArg::Ty(ty)))
             .collect();
         let symbolic: Vec<(ParamId, TyArg)> = self
             .param_scopes
@@ -5320,18 +5320,9 @@ impl Checker {
         let environment = ConstraintEnvironment::by_id(
             symbolic.iter().map(|(id, argument)| (id.clone(), argument)),
         );
-        let type_binders: HashSet<&ParamId> = types.iter().map(|(id, _)| id).collect();
         Some(
             self.apply_predicate_alias(name, &args)
                 .and_then(|constraint| {
-                    // A type binder's identity with another type is no
-                    // structural comparison of the two.
-                    if compares_binder(&constraint, &type_binders) {
-                        return Err(TypeError::Unsupported(format!(
-                            "the Bool-valued comptime alias '{name}' read as a value over a type \
-                     parameter"
-                        )));
-                    }
                     let proposition = self
                         .constraint_proposition(&constraint, &environment)
                         .map_err(param_error)?;
@@ -6117,6 +6108,15 @@ impl Checker {
                             &context.constant(right)?,
                         )?
                     }
+                    // A type over an open binder is the same type as
+                    // another only at the instance, as upstream folds its
+                    // type `eq` once both sides are concrete.
+                    (Some(TyArg::Ty(left)), Some(TyArg::Ty(right)))
+                        if mojito_types::types::has_free_parameters(&left)
+                            || mojito_types::types::has_free_parameters(&right) =>
+                    {
+                        context.identical(&context.type_shape(left), &context.type_shape(right))
+                    }
                     (Some(left), Some(right)) => context.boolean(ty_args_equal(&left, &right)),
                     _ => unknown(),
                 };
@@ -6250,16 +6250,29 @@ impl Checker {
     /// declaration among the open scopes' parameters and then the enclosing
     /// struct's, which `Self` binds.
     pub(super) fn binder_type(&self, binder: &ParamRef) -> Option<Ty> {
-        self.open_type_binders()
+        self.in_scope_type_binders()
             .into_iter()
-            .find(|(open, _)| open.id == binder.id)
+            .find(|(id, _)| *id == binder.id)
             .map(|(_, ty)| ty)
-            .or_else(|| {
-                self.self_decls
-                    .iter()
-                    .position(|decl| decl.id() == &binder.id)
-                    .and_then(|index| self.self_type_parameter(index))
-            })
+    }
+
+    /// Every type parameter in scope, each the type its binder denotes: the
+    /// open scopes' parameters, innermost first, and then the enclosing
+    /// struct's, as `Self` binds them.
+    fn in_scope_type_binders(&self) -> Vec<(ParamId, Ty)> {
+        let mut binders: Vec<(ParamId, Ty)> = self
+            .open_type_binders()
+            .into_iter()
+            .map(|(binder, ty)| (binder.id, ty))
+            .collect();
+        for (index, decl) in self.self_decls.iter().enumerate() {
+            if !binders.iter().any(|(id, _)| id == decl.id())
+                && let Some(ty) = self.self_type_parameter(index)
+            {
+                binders.push((decl.id().clone(), ty));
+            }
+        }
+        binders
     }
 
     /// The binder of the type parameter a bare name denotes in the open
@@ -6817,26 +6830,6 @@ fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
 }
 
 /// The element types of a pack parameter bound in a constraint environment.
-/// Whether a comparison leaf of `constraint` has one of `binders` as an
-/// operand.
-fn compares_binder(constraint: &GenericConstraint, binders: &HashSet<&ParamId>) -> bool {
-    use GenericConstraint::{And, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, WithMessage};
-    let names = |operand: &ConstraintOperand| matches!(operand, ConstraintOperand::Param(param) if binders.contains(&param.id));
-    match constraint {
-        WithMessage(inner, _) | Not(inner) => compares_binder(inner, binders),
-        And(left, right) | Or(left, right) => {
-            compares_binder(left, binders) || compares_binder(right, binders)
-        }
-        Eq(left, right)
-        | Ne(left, right)
-        | Lt(left, right)
-        | Le(left, right)
-        | Gt(left, right)
-        | Ge(left, right) => names(left) || names(right),
-        _ => false,
-    }
-}
-
 fn bound_pack_types(environment: &ConstraintEnvironment<'_>, param: &ParamRef) -> Option<Vec<Ty>> {
     let TyArg::Val(list) = environment.get(param)? else {
         return None;

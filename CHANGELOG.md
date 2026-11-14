@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A predicate alias read as a run-time value over a type parameter
+  (`return NotCopy[T]`, `return IsSmallCopy[T]`, `return C[Self.T]`) is
+  the `Bool` each instance answers, as at the pin: the elaborator answers
+  every `conforms_to` and `IsTrivially*` leaf of a parameter constant and
+  folds the `not`/`and`/`or` above it, a type identity over a binder
+  (`U == Int`) is decided at the instance rather than rejected, and the
+  read binds the enclosing struct's type parameters as well as the
+  function's (R1147;
+  `assets/ok/predicate_alias_value_over_type_parameter.mojo`).
+
 - `comptime if conforms_to(T, Copyable):` over a plain `def`'s `Movable`
   parameter, inferred from its argument, decides per instance as at the
   pin, so a move-only struct takes the `else` (R280, already fixed by the

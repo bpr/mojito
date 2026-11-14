@@ -2042,3 +2042,40 @@ fn bool_storage_extract_and_create_are_inverse() {
     assert_eq!(truth.meta(), &BoolDomain::Storage.meta());
     assert_eq!(create(&truth), context.boolean(true));
 }
+
+#[test]
+fn answer_propositions_folds_the_operators_above_an_answered_proposition() {
+    let context = ParamContext::new();
+    let subject = context.type_shape(
+        TyKind::Param {
+            binder: ParamRef {
+                id: ParamId::new("f", 0),
+                name: "T".into(),
+            },
+            bounds: vec!["AnyType".to_string()],
+            callable_bound: None,
+        }
+        .into(),
+    );
+    let copyable = context.conforms(&subject, "Copyable").expect("conforms_to");
+    let trivial = context
+        .trivial(TrivialLifecycle::Copyable, &subject)
+        .expect("IsTriviallyCopyable");
+    let not_copyable = context.not(&copyable).expect("not");
+    let answered = context
+        .answer_propositions(&not_copyable, &mut |_| Some(true))
+        .expect("the answer folds");
+    assert_eq!(answered.as_bool(), Some(false));
+    let not_trivial = context.not(&trivial).expect("not");
+    let answered = context
+        .answer_propositions(&not_trivial, &mut |node| {
+            matches!(node.kind(), ParamKind::Trivial { .. }).then_some(false)
+        })
+        .expect("the answer folds");
+    assert_eq!(answered.as_bool(), Some(true));
+    // A proposition the oracle leaves stays as it is.
+    let left = context
+        .answer_propositions(&not_copyable, &mut |_| None)
+        .expect("nothing is answered");
+    assert_eq!(left, not_copyable);
+}

@@ -2520,11 +2520,33 @@ impl<'a> Specializer<'a> {
                 .ok(),
             _ => None,
         };
-        if let Some(conforms) =
-            self.decided_conformance(applied.as_ref().unwrap_or(value), bindings)
-        {
-            return Ok(Some(Const::Bool(conforms)));
+        // Each proposition the instance closes is answered, as upstream
+        // folds `#kgen.type_conforms_to_trait` and the lifecycle queries
+        // over a concrete type, and the operators above it fold with it
+        // (`not conforms_to(T, Copyable)`).
+        let answered = mojito_types::param_expr::ParamContext::detached()
+            .answer_propositions(
+                applied.as_ref().unwrap_or(value),
+                &mut |node| match node.kind() {
+                    ParamKind::Conforms {
+                        subject,
+                        trait_name,
+                    } => self.subject_conforms(subject, trait_name, bindings),
+                    _ => proposition_constraint(node).and_then(|proposition| {
+                        self.constraint_holds(&proposition, bindings, &mut HashSet::new())
+                    }),
+                },
+            )
+            .ok();
+        if let Some(answer) = answered.as_ref().and_then(ParamExpr::as_bool) {
+            return Ok(Some(Const::Bool(answer)));
         }
+        // A value the instance leaves partly open is read with the
+        // propositions it closes answered.
+        let value = answered
+            .as_ref()
+            .filter(|answered| *answered != applied.as_ref().unwrap_or(value))
+            .unwrap_or(value);
         match proposition {
             Some(proposition) => Ok(self
                 .constraint_holds(&proposition, bindings, &mut HashSet::new())
@@ -2541,26 +2563,6 @@ impl<'a> Specializer<'a> {
                 Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
                 Err(_) => Ok(None),
             },
-        }
-    }
-
-    /// The answer to a `conforms_to` query the instance closes: one
-    /// `Conforms` proposition, or a conjunction of them
-    /// (`conforms_to(T, A & B)`). `None` for any other expression, or a
-    /// subject the instance leaves open.
-    fn decided_conformance(&self, value: &ParamExpr, bindings: &Bindings) -> Option<bool> {
-        match value.kind() {
-            ParamKind::Conforms {
-                subject,
-                trait_name,
-            } => self.subject_conforms(subject, trait_name, bindings),
-            ParamKind::Op {
-                op: mojito_types::param_expr::ParamOp::BoolAnd,
-                operands,
-            } => operands.iter().try_fold(true, |all, operand| {
-                Some(all && self.decided_conformance(operand, bindings)?)
-            }),
-            _ => None,
         }
     }
 
