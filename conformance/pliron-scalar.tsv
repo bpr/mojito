@@ -154,6 +154,7 @@ assets/ok/comptime_alias_value_parametric.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/comptime_annotated_implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_annotated_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_application_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_application_named_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_application_receiver_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_application_ref_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_application_string_float_argument.mojo	-	ineligible	no-scalar-entry-shape

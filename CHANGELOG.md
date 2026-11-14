@@ -589,6 +589,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time call of a function with a named `out` result is now its
+  application, its result the `out` parameter's type, as at the pin
+  (R1778): `h[mk(5)]()` over `def mk(a: Int, out result: B)` and
+  `v.shuffle[mask=Index(3, 2, 1, 0)]()` stopped with "not an associated
+  comptime expression" and "no overload matches". A result typed by the
+  positional collector (`IndexList[args.__len__(), …]`) now classifies.
 - A struct's annotated `comptime` member checks its body against its
   annotation, and so does a trait requirement's default, as at the pin:
   `comptime N: Int = True`, `comptime K: Int = "x"` in a trait, and an

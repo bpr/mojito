@@ -6036,24 +6036,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1778 A function with a named `out` result is never a
-  compile-time application**
-
-  `h[mk(5)]()` over `def mk(a: Int, out result: B)` and `def h[b: B]()`
-  prints `5` at the pin. Mojito reports "not a compile-time Int constant:
-  not an associated comptime expression".
-  - Cause: `ApplicableShape::applicable` (`checker/comptime_validation.rs`)
-    drops any callable with an `out` parameter, so `called_application`
-    finds no candidate, though `infer` types the call.
-  - The application's result is the `out` parameter's type, as a `->`
-    result's is.
-  - Probe: `v.shuffle[mask=Index(3, 2, 1, 0)]()` on a `SIMD[DType.int32,
-    4]`, through `Index`'s `out result: IndexList[args.__len__(), …]`;
-    `comptime m = Index(…)` then `mask=m` runs.
-  - Found while landing R1675 (2026-10-31).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2044 A value parameter read only through an application in
   another parameter's type is removed, and its caller fails to elaborate**
 

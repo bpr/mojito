@@ -197,7 +197,8 @@ pub(in crate::checker) struct ApplicableFunction {
     /// The declared result: a scalar, `None`, a `DType`, a named struct, one
     /// of its own type parameters, or `Self`, which a call resolves at the instance
     /// it constructs or is called on. For a reference result it is the
-    /// referent ([`Self::returns`]).
+    /// referent ([`Self::returns`]); for a named `out` result, the `out`
+    /// parameter's type.
     result: SourceType,
     /// How it returns its result.
     returns: ResultConvention,
@@ -2876,9 +2877,10 @@ impl Checker {
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
             .collect::<Option<Vec<_>>>();
-        // The result reads the receiver and the runtime parameters as the
-        // signature's typed names (`StringLiteral.__add__`'s
-        // `StringLiteral[#pop.string_concat<self.value, rhs.value>]`).
+        // The result reads the receiver, the runtime parameters, and the
+        // collector as the signature's typed names (`StringLiteral.__add__`'s
+        // `StringLiteral[#pop.string_concat<self.value, rhs.value>]`,
+        // `Index`'s `IndexList[args.__len__(), element_type=dtype]`).
         let receiver = self.self_ty.clone().filter(|_| function.takes_self());
         let owner = self.self_ty.clone();
         let result = match &function.result {
@@ -2893,6 +2895,19 @@ impl Checker {
                         {
                             checker.declare_signature_parameter(&param.name, ty.clone())?;
                         }
+                    }
+                    if let Some(collector) = &function.collector
+                        && let Some(element) = params
+                            .iter()
+                            .flatten()
+                            .nth(function.params.len())
+                            .and_then(Option::as_ref)
+                            .or_else(|| collector.element.resolved(owner.as_ref()))
+                    {
+                        checker.declare_signature_parameter(
+                            &collector.name,
+                            mojito_types::types::variadic_collector_type(element.clone(), None),
+                        )?;
                     }
                     checker.ty_from_anno(result)
                 })
@@ -7096,11 +7111,15 @@ impl ApplicableShape<'_> {
             None => None,
         };
         // A keyword collector is no compile-time value, as the pin rejects
-        // `**kwargs` in a type.
+        // `**kwargs` in a type. A named result takes no argument: its type
+        // is the application's result, as a `->` result's is.
         let params = self
             .params
             .iter()
-            .filter(|param| param.kind != mojito_ast::ast::ParamKind::Variadic)
+            .filter(|param| {
+                param.kind != mojito_ast::ast::ParamKind::Variadic
+                    && !mojito_ast::ast::DeclaredParam::is_named_result(*param)
+            })
             .map(|param| {
                 let passed = param.kind == mojito_ast::ast::ParamKind::Regular
                     && applicable_convention(param);
@@ -7112,6 +7131,7 @@ impl ApplicableShape<'_> {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
+        let ret = mojito_ast::ast::named_result(self.params).map_or(self.ret, |result| &result.ty);
         Some(ApplicableFunction {
             key: symbol,
             site: Some(site),
@@ -7132,8 +7152,8 @@ impl ApplicableShape<'_> {
                 self.keyword_only,
                 variadic,
             ),
-            result: match self.ret {
-                SourceType::None | SourceType::SelfType | SourceType::Named(..) => self.ret.clone(),
+            result: match ret {
+                SourceType::None | SourceType::SelfType | SourceType::Named(..) => ret.clone(),
                 // A reference result is its referent's application, which
                 // the call reads ([`ResultConvention::Reference`]).
                 SourceType::Ref { referent, .. }
@@ -7154,7 +7174,7 @@ impl ApplicableShape<'_> {
                 // builtin's bare member is registered before its body folds
                 // ([`Checker::register_builtin_result_members`]); no other
                 // callable's member is needed sooner.
-                SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => self.ret.clone(),
+                SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => ret.clone(),
                 ret if is_mlir_index_source(ret)
                     || is_mlir_source(ret, "!kgen.deferred")
                     || is_mlir_source(ret, "!kgen.string")
@@ -7164,7 +7184,7 @@ impl ApplicableShape<'_> {
                 }
                 _ => return None,
             },
-            returns: if matches!(self.ret, SourceType::Ref { .. }) {
+            returns: if matches!(ret, SourceType::Ref { .. }) {
                 ResultConvention::Reference
             } else {
                 ResultConvention::Value
