@@ -351,10 +351,9 @@ fn has_parameters(declaration: &MirFunctionDeclaration, declarations: &MirDeclar
         || declaration.enclosing.is_some()
         || (!declaration.param_decls.is_empty()
             && mojito_symbol::symbol::lifted_owner(&declaration.lowered_name).is_some())
-        || declaration
-            .param_decls
-            .iter()
-            .any(|decl| *decl.id().owner == *declaration.lowered_name)
+        || declaration.param_decls.iter().any(|decl| {
+            mojito_symbol::symbol::owns_binder(&declaration.lowered_name, &decl.id().owner)
+        })
         || !method_owner_params(&declaration.lowered_name, declarations).is_empty()
 }
 

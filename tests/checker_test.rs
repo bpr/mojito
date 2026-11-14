@@ -2239,6 +2239,22 @@ fn rejects_type_argument_for_value_parameter() {
 }
 
 #[test]
+fn overloaded_generic_parameter_error_names_its_declaration() {
+    // An overload's binders are owned by its declaration, so a mismatched
+    // parameter names the function as the pin does, not its owner.
+    let e = err_std(
+        "def g[Tr: type_of(AnyType) = 3](x: Int) -> Int:\n    return x\n\n\
+         def g[Tr: type_of(AnyType) = Copyable](x: String) -> Int:\n    return 0\n\n\
+         def main():\n    print(g(1))\n",
+    );
+    assert!(
+        matches!(&e, TypeError::ParamValueType { callee, param, .. }
+            if callee == "g" && param == "Tr"),
+        "got {e:?}"
+    );
+}
+
+#[test]
 fn rejects_wrong_parameter_count() {
     let e = err(&format!(
         "{FIXEDBUF}var b: FixedBuffer[8, 9] = FixedBuffer[8, 9](0)\n"

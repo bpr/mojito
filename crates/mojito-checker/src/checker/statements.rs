@@ -31,6 +31,11 @@ impl Checker {
         // An importer's own statements add to its own sets, which a name
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
+        for statement in stmts {
+            if let StmtKind::Def { name, .. } = &statement.kind {
+                self.module_def_owner(name, statement.source_span());
+            }
+        }
         // A function a constant names is typed before the constant folds.
         self.declare_functions_comptime_reads(stmts);
         // A module integer constant folds once, ahead of every declaration
@@ -3209,7 +3214,7 @@ impl Checker {
             self.list_nested_application(stmt);
         }
         let DefSignature {
-            owner,
+            symbol,
             decls,
             param_tys,
             ret_ty,
@@ -3371,7 +3376,7 @@ impl Checker {
         let module_level = self.function_bases.is_empty() && !lambda;
         let (nested_symbol, nested_binders) = if module_level {
             (
-                Some(owner.clone()),
+                Some(symbol.clone()),
                 self.self_decls.iter().chain(&decls).cloned().collect(),
             )
         } else {
@@ -3569,7 +3574,7 @@ impl Checker {
                 // A nested `def` or a lambda lifts under its enclosing
                 // declaration.
                 let enclosing = if module_level {
-                    self.lifting_owner.replace(owner)
+                    self.lifting_owner.replace(symbol)
                 } else {
                     self.lifting_owner.clone()
                 };
@@ -3909,59 +3914,49 @@ impl Checker {
         )?;
         self.validate_origin_signature(type_params, params, None)?;
         // Two overloads of one name are two declarations, so each owns its
-        // binders under the symbol it lowers to, spelled once from its typed
-        // signature by the key a call to it spells.
+        // binders under its own declaration-relative owner; the symbol a
+        // call to it spells is spelled once from its typed signature.
         if !self.function_bases.is_empty()
             || !self
                 .overload_sets
                 .function_is_overloaded(name, params.len())
         {
-            return self.def_signature_owned_by(stmt, &shape, name.clone(), unavailable, required);
+            return self.def_signature_owned_by(stmt, &shape, name, unavailable, required);
         }
         let site = mojito_checked::checked::GenericSite::Function {
             module: stmt.module.clone(),
             declaration: stmt.span,
             syntax: stmt.syntax_id,
         };
+        let owner = self.module_def_owner(name, stmt.source_span());
+        let mut signature =
+            self.def_signature_owned_by(stmt, &shape, &owner, unavailable, required)?;
         let recorded = self.declaration_symbols.borrow().get(&site).cloned();
         if let Some(symbol) = recorded {
-            return self.def_signature_owned_by(stmt, &shape, symbol, unavailable, required);
-        }
-        let symbol_of = |signature: &DefSignature| {
-            callable_lowered_name(name, &signature.fn_ty).ok_or_else(|| {
+            signature.symbol = symbol;
+        } else {
+            signature.symbol = callable_lowered_name(name, &signature.fn_ty).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("overload '{name}' has no callable type"))
-            })
-        };
-        let provisional = mojito_symbol::symbol::naming_owner(name, stmt.syntax_id.0);
-        if type_params.is_empty() {
-            // Binder-free, the signature types the same under any owner.
-            let mut signature =
-                self.def_signature_owned_by(stmt, &shape, provisional, unavailable, required)?;
-            let symbol = symbol_of(&signature)?;
-            signature.owner.clone_from(&symbol);
-            self.declaration_symbols.borrow_mut().insert(site, symbol);
-            return Ok(signature);
+            })?;
+            self.declaration_symbols
+                .borrow_mut()
+                .insert(site, signature.symbol.clone());
         }
-        // The binders are owned by the symbol the typed signature spells, so
-        // the signature is typed under a provisional owner to spell it, and
-        // its lifts there are forgotten: no key spells a binder's owner, so
-        // the spelling is the one the owned signature gives.
-        let lifted = self.lifted_applications.borrow().len();
-        let counts = self.lifted_counts.borrow().clone();
-        let named = self.def_signature_owned_by(
-            stmt,
-            &shape,
-            provisional,
-            unavailable.clone(),
-            required.clone(),
-        );
-        self.lifted_applications.borrow_mut().truncate(lifted);
-        *self.lifted_counts.borrow_mut() = counts;
-        let symbol = symbol_of(&named?)?;
-        self.declaration_symbols
-            .borrow_mut()
-            .insert(site, symbol.clone());
-        self.def_signature_owned_by(stmt, &shape, symbol, unavailable, required)
+        Ok(signature)
+    }
+
+    /// The binder owner of module `def` `name` declared at `span`: its
+    /// position among the module's `def`s of that name, in source order.
+    fn module_def_owner(&mut self, name: &str, span: SourceSpan) -> String {
+        let spans = self.module_defs.entry(name.to_string()).or_default();
+        let ordinal = spans
+            .iter()
+            .position(|seen| *seen == span)
+            .unwrap_or_else(|| {
+                spans.push(span);
+                spans.len() - 1
+            });
+        mojito_symbol::symbol::declaration_owner(name, ordinal)
     }
 
     /// [`Self::def_signature`] with the declaration's binders owned by
@@ -3970,7 +3965,7 @@ impl Checker {
         &mut self,
         stmt: &Stmt,
         shape: &DefShape<'_>,
-        owner: String,
+        owner: &str,
         unavailable: Option<String>,
         required: Vec<bool>,
     ) -> Result<DefSignature, TypeError> {
@@ -3979,15 +3974,14 @@ impl Checker {
                 "check_def requires a function declaration".to_string(),
             ));
         };
-        let decls = self.classify_params(&owner, type_params)?;
+        let decls = self.classify_params(owner, type_params)?;
         // Type parameters are in scope while resolving the signature (as
         // bare `T`), and value parameters as the typed references a
         // dependent parameter expression names (`Buf[n + 1]`).
         self.push_param_scope(&decls);
         let enclosing_self = self.self_ty.clone();
         self.bind_trait_self();
-        let signature =
-            self.def_signature_in_scope(stmt, shape, owner, decls, unavailable, required);
+        let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);
         self.self_ty = enclosing_self;
         self.pop_param_scope();
         signature
@@ -3999,7 +3993,6 @@ impl Checker {
         &mut self,
         stmt: &Stmt,
         shape: &DefShape<'_>,
-        owner: String,
         mut decls: Vec<ParamDecl>,
         unavailable: Option<String>,
         required: Vec<bool>,
@@ -4218,7 +4211,7 @@ impl Checker {
             self.view_return_origins(ret_anno.as_ref(), type_params, regular, 0, None);
         origin_signature.unavailable.clone_from(&unavailable);
         Ok(DefSignature {
-            owner,
+            symbol: name.clone(),
             clauses,
             decls,
             param_tys,
@@ -4895,7 +4888,9 @@ fn capture_referent(ty: &Ty) -> &Ty {
 /// A function declaration's resolved signature: what binding its name and
 /// checking its body read.
 struct DefSignature {
-    owner: String,
+    /// The symbol the declaration lowers to: its name, or an overload's
+    /// signature-qualified symbol.
+    symbol: String,
     /// Its `where` clauses as emitted over `decls`, which a compile-time
     /// call of it reads; `None` when one reads an erased origin-mutability
     /// binder, which no call binds.

@@ -1107,13 +1107,37 @@ pub fn lifecycle_name<P: AnnotatedParam>(shape: LifecycleShape<'_, P>) -> &str {
     }
 }
 
-/// The provisional owner of overloaded declaration `name`'s binders while
-/// its signature is typed to spell its symbol; no lowered symbol spells it.
+/// The binder owner of overloaded declaration `name`, its `ordinal`-th
+/// in source order (a function among the module's same-named `def`s, a
+/// method or trait requirement by its index in its declaration).
 ///
-/// `site` tells one overload of `name` from another, since a binder is
-/// identified by its owner and slot alone, not by its spelling.
-pub fn naming_owner(name: &str, site: u64) -> String {
-    format!("{name}@naming{site}")
+/// The owner is relative to the declaration and fixed before its signature
+/// is typed, as upstream names a generator's parameters by their
+/// declaration; the symbol the typed signature spells names the
+/// declaration, never its binders. No lowered symbol spells it.
+pub fn declaration_owner(name: &str, ordinal: usize) -> String {
+    format!("{name}{DECLARATION_OWNER_SEP}{ordinal}")
+}
+
+/// The declaration name a [`declaration_owner`] spells, or `None` when
+/// `owner` is not one.
+pub fn declaration_owner_name(owner: &str) -> Option<&str> {
+    let (name, ordinal) = owner.rsplit_once(DECLARATION_OWNER_SEP)?;
+    (!ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())).then_some(name)
+}
+
+/// Whether the binder owned by `owner` is one of `symbol`'s own.
+///
+/// It is when `owner` is the symbol itself (a non-overloaded declaration's
+/// name) or the [`declaration_owner`] of the overload base `symbol`
+/// qualifies. A declaration's binder list holds its own and its struct's,
+/// so the base selects its own among them.
+pub fn owns_binder(symbol: &str, owner: &str) -> bool {
+    owner == symbol
+        || declaration_owner_name(owner).is_some_and(|name| {
+            overload_qualifier(symbol)
+                .is_some_and(|qualifier| &symbol[..symbol.len() - qualifier.len()] == name)
+        })
 }
 
 /// The binder owner of a compile-time-applicable callable's entry.
@@ -2155,6 +2179,10 @@ fn eval_comptime_int(expr: &Expr, comptimes: &dyn ModuleNames) -> Option<IntLite
 /// `pick$ov$Int`, `Box.__init__$ov$String`. The native monomorphizer reads it
 /// to tell such an overload from a per-instantiation clone.
 pub const OV_SEP: &str = "$ov$";
+
+/// The separator between a [`declaration_owner`]'s declaration name and
+/// its ordinal: `pick@decl1`, `Box.get@decl0`.
+pub const DECLARATION_OWNER_SEP: &str = "@decl";
 
 /// `text` with its alphanumerics kept and every other byte spelled `$` and
 /// two hex digits, which `sanitize` keeps and no two texts share.
@@ -3405,6 +3433,20 @@ fn declared_struct_name(linked: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declaration_owner_names_its_declaration_and_owns_its_overloads_binders() {
+        let name = "__module$std$math$max";
+        let owner = declaration_owner(name, 3);
+        assert_eq!(declaration_owner_name(&owner), Some(name));
+        assert_eq!(declaration_owner_name(name), None);
+        assert_eq!(specialization_template(&owner), None);
+        assert!(owns_binder(&format!("{name}$ov$T$Comparable"), &owner));
+        assert!(owns_binder(name, name));
+        assert!(!owns_binder(name, &owner));
+        assert!(!owns_binder("S$Int.get$ov$T", "S.get@decl1"));
+        assert!(owns_binder("S.get$ov$T", "S.get@decl1"));
+    }
 
     #[test]
     fn distinct_values_of_one_parameter_name_distinct_instances() {

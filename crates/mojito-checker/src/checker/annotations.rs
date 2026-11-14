@@ -2,50 +2,39 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::types::TyKind;
 pub use mojito_types::types::splats_to;
 
 impl Checker {
     /// The declaration that owns method `m`'s own binders, the
     /// `method_index`-th of struct `declaration` (a template or one of its
-    /// specializations): the symbol the check recorded for an overloaded
-    /// method, `Struct.method` otherwise.
+    /// specializations, which shares its template's): `Struct.method`, or
+    /// an overloaded method's declaration-relative owner
+    /// ([`mojito_symbol::symbol::declaration_owner`]), fixed before its
+    /// signature is typed.
     pub(super) fn method_binder_owner(
         &self,
-        module: Option<&String>,
         declaration: &str,
         method_index: usize,
         m: &Method,
     ) -> String {
-        self.recorded_method_owner(module, declaration, method_index)
-            .unwrap_or_else(|| {
-                let template = mojito_symbol::symbol::specialization_template(declaration)
-                    .unwrap_or(declaration);
-                format!(
-                    "{template}.{}",
-                    mojito_symbol::symbol::specialization_template(&m.name).unwrap_or(&m.name)
-                )
-            })
-    }
-
-    /// The symbol the check recorded for the overloaded `method_index`-th
-    /// method of struct `declaration`, its template's first.
-    pub(super) fn recorded_method_owner(
-        &self,
-        module: Option<&String>,
-        declaration: &str,
-        method_index: usize,
-    ) -> Option<String> {
-        let site = |declaration: &str| mojito_checked::checked::GenericSite::Method {
-            module: module.cloned(),
-            declaration: declaration.to_string(),
-            method: method_index,
-        };
-        let symbols = self.declaration_symbols.borrow();
-        mojito_symbol::symbol::specialization_template(declaration)
-            .and_then(|template| symbols.get(&site(template)))
-            .or_else(|| symbols.get(&site(declaration)))
-            .cloned()
+        let template =
+            mojito_symbol::symbol::specialization_template(declaration).unwrap_or(declaration);
+        let method = mojito_symbol::symbol::specialization_template(&m.name).unwrap_or(&m.name);
+        let registered = lifecycle_method_name(m);
+        let registered =
+            mojito_symbol::symbol::specialization_template(registered).unwrap_or(registered);
+        let overloaded = self
+            .overload_sets
+            .method_is_overloaded(&format!("{template}.{registered}"), m.params.len());
+        if overloaded {
+            return mojito_symbol::symbol::declaration_owner(
+                &format!("{template}.{registered}"),
+                method_index,
+            );
+        }
+        format!("{template}.{method}")
     }
 
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,

@@ -1321,7 +1321,9 @@ impl Checker {
     ) -> Result<ParamExpr, TypeError> {
         let expected = TyKind::AnyTrait(bound.to_vec());
         let mismatch = |found: String| TypeError::ParamValueType {
-            callee: id.owner.to_string(),
+            callee: mojito_symbol::symbol::declaration_owner_name(&id.owner)
+                .unwrap_or(&id.owner)
+                .to_string(),
             param: tp.name.clone(),
             expected: expected.to_string(),
             found,
@@ -1710,7 +1712,7 @@ impl Checker {
         overload_index: usize,
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
-        let owner = self.method_binder_owner(module, declaration, method_index, m);
+        let owner = self.method_binder_owner(declaration, method_index, m);
         let decls = self.classify_params(&owner, &m.type_params)?;
         let saved_site = self
             .method_site

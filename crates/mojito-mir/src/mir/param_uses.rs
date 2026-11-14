@@ -689,7 +689,7 @@ fn candidate_parameters<'d>(
             declaration
                 .param_decls
                 .iter()
-                .filter(|decl| &*decl.id().owner == name),
+                .filter(|decl| mojito_symbol::symbol::owns_binder(name, &decl.id().owner)),
         );
     }
     // A method's struct parameters, and those of the struct whose method a
@@ -1752,7 +1752,10 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 declaration
                     .param_decls
                     .iter()
-                    .filter(|decl| *decl.id().owner == *callee && !removed.contains(decl.id()))
+                    .filter(|decl| {
+                        mojito_symbol::symbol::owns_binder(callee, &decl.id().owner)
+                            && !removed.contains(decl.id())
+                    })
                     .collect()
             })
             .unwrap_or_default();

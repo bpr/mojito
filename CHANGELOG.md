@@ -794,6 +794,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An overloaded `def`, struct method, or trait requirement now types its
+  signature once, as upstream does: its binders are owned by a
+  declaration-relative owner fixed before typing (`pick@decl1`,
+  `symbol::declaration_owner`), and its signature-qualified symbol is
+  spelled from the typed signature afterwards, where the check typed a
+  generic overload's signature twice under a provisional owner to spell
+  that symbol. Symbols and instance names are unchanged; a mismatched
+  compile-time parameter of such an overload now names the function
+  rather than its provisional owner (R1771).
 - No declaration's symbol is spelled from its annotation syntax any
   longer, as upstream names every declaration from its resolved
   signature: an overloaded trait requirement, and so its default's member,

@@ -518,7 +518,8 @@ pub struct Checker {
     /// implementation independent of declaration order.
     declared_structs: declaration_table::DeclarationSet,
     /// The program's overloaded top-level names, so an overloaded `def` owns
-    /// its binders under the signature-qualified symbol MIR names it by: its
+    /// its binders under its declaration-relative owner and is named by the
+    /// signature-qualified symbol MIR names it by: its
     /// own, and an imported package's, answered from the package's
     /// declarations. Shared with the checked program it carries to MIR.
     overload_sets: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
@@ -564,6 +565,10 @@ pub struct Checker {
     /// The module functions the declaration pass bound ahead of every body,
     /// by statement, whose statement does not bind them again.
     predeclared_functions: HashSet<SourceSpan>,
+    /// Each module `def` name's declarations in source order, by
+    /// statement: an overloaded one's binder owner is its position here
+    /// ([`mojito_symbol::symbol::declaration_owner`]).
+    module_defs: HashMap<String, Vec<SourceSpan>>,
     /// The module constants whose initializer applies a callable, or reads
     /// such a constant: a parameter expression, never a type, so
     /// `comptime E = A` over one is a value binding and not an alias.
@@ -1121,6 +1126,7 @@ impl Checker {
             module_trait_constants: HashSet::new(),
             predeclared_constants: HashSet::new(),
             predeclared_functions: HashSet::new(),
+            module_defs: HashMap::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
             constrained_module_constants: HashMap::new(),
             constrained_local_constants: HashMap::new(),

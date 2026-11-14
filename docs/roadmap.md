@@ -212,6 +212,11 @@ which names the upstream pass each one follows. Each is measured by the
   - The parameter list is classified twice too:
     `classify_applicable_signatures` beside `classify_params` in
     `def_signature` / `method_signature_owned_by`.
+  - Probe: the two classifications own one declaration's binders under
+    two owners, the entry's `symbol::applicable_owner` (`f@applicable1`)
+    and the check's (`f`, or `symbol::declaration_owner`'s `f@decl1` for
+    an overload); after the entry's classification is deleted, one owner
+    remains.
   - The obstacle: the demand chain is `&self` (`ty_from_anno` →
     `applied_call` / `violated_application_constraint` →
     `selected_application_at`), and emitting a signature pushes onto the
@@ -9810,24 +9815,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `symbol::ModuleNames` with `ProgramConstants`' impl of it.
   - Found while landing R1770 (2026-11-14).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1771 An overloaded generic declaration's signature is typed twice
-  to name it**
-
-  A binder is owned by its declaration's lowered symbol (`ParamId::owner`),
-  so an overloaded generic `def` types its signature once under
-  `symbol::naming_owner` just to spell that symbol, then again under it;
-  upstream types a signature once, its binders declaration-relative, and
-  derives the mangled name afterward.
-  - The readers of owner == symbol: `mir/param_uses.rs`'s owner filters,
-    `native/mono/specializer.rs`'s removed-parameter keys, and the MIR
-    text format's binder spelling.
-  - Same direction as R1768: declaration-relative binder identity.
-  - Probe: an overloaded generic trait requirement types twice the same
-    way (`Checker::requirement_signature`, `traits.rs`).
-  - Found while landing R600 (2026-10-31).
-  - Depends on R1770.
   - Model: Fable, Not Planned.
 
 - [ ] **R561 A package body's types name the package check's binding

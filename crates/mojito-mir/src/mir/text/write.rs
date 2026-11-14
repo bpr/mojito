@@ -2725,7 +2725,7 @@ fn checked_const(value: &CheckedConst) -> String {
     }
 }
 /// A parameter expression in schema 1.1's typed structural form. Operands
-/// print in canonical order, references by owner symbol and slot (or by
+/// print in canonical order, references by binder owner and slot (or by
 /// signature depth and index); no address or process-local key is written.
 /// A vector's lane dtype: the dtype's name, or `ct_expr(...)` while the slot
 /// is a parameter expression (the `simd` type record and the SIMD

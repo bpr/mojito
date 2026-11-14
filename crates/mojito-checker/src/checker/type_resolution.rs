@@ -782,7 +782,9 @@ impl Checker {
             .is_generator_of(&mojito_types::param_expr::MetaTy::value(expected.clone()))
         {
             return Err(TypeError::ParamValueType {
-                callee: decl.id().owner.to_string(),
+                callee: mojito_symbol::symbol::declaration_owner_name(&decl.id().owner)
+                    .unwrap_or(&decl.id().owner)
+                    .to_string(),
                 param: decl.name().to_string(),
                 expected: expected.to_string(),
                 found: generator.meta().to_string(),
@@ -3777,7 +3779,9 @@ impl Checker {
                             error => return Err(error),
                         };
                         return Err(TypeError::ParamValueType {
-                            callee: decl.id().owner.to_string(),
+                            callee: mojito_symbol::symbol::declaration_owner_name(&decl.id().owner)
+                                .unwrap_or(&decl.id().owner)
+                                .to_string(),
                             param: name.clone(),
                             expected,
                             found,
@@ -4664,7 +4668,9 @@ impl Checker {
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
         let mismatch = |found: String| TypeError::ParamValueType {
-            callee: decl.id().owner.to_string(),
+            callee: mojito_symbol::symbol::declaration_owner_name(&decl.id().owner)
+                .unwrap_or(&decl.id().owner)
+                .to_string(),
             param: decl.name().to_string(),
             expected: TyKind::AnyTrait(bound.to_vec()).to_string(),
             found,

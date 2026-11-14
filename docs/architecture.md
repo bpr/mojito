@@ -1846,20 +1846,23 @@ second expression tree.
   same line.
 - A reference is owned by its declaration (`ParamId { owner, slot }`), so
   same-spelled parameters of unrelated declarations differ and a `$` clone
-  shares its template's. An overloaded module-level `def` is owned by the
-  signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
-  of one name never share a binder. The checker spells that symbol once from
-  the typed signature, by the key a call to it spells
-  (`callable_lowered_name`); a generic overload's signature is typed first
-  under a provisional owner (`symbol::naming_owner`) to spell it, its lifts
-  there forgotten, and then again under the symbol. An overloaded struct method is owned the
-  same way, by the symbol its template lowers to (`Box.pick$ov$…`): the
-  check spells it once from the method's registered `MethodSig`
-  (`register_struct_method_signatures`, `method_lowered_name`, a generic
-  one's signature typed first under `naming_owner`), records it per
-  `GenericSite::Method` (`Checker::method_binder_owner` reads it, a `$`
-  clone its template's), and the checked builder declares the method under
-  it. A packaged method is named by its package build's check and imported
+  shares its template's. An overloaded module-level `def` is owned by its
+  declaration-relative owner (`symbol::declaration_owner`, `tally@decl1`:
+  its position among the module's `def`s of that name), fixed before its
+  signature is typed, as upstream names a generator's parameters by their
+  declaration, so two overloads of one name never share a binder and the
+  signature is typed once. The checker then spells the symbol MIR names it
+  by (`tally$ov$…`) from the typed signature, by the key a call to it spells
+  (`callable_lowered_name`); the symbol names the declaration, never its
+  binders. An overloaded struct method is owned the same way, by
+  `Box.pick@decl2`, its index among its struct's methods
+  (`Checker::method_binder_owner`, a `$` clone sharing its template's): the
+  check spells its symbol (`Box.pick$ov$…`) once from the method's typed
+  `MethodSig` (`register_struct_method_signatures`, `method_lowered_name`),
+  records it per `GenericSite::Method`, and the checked builder declares the
+  method under it. A reader selecting a declaration's own binders among its
+  struct's tests `symbol::owns_binder`, which accepts the symbol itself or
+  the declaration owner of the overload base it qualifies. A packaged method is named by its package build's check and imported
   with its `MethodSig::overload`, never from its body, which a packaged
   declaration does not carry. The lowered symbol spells the method's own binders
   with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
@@ -1871,9 +1874,10 @@ second expression tree.
   method owner) both number a binder by `TypeParam::binder_slot` — its
   position with the erased `Origin`/`OriginSet` parameters and their
   mutability binders skipped — so one binder has one id in both. A trait requirement is owned by
-  `Trait.method`, or, overloaded, by the symbol `method_lowered_name` spells
+  `Trait.method`, or, overloaded, by its declaration owner
+  (`Picker.pick@decl0`) and named by the symbol `method_lowered_name` spells
   from its typed `MethodSig` (`Picker.pick$ov$T$Copyable`), as a struct
-  method's is: `OverloadSets` counts requirements as it counts struct
+  method is: `OverloadSets` counts requirements as it counts struct
   methods. That symbol names its default's member (`DefaultShape::member`);
   a default's identity is its declaration's position among its trait's
   methods (`DefaultShape::declared_at`), and a conformer's wrapper builds

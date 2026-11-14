@@ -475,10 +475,10 @@ impl Checker {
 
     /// Requirement `m` of trait `name`, its `index`-th method, typed, and
     /// the member symbol it is named by: `Trait.method`, or, when the trait
-    /// overloads the name, the symbol its typed signature spells, which
-    /// owns its binders so two overloads whose slots agree still bind
-    /// distinct parameters, as [`Self::declared_method_signature`] names a
-    /// struct's method.
+    /// overloads the name, the symbol its typed signature spells. An
+    /// overload's binders are owned by its declaration-relative owner, so
+    /// two overloads whose slots agree still bind distinct parameters, as
+    /// [`Self::declared_method_signature`] owns a struct's method's.
     fn requirement_signature(
         &mut self,
         name: &str,
@@ -494,22 +494,9 @@ impl Checker {
             let sig = self.requirement_signature_owned_by(name, m, &source)?;
             return Ok((sig, source));
         }
-        let provisional = mojito_symbol::symbol::naming_owner(&source, index as u64);
-        if m.type_params.is_empty() {
-            // Binder-free, the signature types the same under any owner.
-            let sig = self.requirement_signature_owned_by(name, m, &provisional)?;
-            let symbol = method_lowered_name(&owner_name, &method_name, &sig, None);
-            return Ok((sig, symbol));
-        }
-        // The signature is typed under a provisional owner to spell the
-        // symbol that owns its binders, and its lifts there are forgotten.
-        let lifted = self.lifted_applications.borrow().len();
-        let counts = self.lifted_counts.borrow().clone();
-        let named = self.requirement_signature_owned_by(name, m, &provisional);
-        self.lifted_applications.borrow_mut().truncate(lifted);
-        *self.lifted_counts.borrow_mut() = counts;
-        let symbol = method_lowered_name(&owner_name, &method_name, &named?, None);
-        let sig = self.requirement_signature_owned_by(name, m, &symbol)?;
+        let owner = mojito_symbol::symbol::declaration_owner(&source, index);
+        let sig = self.requirement_signature_owned_by(name, m, &owner)?;
+        let symbol = method_lowered_name(&owner_name, &method_name, &sig, None);
         Ok((sig, symbol))
     }
 
@@ -1505,9 +1492,9 @@ impl Checker {
     }
 
     /// Method `m`'s parameter types and signature, the `method_index`-th of
-    /// struct `declaration`: an overloaded one's binders owned by the symbol
-    /// the check spells once from its typed signature, the key a call to it
-    /// spells, which [`Self::method_binder_owner`] then reads.
+    /// struct `declaration`, typed once under its binder owner
+    /// ([`Self::method_binder_owner`]): an overloaded one's symbol is
+    /// spelled from its typed signature, the key a call to it spells.
     fn declared_method_signature(
         &mut self,
         declaration: &StructDeclaration<'_>,
@@ -1515,65 +1502,28 @@ impl Checker {
         m: &Method,
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
         let name = declaration.name;
-        let module = declaration.module.as_ref();
         let method_name = lifecycle_method_name(m);
-        let overloaded = self
+        let owner = self.method_binder_owner(name, method_index, m);
+        let (all_types, mut sig) =
+            self.method_signature_owned_by(declaration, method_index, m, &owner)?;
+        if !self
             .overload_sets
-            .method_is_overloaded(&format!("{name}.{method_name}"), m.params.len());
-        if !overloaded {
-            let owner = self.method_binder_owner(module, name, method_index, m);
-            return self.method_signature_owned_by(declaration, method_index, m, &owner);
+            .method_is_overloaded(&format!("{name}.{method_name}"), m.params.len())
+        {
+            return Ok((all_types, sig));
         }
-        let recorded = self.recorded_method_owner(module, name, method_index);
-        let provisional = mojito_symbol::symbol::naming_owner(name, method_index as u64);
-        let (all_types, mut sig, owned_by) = match recorded {
-            Some(owner) => {
-                let (all_types, sig) =
-                    self.method_signature_owned_by(declaration, method_index, m, &owner)?;
-                (all_types, sig, None)
-            }
-            // Binder-free, the signature types the same under any owner.
-            None if m.type_params.is_empty() => {
-                let (all_types, sig) =
-                    self.method_signature_owned_by(declaration, method_index, m, &provisional)?;
-                (all_types, sig, None)
-            }
-            None => {
-                // The binders are owned by the symbol the typed signature
-                // spells, so the signature is typed under a provisional owner
-                // to spell it, and its lifts there are forgotten.
-                let lifted = self.lifted_applications.borrow().len();
-                let counts = self.lifted_counts.borrow().clone();
-                let named =
-                    self.method_signature_owned_by(declaration, method_index, m, &provisional);
-                self.lifted_applications.borrow_mut().truncate(lifted);
-                *self.lifted_counts.borrow_mut() = counts;
-                let symbol = method_lowered_name(
-                    name,
-                    method_name,
-                    &named?.1,
-                    self.self_instance_ty(name).as_ref(),
-                );
-                let (all_types, sig) =
-                    self.method_signature_owned_by(declaration, method_index, m, &symbol)?;
-                (all_types, sig, Some(symbol))
-            }
-        };
         let site = mojito_checked::checked::GenericSite::Method {
             module: declaration.module.clone(),
             declaration: name.to_string(),
             method: method_index,
         };
-        // A clone's own symbol is spelled from its own signature, whose
-        // binders its template's symbol owns.
-        let symbol = owned_by.unwrap_or_else(|| {
-            method_lowered_name(
-                name,
-                method_name,
-                &sig,
-                self.self_instance_ty(name).as_ref(),
-            )
-        });
+        // A clone's own symbol is spelled from its own signature.
+        let symbol = method_lowered_name(
+            name,
+            method_name,
+            &sig,
+            self.self_instance_ty(name).as_ref(),
+        );
         sig.overload = mojito_symbol::symbol::overload_qualifier(&symbol).map(str::to_string);
         self.declaration_symbols.borrow_mut().insert(site, symbol);
         Ok((all_types, sig))

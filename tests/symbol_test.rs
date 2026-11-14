@@ -587,16 +587,41 @@ fn struct_alias_overload_keys_agree_between_declaration_and_call() {
 }
 
 #[test]
-fn naming_owner_never_reaches_mir() {
-    // A generic overload's signature is typed under a provisional owner to
-    // spell its symbol; no binder lowered to MIR is owned by it.
+fn overloaded_generic_binders_are_declaration_relative() {
+    // An overload's binders are owned by its declaration, fixed before its
+    // signature is typed; the symbol its typed signature spells names the
+    // declaration and owns no binder.
     for src in [STRUCT_ARGUMENT_PAIRS, STRUCT_ALIAS_OVERLOADS] {
-        let lowered = lower_program(&linked_program(src)).expect("type error");
-        let spelled = format!("{:?}", lowered.functions);
-        assert!(
-            !spelled.contains("@naming"),
-            "a provisional owner reached MIR"
-        );
+        let mir = lower_program(&linked_program(src)).expect("type error");
+        let mut overloads = 0;
+        for declaration in &mir.declarations.functions {
+            let name = &declaration.lowered_name;
+            for decl in &declaration.param_decls {
+                let owner = &*decl.id().owner;
+                assert!(
+                    !owner.contains("$ov$"),
+                    "'{name}' has a binder owned by symbol '{owner}'"
+                );
+            }
+            let Some(qualifier) = mojito::symbol::overload_qualifier(name) else {
+                continue;
+            };
+            let base = &name[..name.len() - qualifier.len()];
+            let own: Vec<_> = declaration
+                .param_decls
+                .iter()
+                .filter(|decl| mojito::symbol::owns_binder(name, &decl.id().owner))
+                .collect();
+            overloads += usize::from(!own.is_empty());
+            for decl in own {
+                assert_eq!(
+                    mojito::symbol::declaration_owner_name(&decl.id().owner),
+                    Some(base),
+                    "'{name}' owns a binder of another declaration"
+                );
+            }
+        }
+        assert!(overloads > 0, "no overloaded generic declaration");
     }
 }
 
