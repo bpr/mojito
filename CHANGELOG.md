@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `comptime if conforms_to(T, Copyable):` over a plain `def`'s `Movable`
+  parameter, inferred from its argument, decides per instance as at the
+  pin, so a move-only struct takes the `else` (R280, already fixed by the
+  elaborator's template-served `conforms_to` repair;
+  `assets/ok/conforms_to_condition_generic_def.mojo`).
+
 - A compile-time arm now knows that every earlier condition in its chain
   failed, as upstream's `buildBranchAssumption` builds it, so `comptime if
   not conforms_to(T, Writable): ... else: print(x)`, the same `elif`, a

@@ -6211,20 +6211,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R280 `comptime if conforms_to(T, X):` over a `def`'s parameter fails**
-
-  Problem: `def tag[T: Movable](x: T)` holding `comptime if conforms_to(T,
-  Copyable):` prints `copyable` at the pin, while Mojito stops with
-  "invalid checked program: fn '$comptime$tag$0': register r0 has no
-  checked type".
-  - The template-served `comptime if` outlines its condition into a thunk,
-    and the thunk's MIR carries `conforms_to` as an untyped call over type
-    operands.
-  - The same condition over `Self.T` in a struct method runs.
-  - Probe: `conformance/probes/conforms_to_condition_generic_def.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R1147 A type proposition over a type parameter is not a runtime
   value**
 
