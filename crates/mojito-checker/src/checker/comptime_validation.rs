@@ -150,11 +150,12 @@ pub(super) struct ForwardedPack {
 /// included.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
-    /// The declaration's key among its name's overloads, the symbol its
-    /// syntax spells, which owns its argument slots' binders. Overloads may
-    /// share it (a copy initializer and a move one), so the entry is found
-    /// by [`Self::site`].
-    key: String,
+    /// The owner of its own compile-time parameters' binders, and its
+    /// argument slots': declaration-relative, its listed name and its
+    /// position among that name's overloads
+    /// ([`mojito_symbol::symbol::applicable_owner`]), and a nested `def`'s
+    /// name, as its check owns them.
+    owner: String,
     /// The declaration it lists: a module `def`'s statement, a method's
     /// index among its struct's, or the struct itself for the synthesized
     /// fieldwise `__init__`. A source location is local to the check of
@@ -162,10 +163,12 @@ pub(in crate::checker) struct ApplicableFunction {
     /// registers, has none.
     #[serde(skip)]
     site: Option<mojito_checked::checked::GenericSite>,
-    /// The symbol the check spelled the declaration from its typed
-    /// signature, once it has: an overloaded module `def` or method is
-    /// listed before any signature is typed.
-    lowered: Option<String>,
+    /// The MIR declaration it names: its plain name, or, when its name is
+    /// overloaded, the symbol its typed signature spells, once its
+    /// signature classifies ([`Checker::classify_applicable_signatures`]),
+    /// which its registered signature then reads; `None` until it does,
+    /// and an unclassified callable is applied by no call.
+    symbol: Option<String>,
     /// The enclosing binders a nested `def`'s generator is applied to
     /// before its own arguments, in the elaborator's order
     /// ([`NestedScope::binders`]); empty for a module declaration.
@@ -261,9 +264,9 @@ pub(in crate::checker) enum FoldedBody {
 }
 
 impl ApplicableFunction {
-    /// The MIR declaration the elaborator runs.
-    pub(in crate::checker) fn symbol(&self) -> &str {
-        self.lowered.as_deref().unwrap_or(&self.key)
+    /// The MIR declaration the elaborator runs ([`Self::symbol`]).
+    pub(in crate::checker) fn symbol(&self) -> Option<&str> {
+        self.symbol.as_deref()
     }
 
     /// How many of its [`Self::argument_slots`] are run-time arguments, the
@@ -287,7 +290,7 @@ impl ApplicableFunction {
     pub(in crate::checker) fn argument_slots(&self, owner: Option<&Ty>) -> Option<Vec<ParamDecl>> {
         let signature = self.signature.as_ref()?;
         let binder = |slot: usize, name: &str| {
-            super::annotations::builtin_body_binder(&self.key, slot, name)
+            super::annotations::builtin_body_binder(&self.owner, slot, name)
         };
         let subst: TySubst = signature
             .decls
@@ -573,6 +576,9 @@ pub(super) struct ApplicableDeclaration<'a> {
     /// The struct statement declaring a static method or an `__init__`;
     /// `None` for a module `def`.
     pub(super) owner: Option<&'a Stmt>,
+    /// The method it is, `None` for a module `def` or a synthesized
+    /// fieldwise `__init__`.
+    method: Option<&'a mojito_ast::ast::Method>,
     /// Its own compile-time parameters as it declares them.
     type_params: &'a [mojito_ast::ast::TypeParam],
 }
@@ -715,18 +721,15 @@ impl Checker {
         let Some(binding) = self.lookup_owner(name) else {
             return;
         };
-        let Some(mut declaration) = applicable_declarations(
-            std::slice::from_ref(stmt),
-            &*self.overload_sets,
-            &*self.program_constants,
-        )
-        .pop() else {
+        let Some(mut declaration) =
+            applicable_declarations(std::slice::from_ref(stmt), &*self.overload_sets).pop()
+        else {
             return;
         };
         let function = &mut declaration.function;
         // Its own binders are owned by its name, as its check owns them.
-        function.key.clone_from(name);
-        function.lowered = Some(symbol);
+        function.owner.clone_from(name);
+        function.symbol = Some(symbol);
         function.enclosing = enclosing
             .iter()
             .map(|decl| match decl {
@@ -917,10 +920,9 @@ pub(super) fn kgen_deferred_runtime_call(callee: &str) -> TypeError {
 pub(super) fn applicable_functions(
     stmts: &[Stmt],
     overloads: &impl mojito_symbol::symbol::OverloadLookup,
-    constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> HashMap<String, Vec<ApplicableFunction>> {
     let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
-    for declaration in applicable_declarations(stmts, overloads, constants) {
+    for declaration in applicable_declarations(stmts, overloads) {
         functions
             .entry(declaration.name)
             .or_default()
@@ -933,9 +935,14 @@ pub(super) fn applicable_functions(
 pub(super) fn applicable_declarations<'a>(
     stmts: &'a [Stmt],
     overloads: &impl mojito_symbol::symbol::OverloadLookup,
-    constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> Vec<ApplicableDeclaration<'a>> {
     let mut declarations = Vec::new();
+    let mut listed = HashMap::<String, usize>::new();
+    let mut owner = |name: &str| {
+        let ordinal = listed.entry(name.to_string()).or_default();
+        *ordinal += 1;
+        mojito_symbol::symbol::applicable_owner(name, *ordinal - 1)
+    };
     for statement in stmts {
         match &statement.kind {
             StmtKind::Def {
@@ -964,27 +971,25 @@ pub(super) fn applicable_declarations<'a>(
                     where_clauses,
                     gate: None,
                 };
-                let symbol = mojito_symbol::symbol::lowered_def_name(
-                    name,
-                    type_params,
-                    params,
-                    overloads,
-                    constants,
-                );
+                let symbol =
+                    (!overloads.function_is_overloaded(name, params.len())).then(|| name.clone());
                 let site = mojito_checked::checked::GenericSite::Function {
                     module: statement.module.clone(),
                     declaration: statement.span,
                     syntax: statement.syntax_id,
                 };
-                declarations.extend(shape.applicable(symbol, site, false, SelfSlot::None).map(
-                    |function| ApplicableDeclaration {
-                        name: name.clone(),
-                        function,
-                        body,
-                        owner: None,
-                        type_params,
-                    },
-                ));
+                declarations.extend(
+                    shape
+                        .applicable(owner(name), symbol, site, false, SelfSlot::None)
+                        .map(|function| ApplicableDeclaration {
+                            name: name.clone(),
+                            function,
+                            body,
+                            owner: None,
+                            method: None,
+                            type_params,
+                        }),
+                );
             }
             StmtKind::Struct {
                 name,
@@ -1007,6 +1012,7 @@ pub(super) fn applicable_declarations<'a>(
                             function,
                             body: method.map_or(&[], |method| method.body.as_slice()),
                             owner: Some(statement),
+                            method,
                             type_params: method.map_or(&[], |method| method.type_params.as_slice()),
                         }));
                     };
@@ -1036,18 +1042,33 @@ pub(super) fn applicable_declarations<'a>(
                         where_clauses: &[],
                         gate: None,
                     };
-                    let symbol = format!("{name}.__init__");
                     let site = mojito_checked::checked::GenericSite::Struct {
                         module: statement.module.clone(),
                         declaration: name.clone(),
                     };
                     list(
                         name.clone(),
-                        shape.applicable(symbol, site, on_instance, SelfSlot::Constructed),
+                        shape.applicable(
+                            owner(name),
+                            Some(format!("{name}.__init__")),
+                            site,
+                            on_instance,
+                            SelfSlot::Constructed,
+                        ),
                         None,
                     );
                 }
                 for (index, method) in methods.iter().enumerate() {
+                    // A name the struct does not overload is its plain
+                    // `Type.method` symbol.
+                    let plain = {
+                        let source = format!(
+                            "{name}.{}",
+                            mojito_symbol::symbol::lifecycle_method_name(method)
+                        );
+                        (!overloads.method_is_overloaded(&source, method.params.len()))
+                            .then_some(source)
+                    };
                     // The index `register_struct_method_signatures` registers
                     // the method's signature at.
                     let site = mojito_checked::checked::GenericSite::Method {
@@ -1069,15 +1090,14 @@ pub(super) fn applicable_declarations<'a>(
                             where_clauses: &method.where_clauses,
                             gate: synthesized_gate(method),
                         };
-                        let symbol = mojito_symbol::symbol::lowered_method_name(
-                            &format!("{name}.__init__"),
-                            type_params,
-                            mojito_symbol::symbol::MethodShape::of(method),
-                            overloads,
-                            constants,
-                        );
                         let function = shape
-                            .applicable(symbol, site, on_instance, SelfSlot::Constructed)
+                            .applicable(
+                                owner(name),
+                                plain,
+                                site,
+                                on_instance,
+                                SelfSlot::Constructed,
+                            )
                             .map(|function| ApplicableFunction {
                                 refined_self: method.self_type.clone(),
                                 ..function
@@ -1119,17 +1139,12 @@ pub(super) fn applicable_declarations<'a>(
                         gate: synthesized_gate(method),
                     };
                     let source = format!("{name}.{}", method.name);
-                    let symbol = mojito_symbol::symbol::lowered_method_name(
-                        &source,
-                        type_params,
-                        mojito_symbol::symbol::MethodShape::of(method),
-                        overloads,
-                        constants,
-                    );
+                    let function_owner = owner(&source);
                     list(
                         source,
                         shape.applicable(
-                            symbol,
+                            function_owner,
+                            plain,
                             site,
                             on_instance,
                             if method.has_self {
@@ -2307,7 +2322,8 @@ impl Checker {
                 overloads
                     .and_then(|overloads| {
                         overloads.iter().find(|function| {
-                            function.constructs() && function.symbol() == conversion.target
+                            function.constructs()
+                                && function.symbol() == Some(conversion.target.as_str())
                         })
                     })
                     .ok_or_else(|| {
@@ -2443,7 +2459,9 @@ impl Checker {
         }
         if function.raises {
             return Err(TypeError::BadCall {
-                func: function.symbol().to_string(),
+                func: function
+                    .symbol()
+                    .map_or_else(|| selected.name.clone(), str::to_string),
                 reason: "cannot call raising function in type parameter".to_string(),
             });
         }
@@ -2587,7 +2605,7 @@ impl Checker {
     /// argument.
     pub(super) fn calls_raising_application(&self, expr: &Expr) -> Option<&str> {
         let function = self.selected_application(expr)?.function;
-        function.raises.then_some(function.symbol())
+        function.symbol().filter(|_| function.raises)
     }
 
     /// Emit the `where` clauses of each callable `stmts` declare that a
@@ -2663,8 +2681,10 @@ impl Checker {
                 else {
                     return true;
                 };
+                let symbol = self.classified_symbol(declaration, &signature, &params);
                 if let Some(entry) = self.applicable_entry(declaration) {
                     classify_entry(entry, signature, params);
+                    entry.symbol = entry.symbol.take().or(symbol);
                 }
                 false
             });
@@ -2685,7 +2705,7 @@ impl Checker {
         let folded: HashSet<String> = declarations
             .iter()
             .filter(|declaration| declaration.function.folded_body.is_some())
-            .map(|declaration| declaration.function.symbol().to_string())
+            .filter_map(|declaration| declaration.function.symbol().map(str::to_string))
             .collect();
         if folded.is_empty() {
             return;
@@ -2712,8 +2732,7 @@ impl Checker {
         &self,
         stmts: &'a [Stmt],
     ) -> Vec<ApplicableDeclaration<'a>> {
-        let mut declarations =
-            applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants);
+        let mut declarations = applicable_declarations(stmts, &*self.overload_sets);
         for declaration in &mut declarations {
             if let Some(listed) =
                 self.applicable_functions
@@ -2728,30 +2747,6 @@ impl Checker {
             }
         }
         declarations
-    }
-
-    /// Name the entry [`applicable_functions`] lists for the overloaded
-    /// module `def` `statement` by `symbol`, the one the check spelled from
-    /// its typed signature.
-    pub(super) fn name_applicable_def(&mut self, statement: &Stmt, symbol: &str) {
-        if let Some(entry) = self.listed_def_entry(statement) {
-            entry.lowered = Some(symbol.to_string());
-        }
-    }
-
-    /// Name the entry [`applicable_functions`] lists for the overloaded
-    /// method `m`, the `method`-th of struct `declaration`, by `symbol`, the
-    /// one the check spelled from its typed signature.
-    pub(super) fn name_applicable_method(
-        &mut self,
-        declaration: &super::StructDeclaration<'_>,
-        method: usize,
-        m: &mojito_ast::ast::Method,
-        symbol: &str,
-    ) {
-        if let Some(entry) = self.listed_method_entry(declaration, method, m) {
-            entry.lowered = Some(symbol.to_string());
-        }
     }
 
     /// The `where` clauses of module `def` `statement` as its one emission
@@ -2860,6 +2855,102 @@ impl Checker {
             .find(|function| function.site.as_ref() == Some(&site))
     }
 
+    /// The symbol an overloaded `declaration` lowers to, named once its
+    /// own compile-time parameters classify as `signature` and its declared
+    /// runtime parameters as `params`: the one its registration recorded,
+    /// or else the one the classified signature spells, recorded for its
+    /// registration to read, as upstream names a declaration from its
+    /// resolved signature. `None` for a callable named at listing.
+    fn classified_symbol(
+        &self,
+        declaration: &ApplicableDeclaration<'_>,
+        signature: &AppliedSignature,
+        params: &[Option<Ty>],
+    ) -> Option<String> {
+        let function = &declaration.function;
+        if function.symbol.is_some() {
+            return None;
+        }
+        let site = function.site.clone()?;
+        if let Some(recorded) = self.declaration_symbols.borrow().get(&site) {
+            return Some(recorded.clone());
+        }
+        let structure = declaration.owner.and_then(|owner| match &owner.kind {
+            StmtKind::Struct { name, .. } => Some(name.as_str()),
+            _ => None,
+        });
+        let instance: Option<Ty> = structure.and_then(|name| {
+            let info = self.structs.get(name)?;
+            Some(TyKind::Struct(name.to_string(), info.self_arguments()).into())
+        });
+        let mut declared = params.iter();
+        let mut slot_ty = |slot: &SlotType| {
+            let declared = declared.next().cloned().flatten();
+            match slot {
+                SlotType::Scalar(ty) => Some(ty.clone()),
+                SlotType::Owner => instance.clone(),
+                SlotType::Declared(..) => declared,
+            }
+        };
+        let mut types = function
+            .params
+            .iter()
+            .map(|param| slot_ty(&param.ty))
+            .collect::<Option<Vec<_>>>()?;
+        if let Some(collector) = &function.collector {
+            types.insert(
+                collector.index.min(types.len()),
+                slot_ty(&collector.element)?,
+            );
+        }
+        let names: Vec<String> = function
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        let symbol = match (structure, declaration.method) {
+            (Some(structure), Some(method)) => super::overload_support::method_parts_symbol(
+                structure,
+                mojito_symbol::symbol::lifecycle_method_name(method),
+                super::overload_support::SignatureParts {
+                    types: types.iter().collect(),
+                    kw_variadic: None,
+                    keyword_names: function
+                        .keyword_only
+                        .map(|index| names[index.min(names.len())..].to_vec())
+                        .unwrap_or_default(),
+                    decls: &signature.decls,
+                },
+                self.self_instance_ty(structure).as_ref(),
+                method.has_self,
+                method.self_convention,
+            ),
+            (None, None) => super::overload_support::function_parts_symbol(
+                &declaration.name,
+                super::overload_support::SignatureParts {
+                    types: types.iter().collect(),
+                    kw_variadic: None,
+                    keyword_names: function
+                        .collector
+                        .as_ref()
+                        .map(|collector| names[collector.index.min(names.len())..].to_vec())
+                        .unwrap_or_default(),
+                    decls: &signature.decls,
+                },
+                &function
+                    .params
+                    .iter()
+                    .map(|param| param.convention)
+                    .collect::<Vec<_>>(),
+            ),
+            _ => return None,
+        };
+        self.declaration_symbols
+            .borrow_mut()
+            .insert(site, symbol.clone());
+        Some(symbol)
+    }
+
     /// `declaration`'s own compile-time parameters classified, its result
     /// over them, and the type of each runtime parameter its signature
     /// declares rather than spells ([`SlotType::Declared`]), its
@@ -2870,7 +2961,7 @@ impl Checker {
     ) -> Option<(AppliedSignature, Vec<Option<Ty>>)> {
         let function = &declaration.function;
         let decls = self
-            .classify_params(&function.key, declaration.type_params)
+            .classify_params(&function.owner, declaration.type_params)
             .ok()?;
         if decls.iter().filter(|decl| !decl.is_pack_list()).count() != function.binders.len() {
             return None;
@@ -3282,7 +3373,7 @@ impl Checker {
         tied.push(application);
         let mut ranked: Vec<_> = if let Some(target) = self.run_time_overload(expr) {
             tied.into_iter()
-                .filter(|selected| selected.function.symbol() == target)
+                .filter(|selected| selected.function.symbol() == Some(target.as_str()))
                 .collect()
         } else {
             let rank = |selected: &Selected<'_>| {
@@ -3382,9 +3473,9 @@ impl Checker {
         };
         let name = template_name(name).to_string();
         let function = self.applicable_functions.get(&name).and_then(|overloads| {
-            overloads
-                .iter()
-                .find(|function| function.constructs() && function.symbol() == symbol)
+            overloads.iter().find(|function| {
+                function.constructs() && function.symbol() == Some(symbol.as_str())
+            })
         });
         let (Some(function), Some(info)) = (function, self.structs.get(name.as_str())) else {
             return Some(Err(TypeError::Unsupported(format!(
@@ -3531,7 +3622,9 @@ impl Checker {
             .applicable_functions
             .get(family)?
             .iter()
-            .find(|candidate| candidate.symbol() == function && candidate.folded_body.is_some())?;
+            .find(|candidate| {
+                candidate.symbol() == Some(function) && candidate.folded_body.is_some()
+            })?;
         let (instance, arguments) = if function.on_instance {
             let (instance, arguments) = args.split_first()?;
             let instance = match instance.kind() {
@@ -3606,7 +3699,7 @@ impl Checker {
                 mutability: mojito_types::origin::Mutability::Immutable,
             });
             let application = self.param_context.apply(
-                function.symbol(),
+                function.symbol()?,
                 &applied,
                 mojito_types::param_expr::MetaTy::value(reference.into()),
             );
@@ -3617,7 +3710,7 @@ impl Checker {
                 .map(|value| (value, false));
         }
         let application = self.param_context.apply(
-            function.symbol(),
+            function.symbol()?,
             &applied,
             mojito_types::param_expr::MetaTy::value(result),
         );
@@ -3648,7 +3741,7 @@ impl Checker {
         };
         let mut bindings = mojito_types::param_expr::ParamBindings::new();
         for (slot, argument) in arguments.iter().enumerate() {
-            let id = super::annotations::builtin_body_binder(&function.key, slot, "").id;
+            let id = super::annotations::builtin_body_binder(&function.owner, slot, "").id;
             // A `ref` slot's body reads the referent its reference holds.
             let Ok(argument) = self.param_context.referent(argument) else {
                 return BuiltinFold::Unbound;
@@ -6959,6 +7052,9 @@ struct ApplicableParameter {
     /// passes stored in compile-time memory, as the pin's does
     /// (`apply(bc, store_to_mem(s))`).
     by_reference: bool,
+    /// Its declared convention, which its overload symbol spells when it
+    /// is owned.
+    convention: Option<ArgConvention>,
 }
 
 /// An [`ApplicableFunction`]'s positional collector (`*xs: Int`, `*xs:
@@ -7066,11 +7162,13 @@ struct ApplicableShape<'a> {
 }
 
 impl ApplicableShape<'_> {
-    /// The callable under `symbol`, when a compile-time call can apply it,
-    /// whose `self` is `self_slot`.
+    /// The callable whose binders `owner` owns, named `symbol` unless its
+    /// name is overloaded, when a compile-time call can apply it, whose
+    /// `self` is `self_slot`.
     fn applicable(
         &self,
-        symbol: String,
+        owner: String,
+        symbol: Option<String>,
         site: mojito_checked::checked::GenericSite,
         on_instance: bool,
         self_slot: SelfSlot,
@@ -7142,14 +7240,15 @@ impl ApplicableShape<'_> {
                     ty: slot(&param.ty).filter(|_| passed)?,
                     default: param.default.clone(),
                     by_reference: param.convention == Some(ArgConvention::Ref),
+                    convention: param.convention,
                 })
             })
             .collect::<Option<Vec<_>>>()?;
         let ret = mojito_ast::ast::named_result(self.params).map_or(self.ret, |result| &result.ty);
         Some(ApplicableFunction {
-            key: symbol,
+            owner,
             site: Some(site),
-            lowered: None,
+            symbol,
             enclosing: Vec::new(),
             on_instance,
             self_slot,

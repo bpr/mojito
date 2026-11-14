@@ -161,45 +161,35 @@ fn method_and_constructor_overloads_get_qualified_names() {
 
 #[test]
 fn overloaded_trait_requirements_get_qualified_names() {
-    // Each overloaded requirement owns its binders under its qualified name,
-    // so two `pick[T]` requirements bind distinct `T`s.
-    use mojito::ast::StmtKind;
-    use mojito::symbol::{MethodShape, OverloadSets, lowered_method_name};
-    let program = parse(
-        "trait Picker:\n\
-         \x20   def pick[T: Copyable](self, a: T) -> T: ...\n\
-         \x20   def pick[T: Copyable](self, a: T, b: T) -> T: ...\n\
-         \x20   def size(self) -> Int: ...\n",
-    )
-    .expect("parse error");
-    let sets = OverloadSets::scan(&program);
-    let owners: Vec<_> = program
-        .iter()
-        .filter_map(|stmt| match &stmt.kind {
-            StmtKind::Trait { methods, .. } => Some(methods),
-            _ => None,
-        })
-        .flatten()
-        .map(|m| {
-            lowered_method_name(
-                &format!("Picker.{}", m.name),
-                &[],
-                MethodShape {
-                    type_params: &[],
-                    params: &m.params,
-                    keyword_only: m.keyword_only,
-                    has_self: true,
-                    self_convention: m.self_convention,
-                },
-                &sets,
-                &mojito::symbol::NoModuleNames,
-            )
-        })
-        .collect();
-    assert_eq!(
-        owners,
-        ["Picker.pick$ov$T", "Picker.pick$ov$T$T", "Picker.size"],
-    );
+    // The check names each overloaded requirement from its typed signature
+    // and owns its binders under that symbol, so two `pick[T]` requirements
+    // bind distinct `T`s; a default's member is named by it.
+    let src = "trait Picker:\n\
+         \x20   def pick[T: Copyable](self, a: T) -> T:\n\
+         \x20       return a.copy()\n\
+         \x20   def pick[T: Copyable](self, a: T, b: T) -> T:\n\
+         \x20       return b.copy()\n\
+         \x20   def size(self) -> Int:\n\
+         \x20       return 0\n";
+    let mir = lower_program(&linked_program(src)).expect("type error");
+    for symbol in [
+        "Picker.pick$ov$T$Copyable",
+        "Picker.pick$ov$T$Copyable$T$Copyable",
+        "Picker.size",
+    ] {
+        let declaration = mir
+            .declarations
+            .function(symbol)
+            .unwrap_or_else(|| panic!("{symbol} declared"));
+        assert!(
+            declaration
+                .param_decls
+                .iter()
+                .all(|decl| &*decl.id().owner == symbol),
+            "{symbol}: {:?}",
+            declaration.param_decls
+        );
+    }
 }
 
 #[test]

@@ -37,11 +37,8 @@ impl Checker {
         // whose symbol spells it.
         self.fold_module_constants(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
-        let applicable = super::comptime_validation::applicable_functions(
-            stmts,
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
+        let applicable =
+            super::comptime_validation::applicable_functions(stmts, &*self.overload_sets);
         self.applicable_functions.extend(applicable);
         for statement in stmts {
             if let StmtKind::Def {
@@ -3942,7 +3939,6 @@ impl Checker {
                 self.def_signature_owned_by(stmt, &shape, provisional, unavailable, required)?;
             let symbol = symbol_of(&signature)?;
             signature.owner.clone_from(&symbol);
-            self.name_applicable_def(stmt, &symbol);
             self.declaration_symbols.borrow_mut().insert(site, symbol);
             return Ok(signature);
         }
@@ -3962,7 +3958,6 @@ impl Checker {
         self.lifted_applications.borrow_mut().truncate(lifted);
         *self.lifted_counts.borrow_mut() = counts;
         let symbol = symbol_of(&named?)?;
-        self.name_applicable_def(stmt, &symbol);
         self.declaration_symbols
             .borrow_mut()
             .insert(site, symbol.clone());

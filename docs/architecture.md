@@ -1871,9 +1871,17 @@ second expression tree.
   method owner) both number a binder by `TypeParam::binder_slot` — its
   position with the erased `Origin`/`OriginSet` parameters and their
   mutability binders skipped — so one binder has one id in both. A trait requirement is owned by
-  `Trait.method`, or, overloaded, by the symbol `lowered_method_name` gives
-  it (`Picker.pick$ov$T`): `OverloadSets` counts requirements as it counts
-  struct methods. A type binder is the same identity: `ParamDecl`
+  `Trait.method`, or, overloaded, by the symbol `method_lowered_name` spells
+  from its typed `MethodSig` (`Picker.pick$ov$T$Copyable`), as a struct
+  method's is: `OverloadSets` counts requirements as it counts struct
+  methods. That symbol names its default's member (`DefaultShape::member`);
+  a default's identity is its declaration's position among its trait's
+  methods (`DefaultShape::declared_at`), and a conformer's wrapper builds
+  its forwarding body when it registers, once its trait has named the
+  member. A compile-time-applicable entry's binders are owned
+  declaration-relatively (`symbol::applicable_owner`), and an overloaded
+  entry is named when its signature classifies, from that signature, and
+  recorded for its registration to read. A type binder is the same identity: `ParamDecl`
   carries its `id`, `TyKind::Param { binder: ParamRef }` compares by it, and every
   type substitution is a `TySubst` keyed by it; an anonymous callable
   contract declares its binders under its own owner

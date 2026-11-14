@@ -26,8 +26,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use mojito_ast::ast::{
-    AnnotatedParam, ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, Method, ParamArg,
-    ParamKind, Stmt, StmtKind, Type, TypeParam,
+    AnnotatedParam, ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt,
+    StmtKind, Type, TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
@@ -850,8 +850,8 @@ pub fn overload_family(lowered_name: &str) -> Option<OverloadFamily<'_>> {
 /// (and at which arities).
 ///
 /// A trait's requirements count under `Trait.method`, so an overloaded
-/// requirement owns its binders under the symbol [`lowered_method_name`]
-/// qualifies it to.
+/// requirement owns its binders under the symbol the check spells from its
+/// typed signature.
 ///
 /// Definitions of non-overloaded names keep their plain source name, so
 /// lowering consults this before qualifying anything. The scan also keeps the
@@ -1051,126 +1051,6 @@ impl OverloadLookup for OverloadSets {
     }
 }
 
-/// The name a top-level `def` lowers to: signature-qualified when the name is
-/// overloaded, the plain source name otherwise.
-///
-/// A module integer constant the signature names spells as the value
-/// `constants` answers, its declaration's.
-pub fn lowered_def_name<P: AnnotatedParam>(
-    name: &str,
-    type_params: &[TypeParam],
-    params: &[P],
-    sets: &impl OverloadLookup,
-    constants: &dyn ModuleNames,
-) -> String {
-    if sets.function_is_overloaded(name, params.len()) {
-        function_symbol(
-            name,
-            // A free function has no enclosing struct, so no `Self` to canonicalize.
-            // The parameters after a `*args` collector are keyword-only, and
-            // their names tell `f(a: Int, *rest: Int)` from
-            // `f(*rest: Int, a: Int)`, whose type sequences agree.
-            &signature_from_ast(params, type_params, constants, None)
-                .with_keyword_names(keyword_only_names(params, None))
-                .with_parameter_names(explicit_parameter_names(type_params))
-                .with_owned_params(
-                    &params
-                        .iter()
-                        .filter(|param| param.kind() == ParamKind::Regular)
-                        .map(DeclaredParam::convention)
-                        .collect::<Vec<_>>(),
-                ),
-        )
-    } else {
-        name.to_string()
-    }
-}
-
-/// The signature facts of a struct method or trait requirement that its
-/// lowered symbol spells.
-#[derive(Debug)]
-pub struct MethodShape<'a, P = FnParam> {
-    /// The method's own compile-time parameters.
-    pub type_params: &'a [TypeParam],
-    pub params: &'a [P],
-    pub keyword_only: Option<usize>,
-    pub has_self: bool,
-    pub self_convention: Option<ArgConvention>,
-}
-
-impl<P> Clone for MethodShape<'_, P> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<P> Copy for MethodShape<'_, P> {}
-
-impl<'a> MethodShape<'a> {
-    pub fn of(m: &'a Method) -> Self {
-        Self {
-            type_params: &m.type_params,
-            params: &m.params,
-            keyword_only: m.keyword_only,
-            has_self: m.has_self,
-            self_convention: m.self_convention,
-        }
-    }
-}
-
-/// The name a struct method lowers to, from its already-joined source name
-/// (`Type.method`): signature-qualified when overloaded, unchanged otherwise.
-///
-/// The key spells every binder in scope — the struct's `type_params`, then
-/// the method's own — with its bounds, exactly as the checker's `TyKind::Param`
-/// spells a call's selected overload, so the symbol a call names is the one
-/// MIR declares. A module integer constant spells as [`lowered_def_name`]
-/// spells one.
-pub fn lowered_method_name<P: AnnotatedParam>(
-    source_name: &str,
-    type_params: &[TypeParam],
-    method: MethodShape<'_, P>,
-    sets: &impl OverloadLookup,
-    constants: &dyn ModuleNames,
-) -> String {
-    let MethodShape {
-        type_params: method_type_params,
-        params,
-        keyword_only,
-        has_self,
-        self_convention,
-    } = method;
-    if sets.method_is_overloaded(source_name, params.len()) {
-        // The enclosing struct's own instance type canonicalizes to `Self` in
-        // the parameter keys, so a same-arity `self`-typed overload keys as
-        // `$ov$Self` and matches the call side's canonicalized key.
-        let self_spelling = split_method_symbol(source_name)
-            .and_then(|(type_name, _)| self_struct_spelling(type_name, type_params));
-        let scope: Vec<TypeParam> = type_params
-            .iter()
-            .chain(method_type_params)
-            .cloned()
-            .collect();
-        let signature = signature_from_ast(params, &scope, constants, self_spelling.as_deref())
-            .with_keyword_names(keyword_only_names(params, keyword_only))
-            .with_parameter_names(explicit_parameter_names(method_type_params));
-        match split_method_symbol(source_name)
-            .filter(|(_, method)| receiver_overloaded_method(method))
-        {
-            Some((type_name, method)) => {
-                if has_self {
-                    receiver_method_symbol(type_name, method, self_convention, &signature)
-                } else {
-                    static_method_symbol(type_name, method, &signature)
-                }
-            }
-            None => format!("{source_name}{}", signature.suffix()),
-        }
-    } else {
-        source_name.to_string()
-    }
-}
-
 /// The name a method is *registered and counted* under.
 ///
 /// Current Mojo spells the copy constructor as an `__init__` overload with an
@@ -1234,6 +1114,15 @@ pub fn lifecycle_name<P: AnnotatedParam>(shape: LifecycleShape<'_, P>) -> &str {
 /// identified by its owner and slot alone, not by its spelling.
 pub fn naming_owner(name: &str, site: u64) -> String {
     format!("{name}@naming{site}")
+}
+
+/// The binder owner of a compile-time-applicable callable's entry.
+///
+/// The entry is the `ordinal`-th listed under `listed`, the name a call
+/// spells, so the owner is relative to its declaration; no lowered symbol
+/// spells it.
+pub fn applicable_owner(listed: &str, ordinal: usize) -> String {
+    format!("{listed}@applicable{ordinal}")
 }
 
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
@@ -2527,136 +2416,6 @@ fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashS
                 None
             }
         })
-        .collect()
-}
-
-fn signature_from_ast<P: AnnotatedParam>(
-    params: &[P],
-    type_params: &[TypeParam],
-    comptimes: &dyn ModuleNames,
-    self_spelling: Option<&str>,
-) -> SignatureKey {
-    let type_bounds = binder_spellings(type_params, comptimes);
-    let key = |param: &P| {
-        TypeKey(sanitize(&ast_raw(
-            denoted_annotation(params, param.annotation()),
-            comptimes,
-            &type_bounds,
-            self_spelling,
-        )))
-    };
-    SignatureKey {
-        types: params
-            .iter()
-            .filter(|param| param.kind() != ParamKind::KwVariadic)
-            .map(key)
-            .collect(),
-        kw_variadic: params
-            .iter()
-            .find(|param| param.kind() == ParamKind::KwVariadic)
-            .map(key),
-        keywords: Vec::new(),
-        owned: Vec::new(),
-        parameters: Vec::new(),
-        packs: Vec::new(),
-    }
-}
-
-/// The annotation a parameter's type denotes: `type_of(x)` over another
-/// parameter `x` of the same list is `x`'s own annotation, as the call side
-/// keys the type `x` resolved to rather than the `type_of` spelling.
-fn denoted_annotation<'a, P: AnnotatedParam>(params: &'a [P], annotation: &'a Type) -> &'a Type {
-    let mut annotation = annotation;
-    for _ in params {
-        let Type::TypeOf(operand) = annotation else {
-            break;
-        };
-        let ExprKind::Identifier(name) = &operand.kind else {
-            break;
-        };
-        let Some(named) = params.iter().find(|param| param.name() == name) else {
-            break;
-        };
-        annotation = named.annotation();
-    }
-    annotation
-}
-
-/// The `ty_raw` mangling of a struct's own instance type, reconstructed from its
-/// name and type parameters — the declaration-side spelling of `Self`. Mirrors
-/// `ty_raw(TyKind::Struct(name, decls.map(param_as_arg)))`: the struct name followed
-/// by each type parameter (`Pair`, `List$T$AnyType`). Origin parameters and
-/// the infer-only `Bool` binders of their mutability are erased exactly as the
-/// checker erases them from the struct's declarations, so a view struct such
-/// as `StringSpan[mut: Bool, //, origin: Origin[mut=mut]]` spells `StringSpan`
-/// and its bare-annotation parameters (`sep: StringSpan`) canonicalize to
-/// `Self` on both sides. Returns `None` when the struct carries other value
-/// or callable parameters (whose argument mangling this cheap reconstruction
-/// does not reproduce), leaving those rare `Self`-typed overloads at their
-/// prior behavior rather than risking a mismatched key.
-fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<String> {
-    // The nominal String struct already mangles its own type as the stable
-    // `String` spelling on both sides (see `ty_raw`/`ast_raw`), so its overload
-    // keys are not asymmetric and must not be rewritten to `Self` — every
-    // String key would churn for no gain.
-    if is_stdlib_string_struct(type_name) {
-        return None;
-    }
-    let retained: Vec<&TypeParam> = type_params
-        .iter()
-        .filter(|param| {
-            !matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                && !param.is_origin_mutability_binder(type_params)
-        })
-        .collect();
-    let all_type_params = retained.iter().all(|param| {
-        param.value_type.is_none()
-            && param.callable_bound.is_none()
-            && param.origin_mutability.is_none()
-            && !param.name.starts_with('*')
-    });
-    if !all_type_params {
-        return None;
-    }
-    let type_bounds: HashMap<String, BinderSpelling> = retained
-        .iter()
-        .map(|param| (param.name.clone(), BinderSpelling::bounded(param)))
-        .collect();
-    let mut spelling = encode_identifier(type_name);
-    for param in retained {
-        spelling.push('$');
-        spelling.push_str(&parameter_raw(&param.name, &type_bounds));
-    }
-    Some(spelling)
-}
-
-/// The names of the keyword-only parameters, part of overload identity.
-/// Parameters after a `*` marker or a variadic collector are keyword-only;
-/// the collectors themselves are not named parameters.
-/// The names a call may bind in brackets: every compile-time parameter after
-/// the `//` infer-only marker, a pack's without its `*`.
-fn explicit_parameter_names(type_params: &[TypeParam]) -> impl Iterator<Item = &str> {
-    type_params
-        .iter()
-        .filter(|param| !param.infer_only)
-        .map(|param| param.name.as_str())
-}
-
-fn keyword_only_names<P: DeclaredParam>(params: &[P], keyword_only: Option<usize>) -> Vec<String> {
-    let variadic = params
-        .iter()
-        .position(|param| param.kind() == ParamKind::Variadic);
-    let boundary = match (keyword_only, variadic) {
-        (Some(marker), Some(variadic)) => marker.min(variadic + 1),
-        (Some(marker), None) => marker,
-        (None, Some(variadic)) => variadic + 1,
-        (None, None) => return Vec::new(),
-    };
-    params
-        .iter()
-        .skip(boundary)
-        .filter(|param| !matches!(param.kind(), ParamKind::Variadic | ParamKind::KwVariadic))
-        .map(|param| param.name().to_string())
         .collect()
 }
 

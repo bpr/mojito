@@ -794,6 +794,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- No declaration's symbol is spelled from its annotation syntax any
+  longer, as upstream names every declaration from its resolved
+  signature: an overloaded trait requirement, and so its default's member,
+  is named from its typed signature, a default is identified by its
+  declaration and its conformer's forwarding body is built once its trait
+  has named the member, and an overloaded compile-time-applicable callable
+  is named from its signature when it classifies, its binders owned
+  declaration-relatively. An application built before its callee
+  registered could name a symbol no declaration had
+  (`SIMDLength.__init__$ov$IntLiteral$$u24$value…` for the declared
+  `SIMDLength.__init__$ov$IntLiteral`); it now names the declared one.
+  `symbol::{lowered_def_name, lowered_method_name, MethodShape}` are gone
+  (R1770). A default's overload key is still spelled from syntax (R2217).
+
 - No module binding names a trait default's member any longer: its check
   records the member's callable type on its trait's default, and a
   conformer's wrapper resolves its forwarding call through the trait's

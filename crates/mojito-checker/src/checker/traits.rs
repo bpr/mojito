@@ -420,7 +420,7 @@ impl Checker {
                     }
                 }
             }
-            for m in methods {
+            for (index, m) in methods.iter().enumerate() {
                 self.check_decorators(
                     DecoratorSite::TraitMethod {
                         init: m.name == "__init__",
@@ -431,136 +431,7 @@ impl Checker {
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
-                // An overloaded requirement owns its binders under the
-                // symbol its signature qualifies it to, so two overloads
-                // whose slots agree still bind distinct parameters.
-                let owner = mojito_symbol::symbol::lowered_method_name(
-                    &format!("{}.{}", binder_owner(name), binder_owner(&m.name)),
-                    &[],
-                    mojito_symbol::symbol::MethodShape {
-                        type_params: &m.type_params,
-                        params: &m.params,
-                        keyword_only: m.keyword_only,
-                        has_self: true,
-                        self_convention: m.self_convention,
-                    },
-                    &*self.overload_sets,
-                    &*self.program_constants,
-                );
-                let decls = self.classify_params(&owner, &m.type_params)?;
-                self.push_param_scope(&decls);
-                let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
-                    if let Some(annotation) = &m.self_type {
-                        let ty = this.ty_from_anno(annotation)?;
-                        if ty != Ty::self_type() {
-                            return Err(TypeError::InvalidReceiver(format!(
-                                "'self' argument must have type 'Self' in trait method declaration, but actually has type '{ty}'"
-                            )));
-                        }
-                    }
-                    let defaults = m
-                        .params
-                        .iter()
-                        .map(|param| {
-                            param
-                                .default
-                                .as_ref()
-                                .map(|default| this.requirement_default(default, &decls))
-                                .transpose()
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let all_types = this.param_tys(&m.params)?;
-                    let ret = match &m.ret {
-                        Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent)?,
-                        Some(t) => this.ty_from_anno(t)?,
-                        None => Ty::none(),
-                    };
-                    let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
-                    // The pin rejects a requirement's `where` clause.
-                    if !m.where_clauses.is_empty() {
-                        return Err(TypeError::Unsupported(
-                            "'where' clauses on trait methods are not supported".to_string(),
-                        ));
-                    }
-                    Ok((defaults, all_types, ret, error))
-                });
-                self.pop_param_scope();
-                let (defaults, all_types, ret, error) = signature?;
-                self.check_result_origins(
-                    m.ret.as_ref(),
-                    &m.params,
-                    &all_types,
-                    Some((m.self_convention, &Ty::self_type())),
-                )?;
-                let collectors = Collectors::of(&m.params, m.keyword_only, &all_types);
-                if let Some(index) = collectors.kw_variadic_index {
-                    self.kwargs_collector_ty(
-                        all_types[index].clone(),
-                        &format!("trait method '{}.{}' keyword collector", name, m.name),
-                    )?;
-                }
-                let regular: Vec<_> = m
-                    .params
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, param)| param.kind == mojito_ast::ast::ParamKind::Regular)
-                    .collect();
-                let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
-                let ref_return = match &m.ret {
-                    Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
-                        origin.as_ref().ok_or_else(|| {
-                            TypeError::Unsupported(
-                                "reference return requires an origin".to_string(),
-                            )
-                        })?,
-                        &m.type_params,
-                        &regular_params,
-                        0,
-                    )?),
-                    _ => None,
-                };
-                let sig = MethodSig {
-                    decls,
-                    availability: Vec::new(),
-                    has_self: true,
-                    params: regular
-                        .iter()
-                        .map(|(index, _)| all_types[*index].clone())
-                        .collect(),
-                    names: regular
-                        .iter()
-                        .map(|(_, param)| param.name.clone())
-                        .collect(),
-                    required: required_mask(&regular_params, collectors.keyword_only)?,
-                    defaults: regular
-                        .iter()
-                        .map(|(index, _)| defaults[*index].clone())
-                        .collect(),
-                    variadic: collectors.variadic,
-                    variadic_index: collectors.variadic_index,
-                    variadic_convention: collectors.variadic_convention,
-                    variadic_name: collectors.variadic_name,
-                    kw_variadic: collectors.kw_variadic,
-                    kw_variadic_index: collectors.kw_variadic_index,
-                    positional_only: m.positional_only,
-                    keyword_only: collectors.keyword_only,
-                    conventions: regular.iter().map(|(_, param)| param.convention).collect(),
-                    ret,
-                    raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
-                    error,
-                    self_convention: m.self_convention,
-                    refined_self: None,
-                    ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
-                    ref_return,
-                    view_return_interior: view_return_interior_tags(m.ret.as_ref()),
-                    view_return: Vec::new(),
-                    implicit: false,
-                    parametric_origin_writes: Vec::new(),
-                    origin_binders: vec![None; regular_params.len()],
-                    synthesized_default: false,
-                    nested_origins: NestedOrigins::AsDeclared,
-                    overload: None,
-                };
+                let (sig, member) = self.requirement_signature(name, m, index)?;
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
                     same_method_shape(existing, &sig)
@@ -569,7 +440,7 @@ impl Checker {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
                 if m.default_body.is_some() {
-                    default_overloads.push(overloads.len());
+                    default_overloads.push((overloads.len(), member));
                 }
                 requirements.push((m.name.clone(), m.params.len(), overloads.len()));
                 overloads.push(sig);
@@ -579,17 +450,12 @@ impl Checker {
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
         self.self_decls = saved_self_decls;
-        let shapes = super::trait_defaults::default_shapes(
-            name,
-            methods,
-            &*self.overload_sets,
-            &*self.program_constants,
-        );
+        let shapes = super::trait_defaults::default_shapes(methods);
         let (methods, default_overloads, requirements) = result?;
         let defaults = shapes
             .into_iter()
             .zip(default_overloads)
-            .map(|(shape, overload)| shape.at_overload(overload))
+            .map(|(shape, (overload, member))| shape.at_requirement(overload, member))
             .collect();
         self.traits.insert(
             name.to_string(),
@@ -605,6 +471,169 @@ impl Checker {
             },
         );
         Ok(())
+    }
+
+    /// Requirement `m` of trait `name`, its `index`-th method, typed, and
+    /// the member symbol it is named by: `Trait.method`, or, when the trait
+    /// overloads the name, the symbol its typed signature spells, which
+    /// owns its binders so two overloads whose slots agree still bind
+    /// distinct parameters, as [`Self::declared_method_signature`] names a
+    /// struct's method.
+    fn requirement_signature(
+        &mut self,
+        name: &str,
+        m: &mojito_ast::ast::TraitMethod,
+        index: usize,
+    ) -> Result<(MethodSig, String), TypeError> {
+        let (owner_name, method_name) = (binder_owner(name), binder_owner(&m.name));
+        let source = format!("{owner_name}.{method_name}");
+        if !self
+            .overload_sets
+            .method_is_overloaded(&source, m.params.len())
+        {
+            let sig = self.requirement_signature_owned_by(name, m, &source)?;
+            return Ok((sig, source));
+        }
+        let provisional = mojito_symbol::symbol::naming_owner(&source, index as u64);
+        if m.type_params.is_empty() {
+            // Binder-free, the signature types the same under any owner.
+            let sig = self.requirement_signature_owned_by(name, m, &provisional)?;
+            let symbol = method_lowered_name(&owner_name, &method_name, &sig, None);
+            return Ok((sig, symbol));
+        }
+        // The signature is typed under a provisional owner to spell the
+        // symbol that owns its binders, and its lifts there are forgotten.
+        let lifted = self.lifted_applications.borrow().len();
+        let counts = self.lifted_counts.borrow().clone();
+        let named = self.requirement_signature_owned_by(name, m, &provisional);
+        self.lifted_applications.borrow_mut().truncate(lifted);
+        *self.lifted_counts.borrow_mut() = counts;
+        let symbol = method_lowered_name(&owner_name, &method_name, &named?, None);
+        let sig = self.requirement_signature_owned_by(name, m, &symbol)?;
+        Ok((sig, symbol))
+    }
+
+    /// Requirement `m` of trait `name` typed with `Self` the abstract
+    /// conforming type, its own binders owned by `owner`.
+    fn requirement_signature_owned_by(
+        &mut self,
+        name: &str,
+        m: &mojito_ast::ast::TraitMethod,
+        owner: &str,
+    ) -> Result<MethodSig, TypeError> {
+        let decls = self.classify_params(owner, &m.type_params)?;
+        self.push_param_scope(&decls);
+        let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
+            if let Some(annotation) = &m.self_type {
+                let ty = this.ty_from_anno(annotation)?;
+                if ty != Ty::self_type() {
+                    return Err(TypeError::InvalidReceiver(format!(
+                        "'self' argument must have type 'Self' in trait method declaration, but actually has type '{ty}'"
+                    )));
+                }
+            }
+            let defaults = m
+                .params
+                .iter()
+                .map(|param| {
+                    param
+                        .default
+                        .as_ref()
+                        .map(|default| this.requirement_default(default, &decls))
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let all_types = this.param_tys(&m.params)?;
+            let ret = match &m.ret {
+                Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent)?,
+                Some(t) => this.ty_from_anno(t)?,
+                None => Ty::none(),
+            };
+            let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
+            // The pin rejects a requirement's `where` clause.
+            if !m.where_clauses.is_empty() {
+                return Err(TypeError::Unsupported(
+                    "'where' clauses on trait methods are not supported".to_string(),
+                ));
+            }
+            Ok((defaults, all_types, ret, error))
+        });
+        self.pop_param_scope();
+        let (defaults, all_types, ret, error) = signature?;
+        self.check_result_origins(
+            m.ret.as_ref(),
+            &m.params,
+            &all_types,
+            Some((m.self_convention, &Ty::self_type())),
+        )?;
+        let collectors = Collectors::of(&m.params, m.keyword_only, &all_types);
+        if let Some(index) = collectors.kw_variadic_index {
+            self.kwargs_collector_ty(
+                all_types[index].clone(),
+                &format!("trait method '{}.{}' keyword collector", name, m.name),
+            )?;
+        }
+        let regular: Vec<_> = m
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.kind == mojito_ast::ast::ParamKind::Regular)
+            .collect();
+        let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
+        let ref_return = match &m.ret {
+            Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+                origin.as_ref().ok_or_else(|| {
+                    TypeError::Unsupported("reference return requires an origin".to_string())
+                })?,
+                &m.type_params,
+                &regular_params,
+                0,
+            )?),
+            _ => None,
+        };
+        let sig = MethodSig {
+            decls,
+            availability: Vec::new(),
+            has_self: true,
+            params: regular
+                .iter()
+                .map(|(index, _)| all_types[*index].clone())
+                .collect(),
+            names: regular
+                .iter()
+                .map(|(_, param)| param.name.clone())
+                .collect(),
+            required: required_mask(&regular_params, collectors.keyword_only)?,
+            defaults: regular
+                .iter()
+                .map(|(index, _)| defaults[*index].clone())
+                .collect(),
+            variadic: collectors.variadic,
+            variadic_index: collectors.variadic_index,
+            variadic_convention: collectors.variadic_convention,
+            variadic_name: collectors.variadic_name,
+            kw_variadic: collectors.kw_variadic,
+            kw_variadic_index: collectors.kw_variadic_index,
+            positional_only: m.positional_only,
+            keyword_only: collectors.keyword_only,
+            conventions: regular.iter().map(|(_, param)| param.convention).collect(),
+            ret,
+            raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
+            error,
+            self_convention: m.self_convention,
+            refined_self: None,
+            ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
+            ref_return,
+            view_return_interior: view_return_interior_tags(m.ret.as_ref()),
+            view_return: Vec::new(),
+            implicit: false,
+            parametric_origin_writes: Vec::new(),
+            origin_binders: vec![None; regular_params.len()],
+            synthesized_default: false,
+            nested_origins: NestedOrigins::AsDeclared,
+            overload: None,
+        };
+        Ok(sig)
     }
 
     /// Register a struct and check its method bodies. A generic struct's type
@@ -1546,7 +1575,6 @@ impl Checker {
             )
         });
         sig.overload = mojito_symbol::symbol::overload_qualifier(&symbol).map(str::to_string);
-        self.name_applicable_method(declaration, method_index, m, &symbol);
         self.declaration_symbols.borrow_mut().insert(site, symbol);
         Ok((all_types, sig))
     }

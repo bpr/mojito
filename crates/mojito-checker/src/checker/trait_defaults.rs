@@ -107,12 +107,17 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct DefaultShape {
     pub(super) method: String,
-    /// Its trait's member symbol, `Trait.method`, signature-qualified as the
-    /// requirement's binder owner is when the name is overloaded.
-    pub(super) member: String,
+    /// Its position among its trait's methods: its identity, as the
+    /// declaration it is.
+    declared_at: usize,
+    /// Its trait's member symbol, `Trait.method`, spelled from its
+    /// requirement's typed signature when the name is overloaded, as its
+    /// binders are owned; the trait's check records it
+    /// ([`Self::at_requirement`]), so `None` until its trait registers.
+    pub(super) member: Option<String>,
     key: OverloadKey,
     /// Its requirement's position among its trait's same-name requirement
-    /// signatures, which the trait's check records ([`Self::at_overload`]).
+    /// signatures, which the trait's check records.
     overload: usize,
     /// Its declared parameter count, as the overload prescan counts it.
     pub(super) arity: usize,
@@ -145,9 +150,20 @@ pub(super) struct DefaultShape {
 }
 
 impl DefaultShape {
-    /// This default, its requirement the `overload`-th signature of its name.
-    pub(super) fn at_overload(self, overload: usize) -> Self {
-        Self { overload, ..self }
+    /// This default, its requirement the `overload`-th signature of its
+    /// name, which its trait's member `member` is named from.
+    pub(super) fn at_requirement(self, overload: usize, member: String) -> Self {
+        Self {
+            overload,
+            member: Some(member),
+            ..self
+        }
+    }
+
+    /// Whether `other` is this default: the same declaration of the same
+    /// trait.
+    fn same_default(&self, trait_name: &str, other: (&str, &Self)) -> bool {
+        (trait_name, self.declared_at) == (other.0, other.1.declared_at)
     }
 }
 
@@ -165,7 +181,7 @@ pub(super) struct TraitMember {
     trait_name: String,
     /// Its position among its trait's methods.
     method_index: usize,
-    /// Its member symbol ([`member_symbol`]).
+    /// Its member symbol ([`DefaultShape::member`]).
     lowered_name: String,
 }
 
@@ -185,6 +201,12 @@ pub(super) struct DefaultWrapper {
     /// Its member position: after the struct's spelled methods, in the order
     /// its defaults are reached.
     pub(super) method_index: usize,
+    /// The inheriting struct statement's span and syntax, which its body's
+    /// syntax derives from.
+    span: Span,
+    syntax_id: SyntaxId,
+    /// Its forwarding body, built once its trait has registered the
+    /// member it calls ([`Checker::register_default_wrappers`]).
     pub(super) body: Vec<Stmt>,
     /// The symbol it lowers to, which registration qualifies when the name
     /// is overloaded.
@@ -199,18 +221,15 @@ impl DefaultWrapper {
 }
 
 /// The defaults `methods` of trait `trait_name` declare, in order.
-pub(super) fn default_shapes(
-    trait_name: &str,
-    methods: &[TraitMethod],
-    sets: &impl OverloadLookup,
-    constants: &dyn mojito_symbol::symbol::ModuleNames,
-) -> Vec<DefaultShape> {
+pub(super) fn default_shapes(methods: &[TraitMethod]) -> Vec<DefaultShape> {
     methods
         .iter()
-        .filter(|method| method.default_body.is_some())
-        .map(|method| DefaultShape {
+        .enumerate()
+        .filter(|(_, method)| method.default_body.is_some())
+        .map(|(declared_at, method)| DefaultShape {
             method: method.name.clone(),
-            member: member_symbol(trait_name, method, sets, constants),
+            declared_at,
+            member: None,
             key: overload_key(
                 &method.name,
                 (&method.type_params, method.ret.as_ref()),
@@ -293,7 +312,7 @@ pub(super) fn inherited_defaults(
     // A default is as available as the conformances reaching it: always,
     // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
-    let mut conditions: HashMap<String, Option<&String>> = HashMap::new();
+    let mut conditions: HashMap<(String, usize), Option<&String>> = HashMap::new();
     for conformance in conforms {
         let condition = conformance_conditions
             .iter()
@@ -302,12 +321,15 @@ pub(super) fn inherited_defaults(
         let mut through = Vec::new();
         defaults_for(conformance, traits, &mut HashSet::new(), &mut through)?;
         for (trait_name, default) in through {
-            let member = default.member.clone();
-            if !reached.iter().any(|(_, seen)| seen.member == member) {
+            let identity = (trait_name.clone(), default.declared_at);
+            if !reached
+                .iter()
+                .any(|(seen_trait, seen)| default.same_default(&trait_name, (seen_trait, seen)))
+            {
                 reached.push((trait_name, default));
             }
             conditions
-                .entry(member)
+                .entry(identity)
                 .and_modify(|known| *known = known.and(condition))
                 .or_insert(condition);
         }
@@ -334,29 +356,25 @@ pub(super) fn inherited_defaults(
         }) {
             return Err(TypeError::TraitDefaultParameterConflict(conflict.clone()));
         }
-        let condition = conditions.get(&default.member).copied().flatten().cloned();
+        let condition = conditions
+            .get(&(trait_name.clone(), default.declared_at))
+            .copied()
+            .flatten()
+            .cloned();
         inherited.push((trait_name, default, condition));
     }
     Ok(inherited)
 }
 
 /// The wrapper of every default struct `stmt` inherits, as
-/// [`inherited_defaults`] reaches them, each body one statement calling the
-/// default's trait member with `Self` bound first and every argument forwarded,
-/// as `populateDefaultedTraitFunction` forwards it.
-///
-/// Each wrapper's syntax is derived from the struct statement's identity,
-/// so every check of the program builds the same occurrences.
+/// [`inherited_defaults`] reaches them, its body built once its trait has
+/// registered ([`Checker::register_default_wrappers`]).
 pub(super) fn default_wrappers(
     stmt: &Stmt,
     traits: &dyn Fn(&str) -> Option<TraitDefaults>,
 ) -> Result<Vec<DefaultWrapper>, TypeError> {
     let StmtKind::Struct { name, methods, .. } = &stmt.kind else {
         return Ok(Vec::new());
-    };
-    let mut ids = DeriveSyntax {
-        parent: stmt.syntax_id,
-        next: 0,
     };
     inherited_defaults(stmt, traits)?
         .into_iter()
@@ -365,11 +383,6 @@ pub(super) fn default_wrappers(
             if let Some(reason) = &shape.unforwardable {
                 return Err(TypeError::Unsupported(reason.clone()));
             }
-            let mut body = vec![forwarding_statement(&shape, stmt.span)];
-            if let Some(module) = &stmt.module {
-                mojito_ast::ast::stamp_source(&mut body, module);
-            }
-            walk_block_mut(&mut ids, &mut body);
             Ok(DefaultWrapper {
                 module: stmt.module.clone(),
                 declaration: name.clone(),
@@ -378,7 +391,9 @@ pub(super) fn default_wrappers(
                 shape,
                 gate,
                 method_index: methods.len() + index,
-                body,
+                span: stmt.span,
+                syntax_id: stmt.syntax_id,
+                body: Vec::new(),
             })
         })
         .collect()
@@ -401,18 +416,7 @@ impl Checker {
                     refines,
                     methods,
                     ..
-                } => Some((
-                    name.as_str(),
-                    (
-                        refines.clone(),
-                        default_shapes(
-                            name,
-                            methods,
-                            &*self.overload_sets,
-                            &*self.program_constants,
-                        ),
-                    ),
-                )),
+                } => Some((name.as_str(), (refines.clone(), default_shapes(methods)))),
                 _ => None,
             })
             .collect();
@@ -460,19 +464,39 @@ impl Checker {
     /// inherits, after its spelled methods: the default's resolved
     /// signature with `Self` the struct and its binders owned by the
     /// wrapper, as `synthesizeDefaultTraitMethodWrapper` builds the
-    /// wrapper's `FnOp` from `getTraitFunctionSignature`.
+    /// wrapper's `FnOp` from `getTraitFunctionSignature`. Its body is built
+    /// here, once its trait has registered the member it calls, one
+    /// statement calling that member with `Self` bound first and every
+    /// argument forwarded, as `populateDefaultedTraitFunction` forwards it.
+    ///
+    /// Each wrapper's syntax is derived from the struct statement's
+    /// identity, so every check of the program builds the same occurrences.
     pub(super) fn register_default_wrappers(
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
+        let mut ids = None;
         for slot in 0..self.default_wrappers.len() {
             let wrapper = &self.default_wrappers[slot];
             if !wrapper.inherited_by(declaration) {
                 continue;
             }
-            let wrapper = wrapper.clone();
-            let lowered = self.register_default_wrapper(declaration, &wrapper)?;
-            self.default_wrappers[slot].lowered_name = lowered;
+            let mut wrapper = wrapper.clone();
+            wrapper.shape = self.registered_default(&wrapper)?.clone();
+            let mut body = vec![forwarding_statement(&wrapper.shape, wrapper.span)?];
+            if let Some(module) = &wrapper.module {
+                mojito_ast::ast::stamp_source(&mut body, module);
+            }
+            walk_block_mut(
+                ids.get_or_insert(DeriveSyntax {
+                    parent: wrapper.syntax_id,
+                    next: 0,
+                }),
+                &mut body,
+            );
+            wrapper.body = body;
+            wrapper.lowered_name = self.register_default_wrapper(declaration, &wrapper)?;
+            self.default_wrappers[slot] = wrapper;
         }
         Ok(())
     }
@@ -506,8 +530,24 @@ impl Checker {
                 continue;
             };
             for (index, method) in methods.iter().enumerate() {
-                let symbol =
-                    member_symbol(name, method, &*self.overload_sets, &*self.program_constants);
+                if method.default_body.is_none() {
+                    continue;
+                }
+                let symbol = self
+                    .traits
+                    .get(name)
+                    .and_then(|info| {
+                        info.defaults
+                            .iter()
+                            .find(|default| default.declared_at == index)
+                    })
+                    .and_then(|default| default.member.clone())
+                    .ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "trait '{name}' records no member for default '{}'",
+                            method.name
+                        ))
+                    })?;
                 let Some(declaration) = trait_member_declaration(stmt, index, symbol.clone())
                 else {
                     continue;
@@ -519,7 +559,7 @@ impl Checker {
                 self.self_ty = None;
                 self.checking_trait_member = false;
                 checked?;
-                self.record_member_callable(name, &symbol, &declaration);
+                self.record_member_callable(name, index, &declaration);
                 self.trait_members.push(TraitMember {
                     module: stmt.module.clone(),
                     trait_name: name.clone(),
@@ -541,7 +581,7 @@ impl Checker {
             .get(trait_name)?
             .defaults
             .iter()
-            .find(|default| default.member == symbol)?
+            .find(|default| default.member.as_deref() == Some(symbol))?
             .callable
             .as_ref()
     }
@@ -602,10 +642,10 @@ impl Checker {
         Ok(())
     }
 
-    /// Record trait member `symbol`'s finalized callable type, which its
-    /// check recorded at `declaration`'s function site, on trait
-    /// `trait_name`'s default.
-    fn record_member_callable(&mut self, trait_name: &str, symbol: &str, declaration: &Stmt) {
+    /// Record the finalized callable type of trait `trait_name`'s member for
+    /// its `declared_at`-th method, which its check recorded at
+    /// `declaration`'s function site, on that method's default.
+    fn record_member_callable(&mut self, trait_name: &str, declared_at: usize, declaration: &Stmt) {
         let site = mojito_checked::checked::AnnotationSite::FunctionType {
             module: declaration.module.clone(),
             declaration: declaration.span,
@@ -615,7 +655,7 @@ impl Checker {
         if let Some(default) = self.traits.get_mut(trait_name).and_then(|info| {
             info.defaults
                 .iter_mut()
-                .find(|default| default.member == symbol)
+                .find(|default| default.declared_at == declared_at)
         }) {
             default.callable = callable;
         }
@@ -655,7 +695,7 @@ impl Checker {
                 method: wrapper.shape.method.clone(),
                 method_index: wrapper.method_index,
                 lowered_name: wrapper.lowered_name.clone(),
-                member: wrapper.shape.member.clone(),
+                member: wrapper.shape.member.clone().unwrap_or_default(),
                 self_convention: wrapper.shape.receiver,
                 params: wrapper.shape.params.clone(),
                 positional_only: wrapper.shape.positional_only,
@@ -680,11 +720,9 @@ impl Checker {
             .traits
             .get(&wrapper.trait_name)
             .and_then(|info| {
-                let default = info
-                    .defaults
-                    .iter()
-                    .find(|default| default.member == wrapper.shape.member)?;
-                info.methods.get(&default.method)?.get(default.overload)
+                info.methods
+                    .get(&wrapper.shape.method)?
+                    .get(wrapper.shape.overload)
             })
             .cloned()
             .ok_or_else(|| {
@@ -798,6 +836,23 @@ impl Checker {
         }
         overloads.push(sig);
         Ok(lowered)
+    }
+
+    /// `wrapper`'s default as its trait registered it, its member named.
+    fn registered_default(&self, wrapper: &DefaultWrapper) -> Result<&DefaultShape, TypeError> {
+        self.traits
+            .get(&wrapper.trait_name)
+            .and_then(|info| {
+                info.defaults
+                    .iter()
+                    .find(|default| default.declared_at == wrapper.shape.declared_at)
+            })
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "trait '{}' records no default '{}'",
+                    wrapper.trait_name, wrapper.shape.method
+                ))
+            })
     }
 
     /// Check `wrapper`'s forwarding body as the `overload_index`-th overload
@@ -922,36 +977,6 @@ impl Checker {
         self.pop_scope();
         result
     }
-}
-
-/// The member symbol default `method` of trait `trait_name` lowers to: the
-/// requirement's binder owner, `Trait.method`, signature-qualified when the
-/// trait overloads the name. Named by declaration, so it is stable across
-/// packages; source cannot spell a dotted callee, so no source name reaches
-/// it.
-fn member_symbol(
-    trait_name: &str,
-    method: &TraitMethod,
-    sets: &impl OverloadLookup,
-    constants: &dyn mojito_symbol::symbol::ModuleNames,
-) -> String {
-    mojito_symbol::symbol::lowered_method_name(
-        &format!(
-            "{}.{}",
-            super::annotations::binder_owner(trait_name),
-            super::annotations::binder_owner(&method.name)
-        ),
-        &[],
-        mojito_symbol::symbol::MethodShape {
-            type_params: &method.type_params,
-            params: &method.params,
-            keyword_only: method.keyword_only,
-            has_self: true,
-            self_convention: method.self_convention,
-        },
-        sets,
-        constants,
-    )
 }
 
 /// A compile-time parameter's name without a pack's leading `*`.
@@ -1100,7 +1125,7 @@ fn defaults_for(
     for default in defaults {
         if !reached
             .iter()
-            .any(|(_, seen)| seen.member == default.member)
+            .any(|(seen_trait, seen)| default.same_default(name, (seen_trait, seen)))
         {
             reached.push((name.to_string(), default));
         }
@@ -1153,7 +1178,7 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
 /// The one statement of a wrapper for `shape`: a call of its trait's member, with
 /// `Self` bound first and every argument forwarded with the convention it
 /// declares.
-fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
+fn forwarding_statement(shape: &DefaultShape, span: Span) -> Result<Stmt, TypeError> {
     let expr = |kind| Expr::new(kind, span);
     let name = |name: &str| expr(ExprKind::Identifier(name.to_string()));
     let transfer = |param: &str| expr(ExprKind::Transfer(Box::new(name(param))));
@@ -1198,8 +1223,14 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
             }),
         }
     }
+    let member = shape.member.clone().ok_or_else(|| {
+        TypeError::InvariantViolation(format!(
+            "the trait declaring default '{}' has not registered",
+            shape.method
+        ))
+    })?;
     let call = expr(ExprKind::Call {
-        name: shape.member.clone(),
+        name: member,
         param_args,
         args,
         kwargs,
@@ -1209,7 +1240,7 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
     } else {
         StmtKind::Expr(call)
     };
-    Stmt::new(statement, span)
+    Ok(Stmt::new(statement, span))
 }
 
 /// Number every node it walks as the next derivation of `parent`.

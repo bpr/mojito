@@ -351,15 +351,75 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
         .chain(variadic.iter())
         .chain(&params[collector_position..])
         .collect();
-    let signature = mojito_symbol::symbol::SignatureKey::from_tys(signature_types)
-        .with_kw_variadic(kw_variadic.as_ref())
-        .with_keyword_names(names[collector_position..].to_vec())
-        .with_owned_params(conventions)
-        .with_parameter_names(explicit_parameter_names(
-            ty.as_generic_func()
+    Some(function_parts_symbol(
+        name,
+        SignatureParts {
+            types: signature_types,
+            kw_variadic: kw_variadic.as_ref(),
+            keyword_names: names[collector_position..].to_vec(),
+            decls: ty
+                .as_generic_func()
                 .map_or(&[][..], |generic| &generic.decls),
-        ));
-    Some(mojito_symbol::symbol::function_symbol(name, &signature))
+        },
+        conventions,
+    ))
+}
+
+/// The facts of a typed signature its overload symbol spells: its
+/// parameter types in declared order, a positional collector's element at
+/// its position, its keyword collector's element, its keyword-only
+/// parameters' names, and its compile-time parameters.
+pub(super) struct SignatureParts<'a> {
+    pub(super) types: Vec<&'a Ty>,
+    pub(super) kw_variadic: Option<&'a Ty>,
+    pub(super) keyword_names: Vec<String>,
+    pub(super) decls: &'a [ParamDecl],
+}
+
+/// The overload symbol of free function `name` over `parts`, its regular
+/// parameters' declared `conventions` telling an owned one.
+pub(super) fn function_parts_symbol(
+    name: &str,
+    parts: SignatureParts<'_>,
+    conventions: &[Option<mojito_ast::ast::ArgConvention>],
+) -> String {
+    let signature = mojito_symbol::symbol::SignatureKey::from_tys(parts.types)
+        .with_kw_variadic(parts.kw_variadic)
+        .with_keyword_names(parts.keyword_names)
+        .with_owned_params(conventions)
+        .with_parameter_names(explicit_parameter_names(parts.decls));
+    mojito_symbol::symbol::function_symbol(name, &signature)
+}
+
+/// The overload symbol of method `method` of `type_name` over `parts`, its
+/// struct's instance type `self_ty` spelled `Self`, its receiver, when it
+/// `has_self`, taken by `self_convention`.
+pub(super) fn method_parts_symbol(
+    type_name: &str,
+    method: &str,
+    parts: SignatureParts<'_>,
+    self_ty: Option<&Ty>,
+    has_self: bool,
+    self_convention: Option<mojito_ast::ast::ArgConvention>,
+) -> String {
+    let signature = mojito_symbol::symbol::SignatureKey::from_tys_with_self(parts.types, self_ty)
+        .with_kw_variadic(parts.kw_variadic)
+        .with_keyword_names(parts.keyword_names)
+        .with_parameter_names(explicit_parameter_names(parts.decls));
+    if mojito_symbol::symbol::receiver_overloaded_method(method) {
+        if has_self {
+            mojito_symbol::symbol::receiver_method_symbol(
+                type_name,
+                method,
+                self_convention,
+                &signature,
+            )
+        } else {
+            mojito_symbol::symbol::static_method_symbol(type_name, method, &signature)
+        }
+    } else {
+        mojito_symbol::symbol::method_symbol(type_name, method, &signature)
+    }
 }
 
 /// The lowered symbol of an overloaded method/constructor resolution, likewise
@@ -385,30 +445,23 @@ pub(super) fn method_lowered_name(
             .min(signature_types.len());
         signature_types.insert(index, element);
     }
-    let signature_types = signature_types.into_iter();
     let keyword_names = match sig.keyword_only {
         Some(index) => sig.names[index..].to_vec(),
         None => Vec::new(),
     };
-    let signature =
-        mojito_symbol::symbol::SignatureKey::from_tys_with_self(signature_types, self_ty)
-            .with_kw_variadic(sig.kw_variadic.as_ref())
-            .with_keyword_names(keyword_names)
-            .with_parameter_names(explicit_parameter_names(&sig.decls));
-    if mojito_symbol::symbol::receiver_overloaded_method(method) {
-        if sig.has_self {
-            mojito_symbol::symbol::receiver_method_symbol(
-                type_name,
-                method,
-                sig.self_convention,
-                &signature,
-            )
-        } else {
-            mojito_symbol::symbol::static_method_symbol(type_name, method, &signature)
-        }
-    } else {
-        mojito_symbol::symbol::method_symbol(type_name, method, &signature)
-    }
+    method_parts_symbol(
+        type_name,
+        method,
+        SignatureParts {
+            types: signature_types,
+            kw_variadic: sig.kw_variadic.as_ref(),
+            keyword_names,
+            decls: &sig.decls,
+        },
+        self_ty,
+        sig.has_self,
+        sig.self_convention,
+    )
 }
 
 /// The names a call may bind in brackets, as the declaration side spells

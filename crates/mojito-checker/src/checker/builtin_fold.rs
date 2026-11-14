@@ -63,7 +63,7 @@ impl Checker {
                 return Err(error);
             }
             if !calls.is_empty() {
-                deferred.insert(declaration.function.symbol().to_string());
+                deferred.extend(declaration.function.symbol().map(str::to_string));
                 self.builtin_ordinary_calls.extend(calls);
             }
         }
@@ -72,11 +72,15 @@ impl Checker {
         loop {
             let unfolded: HashSet<String> = pending
                 .iter()
-                .map(|declaration| declaration.function.symbol().to_string())
+                .filter_map(|declaration| declaration.function.symbol().map(str::to_string))
                 .collect();
             let before = pending.len();
             pending.retain(|declaration| {
-                if deferred.contains(declaration.function.symbol()) {
+                if declaration
+                    .function
+                    .symbol()
+                    .is_some_and(|symbol| deferred.contains(symbol))
+                {
                     return true;
                 }
                 let Some(body) = self
@@ -1028,7 +1032,7 @@ impl Checker {
     ) -> Option<Vec<(String, ParamExpr)>> {
         let self_ty = self.self_ty.clone()?;
         let (constructed, declared) = self.constructed_fields(declaration)?;
-        let symbol = declaration.function.symbol();
+        let symbol = declaration.function.symbol()?;
         let mut slots: Vec<ParamExpr> = declaration
             .function
             .argument_slots(Some(&self_ty))?

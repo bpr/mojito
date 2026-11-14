@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2217**.
+Next free ID: **R2218**.
 
 ## Ordered Work
 
@@ -2876,7 +2876,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   beside `def g[n: Int]() -> Int: return 2` prints `2`, where the pin
   prints `1`.
   - A free function's lowered name spells its run-time signature only
-    (`lowered_def_name` in `crates/mojito-symbol/src/symbol.rs`), so the two
+    (`overload_support::callable_lowered_name`), so the two
     declarations share one symbol and the later replaces the earlier.
   - A trait-valued overload (`g[Tr: type_of(AnyType)]` beside
     `g[n: Int]`) shares it: `g[Copyable]()` prints `2`, the pin `1`.
@@ -9788,28 +9788,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2215.
   - Model: Fable, Not Planned.
 
-- [ ] **R1770 A trait requirement's symbol, and the applicable table's
-  key, are still spelled from syntax**
+- [ ] **R2217 A trait default's overload key is still spelled from syntax**
 
-  A trait requirement's binder owner (`traits.rs`) and its default's
-  `member_symbol` (`trait_defaults.rs`) are spelled by
-  `lowered_method_name` from the AST, and the compile-time applicable
-  table keys a module `def` by `lowered_def_name`; upstream names every
-  declaration from its resolved signature.
-  - Name a requirement from its typed `MethodSig` with
-    `method_lowered_name(…, None)` and store it on the trait info, so
-    `member_symbol` reads it.
-  - Key an applicable entry by its declaration site rather than a symbol,
-    so `ApplicableFunction::key` and `name_applicable_def` go.
-  - Then delete `lowered_def_name`, `lowered_method_name`, `MethodShape`,
-    `signature_from_ast`, `value_expr_raw`, and every
-    `ast_raw` path left without a caller, porting `tests/symbol_test.rs`'s
-    AST-key tests.
+  Whether a conformer's own method suppresses an inherited default, or two
+  inherited defaults conflict, is decided by `trait_defaults::overload_key`,
+  which spells each parameter annotation through
+  `SignatureKey::from_ast_params` → `TypeKey::from_ast` → `symbol::ast_raw`;
+  upstream decides it from the requirement's resolved signature against the
+  conformer's registered method.
   - `symbol::value_expr_raw` spells any annotation value it does not
-    recognize as `expr`, so two same-arity method overloads differing only
-    in such a value share one symbol; this removes it.
-  - Found while landing R600 (2026-10-31).
-  - Depends on R1769.
+    recognize as `expr`, so a default is suppressed by, or conflicts with,
+    a same-arity method differing from it only in such a value.
+  - Fix: compare the requirement's typed `MethodSig` with the conformer's
+    registered signature; the overload prescan
+    (`plan_default_wrappers`) then needs the wrappers' arities before any
+    signature is typed, so it counts every inherited default and the
+    suppression moves to registration.
+  - Then delete `ast_raw`, `value_expr_raw`, `TypeKey::from_ast(_in_scope)`,
+    `SignatureKey::from_ast_params`, `VariadicKey::from_ast_params` (whose
+    only callers are `tests/symbol_test.rs` and a `symbol.rs` unit test),
+    and `symbol::ModuleNames` with `ProgramConstants`' impl of it.
+  - Found while landing R1770 (2026-11-14).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1771 An overloaded generic declaration's signature is typed twice
@@ -9824,6 +9824,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `native/mono/specializer.rs`'s removed-parameter keys, and the MIR
     text format's binder spelling.
   - Same direction as R1768: declaration-relative binder identity.
+  - Probe: an overloaded generic trait requirement types twice the same
+    way (`Checker::requirement_signature`, `traits.rs`).
   - Found while landing R600 (2026-10-31).
   - Depends on R1770.
   - Model: Fable, Not Planned.
