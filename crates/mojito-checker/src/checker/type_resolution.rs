@@ -419,6 +419,8 @@ pub(super) const T_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T")];
 /// A one-type list spelled `type`: `_unqualified_type_name[type:
 /// AnyType]`, `TypeList.contains[type: AnyType]`.
 pub(super) const TYPE_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("type")];
+/// `Pointer.unsafe_bitcast[U: AnyType]`.
+pub(super) const U_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("U")];
 /// `Variant.replace[Tin: Movable & Deinitable, Tout: Movable]` and
 /// `unsafe_replace`.
 pub(super) const VARIANT_REPLACE_PARAMS: &[BuiltinParam] =

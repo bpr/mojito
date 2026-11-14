@@ -22,6 +22,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::ScalarCast { dest, .. }
         | MirInstr::BuiltinCast { dest, .. }
         | MirInstr::PointerConvert { dest, .. }
+        | MirInstr::PointerBitcast { dest, .. }
         | MirInstr::Pop { dest, .. }
         | MirInstr::CallLlvmIntrinsic { dest, .. }
         | MirInstr::StoreToMem { dest, .. }
@@ -146,6 +147,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::ScalarCast { value, .. }
         | MirInstr::BuiltinCast { value, .. }
         | MirInstr::PointerConvert { value, .. }
+        | MirInstr::PointerBitcast { value, .. }
         | MirInstr::StoreToMem { src: value, .. } => out.push(*value),
         MirInstr::WriteRef {
             reference: array,

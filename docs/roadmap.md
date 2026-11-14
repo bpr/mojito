@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2201**.
+Next free ID: **R2203**.
 
 ## Ordered Work
 
@@ -10948,8 +10948,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     a `SIMD[.int, size]`.
   - Probe: upstream's `masked_load[4](ptr, mask, passthrough)` and
     `gather(base, mask, passthrough)` over a `float32` buffer.
-  - Depends on R2035 (a pointer operand) and R221 (`unsafe_bitcast`, for
-    `gather` and `scatter`).
+  - Depends on R2035 (a pointer operand), R221 (`unsafe_bitcast`, for
+    `gather` and `scatter`), and R2201 (the VM's read of that retype).
   - Model: Opus, Not Planned.
 
 - [ ] **R2036 The remaining target-independent LLVM intrinsics the pin
@@ -12253,11 +12253,12 @@ residue found inside a task moves to the task that owns its fix.
   - `std.utils._nicheable` is not bundled; its traits declare
     `@staticmethod` requirements.
   - `reflect[Self].field_offset[name="_line"]()` fails as "type
-    'reflect[SL]' has no method 'field_offset'", and
-    `MutPointer.unsafe_bitcast[Byte]()` is rejected.
+    'reflect[SL]' has no method 'field_offset'".
+  - `write_niche`'s `unsafe_bitcast` of a `MaybeUninit[Self]` pointer to a
+    `_Null` one runs natively, and the VM refuses it.
   - Port `_nicheable` and the four members verbatim once those hold.
   - Found while landing R1979 (2026-11-08).
-  - Depends on R942.
+  - Depends on R942 and R2201 (the VM's retyped pointee).
   - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
@@ -12491,29 +12492,46 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R221 `Pointer.unsafe_bitcast[U]()` is not accepted**
+- [ ] **R2201 The VM refuses a `Pointer.unsafe_bitcast` to a pointee it
+  holds as another type**
 
-  `p.unsafe_bitcast[Int8]()` over a `Pointer[UInt8, o]` is rejected with
-  "compile-time parameter arguments are not supported here", where the pin
-  retypes the pointer to `Pointer[Int8, o]`.
-  - Upstream's body is `pop.pointer.bitcast` over the `!kgen.pointer`.
-    `pointer.convert` is the precedent for a retype that keeps the bits,
-    but a new element type needs the VM's typed memory to reinterpret the
-    pointee or refuse.
-  - Then retype `pop.string.address` to the pin's
-    `!kgen.pointer<scalar<si8>>` (`TyKind::KgenPointer` of `Int8`), respell
-    `StringLiteral.ptr` and `StaticString(_kgen)` as upstream's
-    `Pointer[_, ImmStaticOrigin](_mlir_value=…).unsafe_bitcast[Byte]()`,
-    and drop `is_bundled_kgen_string_source`'s address gate.
-  - Probe: upstream's `VariadicList` constructor ends with
-    `.unsafe_bitcast[Self._EltPointerType]()` over the array's first
-    element (R1317).
-  - Probe: upstream's `Pointer(unsafe_from_address=)` is
-    `Pointer(to=unsafe_from_address).unsafe_bitcast[type_of(self)]()[]`,
-    and `gather`/`scatter` load their `SIMD[.int, size]` addresses as a
-    `!kgen.simd<size, address>` through
-    `Pointer(to=base).unsafe_bitcast[...]()[]` (R1520).
+  Upstream's `pop.pointer.bitcast` reinterprets the bytes at an address,
+  where the VM's heap and frame slots hold one typed `Value` per element.
+  - So `runtime::pointer_bitcast_preserves_pointee` (`mojito-vm`) runs a
+    bitcast only between pointees that are one type up to origins, and
+    refuses any other as unsupported.
+  - Native code runs every retype, as at the pin.
+  - Lever: reinterpret a scalar or SIMD value read or written through the
+    retyped pointer when the two dtypes have one bit width, and keep
+    refusing layouts that differ.
+  - Probe: `Pointer(to=x).unsafe_bitcast[Int8]()[]` over `x: UInt8 = 200`
+    prints `-56` at the pin and natively, and is refused on the VM.
+  - Probe: R2202's `StringLiteral.ptr`, which bitcasts the pin's `si8`
+    string address to `Byte`.
+  - Probe: upstream's `Pointer(unsafe_from_address=)`, which reads an
+    `Int` as a pointer through `Pointer(to=address).unsafe_bitcast[...]`.
+  - Probe: upstream's `MaybeUninit` pointer views
+    (`.unsafe_bitcast[MaybeUninit[U]]()`) and `Pointer.write_niche`'s
+    `_Null` view of a `MaybeUninit[Self]` (R2055).
+  - Probe: `gather` and `scatter` read a `SIMD[.int, size]` as a
+    `!kgen.simd<size, address>` (R2037).
+  - Found while landing R221 (2026-11-14).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2202 `pop.string.address` gives a `Byte` pointer, where the pin's
+  gives a `!kgen.pointer<scalar<si8>>`**
+
+  The checker types `pop.string.address` as `static_string_address_ty()`,
+  where upstream's op gives an `si8` address that `StringLiteral.ptr`
+  bitcasts to `Byte`.
+  - Retype it to `TyKind::KgenPointer` of `Int8`.
+  - Respell `StringLiteral.ptr` and `StaticString(_kgen)` as upstream's
+    `Pointer[_, ImmStaticOrigin](_mlir_value=…).unsafe_bitcast[Byte]()`
+    (the notes in `stdlib/std/builtin/string_literal.mojo` and
+    `stdlib/std/string.mojo`).
+  - Drop `is_bundled_kgen_string_source`'s address gate.
+  - Depends on R2201 (the VM's `si8` to `Byte` retype).
   - Model: Opus, Not Planned.
 
 - [ ] **R222 `CStringSlice` views `Byte` elements instead of `c_char`**

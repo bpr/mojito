@@ -774,7 +774,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::MaterializeLiteral { dest, value, .. }
         | MirInstr::ScalarCast { dest, value, .. }
         | MirInstr::BuiltinCast { dest, value }
-        | MirInstr::PointerConvert { dest, value } => out.extend([dest, value]),
+        | MirInstr::PointerConvert { dest, value }
+        | MirInstr::PointerBitcast { dest, value } => out.extend([dest, value]),
         MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
@@ -2073,6 +2074,13 @@ pub enum MirInstr {
         dest: Reg,
         value: Reg,
     },
+    /// A `Pointer` retyped to a new pointee with its address and origin
+    /// unchanged: upstream's `pop.pointer.bitcast`, the body of
+    /// `Pointer.unsafe_bitcast[U]()`.
+    PointerBitcast {
+        dest: Reg,
+        value: Reg,
+    },
     /// An upstream `pop` lane op no built-in operator computes, over
     /// `operands` of the destination's type: `pop.div` and `pop.rem`
     /// (truncating; `index.divs`), `pop.abs` (wrapping), `pop.round` (half
@@ -3118,6 +3126,7 @@ impl MirInstr {
             | Self::ScalarCast { .. }
             | Self::BuiltinCast { .. }
             | Self::PointerConvert { .. }
+            | Self::PointerBitcast { .. }
             | Self::IsRunInComptimeInterpreter { .. }
             | Self::SourceLoc { .. }
             | Self::ParamListAddress { .. }

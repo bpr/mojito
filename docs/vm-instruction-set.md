@@ -98,6 +98,7 @@ accessed; the compact notation omits this analysis-only field.
 | `scalar.cast` | `ScalarCast` | `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a scalar operand |
 | `builtin.cast` | `BuiltinCast` | Retype an `index` as its `Int` storage, or an `i1` as its `Scalar[DType.bool]` storage, or back |
 | `pointer.convert` | `PointerConvert` | Retype an address among a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` |
+| `pointer.bitcast` | `PointerBitcast` | Retype a `Pointer`'s element (`unsafe_bitcast[U]()`): copies the address when the two elements are one type up to origins, and refuses any other retype, since a slot holds one typed value |
 
 ### Calls
 

@@ -973,7 +973,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", ty_value(target)),
             ],
         ),
-        MirInstr::BuiltinCast { dest, value } | MirInstr::PointerConvert { dest, value } => record(
+        MirInstr::BuiltinCast { dest, value }
+        | MirInstr::PointerConvert { dest, value }
+        | MirInstr::PointerBitcast { dest, value } => record(
             tag,
             &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
         ),

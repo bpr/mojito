@@ -88,6 +88,9 @@ pub(super) fn verify_instruction(
         MirInstr::PointerConvert { dest, value } => {
             verify_pointer_convert(&cx, *dest, *value, errors);
         }
+        MirInstr::PointerBitcast { dest, value } => {
+            verify_pointer_bitcast(&cx, *dest, *value, errors);
+        }
         MirInstr::Select {
             dest,
             condition,
@@ -1685,6 +1688,37 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     if !super::types::types_compatible(&from_element, &to_element) {
         errors.push(format!(
             "{}: pointer conversion from {from} to {to} changes the element type",
+            cx.prefix
+        ));
+    }
+}
+
+/// `pop.pointer.bitcast` retypes a `Pointer`'s pointee and keeps its
+/// origin, as `unsafe_bitcast` declares its result
+/// `Pointer[U, Self.origin]`.
+fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
+    let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
+        return;
+    };
+    let (
+        TyKind::Pointer {
+            origin: to_origin, ..
+        },
+        TyKind::Pointer {
+            origin: from_origin,
+            ..
+        },
+    ) = (to.kind(), from.kind())
+    else {
+        errors.push(format!(
+            "{}: pointer bitcast from {from} to {to} is not between two `Pointer`s",
+            cx.prefix
+        ));
+        return;
+    };
+    if to_origin.statically_mutable() != from_origin.statically_mutable() {
+        errors.push(format!(
+            "{}: pointer bitcast from {from} to {to} changes the origin's mutability",
             cx.prefix
         ));
     }

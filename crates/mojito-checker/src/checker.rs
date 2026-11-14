@@ -3797,7 +3797,7 @@ mod iteration;
 mod type_resolution;
 use type_resolution::{
     BoundParameters, CallableSpecialization, DeclaredAttributes, DependentValues,
-    EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, VALUE_PACK_PARAMS,
+    EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, U_PARAMS, VALUE_PACK_PARAMS,
     VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 

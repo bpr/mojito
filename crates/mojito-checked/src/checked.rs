@@ -1314,6 +1314,10 @@ pub enum SemanticAdjustment {
         origin: Option<mojito_types::origin::PointerOrigin>,
         /// A materialized dereference holder, as on `PointerToPlace`.
         materialized: Option<mojito_types::origin::OwnerId>,
+        /// Whether the address is retyped to a new pointee as well
+        /// (`p.unsafe_bitcast[U]()`, upstream's `pop.pointer.bitcast`),
+        /// rather than among the forms of one pointee's address.
+        bitcast: bool,
     },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources

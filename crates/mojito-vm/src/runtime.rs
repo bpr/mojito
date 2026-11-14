@@ -794,6 +794,33 @@ pub const fn pointer_address(allocation: u64, offset: i64) -> i64 {
     ((allocation as i64) << 32).wrapping_add(offset)
 }
 
+/// Admit a `pop.pointer.bitcast` from a `from` pointer to a `to` pointer.
+///
+/// It leaves its pointee read as the VM holds it when the two pointees are
+/// one type up to origins. Any other retype would need the VM's typed
+/// memory to reinterpret the value it holds, which it refuses.
+pub fn pointer_bitcast_preserves_pointee(
+    from: Option<&mojito_types::types::Ty>,
+    to: Option<&mojito_types::types::Ty>,
+) -> Result<(), RuntimeError> {
+    use mojito_types::types::{TyKind, erase_origins};
+    let pointee = |ty: Option<&mojito_types::types::Ty>| match ty.map(mojito_types::types::Ty::kind)
+    {
+        Some(TyKind::Pointer { element, .. }) => Some(erase_origins(element)),
+        _ => None,
+    };
+    match (pointee(from), pointee(to)) {
+        (Some(from), Some(to)) if from == to => Ok(()),
+        (Some(from), Some(to)) => Err(RuntimeError::Unsupported(format!(
+            "vm: Pointer.unsafe_bitcast from a {from} pointee to a {to} pointee \
+             reinterprets memory the VM holds as typed values"
+        ))),
+        _ => Err(RuntimeError::TypeError(
+            "vm: pointer.bitcast requires Pointer operands".to_string(),
+        )),
+    }
+}
+
 /// The `scalar.cast` to `target`: `Bool(x)`, a literal's conversion, and
 /// the `__bool__`, `__int__`, and `__float__` of a `Bool` or a literal
 /// receiver.

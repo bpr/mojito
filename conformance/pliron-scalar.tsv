@@ -1069,6 +1069,7 @@ assets/ok/pointer_to_tuple_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_tuple_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_move_from.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape

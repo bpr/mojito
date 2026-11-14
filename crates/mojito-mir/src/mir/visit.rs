@@ -512,6 +512,7 @@ macro_rules! type_visitor {
                 | I::ScalarCast { .. }
                 | I::BuiltinCast { .. }
                 | I::PointerConvert { .. }
+                | I::PointerBitcast { .. }
                 | I::ArrayGep { .. }
                 | I::IsRunInComptimeInterpreter { .. }
                 | I::Select { .. }

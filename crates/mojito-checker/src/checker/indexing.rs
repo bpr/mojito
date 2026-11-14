@@ -1968,6 +1968,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::PointerConvert {
                     origin: None,
                     materialized: None,
+                    bitcast: false,
                 },
             );
             return Ok(TyKind::KgenPointer(element.clone()).into());

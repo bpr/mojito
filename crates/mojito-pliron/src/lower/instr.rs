@@ -276,6 +276,11 @@ impl FnLowering<'_> {
             MirInstr::PointerConvert { dest, value } => {
                 self.lower_copy_value(ctx, *dest, *value, None)
             }
+            // LLVM's pointers are opaque: `pop.pointer.bitcast` is the one
+            // `ptr` retyped.
+            MirInstr::PointerBitcast { dest, value } => {
+                self.lower_copy_value(ctx, *dest, *value, None)
+            }
             MirInstr::Pop {
                 dest,
                 op,

@@ -27,10 +27,16 @@ impl Checker {
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
-        // `unsafe_origin_cast` takes its target origin and `unsafe_mut_cast`
-        // its target mutability as the sole compile-time parameter argument;
-        // no other pointer method is parameterized.
-        if !param_args.is_empty() && !matches!(method, "unsafe_origin_cast" | "unsafe_mut_cast") {
+        // `unsafe_origin_cast` takes its target origin, `unsafe_mut_cast`
+        // its target mutability, and `unsafe_bitcast` its target pointee as
+        // the sole compile-time parameter argument; no other pointer method
+        // is parameterized.
+        if !param_args.is_empty()
+            && !matches!(
+                method,
+                "unsafe_origin_cast" | "unsafe_mut_cast" | "unsafe_bitcast"
+            )
+        {
             return Err(TypeError::BadCall {
                 func: format!("Pointer.{method}"),
                 reason: "compile-time parameter arguments are not supported here".to_string(),
@@ -120,6 +126,12 @@ impl Checker {
                 }
                 .into())
             }
+            // Upstream's `unsafe_bitcast[U]()`: the same address and origin
+            // retyped to a `U` pointee (`pop.pointer.bitcast`).
+            "unsafe_bitcast" => {
+                no_arguments(method, args)?;
+                self.infer_pointer_bitcast(span, origin, param_args)
+            }
             // `Copyable.copy()`: the same pointer, lowered as an origin cast
             // to the receiver's own origin.
             "copy" => {
@@ -139,6 +151,7 @@ impl Checker {
                     mojito_checked::checked::SemanticAdjustment::PointerConvert {
                         origin: None,
                         materialized: None,
+                        bitcast: false,
                     },
                 );
                 Ok(TyKind::KgenPointer(elem.clone()).into())
@@ -705,6 +718,48 @@ impl Checker {
                 materialized: None,
             },
         );
+    }
+
+    /// Type upstream's `unsafe_bitcast[U: AnyType]()`: the same address and
+    /// origin retyped to a `U` pointee (`pop.pointer.bitcast`), with `U`
+    /// recorded as the call's parameter attribute.
+    fn infer_pointer_bitcast(
+        &self,
+        span: &SourceSpan,
+        origin: &mojito_types::origin::PointerOrigin,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let [target] = param_args else {
+            return Err(TypeError::BadCall {
+                func: "Pointer.unsafe_bitcast".to_string(),
+                reason: "expected exactly one type parameter argument".to_string(),
+            });
+        };
+        let named = match target {
+            mojito_ast::ast::ParamArg::Named { value, .. } => value.as_ref(),
+            positional => positional,
+        };
+        let element = self.type_param_argument(named, "Pointer.unsafe_bitcast")?;
+        let attributes = DeclaredAttributes::of_builtin(
+            "Pointer.unsafe_bitcast",
+            U_PARAMS,
+            param_args,
+            types_attributes(param_args, std::slice::from_ref(&element)),
+        )?;
+        self.record_declared_attributes(span.clone(), &attributes);
+        self.record_pointer_adjustment(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                origin: Some(origin.clone()),
+                materialized: None,
+                bitcast: true,
+            },
+        );
+        Ok(TyKind::Pointer {
+            element,
+            origin: origin.clone(),
+        }
+        .into())
     }
 
     /// Admit `method` taking the pointee `elem` out through a pointer of

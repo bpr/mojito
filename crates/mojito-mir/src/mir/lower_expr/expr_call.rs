@@ -112,11 +112,16 @@ impl<'a> Flatten<'a> {
     }
 
     /// `operand`'s address retyped to `call`'s checked type, a `Pointer`, a
-    /// `!kgen.pointer`, or a `!lit.ref` (`pointer.convert`).
+    /// `!kgen.pointer`, or a `!lit.ref` (`pointer.convert`), or to a
+    /// `Pointer` to a new pointee (`pointer.bitcast`).
     pub(super) fn pointer_convert(&mut self, call: Node<'a>, operand: Node<'a>) -> Reg {
         let value = self.expr(operand);
         let dest = self.fresh(call.location(), None);
-        self.emit(MirInstr::PointerConvert { dest, value });
+        self.emit(if call.is_pointer_bitcast() {
+            MirInstr::PointerBitcast { dest, value }
+        } else {
+            MirInstr::PointerConvert { dest, value }
+        });
         dest
     }
 
@@ -413,6 +418,13 @@ impl<'a> Flatten<'a> {
         }) && let Some(object) = callee.member_object()
         {
             return self.expr(object);
+        }
+        // `pointer.unsafe_bitcast[U]()` retypes the receiver's pointee
+        // (`pointer.bitcast`); its type argument never lowers.
+        if call.is_pointer_bitcast()
+            && let Some(object) = callee.member_object()
+        {
+            return self.pointer_convert(call, object);
         }
         let simd_shuffle = node
             .adjustments

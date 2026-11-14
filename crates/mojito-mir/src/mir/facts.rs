@@ -256,6 +256,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether the address is retyped to a new pointee as well
+    /// (`p.unsafe_bitcast[U]()`, `pointer.bitcast`).
+    pub(super) fn is_pointer_bitcast(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::PointerConvert { bitcast: true, .. }
+            )
+        })
+    }
+
     /// Project `place`, the place of this member node's object, to the
     /// member `field`.
     pub(super) fn project_member(self, place: &mut MirPlace, field: &str) {
@@ -1579,6 +1590,10 @@ impl<'a> Flatten<'a> {
                     .find_map(|adjustment| match adjustment {
                         mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                             origin,
+                            ..
+                        }
+                        | mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                            origin: Some(origin),
                             ..
                         } => Some(origin),
                         _ => None,

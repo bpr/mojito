@@ -1281,6 +1281,7 @@ impl Checker {
             SemanticAdjustment::PointerConvert {
                 origin: Some(origin.clone()),
                 materialized: None,
+                bitcast: false,
             },
         );
         Ok(TyKind::Pointer { element, origin }.into())

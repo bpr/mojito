@@ -3,7 +3,7 @@
 # this struct, and like upstream's it holds nothing at run time: its
 # default initializer's empty body builds it. `ptr` takes `pop.string.address` as the
 # `Pointer` itself, where upstream's wraps the `!kgen.pointer` it gives
-# with `unsafe_bitcast[Byte]()` (R221). The iterator members name the
+# with `unsafe_bitcast[Byte]()` (R2202). The iterator members name the
 # bundled private iterator structs (R1866), and `split` returns the
 # `List[String]` `StringSpan.split` does (R189). `format` binds its
 # template to a local `comptime` (R1646), and the bundled

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer.unsafe_bitcast[U]()` is accepted, as at the pin: it retypes a
+  pointer to `Pointer[U, origin]` with its address and origin unchanged,
+  lowered as MIR's new `pointer.bitcast` (upstream's `pop.pointer.bitcast`;
+  MIR text 1.195, package format 219). Native code runs any retype; the VM
+  runs one between pointees of one type up to origins and refuses any
+  other, since its slots hold typed values (R221;
+  `assets/ok/pointer_unsafe_bitcast.mojo`).
+
 - Upstream's address builtins `__get_litref_as_mvalue(r)` and
   `__get_address_as_owned_value(k)` are accepted, as at the pin: the first
   is the place a `!lit.ref` refers to (read, assigned, passed `mut`, bound

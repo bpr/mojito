@@ -498,6 +498,17 @@ impl VmBackend {
             MirInstr::PointerConvert { dest, value } => {
                 regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
+            // The heap and frames hold one typed value per element, so an
+            // address retyped to a pointee held differently cannot be
+            // reinterpreted through: the VM refuses it here, at the bitcast.
+            MirInstr::PointerBitcast { dest, value } => {
+                let reg_types = &prog.mir.functions[function].1.reg_types;
+                crate::runtime::pointer_bitcast_preserves_pointee(
+                    reg_types.get(&value.0),
+                    reg_types.get(&dest.0),
+                )?;
+                regs[dest.0 as usize] = regs[value.0 as usize].clone();
+            }
             // An `index` and its `Int` storage are one value, as an `i1` and
             // a `!kgen.scalar<bool>` are, as LLVM's one `i1`, and an `ui8`
             // and a `!kgen.scalar<ui8>`.

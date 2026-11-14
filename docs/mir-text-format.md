@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.194
+# Mojito Textual MIR Format, Version 1.195
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.194 is implemented end to end for inspection and loading: canonical
+Version 1.195 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.194
+mojito-mir 1.195
 ```
 
-The writer emits 1.194. The reader accepts 1.0 through 1.194; *Schema 1.0*
+The writer emits 1.195. The reader accepts 1.0 through 1.195; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1198,6 +1198,12 @@ takes. The package format moves to `mojito-package 218` with it, when a
 checked `kgen.struct.load_indirect` records
 `SemanticAdjustment::KgenStructLoadIndirect` (R1922).
 
+Schema 1.195 adds `pointer.bitcast { dest, value }`, upstream's
+`pop.pointer.bitcast`: `Pointer.unsafe_bitcast[U]()` retypes a `pointer`'s
+element with its address and origin unchanged. The package format moves
+to `mojito-package 219` with it, when a checked `PointerConvert` records
+whether it is that bitcast (R221).
+
 Schema 1.193 makes a raise edge's `error` the slot the instruction writes
 its error into when it raises, `present(raises { type, flag: %rN, error:
 $vM })`, as upstream's throwing `lit.call` takes the slot
@@ -2331,6 +2337,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
+| `PointerBitcast` | `pointer.bitcast { dest, value }` (schema 1.195): `dest` and `value` are each a `pointer`, of any two elements and origins of one mutability, the bits unchanged: upstream's `pop.pointer.bitcast`, the body of `Pointer.unsafe_bitcast[U]()`. The VM runs one only where the two elements are one type up to origins, and refuses any other |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
 | `SourceLoc` | `kgen.source_loc { dest, inline_count, location: [site {...}] }` (schema 1.183): the `(line, column, file)` `Tuple` of the call site `inline_count` frames out along the call-site chain `location`; resolved to constants by the driver after the post-elaboration pipeline |
 | `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`, or `dtype.to_ui8` or `dtype.from_ui8` (schema 1.164), converting one `kgen_dtype` operand to its `ui8` code or one `ui8` code to its `kgen_dtype`; an integer division by zero traps; schema 1.181 adds an optional `fastmath` constant, a `pop.fma`'s `fastmathFlags` |

@@ -469,6 +469,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::ScalarCast { .. }
         | MirInstr::BuiltinCast { .. }
         | MirInstr::PointerConvert { .. }
+        | MirInstr::PointerBitcast { .. }
         | MirInstr::Pop { .. }
         | MirInstr::CallLlvmIntrinsic { .. }
         | MirInstr::ReadRef { .. }
