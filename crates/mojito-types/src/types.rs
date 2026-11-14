@@ -7033,17 +7033,20 @@ pub fn rewrite_decl(
             infer_only,
             variadic,
             constraints,
-        } => ParamDecl::Type {
-            id: id.clone(),
-            name: name.clone(),
-            bounds: bounds.clone(),
-            trait_param: trait_param.clone(),
-            callable_bound: optional(callable_bound, rewrite)?,
-            default: optional(default, rewrite)?,
-            infer_only: *infer_only,
-            variadic: *variadic,
-            constraints: constraints.clone(),
-        },
+        } => {
+            let (bounds, trait_param) = rewrite_trait_param(bounds, trait_param.as_ref(), rewrite);
+            ParamDecl::Type {
+                id: id.clone(),
+                name: name.clone(),
+                bounds,
+                trait_param,
+                callable_bound: optional(callable_bound, rewrite)?,
+                default: optional(default, rewrite)?,
+                infer_only: *infer_only,
+                variadic: *variadic,
+                constraints: constraints.clone(),
+            }
+        }
         ParamDecl::Value {
             id,
             name,
@@ -7071,6 +7074,34 @@ pub fn rewrite_decl(
         },
         ParamDecl::Origin { .. } => decl.clone(),
     })
+}
+
+/// The bound of a type binder bounded by the trait-valued binder
+/// `trait_param` (upstream's symbolic `ParamType`), declared `bounds`, once
+/// `rewrite` rewrites that binder: the trait it binds, which then bounds
+/// the binder alone, or the binder it forwards to. A rewrite that does not
+/// read the binder leaves it.
+fn rewrite_trait_param(
+    bounds: &[String],
+    trait_param: Option<&ParamRef>,
+    rewrite: &mut dyn TyRewrite,
+) -> (Vec<String>, Option<ParamRef>) {
+    let Some(binder) = trait_param else {
+        return (bounds.to_vec(), None);
+    };
+    let reference = ParamContext::detached().decl_ref(
+        binder.id.clone(),
+        &binder.name,
+        MetaTy::Value(TyKind::AnyTrait(bounds.to_vec()).into()),
+    );
+    match rewrite.expr(&reference) {
+        Ok(rewritten) => match (rewritten.as_constant(), rewritten.as_decl_ref()) {
+            (Some(CtValue::Trait(traits)), _) => (traits.clone(), None),
+            (_, Some(forwarded)) => (bounds.to_vec(), Some(forwarded.clone())),
+            _ => (bounds.to_vec(), Some(binder.clone())),
+        },
+        Err(_) => (bounds.to_vec(), Some(binder.clone())),
+    }
 }
 
 /// The elements of the pack `types` spreads, when `rewrite` binds it to a

@@ -1738,6 +1738,18 @@ impl Checker {
         }
     }
 
+    /// The reference to the trait-valued binder (`Tr: type_of(AnyType)`)
+    /// `name` names in an enclosing declaration's scope.
+    pub(super) fn trait_valued_binder(&self, name: &str) -> Option<ParamExpr> {
+        self.value_parameter_in_scope(name).filter(|parameter| {
+            parameter.as_decl_ref().is_some()
+                && matches!(
+                    parameter.meta().as_value().map(Ty::kind),
+                    Some(TyKind::AnyTrait(_))
+                )
+        })
+    }
+
     /// The typed reference a bare name denotes when it is a value parameter
     /// of an enclosing declaration, innermost first.
     pub(super) fn value_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {

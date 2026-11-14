@@ -880,11 +880,14 @@ impl Checker {
         let binder_id = |slot: usize| ParamId::new(&binder_owner, slot);
         for (index, tp) in tps.iter().enumerate() {
             {
+                // The list's own level is the innermost open one; a value or
+                // pack level past it is dead ([`Self::pop_param_scope`]).
                 let mut scopes = self.param_scopes.borrow_mut();
-                if let Some(scope) = scopes.values.last_mut() {
+                let level = scopes.types.len().saturating_sub(1);
+                if let Some(scope) = scopes.values.get_mut(level) {
                     *scope = value_scope(&decls);
                 }
-                if let Some(scope) = scopes.packs.last_mut() {
+                if let Some(scope) = scopes.packs.get_mut(level) {
                     *scope = pack_scope(&decls);
                 }
                 if let Some(scope) = scopes.types.last_mut() {
@@ -989,7 +992,7 @@ impl Checker {
             let trait_param = tp
                 .bounds
                 .iter()
-                .find_map(|bound| sibling_trait_binder(&decls, bound));
+                .find_map(|bound| self.trait_binder(&decls, bound));
             let mut trait_bounds = trait_param
                 .as_ref()
                 .map(|(_, declared)| declared.clone())
@@ -1181,13 +1184,31 @@ impl Checker {
         };
         if self.check_trait_name(only).is_ok()
             || tp.callable_bound.is_some()
-            || sibling_trait_binder(earlier, only).is_some()
+            || self.trait_binder(earlier, only).is_some()
         {
             return None;
         }
         self.ty_from_anno(&SourceType::Named(only.clone(), Vec::new()))
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
+    }
+
+    /// The trait-valued binder `name` names where a list being classified
+    /// reads it, with its declared trait set: an earlier sibling, else an
+    /// enclosing declaration's binder in scope, as a generator type's own
+    /// binder is bounded by the signature's (`F: type_of(AnyType), G:
+    /// __generator_type[From: F] AnyType`).
+    fn trait_binder(&self, earlier: &[ParamDecl], name: &str) -> Option<(ParamRef, Vec<String>)> {
+        sibling_trait_binder(earlier, name).or_else(|| {
+            if earlier.iter().any(|decl| decl.name() == name) {
+                return None;
+            }
+            let parameter = self.trait_valued_binder(name)?;
+            let Some(TyKind::AnyTrait(bound)) = parameter.meta().as_value().map(Ty::kind) else {
+                return None;
+            };
+            Some((parameter.as_decl_ref()?.clone(), bound.clone()))
+        })
     }
 
     /// The value declaration `tp` classifies to once its type is `ty`.
@@ -4825,6 +4846,125 @@ impl Checker {
         Ok(solutions)
     }
 
+    /// Solve each open trait-valued binder a generator parameter's type
+    /// reads (`F` and `T` of `G: __generator_type[From: F] T`, or of `G:
+    /// GT[F, T]` once `GT`'s argument folds the application) from the
+    /// generator its argument is, as upstream infers a parameter from the
+    /// generator type it converts to: a binder of the expected type bounded
+    /// by `F` solves `F` as the argument's binder bound, and a result `T` as
+    /// the argument's result trait. `open` answers whether a binder has no
+    /// explicit argument.
+    fn solve_trait_binders_from_generators(
+        &self,
+        decls: &[ParamDecl],
+        bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
+        open: impl Fn(usize) -> bool,
+        solutions: &mut HashMap<ParamId, CtValue>,
+    ) {
+        let open_trait_binder = |binder: &ParamRef| {
+            decls
+                .iter()
+                .position(|sibling| sibling.id() == &binder.id)
+                .filter(|&position| open(position))
+                .and_then(|position| match &decls[position] {
+                    ParamDecl::Value { ty, .. } => match ty.kind() {
+                        TyKind::AnyTrait(bound) => Some(bound.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+        };
+        for (index, decl) in decls.iter().enumerate() {
+            let ParamDecl::Value {
+                ty,
+                variadic: false,
+                ..
+            } = decl
+            else {
+                continue;
+            };
+            let Some(expected) = self.bound_generator_type(decls, bound, ty) else {
+                continue;
+            };
+            let Some(actual) = self.bound_value_ty(&bound[index], ty) else {
+                continue;
+            };
+            let (TyKind::Generator(expected), TyKind::Generator(actual)) =
+                (expected.kind(), actual.kind())
+            else {
+                continue;
+            };
+            if expected.params.len() != actual.params.len() {
+                continue;
+            }
+            let mut solve = |binder: &ParamRef, traits: Vec<String>| {
+                if let Some(declared) = open_trait_binder(binder)
+                    && self.traits_satisfy(&traits, &declared)
+                {
+                    solutions
+                        .entry(binder.id.clone())
+                        .or_insert(CtValue::Trait(traits));
+                }
+            };
+            for (expected, actual) in expected.params.iter().zip(&actual.params) {
+                if let (
+                    ParamDecl::Type {
+                        trait_param: Some(binder),
+                        ..
+                    },
+                    ParamDecl::Type {
+                        bounds,
+                        trait_param: None,
+                        ..
+                    },
+                ) = (expected, actual)
+                {
+                    solve(binder, self.binder_metatype_traits(bounds));
+                }
+            }
+            if let (TyKind::Dependent(result), TyKind::Trait(traits)) =
+                (expected.result.kind(), actual.result.kind())
+                && let Some(binder) = result.expr().as_decl_ref()
+            {
+                solve(binder, traits.clone());
+            }
+        }
+    }
+
+    /// The generator type a parameter declared `ty` expects: `ty` itself, or
+    /// the application of an earlier generator parameter (`GT[F, T]`)
+    /// folded under the generator its bracket argument binds, its other
+    /// binders left open.
+    fn bound_generator_type(
+        &self,
+        decls: &[ParamDecl],
+        bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
+        ty: &Ty,
+    ) -> Option<Ty> {
+        let dependent = match ty.kind() {
+            TyKind::Generator(_) => return Some(ty.clone()),
+            TyKind::Dependent(dependent) => dependent,
+            _ => return None,
+        };
+        let ParamKind::BindParams { generator, .. } = dependent.expr().kind() else {
+            return None;
+        };
+        let binder = generator.as_decl_ref()?;
+        let position = decls.iter().position(|decl| decl.id() == &binder.id)?;
+        let (_, argument) = bound[position].first()?;
+        let TyArg::Val(value) = self
+            .resolve_param_arg(&decls[position], argument)
+            .ok()?
+            .value
+        else {
+            return None;
+        };
+        let context = &self.param_context;
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        bindings.bind(binder.id.clone(), context.constant(value).ok()?);
+        mojito_types::types::replace_parameters(context, ty, &bindings, 0).ok()
+    }
+
     /// The type of the value the first bracket argument bound to a
     /// parameter declared `declared` spells: a forwarded value pack's element
     /// type, else the value as [`Self::resolve_param_arg`] types it.
@@ -5918,11 +6058,17 @@ impl Checker {
         self.solve_binders_from_values(decls, &mut subst, |index, declared| {
             self.bound_value_ty(&bound[index], declared)
         })?;
-        let trait_solutions = self.solve_trait_binders_from_lists(
+        let mut trait_solutions = self.solve_trait_binders_from_lists(
             decls,
             |index| bound[index].is_empty() && !open(index),
             |index, declared| self.bound_value_ty(&bound[index], declared),
         )?;
+        self.solve_trait_binders_from_generators(
+            decls,
+            &bound,
+            |index| bound[index].is_empty() && !open(index),
+            &mut trait_solutions,
+        );
         let mut tyargs = Vec::with_capacity(decls.len());
         let mut value_environment = HashMap::new();
         for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {

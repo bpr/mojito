@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generator type's binder may be bounded by an enclosing trait-valued
+  binder and its result may name one (`G: __generator_type[From: F] T`
+  over `F, T: type_of(AnyType)`), a later parameter may be typed by an
+  earlier generator parameter's application (`G: GT[Int]`, `G: GT[F, T]`),
+  and infer-only `F` and `T` are solved from the generator `G` binds, as
+  at the pin (R1487). These stopped with "unknown trait 'F' in a
+  type-parameter bound" and "unknown type 'GT'". `type_of` of a generator
+  type is R2175.
+
 - A compile-time evaluation may `print`, as at the pin (R387): what it
   writes is printed while the program elaborates, once per instance, so
   `mojito run` shows it before the program's own output, `mojito compile`

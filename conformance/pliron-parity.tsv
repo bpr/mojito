@@ -470,6 +470,7 @@ assets/ok/generator_type_construction.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_result_binders.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_result_composition.mojo	main	exe-differential	sanitized
+assets/ok/generator_type_trait_binders.mojo	main	exe-differential	sanitized
 assets/ok/generator_type_valued.mojo	main	exe-differential	sanitized
 assets/ok/generator_unbound_application.mojo	main	exe-differential	sanitized
 assets/ok/generator_value_unapplied.mojo	main	exe-differential	sanitized

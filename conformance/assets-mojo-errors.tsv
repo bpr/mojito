@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1193
+# swept-count	1194
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -529,6 +529,7 @@ assets/type_error/generator_parameter_non_generator.mojo	compile-reject	agree	er
 assets/type_error/generator_parameter_signature_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Int, b: Int] Int'
 assets/type_error/generator_parameter_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Bool] IntLiteral[1]'
 assets/type_error/generator_runtime_value_binder_names.mojo	compile-reject	agree	error: cannot implicitly convert '__generator_type[b: Int] Int' value to '__generator_type[c: Int] Int' in 'var' initializer
+assets/type_error/generator_trait_binder_bound_mismatch.mojo	compile-reject	agree	error: invalid call to 'bound_by': 'bound_by' parameter 'G' has '__generator_type[From: Hashable] AnyType' type, but value has type '__generator_type[From: Copyable] AnyStruct[Int]'
 assets/type_error/generator_type_result_composition_non_trait.mojo	compile-reject	agree	error: 'AnyTrait[Copyable]' does not implement the '__and__' method
 assets/type_error/generator_type_valued_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[5]' value to 'G[Int]' in 'var' initializer
 assets/type_error/generator_unbound_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__generator_type[b: Int] Int' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance

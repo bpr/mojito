@@ -853,6 +853,16 @@ impl Checker {
             {
                 Ok(TyKind::Trait(vec![name.clone()]).into())
             }
+            // A trait-valued binder in scope is the trait it binds used as a
+            // type (`__generator_type[From: From] To` over `To:
+            // type_of(AnyType)`), symbolic until the binder is bound.
+            SourceType::Named(name, args)
+                if args.is_empty()
+                    && self.lookup_tparam(name).is_none()
+                    && let Some(binder) = self.trait_valued_binder(name) =>
+            {
+                Ok(mojito_types::types::DependentType::resolve(binder))
+            }
             SourceType::Named(name, members) if name == "$trait_composition" => self
                 .generator_result_composition(members)
                 .map(|traits| TyKind::Trait(traits).into()),

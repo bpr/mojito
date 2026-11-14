@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2175**.
+Next free ID: **R2176**.
 
 ## Ordered Work
 
@@ -5583,6 +5583,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A body's use of `T: Tr` against a bound `Tr` does not imply (`need[Ts[0]]()`
     over `Tr: type_of(AnyType)`) names the trait parameter at the pin ("has
     'Copyable' type, but value has type 'Tr'") and the element in Mojito.
+  - Probe: `inferred_applied[GTG, Generator]()` in
+    `assets/ok/generator_type_trait_binders.mojo` solves its infer-only `T`
+    from `Generator`'s result as `AnyType`, where the pin's is
+    `AnyStruct[Int]`.
   - Found while landing R1167 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -5810,20 +5814,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1487 A generator-typed generator parameter is not supported**
+- [ ] **R2175 A non-struct type has no metatype**
 
   Problem: upstream's
   `test/mojo-integration/generator_param_applied_to_earlier_params.mojo`
-  declares `GT: __generator_type[From: type_of(AnyType), To:
-  type_of(AnyType)] type_of(__generator_type[From: From] To)` and `G: GT[F,
-  T]`, and runs.
-  - The result of `GT` is itself a generator type, applied in a later
-    parameter's type: R1486's type-position application, over a
-    `type_of(...)` of a generator type, which `type_of` rejects as "of a
-    type" (R1176's metatype).
-  - No bundled library use needs it yet.
-  - Found while landing R808 (2026-10-27).
-  - Depends on R1486.
+  types `GT` as `__generator_type[From: type_of(AnyType), To:
+  type_of(AnyType)] type_of(__generator_type[From: From] To)` and runs,
+  where Mojito stops with "'type_of' of a type is not supported yet".
+  - The pin types a non-struct type read as a value (a generator type) as
+    `__mlir_type.`!kgen.non_struct_type``, whose own metatype is
+    `__TypeOfAllTypes`; Mojito has no such `TyKind`, and
+    `Checker::type_of_operand` (`checker/constraints.rs`) rejects every
+    type operand.
+  - Probe: `comptime GTG[From: type_of(AnyType), To: type_of(AnyType)] =
+    __generator_type[From: From] To` read unapplied is typed
+    `__generator_type[From: AnyTrait[AnyType], To: AnyTrait[AnyType]]
+    __mlir_type.`!kgen.non_struct_type`` at the pin, and `GTG[Copyable,
+    AnyType]` is a `!kgen.non_struct_type` value; Mojito types both with an
+    `AnyType` result (`GeneratorValue::ty`).
+  - Probe: `take[GTG]()` over `GT: __generator_type[...]
+    __mlir_type.`!kgen.non_struct_type`` prints at the pin; Mojito reads
+    no such MLIR type (`mlir_type_named`).
+  - Probe: the upstream test itself, whose `G: GT[F, T]` and the inference
+    of `F` and `T` already run with an `AnyType` result
+    (`assets/ok/generator_type_trait_binders.mojo`).
+  - A struct type's metatype (`AnyStruct[S]`) is R1176's.
+  - Found while landing R1487 (2026-11-13).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1488 A trait's parameterized value requirement is not a
