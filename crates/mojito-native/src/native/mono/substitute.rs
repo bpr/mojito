@@ -112,7 +112,8 @@ pub(super) type ConformsAnswer<'a> = dyn Fn(&ParamExpr, &str) -> Option<bool> + 
 /// Rewrite each dispatched `copy()` whose receiver this instance makes a
 /// built-in with a value-read copy into that value copy. `Copyable.copy` is
 /// `Self(copy=self)`, so at such a `Self` it is the [`MirInstr::CopyValue`]
-/// [`mojito_mir::mir::construct_type_parameters`] writes for `T(copy=x)`.
+/// [`mojito_mir::mir::construct_type_parameters`] writes for `T(copy=x)`,
+/// or the [`MirInstr::ReadRef`] of a receiver passed by address.
 /// The copy is no call, so a binding of its result is no longer in place.
 pub(super) fn copy_builtin_receivers(block: &mut MirBlock, reg_types: &HashMap<u32, Ty>) {
     let mut copied = HashSet::new();
@@ -133,15 +134,22 @@ pub(super) fn copy_builtin_receivers(block: &mut MirBlock, reg_types: &HashMap<u
                 && resolved
                     .as_deref()
                     .is_none_or(|target| target.starts_with("__trait_dispatch."))
-                && reg_types.get(&recv.0).is_some_and(|ty| {
-                    mojito_types::types::builtin_copy_is_value_read(ty.kind())
-                }) =>
+                && let Some(by_reference) = reg_types
+                    .get(&recv.0)
+                    .and_then(|ty| builtin_copy_receiver(ty.kind())) =>
             {
                 copied.insert(dest.0);
-                *instruction = MirInstr::CopyValue {
-                    dest: *dest,
-                    value: *recv,
-                    constructor: None,
+                *instruction = if by_reference {
+                    MirInstr::ReadRef {
+                        dest: *dest,
+                        reference: *recv,
+                    }
+                } else {
+                    MirInstr::CopyValue {
+                        dest: *dest,
+                        value: *recv,
+                        constructor: None,
+                    }
                 };
             }
             MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
@@ -1393,5 +1401,19 @@ fn unsupported_param(error: &mojito_types::param_expr::ParamError) -> MonoError 
         kind: MonoErrorKind::Unsupported,
         function: None,
         construct: error.to_string(),
+    }
+}
+
+/// How a dispatched `copy()` reaches a receiver of type `ty` whose copy is
+/// a value read: `Some(false)` for the value itself, `Some(true)` for a
+/// reference to it, as `Copyable.copy`'s `read self` passes the receiver
+/// by address; `None` for any other receiver.
+fn builtin_copy_receiver(ty: &TyKind) -> Option<bool> {
+    match ty {
+        TyKind::Ref(reference) => {
+            mojito_types::types::builtin_copy_is_value_read(reference.referent.kind())
+                .then_some(true)
+        }
+        ty => mojito_types::types::builtin_copy_is_value_read(ty).then_some(false),
     }
 }

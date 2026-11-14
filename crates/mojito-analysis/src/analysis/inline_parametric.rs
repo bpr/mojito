@@ -3463,9 +3463,12 @@ fn copy_bound_parameters<'b>(
                     ty.unwrap_or_else(|| outer.ty.clone().unwrap_or_else(Ty::none)),
                     span.as_ref(),
                 );
+                // Rooted at the parameter, so `rebind_blocks` composes it
+                // with the caller's place after moving the body's
+                // registers, leaving that place's index registers alone.
                 rewritten.push(MirInstr::LoadPlace {
                     dest: loaded,
-                    place: outer.clone(),
+                    place: MirPlace::root(var, outer.ty.clone()),
                 });
                 rewritten.push(MirInstr::CopyValue {
                     dest,
