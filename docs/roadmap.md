@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2196**.
+Next free ID: **R2199**.
 
 ## Ordered Work
 
@@ -1494,10 +1494,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   pin prints `t 2002`.
   - `(b^, 3)` matches the pin at `t 1002`.
   - Tuple's initializer stores its pack whole without element move
-    initializers (R2025), and a display element is not a forwarded
+    initializers (R2197), and a display element is not a forwarded
     argument.
   - Found while landing R730 (2026-10-13).
-  - Depends on R2025.
+  - Depends on R2197.
   - Model: Opus, Not Planned.
 
 - [ ] **R732 A `@fieldwise_init` construction stores its `var` arguments
@@ -7304,6 +7304,37 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R2196 A `Pointer` held in a place is addressed as its pointee, so
+  a pointer to it reads or writes the wrong storage**
+
+  `Pointer(to=place)` over a place holding a `Pointer` (a local, a tuple
+  element, a pack element's slot) must address that place, where both
+  backends reach the held pointer's pointee.
+  - VM: `canonical_reference_parts` (`vm/references.rs`) adopts a
+    `Value::Ref` stored in the addressed root slot, so a read or write
+    through the outer pointer chases the inner one.
+  - Pliron: `Pointer(to=result[i]).unsafe_write(p)` over a `Pointer`
+    element loads the element slot as a pointer and stores `p` through it
+    (`store ptr %p, ptr (load result+8)`), so an uninitialized element
+    crashes.
+  - Probe: `var p = Pointer(to=x)`, `var pp = Pointer(to=p)`, `var q =
+    pp[]`, `print(q[])` prints `0` on the VM; the pin and Pliron print
+    `4`.
+  - Probe: `Pointer(to=t[1]).unsafe_take_pointee()[]` over `t =
+    (Pointer(to=left), Pointer(to=right))` prints `0` on the VM; the pin
+    prints `8`.
+  - Probe: `(Pointer(to=left), 7).reverse()` prints `7 0` on the VM and
+    crashes natively; the pin prints `7 4` (`Tuple.reverse` writes each
+    element through `Pointer(to=result[i])`).
+  - Probe: with R2197's upstream `Tuple.__init__`, which writes each
+    element through `Pointer(to=self[idx])`,
+    `assets/ok/pointer_tuple_field_write.mojo` and
+    `tuple_pointer_element_write.mojo` print `0 0` on the VM and crash
+    natively, where they print `4 10`.
+  - Found while landing R1927 (2026-11-14).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R1817 With one caller, a function over `Optional[Pointer[Int, _]]`
   prints `None` for `p.value()[]`**
 
@@ -9752,39 +9783,80 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1927 An owned heterogeneous collector is the tuple of its
+- [ ] **R2197 An owned heterogeneous collector is the tuple of its
   elements' values, where upstream's is an owned `VariadicPack` of their
   references**
 
   `var *args: *Ts` binds `TyKind::VariadicPack(*Ts)` in its body, which
   `native::mono::substitute_ty` rewrites to the `Tuple` of the bound
   elements, and the call builds a `tuple.make` of the moved values, where
-  the pin types it `VariadicPack[..., is_owned=True, *Ts]` over the
-  addresses of slots the call moves each argument into.
-  - A `read` collector is the bundled `VariadicPack` already
-    (`build_variadic_pack`, `mir/variadics.rs`).
-  - Lever: `variadic_collector_type`'s owned arm returns
-    `variadic_pack_type(..., true)`, and `build_variadic_pack` moves each
-    element into a slot it `ended`s, as an owned `VariadicList` does.
-  - `VariadicPack.__deinit__`'s `unsafe_deinit_pointee` then destroys the
-    elements last to first, and `pack_drops.rs::refine_pack_drops`'s
-    owning-collector branch goes.
-  - `Tuple.__init__(var *args)`'s `__RuntimeTuple(*args^)`
-    (`stdlib/std/builtin/tuple.mojo`) must move each element out through
-    the references, or call upstream's `args^.consume_elements(...)`.
-  - The mono tuple arm (`substitute.rs`), the `TyKind::VariadicPack`
-    collector role, and `verify_pack_spread`'s `Tuple`/`RuntimePack`
-    admission go with it.
-  - Probe: `owned_pack_destroyed_in_reverse.mojo` and
-    `pack_constructor_spread_served.mojo` keep their output.
+  the pin types it `VariadicPack[..., is_owned=True, *Ts]` over slots the
+  call moves each argument into.
+  - Lever: `variadic_collector_type`'s owned arms return
+    `bound_variadic_pack_type(.., true)` and `variadic_pack_type(.., true)`.
+    `build_collector`'s owned branch (`call_defaults.rs`) builds through
+    `build_variadic_pack` with every element a `ListElement::Value` slot
+    it marks destroyed, as an owned `VariadicList` does.
+  - `Tuple.__init__(var *args)` must take upstream's body in the same
+    change, since `__RuntimeTuple(*args^)` no longer packages: mark
+    `self.storage` initialized, `def init_elt[idx: Int](var elt:
+    Self.Ts[idx]) {mut self}` writing `Pointer(to=self[idx])
+    .unsafe_write(elt^)`, then `args^.consume_elements(init_elt)`.
+  - A forwarded owned pack whose callee's element trait differs
+    (`Tuple(*args^)` from `*Ts: Movable & Deinitable` into `*Ts:
+    Movable`) fails verification after inlining ("binding of
+    VariadicPack[Movable & Deinitable, ...] to a slot of type
+    VariadicPack[Movable, ...]"). Convert it at the call: in
+    `build_collector`'s spread case, bind the moved pack to a slot, load its
+    `_value`, mark the slot destroyed, and `struct.create` the callee's
+    type. The moved register is untyped there; take its type from the
+    `var.use`'s slot.
+  - With that conversion and R2196, the 60 fixtures that build or forward
+    an owned pack or construct a `Tuple` kept their output on the VM.
+  - `VariadicPack.__deinit__` then destroys the elements last to first.
+  - Probe: `owned_pack_destroyed_in_reverse.mojo`,
+    `pack_constructor_spread_served.mojo`, `pack_struct_getitem.mojo`,
+    `tuple_one_element.mojo`, and `tuple_move_runs_element_moves.mojo`
+    keep their output on both backends.
+  - Probe: `var t = (M(20), 3)` and `Tuple(k^, 3)` print one `move` per
+    element, as the pin does.
   - Probe: once a pack's drop runs `__deinit__`, an empty pack must still
-    inline it. Forcing a read pack's drop to run code, `scaled[2]()` over
-    `def scaled[n: Int, *Us: Writable](*extra: *Us)` failed
-    `inline-parametric`'s verification ("intrinsic TupleStorage result
-    type ... paramfor_next_value ... is incompatible with its checked
-    element type") on the `comptime for` over `reversed(range(0))`.
-  - Split from R1921 (2026-11-05).
-  - Depends on R1924.
+    inline it: `scaled[2]()` over `def scaled[n: Int, *Us: Writable &
+    Movable](var *extra: *Us)` and `take()` print as the pin.
+  - Side probe: the pin destroys the pack in `take(n^)` over `def
+    take[*Ts: Writable & Movable](var *a: *Ts): print("in take", a[0])`
+    before the print (`del 10`, `in take M10`); Mojito prints the
+    reverse.
+  - Absorbs R2025, the `Tuple.__init__` body, which cannot land apart
+    from the flip.
+  - Split from R1927 (2026-11-14), which landed the closure witness's
+    owned-argument forwarding and the instance symbol's erasure of
+    origins inside a value argument.
+  - Depends on R2196.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2198 The owned collector's tuple stand-in outlives R2197**
+
+  Once an owned collector is an owned `VariadicPack`, the code that made it
+  a tuple of values is dead and should go.
+  - `native::mono::substitute_ty`'s `VariadicPack(*Ts)` to `Tuple` arm
+    (`substitute.rs`) goes once `call_defaults::collector_type` closes the
+    pack binder itself and returns `bound_variadic_pack_type`.
+    `TyKind::VariadicPack` stays, as a value pack constant's type.
+  - `refine_pack_drops`'s `owned_pack` parameter and reverse-order branch
+    (`pack_drops.rs`) go, with `mir::owned_pack_slot` and its callers in
+    `analysis.rs` and `specializer.rs`. The `RuntimePack` path stays.
+  - `verify_pack_spread` (`verify/calls.rs`) drops its `VariadicPack(_)`
+    and `Tuple(_)` admissions.
+  - The `__RuntimeTuple(*args^)` spread arm (`lower_expr/expr_call.rs`)
+    and `Checker::infer_unbound_pack_construction` go.
+  - Audit the remaining owned-collector cases of `TyKind::VariadicPack`
+    (checker indexing and iteration, `mir/facts.rs`'s `VariadicStorage`,
+    `mono/spread.rs`, `mono/infer.rs`). If `VariadicStorage` loses its last
+    producer, remove it and bump the MIR text version.
+  - Probe: `rg 'owned_pack_slot|infer_unbound_pack_construction'` finds
+    nothing.
+  - Depends on R2197.
   - Model: Fable, Not Planned.
 
 - [ ] **R1929 A read collector cannot keep alive the owner of an element
@@ -11253,24 +11325,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `format_string` parameter beside the interpolations.
   - The pin's shape needs an origin-carrying struct over a borrowed pack.
   - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R2025 `Tuple`'s pack initializer stores `__RuntimeTuple(*args^)`
-  where upstream consumes its owned pack with `consume_elements`**
-
-  Upstream marks `self._mlir_value` initialized, declares
-  `def init_elt[idx: Int](var elt: Self.Ts[idx]) {mut self}` running
-  `Pointer(to=self[idx]).unsafe_write(elt^)`, and calls
-  `args^.consume_elements(init_elt)`.
-  - With that body the bundled library does not package: "no symbolic
-    rule for an unbound pack or reflected type: method 'consume_elements'
-    of an unbound pack".
-  - `var *args: *Ts` is still the tuple of its values (R1927), so the
-    bundled `VariadicPack.consume_elements` is never reached.
-  - Do not add a symbolic `consume_elements` rule for the tuple collector.
-  - Split from R341 (2026-11-08), whose copy, move, default, and
-    `init_with` initializers landed.
-  - Depends on R1927.
   - Model: Fable, Planned.
 
 - [ ] **R2024 `Tuple(init_with=)` writes each element with `unsafe_write`

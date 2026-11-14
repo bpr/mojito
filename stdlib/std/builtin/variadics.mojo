@@ -46,7 +46,7 @@
 # `VariadicPack`, the heterogeneous collector a `read` `*args: *Ts` is in
 # its body, is upstream's declaration over its `!lit.ref.pack` field, which
 # the call builds over its arguments' references; an owned `var *args: *Ts`
-# collector is still the tuple of its elements (roadmap R1927), and
+# collector is still the tuple of its elements (roadmap R2197), and
 # `get_as_kgen_pack`/`get_loaded_kgen_pack` and the members they read are
 # not declared (R1922). Otherwise it differs from upstream's:
 # - the `Copyable` conformance has no `else` message, and

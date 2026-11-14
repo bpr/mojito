@@ -136,6 +136,7 @@ assets/ok/closure_storage_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_method_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_origin_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closure_storage_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/closure_witness_forwards_owned_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_display_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_handler_closure_traits.mojo	-	ineligible	no-scalar-entry-shape

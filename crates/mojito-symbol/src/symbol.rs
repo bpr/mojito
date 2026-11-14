@@ -1646,7 +1646,12 @@ fn value_argument_raw(value: &CtValue, mode: KeyMode) -> String {
         {
             format!("A{}", escape_bytes(&value.to_string()))
         }
-        KeyMode::Instance => format!("V{}", escape_bytes(&value.to_string())),
+        // Origins erase from the instance symbol, inside a value's types
+        // (a `VariadicPack`'s bound element list) as in a type argument.
+        KeyMode::Instance => format!(
+            "V{}",
+            escape_bytes(&mojito_types::types::erase_value_origins(value).to_string())
+        ),
     }
 }
 

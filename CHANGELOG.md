@@ -631,6 +631,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call through a capturing closure's `__call__` witness hands an owned
+  (`var`) argument on to the closure's body without running its move
+  initializer, as at the pin, where it ran one extra move
+  (`assets/ok/closure_witness_forwards_owned_argument.mojo`). An
+  instance symbol now erases the origins inside a value argument (a
+  `VariadicPack`'s bound element list) as it does in a type argument. The
+  owned collector's switch to upstream's `VariadicPack` (R1927) is filed
+  as R2197, behind R2196: a `Pointer` held in a place is addressed as its
+  pointee when a pointer to that place reads or writes it.
 - The whole of a slot holding a pointer is now the pointer, not its
   pointee, in the verifier, the VM, and Pliron, as upstream addresses a
   pointer local only through a `!lit.ref` (R1269). A requirement,

@@ -1042,11 +1042,13 @@ fn lower_storage_call_witness(
     for (index, (name, ty, convention)) in parameters.iter().enumerate() {
         let var = index + 1;
         let dest = register(ty);
+        // An owned parameter hands its storage on, as the method's owned
+        // argument binds it, and runs no move initializer.
         let place = if is_owned(convention) {
             instrs.push(MirInstr::UseVar {
                 dest,
                 var: var as VarId,
-                mode: UseMode::Move,
+                mode: UseMode::Forward,
                 constructor: None,
             });
             None

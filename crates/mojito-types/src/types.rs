@@ -4126,7 +4126,7 @@ pub fn erase_origins(ty: &Ty) -> Ty {
                 .iter()
                 .map(|argument| match argument {
                     TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
-                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Val(value) => TyArg::Val(erase_value_origins(value)),
                     TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
                 })
                 .collect(),
@@ -4169,6 +4169,18 @@ pub fn erase_origins(ty: &Ty) -> Ty {
             TyKind::Ref(reference).into()
         }
         _ => ty.clone(),
+    }
+}
+
+/// [`erase_origins`] inside a compile-time argument: a type, or a list of
+/// them, such as a `VariadicPack`'s bound element types.
+pub fn erase_value_origins(value: &CtValue) -> CtValue {
+    match value {
+        CtValue::Type(ty) => CtValue::Type(erase_origins(ty)),
+        CtValue::Tuple(elements) => {
+            CtValue::Tuple(elements.iter().map(erase_value_origins).collect())
+        }
+        value => value.clone(),
     }
 }
 

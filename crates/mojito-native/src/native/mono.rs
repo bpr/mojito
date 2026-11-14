@@ -495,19 +495,14 @@ impl Bindings {
     /// instance's own origin binders are not bindings and stay symbolic, as
     /// upstream keeps an instance's origin parameters unspecialized.
     fn erase_origins(&mut self) {
-        fn erase_value(value: &mut CtValue) {
-            match value {
-                CtValue::Type(ty) => *ty = erase_origins(ty),
-                CtValue::Tuple(elements) => elements.iter_mut().for_each(erase_value),
-                _ => {}
-            }
-        }
         self.types
             .values_mut()
             .chain(self.associated.values_mut())
             .chain(self.self_instance.iter_mut().map(|(_, ty)| ty))
             .for_each(|ty| *ty = erase_origins(ty));
-        self.values.values_mut().for_each(erase_value);
+        self.values
+            .values_mut()
+            .for_each(|value| *value = mojito_types::types::erase_value_origins(value));
         self.name_owner_origins();
     }
 
