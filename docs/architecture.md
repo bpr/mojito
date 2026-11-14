@@ -2516,9 +2516,12 @@ collector and is filled like any other. The list is built as upstream's call and
 display construction shares): a `ref.make` per element, their
 `!pop.array` (`array.create`, MIR's `TyKind::PopArray`) stored in the
 caller's `__passed_varargs__` slot, as upstream's call stores its
-`pop.array.create`, and a
-`struct.create` of the `Span` over its first element and one of the list
-over the span. A `read` collector's element is the caller's own place, its
+`pop.array.create`, and a `call` of `VariadicList`'s `@implicit`
+constructor (`variadic_list_constructor_symbol`) on the slot's `!lit.ref`,
+which `inline-always` splices as it splices any `@inline(.always)` callee.
+The array holds the elements' `!lit.ref`s, and an empty call's is the
+zero-size `!pop.array<0, …>`, which the constructor's `array.gep` addresses
+without reading. A `read` collector's element is the caller's own place, its
 read load turned into the `ref.make` (the private `borrowed_element`), kept
 live past the call by a `KeepAlive` per place, last to first; any other
 element, and every element of an owned collector, is moved into a fresh

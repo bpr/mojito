@@ -2775,14 +2775,20 @@ fn names_slot(instruction: &MirInstr, slot: VarId) -> bool {
 }
 
 /// Whether `collector` is the positional collector the call at `index` of
-/// `block` builds: a `tuple.make` in the straight-line run before it, or the
-/// `struct.create` of a homogeneous collector's `VariadicList` over one.
+/// `block` builds in the straight-line run before it: a `tuple.make`, the
+/// `struct.create` of a `VariadicPack`, or the call of `VariadicList`'s
+/// constructor a homogeneous collector is. Once that constructor is
+/// spliced, its result is a read of the slot the splice initializes, which
+/// binds as any other owned value the run defines.
 fn builds_collector(block: &MirBlock, index: usize, collector: Reg) -> bool {
     block.instrs[run_start(block, index)..index]
         .iter()
         .any(|instruction| match instruction {
             MirInstr::MakeTuple { dest, .. } | MirInstr::MakeStruct { dest, .. } => {
                 *dest == collector
+            }
+            MirInstr::Call { dest, func, .. } => {
+                *dest == collector && mojito_symbol::symbol::is_variadic_list_constructor(&func.0)
             }
             _ => false,
         })

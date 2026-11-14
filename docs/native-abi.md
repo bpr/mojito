@@ -211,7 +211,8 @@ Rules:
   builds it in MIR: each element is the caller's own place for a `read`
   collector, or a caller slot the element is moved into, and `data` points
   at the caller's `__passed_varargs__` slot, the `!pop.array` of their
-  addresses (one unread element when `len == 0`). An owned list's callee owns the elements: a consuming
+  addresses (zero-size when `len == 0`), which `VariadicList`'s
+  `@implicit` constructor wraps. An owned list's callee owns the elements: a consuming
   iterator narrows its copy of the span past each element it moves out,
   and the list's `__deinit__` destroys the elements the span still covers,
   last to first, through their addresses.

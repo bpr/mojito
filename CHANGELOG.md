@@ -794,6 +794,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a homogeneous `*xs: T` callee now builds its `VariadicList` as
+  upstream's does: it stores the elements' `!lit.ref`s in the
+  `__passed_varargs__` `!pop.array` and calls the list's `@implicit`
+  constructor, now declared in the bundled `VariadicList` as upstream's,
+  on that slot's `!lit.ref`, where it built the `Span` and the list itself
+  as two `struct.create`s (R1314). An empty call's array is zero-size, no
+  longer one uninitialized pointer; the pin passes a null `!lit.ref`
+  instead (R2213). The VM's `pointer.bitcast` reads a `!lit.ref` pointee
+  as the `Pointer` it holds it as.
+
 - Every phase outside `mojito-types` now builds and reads a `Pointer`
   type through accessors (`Ty::pointer`, `TyKind::{as_pointer,
   pointer_element, pointer_origin, pointer_or_lit_ref, is_pointer}`)

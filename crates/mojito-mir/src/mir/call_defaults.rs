@@ -27,7 +27,8 @@
 
 use crate::mir::type_construction::storage_construction;
 use crate::mir::variadics::{
-    FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_pointer_type,
+    FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_lit_ref_type,
+    element_pointer_type,
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -1478,7 +1479,7 @@ fn borrowed_element(
     let pointer = element_pointer(
         function,
         register,
-        element_pointer_type(element, false),
+        element_lit_ref_type(element, false),
         location,
     );
     prelude[at] = MirInstr::MakeRef {

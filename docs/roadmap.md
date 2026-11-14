@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2213**.
+Next free ID: **R2214**.
 
 ## Ordered Work
 
@@ -2347,8 +2347,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The same signature with a concrete element (`Pointer[Int, o]`) runs.
   - The parameter order does not matter.
   - Probe: `def h[T: AnyType, o: ImmOrigin](r: Pointer[T, o]._mlir_lit_ref)`
-    called with `__get_mvalue_as_litref(x)` fails the same way, and R1314's
-    `VariadicList.__init__[size, container_origin]` needs both inferred.
+    called with `__get_mvalue_as_litref(x)` fails the same way.
   - Found while fixing a call-result pointer's dereference (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9219,6 +9218,26 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2213 An empty `*xs` call passes the `!lit.ref` of a zero-size
+  array, where the pin passes a null `!lit.ref`**
+
+  The pin's empty call of a homogeneous `*xs: T` callee builds no
+  `__passed_varargs__` array: it passes `VariadicList`'s `@implicit`
+  constructor a null `!lit.ref<!pop.array<0, …>>`, whose `pop.array.gep`
+  addresses nothing without reading it.
+  - Cause: MIR has no null-address constant, so
+    `mir::variadics::build_variadic_list` stores an empty
+    `!pop.array<0, …>` in the slot and passes its `!lit.ref`. A null
+    `!lit.ref` needs a `Const` that both the VM and Pliron lower.
+  - Observable only through the span's address: an empty list's
+    `xs._value.unsafe_ptr()` addresses the caller's slot, not null.
+  - Evidence: `mojo build --emit llvm` of `f()` against a `@no_inline def
+    f(*xs: Int)` passes `{ ptr, i64 } zeroinitializer` with no array
+    alloca, where `f(a, 4)` stores a `[2 x ptr]` and passes its gep.
+  - Found while landing R1314 (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -10148,28 +10167,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while planning R1681 (2026-11-14).
   - Depends on R2210.
   - Model: Fable, Planned.
-
-- [ ] **R1314 The call builds a `VariadicList`'s span itself, where
-  upstream calls the list's `@implicit` constructor from the `!pop.array`**
-
-  Problem: every call of a `*xs: T` callee stores its element pointers'
-  `!pop.array` in `__passed_varargs__`, as upstream's does, then builds the
-  `Span` and the list over it as two `struct.create`s
-  (`mir::variadics::build_variadic_list`), where upstream calls
-  `VariadicList.__init__[size, container_origin]` on a reference to that
-  slot, inlined.
-  - Probe: the bundled `VariadicList` declares no constructor
-    (`stdlib/std/builtin/variadics.mojo`'s header).
-  - Probe: the elaborator's `Array` display construction
-    (`mono/substitute.rs::array_literal_construction`) shares the builder.
-  - Probe: an empty list's array holds one uninitialized pointer, where
-    upstream passes a null `!lit.ref` to a `!pop.array<0, …>`, which the
-    constructor's gep addresses without reading.
-  - Found while landing R1073 (2026-10-23); the array became a
-    `!pop.array` with R1304.
-  - Depends on R1315, R1316, R1317 (the constructor's vocabulary), and
-    R221 (its `unsafe_bitcast` of the element pointer).
-  - Model: Fable, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**
@@ -12686,7 +12683,8 @@ residue found inside a task moves to the task that owns its fix.
   Upstream's `pop.pointer.bitcast` reinterprets the bytes at an address,
   where the VM's heap and frame slots hold one typed `Value` per element.
   - So `runtime::pointer_bitcast_preserves_pointee` (`mojito-vm`) runs a
-    bitcast only between pointees that are one type up to origins, and
+    bitcast only between pointees that are one type up to origins, a
+    `!lit.ref` pointee counting as the `Pointer` it is held as, and
     refuses any other as unsupported.
   - Native code runs every retype, as at the pin.
   - Lever: reinterpret a scalar or SIMD value read or written through the

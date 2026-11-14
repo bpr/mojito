@@ -2588,10 +2588,7 @@ pub enum MirInstr {
     /// in declaration order, running no constructor: upstream's
     /// `kgen.struct.create`, which `sroa` emits for a whole read of a split
     /// slot. It is pure, as upstream's is: `sroa` builds one only of a type
-    /// whose drop runs no code. The `Span` over a call's array of element
-    /// pointers and the `VariadicList` over that span, which a call builds
-    /// for its callee's `*xs: T`, are two, standing for upstream's
-    /// constructor from the `!pop.array` of element pointers.
+    /// whose drop runs no code.
     MakeStruct {
         dest: Reg,
         fields: Vec<Reg>,

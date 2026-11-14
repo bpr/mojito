@@ -346,8 +346,10 @@ impl VmBackend {
     /// (`mir::variadics::build_variadic_list`), in compile-time memory:
     /// each element stored where its pointer addresses it, the array of
     /// those pointers stored, and the `Span` over the array's first element
-    /// and its length, which the list wraps. An empty list's array holds one
-    /// uninitialized pointer, so its span still addresses the array.
+    /// and its length, which the list wraps: the value the list's
+    /// `@implicit` constructor builds from that array. An empty list's array
+    /// is empty, as an empty call's `!pop.array<0, …>`, and its span
+    /// addresses it without reading it.
     fn thawed_variadic_list(
         &mut self,
         prog: &Prog,
@@ -355,15 +357,12 @@ impl VmBackend {
         element: &Ty,
         target: &Ty,
     ) -> Result<Value, RuntimeError> {
-        let mut pointers = Vec::with_capacity(items.len().max(1));
+        let mut pointers = Vec::with_capacity(items.len());
         for item in items {
             let value = self.thaw(prog, item, Some(element))?;
             pointers.push(self.store_to_comptime_memory(value));
         }
         let length = pointers.len();
-        if pointers.is_empty() {
-            pointers.push(Value::UninitStorage(None));
-        }
         let Value::Ref { frame, slot, .. } = self.store_to_comptime_memory(Value::Tuple(pointers))
         else {
             unreachable!("compile-time memory is addressed by reference");

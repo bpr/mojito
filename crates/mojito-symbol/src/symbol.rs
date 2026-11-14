@@ -667,6 +667,20 @@ pub fn keyword_collector_constructor_symbol() -> String {
     format!("{KEYWORD_COLLECTOR_STRUCT}.__init__")
 }
 
+/// `VariadicList`'s `@implicit` constructor from the `!lit.ref` of a
+/// `!pop.array` of element references, which a call building the list its
+/// callee's homogeneous `*xs` takes names, as upstream's does.
+pub fn variadic_list_constructor_symbol() -> String {
+    format!("{}.__init__", mojito_types::types::VARIADIC_LIST_TYPE_NAME)
+}
+
+/// Whether `symbol` names [`variadic_list_constructor_symbol`].
+pub fn is_variadic_list_constructor(symbol: &str) -> bool {
+    split_method_symbol(symbol).is_some_and(|(owner, method)| {
+        owner == mojito_types::types::VARIADIC_LIST_TYPE_NAME && method == "__init__"
+    })
+}
+
 /// The `_insert` a call building a keyword collector names per keyword.
 ///
 /// It is the overload taking the keyword's literal key, as upstream's call

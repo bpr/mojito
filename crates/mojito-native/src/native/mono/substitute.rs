@@ -1313,7 +1313,8 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 /// The list-literal initializer call over `elements` of type `element`, as
 /// MIR lowers a display: the call builds the `VariadicList` over the
 /// elements (`owned` for the initializer's `var` collector, each element
-/// then the list's) and passes it, `__list_literal__` (a `NoneType` built
+/// then the list's), calling the list's `@implicit` constructor on their
+/// array, and passes it, `__list_literal__` (a `NoneType` built
 /// from `None`) selects the overload,
 /// and the `length` parameter argument reifies the constructed value's
 /// length. Concrete MIR holds no lifetime marker, so the slots an owned

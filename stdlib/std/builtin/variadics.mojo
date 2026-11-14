@@ -21,11 +21,6 @@
 #
 # `VariadicList`, the run-time homogeneous collector a `*xs: T` parameter is
 # in its body, and its `_VariadicListIter` are upstream's, except:
-# - the call builds the element pointers' `!pop.array` in its
-#   `__passed_varargs__` slot, as upstream's does, but then builds the
-#   `Span` over it and the list over the span itself (`struct.create`s),
-#   standing for upstream's `@implicit` constructor from that array, so
-#   that constructor, the one use of `_MLIR.POPArrayType`, is not declared;
 # - `__getitem__` returns `ref[origin_of(self)]` rather than upstream's union
 #   of the elements' and the list's origins, and binds the span's pointer
 #   before indexing it;
@@ -449,6 +444,39 @@ struct VariadicList[
     # ===-------------------------------------------------------------------===#
     # Life cycle methods
     # ===-------------------------------------------------------------------===#
+
+    @doc_hidden
+    @inline(.always)
+    @implicit
+    def __init__[
+        size: __mlir_type.index, container_origin: ImmOrigin
+    ](
+        out self,
+        value: Pointer[
+            _MLIR.POPArrayType[size, Self._EltPointerType._mlir_lit_ref],
+            container_origin,
+        ]._mlir_lit_ref,
+    ):
+        """Constructs a VariadicList from a compiler-generated array of element
+        pointers.
+
+        Parameters:
+            size: The number of elements in the variadic list.
+            container_origin: The origin of the container.
+
+        Args:
+            value: The raw reference to the array of element pointers.
+        """
+        # Convert the !lit.ref to a pointer, then cast to a pointer to
+        # the first element.
+        var array_up = Pointer(to=Pointer(_mlir_value=value)[])
+        var elt_ptr = Pointer[_, ImmUntrackedOrigin](
+            _mlir_value=__mlir_op.`pop.array.gep`(
+                array_up._get_kgen_pointer(),
+                Int(0).__mlir_index__(),
+            )
+        ).unsafe_bitcast[Self._EltPointerType]()
+        self._value = Span(unsafe_ptr=elt_ptr, length=Int(mlir_value=size))
 
     # The destructor for this type is trivial if not an "owned" list.
     comptime __del__is_trivial: Bool = not Self.is_owned
