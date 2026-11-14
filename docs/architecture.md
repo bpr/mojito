@@ -2439,8 +2439,15 @@ reads each addressed operand through its reference ahead of the call
 (`mir::read_addressed_operands`), since the builtin takes values (R2177).
 An operand over a type parameter a pointer may instantiate keeps its load,
 since a `ref.make` of a whole pointer slot designates the pointee (R1269);
-so does a lifecycle requirement's receiver (`x.copy()`, R2180) and a type
-parameter's copy construction (R2179). A call through a function value
+so does a lifecycle requirement's receiver (`x.copy()`, R2180). A type
+parameter's copy construction (`T(copy=x)`, `type.construct`) passes its
+source as its copy initializer's `read copy: Self` operand, a `ref.make`
+of the source's place when `T` is memory-only, as upstream's call of the
+`Copyable` initializer takes a `!lit.ref`; the elaborator's and
+`inline-parametric`'s `construct_type_parameters` read it through
+(`ref.read`, from the function's `RegisterTable`) where the bound type
+copies by value, and pass it as it is to a struct's copy initializer
+call. A call through a function value
 (`call.indirect`) and a `def(...)` bound's `__call__` bind their operands
 by the value's or the bound's function type (its `conventions`,
 `ref_params`, and `params`, slot-matched as a declaration's), as

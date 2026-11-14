@@ -389,7 +389,15 @@ impl Specializer<'_> {
         // nothing else of the clone may be substituted without.
         self.elaborate_in(blocks, frame, iteration, tables)?;
         substitute_callable_parameter_reads(blocks, tables.var_names, &bindings.callables);
-        default_construct_parameters(blocks, iteration, &self.source.declarations)?;
+        default_construct_parameters(
+            blocks,
+            iteration,
+            &self.source.declarations,
+            &mut mojito_mir::mir::RegisterTable {
+                n_regs: tables.n_regs,
+                reg_types: tables.reg_types,
+            },
+        )?;
         substitute_blocks_metadata(blocks, iteration)?;
         self.answer_param_constants(
             template,

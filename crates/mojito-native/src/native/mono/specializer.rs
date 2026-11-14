@@ -1178,7 +1178,15 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<MirFunction, MonoError> {
         let mut function = template.clone();
-        default_construct_parameters(&mut function.body, bindings, &self.source.declarations)?;
+        default_construct_parameters(
+            &mut function.body,
+            bindings,
+            &self.source.declarations,
+            &mut mojito_mir::mir::RegisterTable {
+                n_regs: &mut function.n_regs,
+                reg_types: &mut function.reg_types,
+            },
+        )?;
         self.elaborate_comptime_ops(name, &mut function, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.body, bindings);
         let conforms = |subject: &ParamExpr, trait_name: &str| {

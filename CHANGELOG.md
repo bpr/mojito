@@ -756,6 +756,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type parameter's copy construction (`T(copy=x)`, `type.construct`)
+  passes its source as its copy initializer's `read copy: Self` operand:
+  over a memory-only `T` it is a `ref.make` of the caller's place, as
+  upstream's call of the `Copyable` initializer takes a `!lit.ref`
+  (R2179). The elaborator's and `inline-parametric`'s
+  `construct_type_parameters` now take the function's register table and
+  read the address through (`ref.read`) where the bound type copies by
+  value, and pass it to a struct's copy initializer as it is. A `T` a
+  pointer may instantiate (`T: Copyable & Movable`) keeps the load
+  (R1269).
+
 - A call through a function value (`call.indirect`) and a `def(...)`
   bound's call pass their operands by the function type's conventions, as
   upstream's indirect `lit.call` reads the callee's signature: a

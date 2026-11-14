@@ -194,7 +194,7 @@ use mojito_mir::mir::{
     CleanSplice, Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel, MirBlock,
     MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg,
-    RegionFrame, RegisterEnds, TypeConstructionError, UseMode, callable_targets,
+    RegionFrame, RegisterEnds, RegisterTable, TypeConstructionError, UseMode, callable_targets,
     construct_type_parameters, count_register_reads, dunder_method_call, erase_removed_operands,
     fresh_register, has_no_destructor, instruction_regions, instruction_regions_mut,
     instruction_regs_mut, instruction_slots, instruction_subscript_call,
@@ -4225,7 +4225,16 @@ fn instantiated<'c>(
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
-    construct_type_parameters(&mut function.body, &instantiation, declarations).ok()?;
+    construct_type_parameters(
+        &mut function.body,
+        &instantiation,
+        declarations,
+        &mut RegisterTable {
+            n_regs: &mut function.n_regs,
+            reg_types: &mut function.reg_types,
+        },
+    )
+    .ok()?;
     if constructs_binder(&function.body, &instantiation.types) {
         return None;
     }

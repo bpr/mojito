@@ -15,6 +15,7 @@ use crate::mir::{
 };
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{Ty, TyArg, TyKind};
+use std::collections::HashMap;
 use std::fmt;
 
 /// The types a construction's binder and pack element are bound to.
@@ -31,6 +32,36 @@ pub trait ConstructionTypes {
     ///
     /// When the bindings cannot close `ty`.
     fn close(&self, ty: &Ty) -> Result<Ty, Self::Error>;
+}
+
+/// The register table of the function a construction rewrite runs in,
+/// which allocates the `ref.read` an addressed `copy=` source needs.
+pub struct RegisterTable<'a> {
+    pub n_regs: &'a mut u32,
+    pub reg_types: &'a mut HashMap<u32, Ty>,
+}
+
+impl RegisterTable<'_> {
+    /// Read `source` through, where the construction's operand is a
+    /// reference ([`crate::mir::address_call_operands`]) and its copy
+    /// reads a value: the fresh register and the `ref.read` defining it,
+    /// or `source` alone when it is no reference.
+    fn value_of(&mut self, source: Reg) -> (Reg, Option<MirInstr>) {
+        let Some(TyKind::Ref(reference)) = self.reg_types.get(&source.0).map(Ty::kind) else {
+            return (source, None);
+        };
+        let referent = reference.referent.clone();
+        let loaded = Reg(*self.n_regs);
+        *self.n_regs += 1;
+        self.reg_types.insert(loaded.0, referent);
+        (
+            loaded,
+            Some(MirInstr::ReadRef {
+                dest: loaded,
+                reference: source,
+            }),
+        )
+    }
 }
 
 /// A construction its bound type cannot build.
@@ -93,6 +124,7 @@ pub fn construct_type_parameters<C: ConstructionTypes>(
     block: &mut MirBlock,
     types: &C,
     declarations: &MirDeclarations,
+    registers: &mut RegisterTable<'_>,
 ) -> Result<(), C::Error> {
     let mut index = 0;
     while index < block.instrs.len() {
@@ -113,11 +145,11 @@ pub fn construct_type_parameters<C: ConstructionTypes>(
                 .map(|ty| default_construction(*dest, &ty, declarations))
                 .transpose()?,
             instruction @ MirInstr::ConstructTypeParam { .. } => {
-                copy_construction(instruction, types, declarations).map(|copy| vec![copy])
+                copy_construction(instruction, types, declarations, registers)
             }
             instruction => {
                 for region in instruction_regions_mut(instruction) {
-                    construct_type_parameters(region, types, declarations)?;
+                    construct_type_parameters(region, types, declarations, registers)?;
                 }
                 None
             }
@@ -251,7 +283,8 @@ fn copy_construction<C: ConstructionTypes>(
     instruction: &MirInstr,
     types: &C,
     declarations: &MirDeclarations,
-) -> Option<MirInstr> {
+    registers: &mut RegisterTable<'_>,
+) -> Option<Vec<MirInstr>> {
     let MirInstr::ConstructTypeParam {
         dest,
         param,
@@ -269,20 +302,34 @@ fn copy_construction<C: ConstructionTypes>(
         return None;
     }
     let bound = types.bound(param)?;
-    match bound.kind() {
-        ty if mojito_types::types::builtin_copy_is_value_read(ty) => Some(MirInstr::CopyValue {
+    let place = kwarg_places.first().cloned().flatten();
+    let copy = match bound.kind() {
+        ty if mojito_types::types::builtin_copy_is_value_read(ty) => MirInstr::CopyValue {
             dest: *dest,
             value: *source,
             constructor: None,
-        }),
-        TyKind::Struct(..) => Some(struct_copy(
-            *dest,
-            bound,
-            (*source, kwarg_places.first().cloned().flatten()),
-            declarations,
-        )),
-        _ => None,
-    }
+        },
+        TyKind::Struct(..) => struct_copy(*dest, bound, (*source, place), declarations),
+        _ => return None,
+    };
+    let MirInstr::CopyValue {
+        dest,
+        value,
+        constructor,
+    } = copy
+    else {
+        return Some(vec![copy]);
+    };
+    let (value, read) = registers.value_of(value);
+    Some(
+        read.into_iter()
+            .chain([MirInstr::CopyValue {
+                dest,
+                value,
+                constructor,
+            }])
+            .collect(),
+    )
 }
 
 /// The compile-time arguments a call of the struct `ty`'s initializer

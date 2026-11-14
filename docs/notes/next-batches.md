@@ -156,7 +156,7 @@ A call reads its argument conventions from the callee's signature rather
 than checker markers, passes by-address operands as addresses with no
 `arg_places` side table, and returns a raising callee's result and error
 through memory slots. The largest structural change left at the MIR waist;
-it touches the VM, Pliron, and the package format. R2179, R1269, and R2180
+it touches the VM, Pliron, and the package format. R1269 and R2180
 run as prerequisites.
 
 ```sh

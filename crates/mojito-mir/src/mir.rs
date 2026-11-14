@@ -116,8 +116,8 @@ mod try_finally;
 use try_finally::TryParts;
 mod type_construction;
 pub use type_construction::{
-    ConstructionTypes, TypeConstructionError, construct_type_parameters, storage_construction,
-    struct_copy,
+    ConstructionTypes, RegisterTable, TypeConstructionError, construct_type_parameters,
+    storage_construction, struct_copy,
 };
 mod unused_args;
 mod write_back;

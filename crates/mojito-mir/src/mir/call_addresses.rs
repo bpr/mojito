@@ -11,7 +11,9 @@
 //! reads the requirement's signature. A call through a function value
 //! (`call.indirect`) and a `def(...)` bound's `__call__` bind theirs by the
 //! value's or the bound's function type, as upstream's indirect `lit.call`
-//! reads the callee's `!lit.fn` signature.
+//! reads the callee's `!lit.fn` signature. A type parameter's copy
+//! construction (`T(copy=x)`) passes its source as its copy initializer's
+//! `read copy: Self` operand.
 //!
 //! A register-passable `read` argument is passed by value, as upstream's
 //! `LowerArgConventions` caller half passes it: one an instance's
@@ -105,7 +107,8 @@ pub fn operand_value_ty(ty: &Ty) -> &Ty {
 /// retained place, rather than a whole load of it.
 ///
 /// The calls are every direct call, call through a function value,
-/// resolved method call, and checked subscript.
+/// resolved method call, checked subscript, and type parameter's copy
+/// construction.
 ///
 /// The operand is rewritten when its one reader is the call and its
 /// definition reads the storage the call's place table names: a
@@ -246,8 +249,9 @@ impl<'a> Callees<'a> {
 
 /// The contract a resolved call binds its operands by: its callee's
 /// declaration, the requirement a call through a trait bound selects,
-/// beside the receiver convention the call records for it, or the function
-/// type a call through a function value or a `def(...)` bound reads.
+/// beside the receiver convention the call records for it, the function
+/// type a call through a function value or a `def(...)` bound reads, or
+/// the copy initializer `T(copy=x)` calls.
 #[derive(Clone, Copy)]
 enum Contract<'a> {
     Declared(&'a MirFunctionDeclaration),
@@ -256,12 +260,18 @@ enum Contract<'a> {
         receiver: Option<ArgConvention>,
     },
     Signature(&'a FuncTy),
+    /// `Copyable`'s `__init__(out self, *, copy: Self)`, whose one
+    /// parameter is the `read` `copy=` source.
+    Copy,
 }
 
 impl<'a> Contract<'a> {
-    fn shape(self) -> CallShape<'a> {
-        match self {
+    /// The shape a call's operands bind by; `None` for the copy
+    /// initializer, whose one operand binds its one parameter.
+    fn shape(self) -> Option<CallShape<'a>> {
+        Some(match self {
             Self::Declared(declaration) => CallShape::declared(declaration),
+            Self::Copy => return None,
             Self::Required { requirement, .. } => CallShape {
                 names: &requirement.param_names,
                 required: &requirement.required,
@@ -282,12 +292,13 @@ impl<'a> Contract<'a> {
                     keyword: signature.kw_variadic.is_some(),
                 },
             },
-        }
+        })
     }
 
     /// Whether the contract's parameter types may name a type parameter a
-    /// pointer instantiates ([`pointer_may_bind`]): a requirement's spelled
-    /// over `Self`, or a function type's over the caller's parameters.
+    /// pointer instantiates ([`pointer_may_bind`]): a requirement's or the
+    /// copy initializer's spelled over `Self`, or a function type's over
+    /// the caller's parameters.
     const fn is_abstract(self) -> bool {
         !matches!(self, Self::Declared(_))
     }
@@ -299,7 +310,7 @@ impl<'a> Contract<'a> {
             Self::Required { receiver, .. } => {
                 by_address(receiver, is_reference(receiver), ty, declarations)
             }
-            Self::Signature(_) => None,
+            Self::Signature(_) | Self::Copy => None,
         }
     }
 
@@ -326,6 +337,7 @@ impl<'a> Contract<'a> {
                     declarations,
                 )
             }
+            Self::Copy => by_address(None, false, operand_ty, declarations),
             Self::Signature(signature) => {
                 let (convention, reference, ty) = signature_parameter(signature, parameter)?;
                 by_address(convention, reference, ty, declarations)
@@ -337,11 +349,12 @@ impl<'a> Contract<'a> {
     /// value where its operand may be a reference: an owned one, or a
     /// `read` one an instance's substitution made register-passable. A
     /// requirement's parameters are never read here: the elaborator names
-    /// the witness, whose declaration binds them.
+    /// the witness, whose declaration binds them, and writes the copy
+    /// initializer's call itself.
     fn by_value_parameter(self, parameter: usize, declarations: &MirDeclarations) -> bool {
         match self {
             Self::Declared(declaration) => by_value_parameter(declaration, declarations, parameter),
-            Self::Required { .. } => false,
+            Self::Required { .. } | Self::Copy => false,
             Self::Signature(signature) => signature_parameter(signature, parameter).is_some_and(
                 |(convention, reference, ty)| {
                     !reference
@@ -513,7 +526,7 @@ fn bound_call<'i>(
             )?;
             let contract = Contract::Signature(signature);
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-            let parameters = operand_parameters(&contract.shape(), args.len(), &keywords)?;
+            let parameters = operand_parameters(&contract.shape()?, args.len(), &keywords)?;
             Some(BoundCall {
                 contract,
                 receiver: None,
@@ -557,7 +570,7 @@ fn bound_call<'i>(
                     })
                 })?;
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-            let parameters = operand_parameters(&contract.shape(), args.len(), &keywords)?;
+            let parameters = operand_parameters(&contract.shape()?, args.len(), &keywords)?;
             // A requirement call whose receiver convention went unrecorded
             // but which writes its receiver is left to its place, and a
             // `def(...)` bound's callee is passed as the value it is.
@@ -570,6 +583,19 @@ fn bound_call<'i>(
                 operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
             })
         }
+        MirInstr::ConstructTypeParam {
+            kwargs,
+            kwarg_places,
+            element: None,
+            ..
+        } => match (kwargs.as_slice(), kwarg_places.as_slice()) {
+            ([(keyword, source)], [place]) if keyword == "copy" => Some(BoundCall {
+                contract: Contract::Copy,
+                receiver: None,
+                operands: vec![(*source, place.as_ref(), Some(0))],
+            }),
+            _ => None,
+        },
         _ => {
             let subscript = SubscriptOperands::of(instruction)?;
             let declaration = callees.get(subscript.callee)?;
@@ -726,6 +752,10 @@ fn operand_registers_mut(instruction: &mut MirInstr) -> (Option<&mut Reg>, Vec<&
             args.iter_mut()
                 .chain(kwargs.iter_mut().map(|(_, register)| register))
                 .collect(),
+        ),
+        MirInstr::ConstructTypeParam { kwargs, .. } => (
+            None,
+            kwargs.iter_mut().map(|(_, register)| register).collect(),
         ),
         MirInstr::MethodCall {
             recv, args, kwargs, ..

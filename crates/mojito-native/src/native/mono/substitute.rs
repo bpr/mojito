@@ -73,8 +73,9 @@ pub(super) fn default_construct_parameters(
     block: &mut MirBlock,
     bindings: &Bindings,
     declarations: &MirDeclarations,
+    registers: &mut mojito_mir::mir::RegisterTable<'_>,
 ) -> Result<(), MonoError> {
-    mojito_mir::mir::construct_type_parameters(block, bindings, declarations)
+    mojito_mir::mir::construct_type_parameters(block, bindings, declarations, registers)
 }
 
 /// Substitute `bindings` through `function`. Each read of a retained

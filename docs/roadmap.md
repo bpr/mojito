@@ -9118,6 +9118,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     operand over such a parameter loaded (`pointer_may_bind`: `T:
     Intable`, `T: Writable`, a lifecycle bound, or `Self`); drop that
     guard with the fix.
+  - Probe: the same guard covers a type parameter's copy construction:
+    `def make[T: Copyable & Movable](x: T) -> T: return T(copy=x)` keeps a
+    `place.load` of `x` feeding `type.construct` in the template
+    `emit-mir` prints, where `T: Valued` over a user trait passes a
+    `ref.make`.
   - Probe: the same guard covers a call through a function value or a
     `def(...)` bound over such a parameter: `def apply[T: Copyable](f:
     def(T) -> Int, x: T) -> Int: return f(x)` keeps `place.load` of `x`
@@ -9191,29 +9196,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fix: record each argument's convention on `call`/`call.method` at
     lowering (the checker binds it), and classify by that record.
   - Found while landing R1930 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2179 A type parameter's copy construction passes its source as a
-  loaded value beside its place**
-
-  `T(copy=x)` (`MirInstr::ConstructTypeParam`) takes its `copy=` source as
-  a `place.load` beside `kwarg_places`, where upstream's copy initializer
-  takes a `read` operand, an address when `T` is memory-only.
-  - `mir::address_call_operands` cannot address it yet: the elaborator's
-    `construct_type_parameters` (`mir/type_construction.rs`) writes the
-    construction as a `value.copy` of the source register at a built-in
-    binding, and `value.copy` reads a value, not a reference.
-  - That rewrite sees only a block, so it cannot allocate the `ref.read`
-    an addressed source would need, and `inline-parametric` runs the same
-    rewrite.
-  - Fix: give `construct_type_parameters` the function's register table
-    so a built-in copy reads an addressed source through, then address the
-    `copy=` source in `address_call_operands` when `T` is memory-only.
-  - Probe: `def make[T: Copyable & Movable](x: T) -> T: return
-    T(copy=x)` keeps a `place.load` of `x` feeding `type.construct` in the
-    template `emit-mir` prints.
-  - Found while landing R1919 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

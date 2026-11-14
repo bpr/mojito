@@ -4670,6 +4670,42 @@ fn indirect_and_callable_bound_calls_pass_by_address_operands() {
 }
 
 #[test]
+fn type_parameter_copy_construction_passes_its_source_by_address() {
+    // `T(copy=x)` calls the copy initializer's `read copy: Self`, so a
+    // memory-only `T` no pointer may bind passes the source as a reference
+    // to its storage; a `T` a pointer may bind keeps its load (R1269).
+    let src = "trait Valued(Copyable, Movable):\n    def value(self) -> Int: ...\n\ndef make[T: Valued](x: T) -> T:\n    return T(copy=x)\n\ndef plain[T: Copyable & Movable](x: T) -> T:\n    return T(copy=x)\n";
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    for (name, expected) in [("make", true), ("plain", false)] {
+        let (_, function) = mir
+            .functions
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .expect("function lowered");
+        let instructions = nested_instructions(&function.body);
+        let source = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::ConstructTypeParam { kwargs, .. } => Some(kwargs[0].1),
+                _ => None,
+            })
+            .expect("copy construction");
+        let addressed = instructions.iter().any(
+            |instruction| matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == source),
+        );
+        assert_eq!(addressed, expected, "{function:#?}");
+    }
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn pack_element_read_argument_retains_its_place() {
     // A pack element `Ts[i]` is one more type known only per instance:
     // `print` and an ordinary `read` parameter read it where it lies, as
