@@ -765,6 +765,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raising callee's non-`None` result is now returned through memory
+  (`IndirectResult`) whatever its type, and a raising implicit
+  conversion's (`ConversionIndirectResult`), as upstream's throwing
+  signature makes its ABI result the error flag and passes the result as
+  a synthesized `ByRefResult` (R1420). `print(atol(s))` now binds `atol`'s
+  `Int` to a call-result slot rather than a register. Behavior is
+  unchanged: a raise is still an edge, and the post-elaboration passes
+  still promote a trivial slot read by value (`take(boom(1))`) back to a
+  register.
+
 - A `mut` or `ref` call argument is now lowered as its place's address, a
   `ref.make` emitted as the operand is lowered, as upstream emits the
   `!lit.ref` (R1920). `inc(i)` over `mut x: Int`, which used to pass a

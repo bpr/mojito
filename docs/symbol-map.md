@@ -1518,7 +1518,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Node::indirect_result` (the checker's `IndirectResult` /
   `ConversionIndirectResult`, recorded by
   `Checker::record_result_conventions` from `NodeFacts::declared_result`
-  through `Checker::memory_only`,
+  through `Checker::memory_only`, and for every raising callee's
+  non-`None` result from `NodeFacts::effects`,
   which also marks a register-passable read argument
   `RegisterPassableRead`, `Node::register_passable_read`, so
   `lower_call_operand` retains the place of every other one)

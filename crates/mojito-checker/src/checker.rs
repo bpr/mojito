@@ -2382,9 +2382,12 @@ impl Checker {
     /// argument: a result whose declared type (the selected callee's, an
     /// initializer's struct at its own parameters, else the node's own) is
     /// memory-only is returned through memory
-    /// ([`mojito_checked::checked::SemanticAdjustment::IndirectResult`]);
-    /// so is an implicit conversion's when its type is. A conversion's
-    /// `read` source stays passed by address only when it is memory-only
+    /// ([`mojito_checked::checked::SemanticAdjustment::IndirectResult`]),
+    /// as is any raising callee's non-`None` result, since a throwing
+    /// signature's ABI result is its error flag; so is an implicit
+    /// conversion's when its type is memory-only or its constructor raises.
+    /// A conversion's `read` source stays passed by address only when it is
+    /// memory-only
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).
     /// A read argument, a borrowed place or a temporary,
     /// whose type is not memory-only is passed by value
@@ -2420,13 +2423,22 @@ impl Checker {
                         || facts.read_temporary_argument
                         || facts.read_place_receiver)
                         && passed.is_some_and(|ty| !memory_only(ty));
-                    let indirect = facts
+                    let result = facts
                         .declared_result
                         .clone()
                         .or_else(|| facts.overload_target.as_deref().and_then(constructed))
-                        .or_else(|| facts.ty.clone())
-                        .is_some_and(|ty| memory_only(&ty));
-                    let converted = conversion.as_ref().is_some_and(memory_only);
+                        .or_else(|| facts.ty.clone());
+                    let raises = facts
+                        .effects
+                        .as_ref()
+                        .is_some_and(|effects| effects.raises.is_some());
+                    let indirect = result.is_some_and(|ty| {
+                        memory_only(&ty)
+                            || (raises && !ty.kind().is_none_type() && *ty != TyKind::Never)
+                    });
+                    let converted = conversion
+                        .as_ref()
+                        .is_some_and(|ty| memory_only(ty) || facts.conversion_raises.is_some());
                     let reads_source =
                         facts.conversion_reads_source && facts.ty.as_ref().is_some_and(memory_only);
                     (indirect || converted || by_value || facts.conversion_reads_source)

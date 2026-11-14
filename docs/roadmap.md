@@ -9370,23 +9370,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2188, R2189, R2190.
   - Model: Fable, Planned.
 
-- [ ] **R1420 A raising call's register-passable result stays a register,
-  where upstream returns every raising callee's result through memory**
-
-  Upstream's signature (`Signatures.cpp`) makes a throwing function's ABI
-  result its error flag, so its result always goes through a synthesized
-  `ByRefResult`, beside the `ByRefError` the error takes.
-  - `Checker::record_result_conventions` judges only the declared result
-    type, so `print(atol(s))` keeps its `Int` in a register.
-  - Mojito models a raise as an edge (`MirInstr::raise_edge`), so the slot
-    changes no behavior: it is the structure upstream's error ABI implies.
-  - Fix: count a raising callee's result as returned through memory, and
-    update the MIR tests that pin instruction adjacency next to a raising
-    call (`owned_operand_transfers_at_the_call_after_a_raising_operand`,
-    `tests/mir_test.rs`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's
   memory-only register rule and fail at load**
 

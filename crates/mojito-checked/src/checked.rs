@@ -957,11 +957,14 @@ pub enum SemanticAdjustment {
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's
     /// signature synthesizes a `ByRefResult` argument: the callee's declared
-    /// result type is memory-only. Lowering gives a result no destination
-    /// takes one hidden slot at the call, upstream's `__call_result_tmp__`.
+    /// result type is memory-only, or the callee raises and its result is
+    /// not `None`, since a throwing signature's ABI result is its error
+    /// flag. Lowering gives a result no destination takes one hidden slot
+    /// at the call, upstream's `__call_result_tmp__`.
     IndirectResult,
     /// An implicit conversion whose constructor returns the converted value
-    /// through memory, as [`Self::IndirectResult`] answers for a call.
+    /// through memory, as [`Self::IndirectResult`] answers for a call: its
+    /// type is memory-only or its constructor raises.
     ConversionIndirectResult,
     /// An implicit conversion whose constructor binds its memory-only
     /// source to a `read` parameter, neither consuming it nor borrowing it

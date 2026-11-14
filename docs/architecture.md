@@ -6098,8 +6098,11 @@ current Mojo:
   result type that is memory-only — not a compiler-known trivially
   register-passable type and not proven `RegisterPassable`, so a generic
   `-> T` qualifies at every instance — is `IndirectResult` on the call,
-  dispatched operator, by-value subscript, or display, and
-  `ConversionIndirectResult` on an implicit conversion, whose
+  dispatched operator, by-value subscript, or display, as is a raising
+  callee's non-`None` result of any type, since upstream's throwing
+  signature makes its ABI result the error flag; and
+  `ConversionIndirectResult` on an implicit conversion whose type is
+  memory-only or whose constructor raises, whose
   constructor's memory-only `read` source is `ConversionReadsSource`, read
   where it lies or in its own slot; a `@__nonmaterializable(T)` source the
   conversion first materializes to `T` (`ConversionMaterializesSource`)
