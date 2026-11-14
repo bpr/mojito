@@ -1584,8 +1584,10 @@ impl<'c> Inliner<'_, 'c> {
                     Receiver::Constructed => Binding::Out,
                     Receiver::Argument(recv) => bind(
                         recv,
-                        site.receiver_place
-                            .filter(|_| is_reference_parameter(callee, param)),
+                        site.receiver_place.filter(|_| {
+                            is_reference_parameter(callee, param)
+                                || passes_address(self.function, callee, param, recv)
+                        }),
                         site.receiver_place,
                     )?,
                 },

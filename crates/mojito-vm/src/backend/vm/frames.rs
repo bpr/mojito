@@ -495,7 +495,14 @@ impl VmBackend {
         if pointer_copy {
             return Ok(None);
         }
-        let raw = caller.registers[recv.0 as usize].clone();
+        let addressed = self.addressed_receiver(
+            prog,
+            (caller.function, caller.id),
+            (&caller.registers, &mut caller.variables),
+            (*recv, recv_place.as_deref()),
+        )?;
+        let (raw, receiver_ty) =
+            addressed.unwrap_or_else(|| (caller.registers[recv.0 as usize].clone(), receiver_ty));
         let receiver = if prog.held_field(receiver_ty).is_some() {
             prog.boxed(raw, receiver_ty)
         } else if matches!(raw, Value::Ref { .. }) {
@@ -564,11 +571,29 @@ impl VmBackend {
                 reg_types.get(&register.0),
             )
         };
-        let positional: Vec<Value> = args.iter().map(operand).collect();
-        let keywords: Vec<(String, Value)> = kwargs
+        let mut positional: Vec<Value> = args.iter().map(operand).collect();
+        let mut keywords: Vec<(String, Value)> = kwargs
             .iter()
             .map(|(key, register)| (key.clone(), operand(register)))
             .collect();
+        let operands = args.iter().zip(arg_places).chain(
+            kwargs
+                .iter()
+                .map(|(_, register)| register)
+                .zip(kwarg_places),
+        );
+        for (operand, value, ty) in self.addressed_operand_values(
+            prog,
+            (caller.function, caller.id),
+            (&caller.registers, &mut caller.variables),
+            operands,
+        )? {
+            let value = prog.boxed(value, ty);
+            match operand.checked_sub(positional.len()) {
+                None => positional[operand] = value,
+                Some(keyword) => keywords[keyword].1 = value,
+            }
+        }
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         let (mut bound, slots) = match prog.sigs.get(&function_name) {
             Some(signature) => {

@@ -756,6 +756,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A resolved method call passes its receiver and arguments as a direct
+  call does: a `mut`/`ref` receiver or argument, or a `read` one of a
+  memory-only type, is a `ref.make` of the caller's place, upstream's
+  `lit.call` address operand, instead of a whole load beside the place, so
+  `p.bump(q)` and `Big.bump(p, q)` pass two addresses (R1918,
+  `mir::by_address_receiver`). The move check, the inliner's receiver
+  binding, `lower-arg-conventions`, the VM's method binding, and Pliron's
+  scalar operands read the address. Trait-dispatched, callable-bound, and
+  temporary-receiver method calls keep the load (R2177).
+
 - MIR reads or takes a call operand by the convention the call's selected
   callee declares for it, as upstream's call emission reads the callee's
   signature: a free function, a construction, a read builtin, and a `not`

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2177**.
+Next free ID: **R2178**.
 
 ## Ordered Work
 
@@ -9153,24 +9153,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1918 A method call passes its receiver and by-address arguments
-  as loaded values beside their places**
+- [ ] **R2177 A trait-dispatched, callable-bound, or temporary-receiver
+  method call passes its operands as loaded values beside their places**
 
-  `mir::address_call_operands` rewrites only `MirInstr::Call`, so
-  `call.method` still passes a whole load of a `read` receiver or
-  argument of a memory-only type, and of a `mut`/`ref` one, with the place
-  in `recv_place` and `arg_places`.
-  - A `call` naming a receiver-bearing method by its symbol
-    (`Pt.method(p)`) is skipped too
-    (`mir::call_operand_parameters` answers `None` for it).
-  - Upstream has one call operation, whose receiver operand is a
-    `!lit.ref` like any other by-address argument.
-  - Fix: apply the same rewrite to `call.method`'s receiver and
-    arguments, and teach the VM's method binding (`vm/frames.rs`,
-    `vm/invoke.rs`) and Pliron's `lower/methods.rs` to read an addressed
-    operand.
+  `mir::address_call_operands` addresses a `call.method` operand only
+  when it finds the callee's `MirFunctionDeclaration`, and the receiver
+  only when the call retains a `recv_place`.
+  - A `__trait_dispatch` symbol and a `def(...)` bound's `__call__` have
+    no declaration, so `x.show()` over `x: T` with `T: Shower` keeps a
+    `place.load` of `x`.
+  - A temporary receiver (`Big.make().show()`) has no `recv_place`, so
+    its call-result slot is loaded, where a direct `call`'s memory-only
+    temporary is addressed (`Flatten::temporary_operand`, R1917).
+  - Upstream addresses the operand by the requirement's or the callee's
+    convention, and passes the rvalue's materialized address.
+  - Fix: read the conventions off the `TraitRequirement` (its receiver's
+    and `param_conventions`) or the callable contract's `conventions`, and
+    give a temporary receiver its call-result slot as its place.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1931 The loan check reconstructs a call argument's convention
   from declaration tables, so a trait-dispatched method's and a keyword
@@ -9231,7 +9232,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     result" bit for `loans.rs`, delete the place-based argument paths, make
     the verifier require a reference at a by-address slot, and move the MIR
     text version with an upgrade of older calls.
-  - Depends on R1917, R1918, R1919.
+  - Depends on R1917, R1919, R2177.
   - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,

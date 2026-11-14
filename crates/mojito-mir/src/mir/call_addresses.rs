@@ -29,8 +29,10 @@ use std::collections::HashMap;
 /// One entry per positional operand, then one per keyword operand,
 /// `None` for an operand a collector takes. `None` overall when the call
 /// does not bind, or when the callee takes a receiver the call passes
-/// among its operands (a method named as a function), whose slots the
-/// declaration's parameter lists do not count.
+/// among its operands, whose slots the declaration's parameter lists do
+/// not count: a method named by its symbol (`Pt.method(p)`) lowers to a
+/// `call.method`, whose operands exclude its receiver, so no such `call`
+/// reaches this question from lowering.
 #[must_use]
 pub fn call_operand_parameters(
     callee: &str,
@@ -41,29 +43,7 @@ pub fn call_operand_parameters(
     if declaration.has_receiver && !is_initializer_symbol(callee) {
         return None;
     }
-    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-    let matched = match_call_slots(
-        &declaration.param_names,
-        &declaration.required,
-        declaration.positional_only,
-        declaration.keyword_only,
-        positional,
-        &keywords,
-        CallVariadics {
-            positional: declaration.variadic.is_some(),
-            keyword: declaration.kw_variadic.is_some(),
-        },
-    )
-    .ok()?;
-    let mut parameters = vec![None; positional + kwargs.len()];
-    for (parameter, slot) in matched.slots.iter().enumerate() {
-        match slot {
-            ArgSlot::Positional(operand) => parameters[*operand] = Some(parameter),
-            ArgSlot::Keyword(operand) => parameters[positional + *operand] = Some(parameter),
-            ArgSlot::Default => {}
-        }
-    }
-    Some(parameters)
+    operand_parameters(declaration, positional, kwargs)
 }
 
 /// How a callee receives its regular parameter `parameter` by address.
@@ -77,15 +57,29 @@ pub fn by_address_parameter(
     declarations: &MirDeclarations,
     parameter: usize,
 ) -> Option<Mutability> {
-    if declaration.ref_params.get(parameter).copied()? {
-        return Some(Mutability::Mutable);
-    }
-    match declaration.param_conventions.get(parameter).copied()? {
-        None | Some(ArgConvention::Imm) => {}
-        Some(_) => return None,
-    }
-    let ty = declaration.param_types.get(parameter)?;
-    (!declarations.register_passable(ty)).then_some(Mutability::Immutable)
+    by_address(
+        declaration.param_conventions.get(parameter).copied()?,
+        declaration.ref_params.get(parameter).copied()?,
+        declaration.param_types.get(parameter)?,
+        declarations,
+    )
+}
+
+/// How a method receives its receiver, of type `receiver_ty` at the call,
+/// by address.
+///
+/// A `mut` or `ref` receiver is a mutable reference, a `read` one of a
+/// memory-only type an immutable one, and an owned (`var`, `deinit`) or
+/// register-passable `read` receiver is `None`.
+#[must_use]
+pub fn by_address_receiver(
+    declaration: &MirFunctionDeclaration,
+    receiver_ty: &Ty,
+    declarations: &MirDeclarations,
+) -> Option<Mutability> {
+    let convention = declaration.receiver_convention;
+    let reference = matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref));
+    by_address(convention, reference, receiver_ty, declarations)
 }
 
 /// The value an operand of `ty` passes: the referent of a reference.
@@ -174,6 +168,90 @@ impl<'a> Callees<'a> {
                 .as_ref()
                 .and_then(|imported| imported.function(name))
         })
+    }
+}
+
+/// How a parameter of `convention` and type `ty` is received by address,
+/// `reference` when the callee binds it as a reference.
+fn by_address(
+    convention: Option<ArgConvention>,
+    reference: bool,
+    ty: &Ty,
+    declarations: &MirDeclarations,
+) -> Option<Mutability> {
+    if reference {
+        return Some(Mutability::Mutable);
+    }
+    match convention {
+        None | Some(ArgConvention::Imm) => {
+            (!declarations.register_passable(ty)).then_some(Mutability::Immutable)
+        }
+        Some(_) => None,
+    }
+}
+
+/// The regular parameter each of a call's operands binds, the receiver
+/// excluded ([`call_operand_parameters`]).
+fn operand_parameters(
+    declaration: &MirFunctionDeclaration,
+    positional: usize,
+    kwargs: &[(String, Reg)],
+) -> Option<Vec<Option<usize>>> {
+    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    let matched = match_call_slots(
+        &declaration.param_names,
+        &declaration.required,
+        declaration.positional_only,
+        declaration.keyword_only,
+        positional,
+        &keywords,
+        CallVariadics {
+            positional: declaration.variadic.is_some(),
+            keyword: declaration.kw_variadic.is_some(),
+        },
+    )
+    .ok()?;
+    let mut parameters = vec![None; positional + kwargs.len()];
+    for (parameter, slot) in matched.slots.iter().enumerate() {
+        match slot {
+            ArgSlot::Positional(operand) => parameters[*operand] = Some(parameter),
+            ArgSlot::Keyword(operand) => parameters[positional + *operand] = Some(parameter),
+            ArgSlot::Default => {}
+        }
+    }
+    Some(parameters)
+}
+
+/// The parameters each operand of a resolved direct `call` or `call.method`
+/// binds, with its callee's declaration; the receiver is not among them.
+fn direct_call_operands<'a>(
+    instruction: &MirInstr,
+    callees: &Callees<'a>,
+) -> Option<(&'a MirFunctionDeclaration, Vec<Option<usize>>)> {
+    match instruction {
+        MirInstr::Call {
+            func,
+            args,
+            kwargs,
+            spread: None,
+            ..
+        } => {
+            let declaration = callees.get(&func.0)?;
+            call_operand_parameters(&func.0, declaration, args.len(), kwargs)
+                .map(|parameters| (declaration, parameters))
+        }
+        MirInstr::MethodCall {
+            resolved: Some(callee),
+            args,
+            kwargs,
+            spread: None,
+            ..
+        } => {
+            let declaration = callees.get(callee)?;
+            operand_parameters(declaration, args.len(), kwargs)
+                .map(|parameters| (declaration, parameters))
+        }
+        _ => None,
     }
 }
 
@@ -292,44 +370,81 @@ fn collect(
                 definitions.insert(dest.0, Definition::Address(place.clone()));
             }
             MirInstr::Call {
-                func,
                 args,
                 kwargs,
                 arg_places,
                 kwarg_places,
-                spread: None,
                 ..
             } => {
-                let Some(declaration) = callees.get(&func.0) else {
-                    continue;
-                };
-                let Some(parameters) =
-                    call_operand_parameters(&func.0, declaration, args.len(), kwargs)
+                if let Some((declaration, parameters)) = direct_call_operands(instruction, callees)
+                {
+                    push_operands(
+                        (args, kwargs),
+                        (arg_places, kwarg_places),
+                        (declaration, &parameters),
+                        declarations,
+                        operands,
+                    );
+                }
+            }
+            MirInstr::MethodCall {
+                recv,
+                recv_place,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                ..
+            } => {
+                let Some((declaration, parameters)) = direct_call_operands(instruction, callees)
                 else {
                     continue;
                 };
-                let registers = args
-                    .iter()
-                    .chain(kwargs.iter().map(|(_, register)| register));
-                let places = arg_places.iter().chain(kwarg_places);
-                for ((register, place), parameter) in registers.zip(places).zip(parameters) {
-                    let (Some(place), Some(parameter)) = (place, parameter) else {
-                        continue;
-                    };
-                    if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
-                        continue;
-                    }
-                    if let Some(mutability) =
-                        by_address_parameter(declaration, declarations, parameter)
-                    {
-                        operands.push((*register, place.clone(), mutability));
-                    }
+                if let Some(place) = recv_place.as_deref()
+                    && let Some(ty) = place.ty.as_ref()
+                    && !matches!(ty.kind(), TyKind::Ref(_))
+                    && let Some(mutability) = by_address_receiver(declaration, ty, declarations)
+                {
+                    operands.push((*recv, place.clone(), mutability));
                 }
+                push_operands(
+                    (args, kwargs),
+                    (arg_places, kwarg_places),
+                    (declaration, &parameters),
+                    declarations,
+                    operands,
+                );
             }
             _ => {}
         }
         for region in instruction_regions(instruction) {
             collect(region, callees, declarations, definitions, operands);
+        }
+    }
+}
+
+/// Push each operand of a call that its callee receives by address, with
+/// the place it addresses.
+fn push_operands(
+    (args, kwargs): (&[Reg], &[(String, Reg)]),
+    (arg_places, kwarg_places): (&[Option<MirPlace>], &[Option<MirPlace>]),
+    (declaration, parameters): (&MirFunctionDeclaration, &[Option<usize>]),
+    declarations: &MirDeclarations,
+    operands: &mut Vec<(Reg, MirPlace, Mutability)>,
+) {
+    let registers = args
+        .iter()
+        .chain(kwargs.iter().map(|(_, register)| register));
+    let places = arg_places.iter().chain(kwarg_places);
+    for ((register, place), parameter) in registers.zip(places).zip(parameters) {
+        let (Some(place), Some(parameter)) = (place, parameter) else {
+            continue;
+        };
+        if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
+            continue;
+        }
+        if let Some(mutability) = by_address_parameter(declaration, declarations, *parameter) {
+            operands.push((*register, place.clone(), mutability));
         }
     }
 }
@@ -376,50 +491,45 @@ fn load_in_blocks(
             changed |= load_in_blocks(region, reg_types, context);
         }
         let mut loads = Vec::new();
-        if let MirInstr::Call {
-            func,
-            args,
-            kwargs,
-            spread: None,
-            ..
-        } = &mut block.instrs[index]
-            && let Some(declaration) = context.callees.get(&func.0)
-            && let Some(parameters) =
-                call_operand_parameters(&func.0, declaration, args.len(), kwargs)
+        if let Some((declaration, parameters)) =
+            direct_call_operands(&block.instrs[index], context.callees)
         {
-            let registers = args
-                .iter_mut()
-                .chain(kwargs.iter_mut().map(|(_, register)| register));
-            for (register, parameter) in registers.zip(parameters) {
-                let Some(parameter) = parameter else {
-                    continue;
-                };
-                let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind) else {
-                    continue;
-                };
-                let by_value = !declaration
-                    .ref_params
-                    .get(parameter)
-                    .copied()
-                    .unwrap_or(true)
-                    && by_address_parameter(declaration, context.declarations, parameter).is_none()
-                    && !matches!(
-                        declaration.param_types.get(parameter).map(Ty::kind),
-                        Some(TyKind::Ref(_))
-                    );
-                if !by_value {
-                    continue;
+            let receiver_by_value = matches!(
+                &block.instrs[index],
+                MirInstr::MethodCall { recv, recv_place: Some(_), .. }
+                    if reg_types.get(&recv.0).is_some_and(|ty| {
+                        by_value_receiver(declaration, ty, context.declarations)
+                    })
+            );
+            if receiver_by_value && let MirInstr::MethodCall { recv, .. } = &mut block.instrs[index]
+            {
+                read_operand(recv, reg_types, context, &mut loads);
+            }
+            if let MirInstr::Call { args, kwargs, .. } | MirInstr::MethodCall { args, kwargs, .. } =
+                &mut block.instrs[index]
+            {
+                let registers = args
+                    .iter_mut()
+                    .chain(kwargs.iter_mut().map(|(_, register)| register));
+                for (register, parameter) in registers.zip(parameters) {
+                    let Some(parameter) = parameter else {
+                        continue;
+                    };
+                    let by_value = !declaration
+                        .ref_params
+                        .get(parameter)
+                        .copied()
+                        .unwrap_or(true)
+                        && by_address_parameter(declaration, context.declarations, parameter)
+                            .is_none()
+                        && !matches!(
+                            declaration.param_types.get(parameter).map(Ty::kind),
+                            Some(TyKind::Ref(_))
+                        );
+                    if by_value {
+                        read_operand(register, reg_types, context, &mut loads);
+                    }
                 }
-                let loaded = Reg(*context.next);
-                *context.next += 1;
-                context
-                    .types
-                    .push((loaded.0, reference.referent.clone(), register.0));
-                loads.push(MirInstr::ReadRef {
-                    dest: loaded,
-                    reference: *register,
-                });
-                *register = loaded;
             }
         }
         let inserted = loads.len();
@@ -428,4 +538,40 @@ fn load_in_blocks(
         index += inserted + 1;
     }
     changed
+}
+
+/// Whether a method receives by value the receiver a reference of type
+/// `operand_ty` addresses: a `read` receiver an instance's substitution
+/// made register-passable.
+fn by_value_receiver(
+    declaration: &MirFunctionDeclaration,
+    operand_ty: &Ty,
+    declarations: &MirDeclarations,
+) -> bool {
+    matches!(operand_ty.kind(), TyKind::Ref(reference)
+        if matches!(declaration.receiver_convention, None | Some(ArgConvention::Imm))
+            && by_address_receiver(declaration, &reference.referent, declarations).is_none())
+}
+
+/// Read a reference operand through, the `ref.read` going to `loads` and
+/// the operand becoming the value it reads.
+fn read_operand(
+    register: &mut Reg,
+    reg_types: &HashMap<u32, Ty>,
+    context: &mut LoadContext<'_, '_>,
+    loads: &mut Vec<MirInstr>,
+) {
+    let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind) else {
+        return;
+    };
+    let loaded = Reg(*context.next);
+    *context.next += 1;
+    context
+        .types
+        .push((loaded.0, reference.referent.clone(), register.0));
+    loads.push(MirInstr::ReadRef {
+        dest: loaded,
+        reference: *register,
+    });
+    *register = loaded;
 }

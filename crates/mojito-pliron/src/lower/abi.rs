@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth};
+use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -72,7 +72,9 @@ impl FnLowering<'_> {
 
     /// Bind an immutable aggregate argument directly to its checked caller
     /// place, or to the place behind its `LoadPlace` when the checker retained
-    /// none: a borrowed argument never runs a copy lifecycle.
+    /// none: a borrowed argument never runs a copy lifecycle. A scalar the
+    /// call passes by address (`ref.make` of its place) is read from the
+    /// place.
     pub(super) fn place_backed_arg_value(
         &mut self,
         ctx: &mut Context,
@@ -82,6 +84,15 @@ impl FnLowering<'_> {
         place: Option<&MirPlace>,
         dest: Reg,
     ) -> Result<Value, PlironError> {
+        if let (LowerTy::Scalar(scalar), Some(place)) = (expected, place)
+            && self.addresses_place(reg, place)
+        {
+            let address = self.aliased_receiver_address(ctx, place, dest)?;
+            let handle = scalar.handle(ctx);
+            let load = LoadOp::new(ctx, address, handle);
+            self.append(ctx, load.get_operation(), Some(dest));
+            return Ok(load.get_result(ctx));
+        }
         if !owned && matches!(expected, LowerTy::Aggregate { .. }) {
             let place = place
                 .cloned()
@@ -92,6 +103,20 @@ impl FnLowering<'_> {
             }
         }
         self.arg_value(ctx, reg, expected, owned, dest)
+    }
+
+    /// Whether `reg` passes `place` by address: a reference to the place's
+    /// own storage (`mojito_mir::mir::address_call_operands`).
+    pub(super) fn addresses_place(&self, reg: Reg, place: &MirPlace) -> bool {
+        match (
+            self.func.reg_types.get(&reg.0).map(Ty::kind),
+            place.ty.as_ref(),
+        ) {
+            (Some(TyKind::Ref(reference)), Some(stored)) => {
+                !matches!(stored.kind(), TyKind::Ref(_)) && &reference.referent == stored
+            }
+            _ => false,
+        }
     }
 
     /// Transfer an owning `{data, len}` Array temporary into the List

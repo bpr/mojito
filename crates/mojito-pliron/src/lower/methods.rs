@@ -152,7 +152,14 @@ impl FnLowering<'_> {
         } else if matches!(params[0], LowerTy::ZeroSized) {
             None
         } else {
-            Some(self.arg_value(ctx, recv, &params[0], recv_owned || deinit_receiver, dest)?)
+            Some(self.place_backed_arg_value(
+                ctx,
+                recv,
+                &params[0],
+                recv_owned || deinit_receiver,
+                recv_place.filter(|place| self.addresses_place(recv, place)),
+                dest,
+            )?)
         };
         let rest = &params[1..];
         let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -215,7 +222,12 @@ impl FnLowering<'_> {
         // temporary receiver.
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
-            && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
+            && match recv_place
+                .filter(|place| self.addresses_place(recv, place))
+                .and_then(|place| place.ty.as_ref())
+                .or_else(|| self.func.reg_types.get(&recv.0))
+                .map(Ty::kind)
+            {
                 Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
                     let is_mut = self
                         .struct_decls
