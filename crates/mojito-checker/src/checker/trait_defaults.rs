@@ -137,6 +137,11 @@ pub(super) struct DefaultShape {
     forwarded: Vec<String>,
     /// Why no wrapper can forward to it, when none can.
     unforwardable: Option<String>,
+    /// The member's checked callable type, which the trait's check
+    /// records: what a wrapper's forwarding call types against, as
+    /// upstream's wrapper names its trait's function. No module binding
+    /// names the member.
+    pub(super) callable: Option<Ty>,
 }
 
 impl DefaultShape {
@@ -249,6 +254,7 @@ pub(super) fn default_shapes(
                 .map(|param| param.name.clone())
                 .collect(),
             unforwardable: unforwardable(method),
+            callable: None,
         })
         .collect()
 }
@@ -491,8 +497,9 @@ impl Checker {
     /// Check every default a top-level trait of `stmts` declares as its
     /// trait's member, once every module declaration is bound, as upstream
     /// emits a default inside its trait: its body names any function of the
-    /// module, wherever declared. The member's callable binds under its
-    /// symbol, which only a conformer's wrapper calls.
+    /// module, wherever declared. The member's callable is recorded on its
+    /// trait's default, through which only a conformer's wrapper calls it
+    /// ([`Checker::trait_member_callable`]).
     pub(super) fn check_trait_members(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         for stmt in stmts {
             let StmtKind::Trait { name, methods, .. } = &stmt.kind else {
@@ -512,6 +519,7 @@ impl Checker {
                 self.self_ty = None;
                 self.checking_trait_member = false;
                 checked?;
+                self.record_member_callable(name, &symbol, &declaration);
                 self.trait_members.push(TraitMember {
                     module: stmt.module.clone(),
                     trait_name: name.clone(),
@@ -521,6 +529,28 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// The callable type of trait member `symbol`, `Trait.method`, from its
+    /// trait's record, own or installed: what the forwarding call of a
+    /// conformer's wrapper resolves its callee to. Source cannot spell a
+    /// dotted callee, so no other call reaches it.
+    pub(super) fn trait_member_callable(&self, symbol: &str) -> Option<&Ty> {
+        let (trait_name, _) = symbol.split_once('.')?;
+        self.traits
+            .get(trait_name)?
+            .defaults
+            .iter()
+            .find(|default| default.member == symbol)?
+            .callable
+            .as_ref()
+    }
+
+    /// Whether the `def` `bind_def` binds is the trait member being
+    /// checked, which binds on its trait's record instead of the module
+    /// scope.
+    pub(super) const fn binds_trait_member(&self, lambda: bool) -> bool {
+        self.binding_trait_self && !lambda && self.function_bases.is_empty()
     }
 
     /// Bind `Self` to the member's `_Self` binder once its scope is open,
@@ -570,6 +600,25 @@ impl Checker {
             checked?;
         }
         Ok(())
+    }
+
+    /// Record trait member `symbol`'s finalized callable type, which its
+    /// check recorded at `declaration`'s function site, on trait
+    /// `trait_name`'s default.
+    fn record_member_callable(&mut self, trait_name: &str, symbol: &str, declaration: &Stmt) {
+        let site = mojito_checked::checked::AnnotationSite::FunctionType {
+            module: declaration.module.clone(),
+            declaration: declaration.span,
+            syntax: declaration.syntax_id,
+        };
+        let callable = self.declaration_types.borrow().get(&site).cloned();
+        if let Some(default) = self.traits.get_mut(trait_name).and_then(|info| {
+            info.defaults
+                .iter_mut()
+                .find(|default| default.member == symbol)
+        }) {
+            default.callable = callable;
+        }
     }
 
     /// The checked handoff of every trait member, each declaration built

@@ -2933,8 +2933,12 @@ an importer checks no library default and reads no library trait's syntax: a
 is still checked through a `def` the check builds, its receiver an ordinary
 first argument; its signature and body keep the source's `Self`, which the
 check binds to the `_Self` binder (`Checker::bind_trait_self` sets `self_ty`)
-as upstream's name resolution does, and a wrapper reaches it through a
-module binding under its symbol (R595). MIR and
+as upstream's name resolution does (checking it as its trait's method is
+R2215). No module binding names a member: the check records its callable
+type on its trait's default (`DefaultShape::callable`), and a wrapper's
+forwarding call resolves its callee through the trait's record
+(`Checker::trait_member_callable`), own or imported, as upstream's wrapper
+names the trait's function. MIR and
 the VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.

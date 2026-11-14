@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2215**.
+Next free ID: **R2217**.
 
 ## Ordered Work
 
@@ -9736,24 +9736,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R595 A trait member is checked as a function the check builds,
-  and its wrapper reaches it through a module binding**
+- [ ] **R2215 A trait member is checked as a function the check builds,
+  not as its trait's method**
 
   The check checks a trait default as a `def` it builds from the trait
-  method, receiver first, and binds it at module scope under its member
-  symbol, while upstream checks the default over its trait's declaration
-  and its wrapper names the trait's function directly.
+  method, its receiver an ordinary first argument, while upstream checks
+  the default as a method of its trait.
   - `check_trait_members` runs `check_def` over `trait_member_declaration`,
     whose sites are `FunctionParam`/`FunctionReturn` keyed by a syntax id
-    derived from the trait statement's.
-  - The member's MIR declaration takes its receiver as an ordinary first
-    parameter (`has_receiver: false`), which a direct call passes.
-  - A conformer's wrapper calls it by name through `Checker::lookup`; an
-    importer's resolves the package's module binding `Writer.write`.
-  - The lever: check the member over the `TraitMethod` under its trait's
-    sites (`check_method_body`), and resolve the wrapper's call through
-    the trait's record.
-  - Depends on R594.
+    derived from the trait statement's; a trait method has no
+    `MethodParam`/`MethodReturn`/`GenericSite::Method` sites today.
+  - The member's MIR declaration has `has_receiver: false`, which
+    `member_defaults` (`mir.rs`) and `call_defaults::requirement_member`
+    require, and the wrapper's forwarding call is a direct `call`.
+  - The lever: open a trait scope (as `enter_struct_scope` does), register
+    the member's signature from the `TraitMethod` under its trait's method
+    sites, check the body with `check_method_body`, and lower it through
+    `lower_struct_member` with `has_receiver: true`; the forwarding call
+    becomes a `call.method` statically resolved to the member, still
+    resolved through `Checker::trait_member_callable`.
+  - `CheckedTraitMember::declaration`, `trait_member_declaration`, the
+    elaborator's `StmtKind::Trait` arm (`elab.rs`) and
+    `explicit_destroy::check`'s member list follow it.
+  - `_Self` stays the member's own first binder here (R2216 moves it).
+  - Probe: `emit-mir` of a trait `Greet` whose default `hello(self)` a
+    conformer `S` inherits shows `decl { lowered_name: "Greet.hello",
+    has_receiver: false … }` and `S.hello` lowering to `call { func:
+    "Greet.hello" … }`.
+  - Found while landing R595 (2026-11-14).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2216 A trait member's `_Self` is its own compile-time
+  parameter, not its trait's binder**
+
+  A trait member's `_Self` is its own first compile-time parameter (owner
+  `Trait.method`, slot 0), while upstream's is its trait's binder,
+  enclosing the member: at the pin, `Greet::hello($0),_Self`=[S]` names
+  `_Self` only in the enclosing-parameter suffix.
+  - The `_Self` owner becomes the trait, whose declaration
+    (`TraitDeclaration`, `mojito-checked/src/declaration.rs`) gains
+    `param_decls: [_Self]` as a struct's carries its binders; the member's
+    own `param_decls` drop slot 0.
+  - Mono binds a trait's enclosing `_Self` from a resolved `call.method`'s
+    receiver type, as it binds a struct's binders from its receiver.
+  - The forwarding call drops its explicit `Self` argument and
+    `DefaultShape::explicit_self`: the receiver binds it.
+  - Probe: the same `emit-mir` shows `param_decls: [type_param { owner:
+    "Greet.hello", slot: 0, name: _Self … }]` on the member.
+  - Found while landing R595 (2026-11-14).
+  - Depends on R2215.
   - Model: Fable, Not Planned.
 
 - [ ] **R1770 A trait requirement's symbol, and the applicable table's

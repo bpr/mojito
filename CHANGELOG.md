@@ -794,6 +794,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- No module binding names a trait default's member any longer: its check
+  records the member's callable type on its trait's default, and a
+  conformer's wrapper resolves its forwarding call through the trait's
+  record, own or imported, as upstream's wrapper names the trait's
+  function; the bundled package binds no `Writer.write` or
+  `Writable.write_to` (R595). Checking the member as its trait's method is
+  R2215, and its `_Self` as the trait's binder R2216.
+
 - A trait default's `Self` now resolves to its member's `_Self` binder in
   the check, as upstream's name resolution binds it, instead of the
   member's declaration respelling the default's signature and body `_Self`;

@@ -4250,8 +4250,14 @@ impl Checker {
                 "check_def requires a function declaration".to_string(),
             ));
         };
+        // A trait member binds on its trait's record, which only a wrapper's
+        // forwarding call reads; its signature carries no origin a call
+        // would bind, as `unforwardable` rejects every one that does.
+        let trait_member = self.binds_trait_member(lambda);
         // A function's name is not a variable: assigning it is rejected.
-        self.declare_immutable(name, signature.fn_ty.clone())?;
+        if !trait_member {
+            self.declare_immutable(name, signature.fn_ty.clone())?;
+        }
         if !lambda
             && !self.function_bases.is_empty()
             && let Some(owner) = self.lookup_owner(name)
@@ -4270,8 +4276,10 @@ impl Checker {
                 )
             }),
         );
-        self.record_statement_binding(stmt, name);
-        self.register_callable_origins(name, signature.origin_signature.clone());
+        if !trait_member {
+            self.record_statement_binding(stmt, name);
+            self.register_callable_origins(name, signature.origin_signature.clone());
+        }
         Ok(())
     }
 

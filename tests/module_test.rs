@@ -243,6 +243,24 @@ fn linking_rewrites_conditional_conformance_and_where_clause_names() {
 }
 
 #[test]
+fn an_imported_traits_default_reaches_its_member_through_the_trait() {
+    // A conformer that does not spell an imported trait's default forwards
+    // to the trait's member, which no module binding names: the call
+    // resolves through the trait's record, under a dotted module path.
+    let d = TempDir::new();
+    d.write("pkg/__init__.mojo", "");
+    d.write(
+        "pkg/greet.mojo",
+        "trait Greet:\n    def hello(self) -> Int:\n        return self.other() + 7\n    def other(self) -> Int: ...\n",
+    );
+    let main = d.write(
+        "main.mojo",
+        "from pkg.greet import Greet\n\nstruct S(Greet, Movable):\n    var x: Int\n    def __init__(out self):\n        self.x = 1\n    def other(self) -> Int:\n        return self.x\n\ndef use[T: Greet](t: T) -> Int:\n    return t.hello()\n\ndef main():\n    print(use(S()), S().hello())\n",
+    );
+    assert_eq!(run(&main).unwrap(), "8 8\n");
+}
+
+#[test]
 fn wildcard_and_relative_import() {
     let d = TempDir::new();
     d.write(
@@ -1146,6 +1164,30 @@ fn std_resolves_at_the_bundled_library_whatever_the_roots_hold() {
         matches!(&error, ModuleError::NameNotFound { module, name } if module == "std.bit" && name == "special"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn bundled_library_binds_no_trait_member() {
+    // A trait default is its trait's member, which a conformer's wrapper
+    // reaches through the trait's record, as upstream's wrapper names the
+    // trait's function: no module binding names `Writer.write`.
+    use mojito::checked_package::InterfaceTable;
+    let package = mojito::package::bundled_std_package(false)
+        .expect("the bundled package")
+        .expect("the library packages");
+    let directory = package.declarations.directory();
+    assert!(
+        directory
+            .key_declaration(InterfaceTable::Bindings, "print")
+            .is_some(),
+        "a module function is a module binding"
+    );
+    let members: Vec<&str> = directory
+        .table_keys(InterfaceTable::Bindings)
+        .map(|(key, _)| key)
+        .filter(|key| key.starts_with("Writer.") || key.starts_with("Writable."))
+        .collect();
+    assert!(members.is_empty(), "trait members bound: {members:?}");
 }
 
 #[test]

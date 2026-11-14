@@ -643,7 +643,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and the handoff alike. `Checker::check_trait_members` checks every
   member after the module walk, `Checker::bind_trait_self` binding its
   `Self` to the `_Self` binder once the member's scope is open, and
-  `checked_trait_members` hands it over as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
+  binding no module name for it (`Checker::binds_trait_member`): its
+  callable type is recorded on its trait's `DefaultShape::callable`, which
+  `Checker::trait_member_callable` resolves a wrapper's forwarding call
+  through (`Checker::lookup`, `Checker::binding_scope`), own or imported,
+  and `checked_trait_members` hands it over as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
   check records its defaults in its `TraitInfo` (a `DefaultShape` from
   `default_shapes`, naming its requirement row in `TraitInfo::methods` by
   overload index), which a package exports. The check builds each conformer's
