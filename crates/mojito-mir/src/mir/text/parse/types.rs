@@ -911,6 +911,13 @@ impl Decoder {
                 }
             },
             ValueKind::Record(tag, fields) => match tag.as_str() {
+                "param_constant" => {
+                    let constant = self.req(value, fields, "value", Self::ct_value)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    self.unknown(fields, &["value", "type"]);
+                    let built = self.context.constant_typed(constant, meta);
+                    self.built(value, built)
+                }
                 "param_decl_ref" => {
                     let owner = self.req(value, fields, "owner", Self::string)?;
                     let slot = self.req(value, fields, "slot", Self::uint)?;

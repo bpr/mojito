@@ -2771,6 +2771,10 @@ fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
 fn param_expr(value: &ParamExpr) -> String {
     let meta = ("type", meta_ty(value.meta()));
     match value.kind() {
+        // A constant whose type its value does not spell keeps the type.
+        ParamKind::Constant(constant) if *value.meta() != MetaTy::of_value(constant) => {
+            record("param_constant", &[("value", ct_value(constant)), meta])
+        }
         ParamKind::Constant(constant) => positional("param_constant", &ct_value(constant)),
         ParamKind::DeclRef(reference) => record(
             "param_decl_ref",

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.190
+# Mojito Textual MIR Format, Version 1.191
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.190 is implemented end to end for inspection and loading: canonical
+Version 1.191 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.190
+mojito-mir 1.191
 ```
 
-The writer emits 1.190. The reader accepts 1.0 through 1.190; *Schema 1.0*
+The writer emits 1.191. The reader accepts 1.0 through 1.191; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1879,6 +1879,7 @@ and index; no address or process-local key is written.
 
 ```text
 param_constant(ct-value)
+param_constant  { value: ct-value, type: meta }
 param_decl_ref  { owner: "symbol", slot: N, name: symbol, type: meta }
 param_index_ref { depth: N, index: N, type: meta }
 param_expr      { op, type: meta, operands: [param-expr...] }
@@ -1898,6 +1899,12 @@ param_apply     { function: "symbol", type: meta, args: [param-expr...] }
 param_bind_params { generator, args: [present(param-expr) | absent...], type: meta }
 param_struct_value { fields: [field { name: symbol, value: param-expr }...], spelling, type: meta }
 ```
+
+A constant prints positionally when its type is the one its value spells,
+and as the record (schema 1.191) when it is typed otherwise, as a typed
+attribute keeps its type: a struct constant bound to a
+`ParameterList[Int, values]` binder keeps that type, which `ct_struct` does
+not spell.
 
 `param_list_get` is an element of a parameter list that is still a parameter
 (a pack element). `param_list_tabulate` and `param_list_concat` (schema 1.29)

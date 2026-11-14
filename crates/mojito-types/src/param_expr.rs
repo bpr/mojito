@@ -111,6 +111,16 @@ impl ParamContext {
         Ok(self.make(meta, ParamKind::Constant(value)))
     }
 
+    /// A closed constant typed by `meta`, which the value alone may not
+    /// spell, as a typed attribute carries its type: a struct constant
+    /// bound to a `ParameterList[Int, values]` binder keeps that type.
+    pub fn constant_typed(&self, value: CtValue, meta: MetaTy) -> Result<ParamExpr, ParamError> {
+        if crate::types::ct_value_is_symbolic(&value) {
+            return Err(ParamError::NotConstant(value.to_string()));
+        }
+        Ok(self.make(meta, ParamKind::Constant(value)))
+    }
+
     /// A constant of the type `ty`: a closed value of a `!kgen.simd`
     /// storage type is an attribute of that storage, which holds its
     /// vector's constants, as a `#kgen.dtype.constant` is an attribute of

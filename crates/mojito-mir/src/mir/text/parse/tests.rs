@@ -2191,6 +2191,44 @@ fn symbolic_simd_slots_round_trip() {
     assert_eq!(folded, Ty::float64());
 }
 
+/// Schema 1.191 keeps the type of a constant its value does not spell: a
+/// struct constant bound to a `ParameterList[Int, (1, 2)]` binder, in a
+/// type keyed by an unevaluated application over it.
+#[test]
+fn typed_struct_constant_round_trips() {
+    let context = ParamContext::detached();
+    let list = Ty::new(TyKind::Struct(
+        "ParameterList".into(),
+        vec![
+            TyArg::Ty(Ty::int()),
+            TyArg::Val(CtValue::Tuple(vec![CtValue::Int(1), CtValue::Int(2)])),
+        ],
+    ));
+    let constant = context
+        .constant_typed(
+            CtValue::Struct {
+                name: "ParameterList".into(),
+                fields: Vec::new(),
+            },
+            MetaTy::value(list),
+        )
+        .expect("a closed struct constant");
+    let applied = context.apply("len", &[constant], MetaTy::value(Ty::int()));
+    let ty = Ty::new(TyKind::Struct(
+        "Width".into(),
+        vec![TyArg::Val(CtValue::Expr(applied))],
+    ));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![ty.clone()], Vec::new()),
+    )]);
+    let text = write::program(&program);
+    assert!(text.contains("param_constant { value: ct_struct"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], ty);
+    assert_eq!(write::program(&parsed.program), text);
+}
+
 #[test]
 fn pop_array_size_and_constant_round_trip() {
     let context = ParamContext::detached();

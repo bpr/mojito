@@ -24,6 +24,10 @@
 //! checks is not moved, since moving it out of an arm not taken, or out of
 //! a loop that never runs, would trap where the program does not.
 //!
+//! A raising instruction's results are defined where its error region
+//! decides them, at the `if` on its flag, so nothing moves to a point
+//! between the two, where the verifier reads them as undefined.
+//!
 //! MIR is not SSA: an instruction moves only when its result and each of
 //! its operands has one definition, the result of a register-passable
 //! trivial type or a reference handle, as `cse` merges only such a result,
@@ -141,6 +145,7 @@ impl Walk<'_> {
             );
         }
         let mut keys: Vec<Vec<u32>> = Vec::new();
+        let mut undecided: HashMap<u32, Vec<Reg>> = HashMap::new();
         let mut outward = Vec::new();
         let mut ordinal = 0;
         let mut index = 0;
@@ -166,6 +171,14 @@ impl Walk<'_> {
             instruction_result_regs(instruction, &mut results);
             let arguments = region_arguments(instruction);
             results.retain(|reg| !arguments.iter().any(|args| args.contains(reg)));
+            if let Some(raises) = instruction.raise_edge() {
+                undecided.insert(raises.flag.0, results);
+                results = Vec::new();
+            } else if let MirInstr::If { cond, .. } = instruction
+                && let Some(decided) = undecided.remove(&cond.0)
+            {
+                results.extend(decided);
+            }
             for result in results {
                 self.define(
                     result,
