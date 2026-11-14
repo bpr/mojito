@@ -1443,14 +1443,22 @@ impl<'a> Specializer<'a> {
             expr.clone()
         };
         let expr = &expanded;
-        let mut pending = false;
-        expr.visit(&mut |node| {
-            pending |= matches!(node.kind(), ParamKind::Apply {
-                function,
-                ..
-            } if self.declarations.contains_key(function.as_str()));
-        });
-        if !pending {
+        let applies = |expr: &ParamExpr| {
+            let mut pending = false;
+            expr.visit(&mut |node| {
+                pending |= matches!(node.kind(), ParamKind::Apply {
+                    function,
+                    ..
+                } if self.declarations.contains_key(function.as_str())
+                    || self.applications.lowers(function));
+            });
+            pending
+        };
+        // A binder the instance is keyed by an application of
+        // ([`symbolic::closed_argument`]) reads that application.
+        let reads_residual = !expr.free_parameters().is_empty()
+            && bindings.values.values().any(symbolic::is_closed_residual);
+        if !applies(expr) && !reads_residual {
             return Ok(expr.clone());
         }
         // The instance's values close what sits between two applications
@@ -1459,9 +1467,20 @@ impl<'a> Specializer<'a> {
         let context = ParamContext::detached();
         let closed = context.replace(expr, &ct_bindings(bindings));
         let expr = closed.as_ref().unwrap_or(expr);
+        if !applies(expr) {
+            return Ok(expr.clone());
+        }
+        // An application a struct's value argument holds keys its instance
+        // unevaluated, as the pin's `#kgen.apply` attribute does.
+        let keyed = symbolic::keyed_applications(expr);
         let mut failure = None;
         let answered = context.answer_applications(expr, &mut |function, args| {
-            if failure.is_some() || !self.declarations.contains_key(function) {
+            if failure.is_some()
+                || !self.declarations.contains_key(function)
+                || keyed
+                    .iter()
+                    .any(|(keyed, keyed_args)| keyed == function && keyed_args == args)
+            {
                 return Ok(None);
             }
             Ok(self
@@ -1795,7 +1814,14 @@ impl<'a> Specializer<'a> {
         arg: &ParamExpr,
         bindings: &Bindings,
     ) -> Result<Option<CtValue>, MonoError> {
-        if let ParamKind::DeclRef(reference) = arg.kind() {
+        // A binder the instance is keyed by an application of passes that
+        // application's value.
+        if let ParamKind::DeclRef(reference) = arg.kind()
+            && !bindings
+                .values
+                .get(reference)
+                .is_some_and(symbolic::is_closed_residual)
+        {
             return Ok(bindings.values.get(reference).cloned());
         }
         if let Some(value) = eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()) {
@@ -2234,9 +2260,14 @@ impl<'a> Specializer<'a> {
             // A bracket argument read off a local `comptime` binding
             // (`g[e]()` after `comptime e = L[1]`) is the application
             // the callee's instance is keyed by.
+            // One that applies a lowered function once closed keys it by
+            // that application, unevaluated ([`symbolic::closed_argument`]).
             for argument in mojito_mir::mir::instruction_param_args_mut(&mut instruction) {
                 if let Some(expr) = &argument.expr {
-                    argument.expr = Some(self.applied(template, expr, bindings)?);
+                    argument.expr = Some(match symbolic::closed_argument(expr, bindings) {
+                        Ok(CtValue::Expr(closed)) if closed.is_closed_application() => closed,
+                        _ => self.applied(template, expr, bindings)?,
+                    });
                 }
             }
             // A parameter list's static address names the list the

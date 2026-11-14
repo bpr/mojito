@@ -589,6 +589,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An instance is now keyed by a parameter argument that applies a function
+  unevaluated, as the pin keys `S[h(3)]` by the application (R1736), and
+  only a read the instance keeps evaluates it. Constructing a struct whose
+  default's constraint fails (`_x: NoneType = _c[d]()` at a non-float
+  `d`), applying its static method at compile time, and a function whose
+  read of the default is a receiver its callee removes (`_k.write_to(s)`)
+  run, where they stopped with "function instantiation of `_c` failed".
 - A compile-time call of a function with a named `out` result is now its
   application, its result the `out` parameter's type, as at the pin
   (R1778): `h[mk(5)]()` over `def mk(a: Int, out result: B)` and

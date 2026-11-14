@@ -260,15 +260,15 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // A value spells each byte of its display that `sanitize` would
             // collapse, so two values of one parameter (`"("` and `")"`,
             // `(String("["), 1)` and `(String("]"), 1)`) never name one
-            // instance.
+            // instance, and an application keyed unevaluated spells apart
+            // from any value.
             InstanceArg::Value(value) => {
-                spelling.push('V');
-                spelling.push_str(&escape_bytes(&value.to_string()));
+                spelling.push_str(&value_argument_raw(value, KeyMode::Instance));
             }
         }
     }
     if spelling.len() > INSTANCE_SPELLING_LIMIT {
-        // Every spelled argument opens with `$T` or `$V`, so the `$H` marker
+        // Every spelled argument opens with `$T`, `$V`, or `$A`, so the `$H` marker
         // keeps a digest apart from any spelling short enough to stay.
         let digest = Sha256::digest(spelling.as_bytes());
         spelling = format!("$H{}", hex_digest(&digest[..16]));
@@ -1640,6 +1640,12 @@ fn value_argument_raw(value: &CtValue, mode: KeyMode) -> String {
             )
         }
         KeyMode::Overload => format!("V{value}"),
+        // An application the instance is keyed by unevaluated spells apart
+        // from any value whose display it shares.
+        KeyMode::Instance if matches!(value, CtValue::Expr(expression) if expression.is_closed_application()) =>
+        {
+            format!("A{}", escape_bytes(&value.to_string()))
+        }
         KeyMode::Instance => format!("V{}", escape_bytes(&value.to_string())),
     }
 }
@@ -3642,6 +3648,22 @@ mod tests {
         assert_eq!(
             instance_symbol("f", &[InstanceArg::Value(CtValue::Int(3))]),
             "f$mono$V3"
+        );
+    }
+
+    #[test]
+    fn an_application_keyed_unevaluated_names_apart_from_a_value_spelled_alike() {
+        let context = mojito_types::param_expr::ParamContext::detached();
+        let three = context
+            .constant(CtValue::Int(3))
+            .expect("an integer is a constant");
+        let application = context.apply("h", &[three], MetaTy::value(Ty::int()));
+        let residual = CtValue::Expr(application);
+        let alike = CtValue::MlirAttr(residual.to_string());
+        assert_eq!(residual.to_string(), alike.to_string());
+        assert_ne!(
+            instance_symbol("S", &[InstanceArg::Value(residual)]),
+            instance_symbol("S", &[InstanceArg::Value(alike)])
         );
     }
 

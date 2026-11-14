@@ -701,9 +701,11 @@ fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoEr
 pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, MonoError> {
     Ok(match arg {
         TyArg::Ty(ty) => TyArg::Ty(substitute_ty(ty, bindings)?),
-        // A residual closes under the mono environment or it is the
-        // contextual unsupported boundary; nothing symbolic reaches lowering.
-        TyArg::Val(CtValue::Expr(expr)) => TyArg::Val(eval_ct(expr, bindings)?),
+        // A residual closes under the mono environment, to its constant or
+        // to the application it keys the instance by unevaluated, or it is
+        // the contextual unsupported boundary; nothing symbolic reaches
+        // lowering.
+        TyArg::Val(CtValue::Expr(expr)) => TyArg::Val(closed_argument(expr, bindings)?),
         // A pack bound as one list of types closes type by type, each
         // materialized as an elementwise argument is.
         TyArg::Val(CtValue::Tuple(values))

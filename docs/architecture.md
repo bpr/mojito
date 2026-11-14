@@ -7594,7 +7594,25 @@ point where a slot declared in a loop is uninitialized again.
   `infer_receiver_call` pass), and an argument that is an application
   nothing has answered is erased (`Specializer::erase_valueless_removed_arguments`),
   so `_constraint: NoneType = _constrain[dtype]()` runs no constraint at
-  an instance that never reads it. Upstream instead rewrites the
+  an instance that never reads it. A kept parameter's argument that still
+  applies a lowered function once closed and folded keys the instance by
+  that application, unevaluated, as upstream's parameter attribute holds
+  `#kgen.apply` (`symbolic::closed_argument`, R1736): a struct type
+  argument, a default, a call's bracket argument, and a checker-recorded
+  solution all bind it so (a value pack's element list still holds values),
+  and `instance_symbol` spells it `$A…`, apart from any value. `bind_value`
+  compares two residuals structurally; where one site keeps a checked
+  expression's application and another has evaluated it, the residual
+  binds, unless the application's known answer differs, so the key does
+  not depend on which site binds first.
+  It is evaluated only where a read the instance keeps materializes the
+  binder: `Specializer::applied` closes a read over it to the application
+  and demands it, a struct's field layout demands it through
+  `discover_structs`' retry, and an application nested in a struct type's
+  value argument is never demanded for the type
+  (`symbolic::keyed_applications`). The elaborated-MIR concreteness check
+  treats such an argument as concrete
+  (`types::is_elaborated_symbolic`). Upstream instead rewrites the
   generator's signature and its callers; Mojito keeps both, and an
   instance clears the field. The verifier takes a removed binder out of the
   body's scope but inside a struct argument, which an instance erases

@@ -3800,6 +3800,17 @@ impl ParamExpr {
         closed
     }
 
+    /// Whether the expression is closed ([`Self::is_closed`]) and applies a
+    /// function below: the unevaluated application an instance is keyed
+    /// by, as the pin's parameter attribute holds `#kgen.apply`.
+    pub fn is_closed_application(&self) -> bool {
+        let mut applies = false;
+        self.visit(&mut |node| {
+            applies |= matches!(node.kind(), ParamKind::Apply { .. });
+        });
+        applies && self.is_closed()
+    }
+
     /// Whether evaluation cannot fail once the parameters are bound: no
     /// partial operator occurs below.
     pub fn is_total(&self) -> bool {

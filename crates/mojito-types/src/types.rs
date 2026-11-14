@@ -6530,68 +6530,22 @@ pub fn trait_type_bound(ty: &Ty) -> Option<&[String]> {
 /// has no runtime identity — no native layout, and nothing the VM can dispatch
 /// on. Origins erase from the runtime ABI, so they never make a type symbolic.
 pub fn is_symbolic(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Infer
-        | TyKind::Param { .. }
-        | TyKind::Assoc { .. }
-        | TyKind::Dependent(_)
-        | TyKind::SelfType => true,
-        TyKind::Struct(..) if ty.is_closed() => false,
-        TyKind::Struct(_, arguments) => arguments.iter().any(ty_arg_is_symbolic),
-        TyKind::Func(_) => ty
-            .callable()
-            .is_some_and(|func| func.types().any(is_symbolic)),
-        // The callable's own binders are bound inside it.
-        TyKind::GenericFunc(_) => has_free_binders(ty),
-        // The generator's own binders are bound inside it.
-        TyKind::Generator(generator) => {
-            let bound: Vec<&ParamId> = generator.params.iter().map(ParamDecl::id).collect();
-            let free = |ty: &Ty| {
-                mentions(ty, &|inner| match inner.kind() {
-                    TyKind::Param { binder, .. } => !bound.contains(&&binder.id),
-                    TyKind::Infer | TyKind::Assoc { .. } | TyKind::SelfType => true,
-                    TyKind::Dependent(_) => is_symbolic(inner),
-                    _ => false,
-                })
-            };
-            generator
-                .params
-                .iter()
-                .filter_map(ParamDecl::value_element_ty)
-                .any(free)
-                || free(&generator.result)
-        }
-        TyKind::Overload(types)
-        | TyKind::Tuple(types)
-        | TyKind::RuntimePack(types)
-        | TyKind::Variant(types) => types.iter().any(is_symbolic),
-        TyKind::ComptimeList(element)
-        | TyKind::ParamList(element)
-        | TyKind::AnyStruct(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => is_symbolic(element),
-        TyKind::LitRefPack { elements, .. } => elements.iter().any(is_symbolic),
-        TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
-        TyKind::Ref(reference) => is_symbolic(&reference.referent),
-        TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::KgenAddressSimd { width } => width.is_symbolic(),
-        TyKind::AnyTrait(_)
-        | TyKind::Trait(_)
-        | TyKind::TypeType
-        | TyKind::KgenString
-        | TyKind::PopIntLiteral
-        | TyKind::PopFloatLiteral
-        | TyKind::KgenDeferred
-        | TyKind::KgenTarget
-        | TyKind::Index
-        | TyKind::I1
-        | TyKind::Ui8
-        | TyKind::KgenDtype
-        | TyKind::None
-        | TyKind::Never => false,
-    }
+    symbolic_in(ty, false)
+}
+
+/// [`is_symbolic`] of an elaborated type.
+///
+/// A value argument that is a closed application keys its struct's instance
+/// unevaluated, as the pin's parameter attribute holds `#kgen.apply`, and
+/// so resolves nothing more.
+pub fn is_elaborated_symbolic(ty: &Ty) -> bool {
+    symbolic_in(ty, true)
+}
+
+/// [`ct_value_is_symbolic`] of an elaborated value
+/// ([`is_elaborated_symbolic`]).
+pub fn ct_value_is_elaborated_symbolic(value: &CtValue) -> bool {
+    ct_value_symbolic_in(value, true)
 }
 
 /// Whether `ty` mentions a parameter that nothing inside it binds.
@@ -6653,34 +6607,128 @@ pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
 /// The [`is_symbolic`] companion for compile-time values: a value parameter, or
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
-    match value {
-        CtValue::Pointer { memory, .. } => {
-            memory.iter().flatten().flatten().any(ct_value_is_symbolic)
+    ct_value_symbolic_in(value, false)
+}
+
+/// [`is_symbolic`] over one parameter argument, a closed application
+/// concrete when `keyed` ([`is_elaborated_symbolic`]); an origin never is.
+fn ty_arg_symbolic_in(argument: &TyArg, keyed: bool) -> bool {
+    match argument {
+        TyArg::Ty(ty) => symbolic_in(ty, keyed),
+        TyArg::Val(value) => ct_value_symbolic_in(value, keyed),
+        TyArg::Origin(_) => false,
+    }
+}
+
+/// [`is_symbolic`], a closed application concrete when `keyed`
+/// ([`is_elaborated_symbolic`]).
+fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
+    match ty.kind() {
+        TyKind::Infer
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. }
+        | TyKind::Dependent(_)
+        | TyKind::SelfType => true,
+        TyKind::Struct(..) if ty.is_closed() => false,
+        TyKind::Struct(_, arguments) => arguments
+            .iter()
+            .any(|argument| ty_arg_symbolic_in(argument, keyed)),
+        TyKind::Func(_) => ty
+            .callable()
+            .is_some_and(|func| func.types().any(|ty| symbolic_in(ty, keyed))),
+        // The callable's own binders are bound inside it.
+        TyKind::GenericFunc(_) => has_free_binders(ty),
+        // The generator's own binders are bound inside it.
+        TyKind::Generator(generator) => {
+            let bound: Vec<&ParamId> = generator.params.iter().map(ParamDecl::id).collect();
+            let free = |ty: &Ty| {
+                mentions(ty, &|inner| match inner.kind() {
+                    TyKind::Param { binder, .. } => !bound.contains(&&binder.id),
+                    TyKind::Infer | TyKind::Assoc { .. } | TyKind::SelfType => true,
+                    TyKind::Dependent(_) => is_symbolic(inner),
+                    _ => false,
+                })
+            };
+            generator
+                .params
+                .iter()
+                .filter_map(ParamDecl::value_element_ty)
+                .any(free)
+                || free(&generator.result)
         }
-        CtValue::StoreToMem(referent) => ct_value_is_symbolic(referent),
-        CtValue::Expr(_) | CtValue::Deferred(_) => true,
+        TyKind::Overload(types)
+        | TyKind::Tuple(types)
+        | TyKind::RuntimePack(types)
+        | TyKind::Variant(types) => types.iter().any(|ty| symbolic_in(ty, keyed)),
+        TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
+        | TyKind::VariadicPack(element)
+        | TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer(element)
+        | TyKind::LitRef { element, .. } => symbolic_in(element, keyed),
+        TyKind::LitRefPack { elements, .. } => elements.iter().any(|ty| symbolic_in(ty, keyed)),
+        TyKind::PopArray { size, element } => size.is_symbolic() || symbolic_in(element, keyed),
+        TyKind::Ref(reference) => symbolic_in(&reference.referent, keyed),
+        TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::KgenAddressSimd { width } => width.is_symbolic(),
+        TyKind::AnyTrait(_)
+        | TyKind::Trait(_)
+        | TyKind::TypeType
+        | TyKind::KgenString
+        | TyKind::PopIntLiteral
+        | TyKind::PopFloatLiteral
+        | TyKind::KgenDeferred
+        | TyKind::KgenTarget
+        | TyKind::Index
+        | TyKind::I1
+        | TyKind::Ui8
+        | TyKind::KgenDtype
+        | TyKind::None
+        | TyKind::Never => false,
+    }
+}
+
+/// [`ct_value_is_symbolic`], a closed application concrete when `keyed`.
+fn ct_value_symbolic_in(value: &CtValue, keyed: bool) -> bool {
+    match value {
+        CtValue::Pointer { memory, .. } => memory
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|value| ct_value_symbolic_in(value, keyed)),
+        CtValue::StoreToMem(referent) => ct_value_symbolic_in(referent, keyed),
+        CtValue::Expr(expr) => !(keyed && expr.is_closed_application()),
+        CtValue::Deferred(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
             elements: values, ..
-        } => values.iter().any(ct_value_is_symbolic),
-        CtValue::Dict { entries, .. } => entries
+        } => values
             .iter()
-            .any(|(key, value)| ct_value_is_symbolic(key) || ct_value_is_symbolic(value)),
-        CtValue::Type(ty) => is_symbolic(ty),
-        CtValue::Struct { fields, .. } => {
-            fields.iter().any(|(_, value)| ct_value_is_symbolic(value))
-        }
+            .any(|value| ct_value_symbolic_in(value, keyed)),
+        CtValue::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+            ct_value_symbolic_in(key, keyed) || ct_value_symbolic_in(value, keyed)
+        }),
+        CtValue::Type(ty) => symbolic_in(ty, keyed),
+        CtValue::Struct { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| ct_value_symbolic_in(value, keyed)),
         CtValue::PopArray { element, elements } => {
-            is_symbolic(element) || elements.iter().any(ct_value_is_symbolic)
+            symbolic_in(element, keyed)
+                || elements
+                    .iter()
+                    .any(|value| ct_value_symbolic_in(value, keyed))
         }
         CtValue::Variant {
             alternatives,
             payload,
             ..
         } => {
-            alternatives.iter().any(is_symbolic)
-                || payload.as_deref().is_some_and(ct_value_is_symbolic)
+            alternatives.iter().any(|ty| symbolic_in(ty, keyed))
+                || payload
+                    .as_deref()
+                    .is_some_and(|value| ct_value_symbolic_in(value, keyed))
         }
         CtValue::Int(_)
         | CtValue::UInt(_)
@@ -6701,16 +6749,10 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::KgenTarget(_)
         | CtValue::Generator(_)
         | CtValue::RemovedArg => false,
-        CtValue::FuncSymbol(function) => function.arguments.iter().any(ty_arg_is_symbolic),
-    }
-}
-
-/// [`is_symbolic`] over one parameter argument; an origin never is.
-fn ty_arg_is_symbolic(argument: &TyArg) -> bool {
-    match argument {
-        TyArg::Ty(ty) => is_symbolic(ty),
-        TyArg::Val(value) => ct_value_is_symbolic(value),
-        TyArg::Origin(_) => false,
+        CtValue::FuncSymbol(function) => function
+            .arguments
+            .iter()
+            .any(|argument| ty_arg_symbolic_in(argument, keyed)),
     }
 }
 

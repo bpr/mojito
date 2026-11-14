@@ -566,12 +566,7 @@ impl Applications {
     /// as pending when it is a lowered function's at constant arguments
     /// that nothing has run yet.
     fn answer(&self, function: &str, args: &[ParamExpr]) -> Option<CtValue> {
-        let declared = self.declared.contains(function)
-            || self
-                .imported
-                .as_ref()
-                .is_some_and(|imported| imported.package().contains_function(function));
-        if !declared || args.iter().any(|arg| arg.as_constant().is_none()) {
+        if !self.lowers(function) || args.iter().any(|arg| arg.as_constant().is_none()) {
             return None;
         }
         let key = (function.to_string(), args.to_vec());
@@ -583,6 +578,15 @@ impl Applications {
             }
         }
         answer
+    }
+
+    /// Whether `function` is one the elaboration lowers and runs.
+    fn lowers(&self, function: &str) -> bool {
+        self.declared.contains(function)
+            || self
+                .imported
+                .as_ref()
+                .is_some_and(|imported| imported.package().contains_function(function))
     }
 }
 

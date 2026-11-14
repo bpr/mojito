@@ -205,9 +205,10 @@ fn require_concrete_value(head: &str, role: &str, ty: &Ty, errors: &mut Vec<Stri
 
 /// Report `ty` where it is a type only parametric MIR may name — one an
 /// instantiation has yet to resolve
-/// ([`mojito_types::types::is_symbolic`]) — or a compile-time-only one.
+/// ([`mojito_types::types::is_elaborated_symbolic`]) — or a
+/// compile-time-only one.
 fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
-    if mojito_types::types::is_symbolic(ty) {
+    if mojito_types::types::is_elaborated_symbolic(ty) {
         errors.push(format!(
             "{head} {role} keeps symbolic type `{ty}` in elaborated MIR"
         ));
@@ -702,7 +703,7 @@ impl TypeVisitor for ConcreteCx<'_> {
         let role = self.family.argument_role();
         match arg {
             TyArg::Ty(ty) => require_concrete(self.head, role, ty, self.errors),
-            TyArg::Val(value) if mojito_types::types::ct_value_is_symbolic(value) => {
+            TyArg::Val(value) if mojito_types::types::ct_value_is_elaborated_symbolic(value) => {
                 self.errors.push(format!(
                     "{} {role} keeps the symbolic parameter value `{value:?}` in elaborated MIR",
                     self.head

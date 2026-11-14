@@ -911,6 +911,9 @@ assets/ok/param_expr_normal_form.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_overflow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_where_assumption.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_default_application_comptime_owner.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_default_application_removed_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_default_application_struct_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_default_dtype_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_default_none_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_default_none_application_struct.mojo	-	ineligible	no-scalar-entry-shape

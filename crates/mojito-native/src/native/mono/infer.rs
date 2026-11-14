@@ -129,13 +129,21 @@ impl Specializer<'_> {
             // A constant register is the value; an index built from the
             // caller's binders is its recorded expression under the caller
             // instance's bindings.
-            let value = param_arg
-                .value
-                .and_then(|reg| {
-                    self.constant_values
-                        .get(&reg.0)
-                        .cloned()
-                        .or_else(|| const_reg_value(function, reg))
+            // One that applies a lowered function keys the instance by the
+            // application, which the register's constant has evaluated.
+            let residual = param_arg
+                .expr
+                .as_ref()
+                .and_then(|expr| closed_argument(expr, &self.enclosing).ok())
+                .filter(is_closed_residual);
+            let value = residual
+                .or_else(|| {
+                    param_arg.value.and_then(|reg| {
+                        self.constant_values
+                            .get(&reg.0)
+                            .cloned()
+                            .or_else(|| const_reg_value(function, reg))
+                    })
                 })
                 .or_else(|| {
                     param_arg
@@ -851,7 +859,7 @@ impl Specializer<'_> {
                     TyArg::Val(value),
                 ) if !matches!(value, CtValue::Deferred(_) | CtValue::RemovedArg) => {
                     let closed = match value {
-                        CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
+                        CtValue::Expr(expr) => match closed_argument(expr, &self.enclosing) {
                             Ok(value) => value,
                             Err(_) => continue,
                         },

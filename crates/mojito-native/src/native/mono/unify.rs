@@ -185,24 +185,44 @@ pub(super) fn bind_explicit_value_arguments(
                         .is_some_and(|bound| !mojito_types::types::ct_value_is_symbolic(bound)) => {
             }
             ParamDecl::Value { name, .. } => {
-                let value = match (constant_values.get(&value_reg.0), &argument.expr) {
-                    (Some(value), _) => value.clone(),
-                    (None, Some(expr)) => eval_ct(expr, enclosing).map_err(|mut error| {
-                        error.function.get_or_insert_with(|| target.to_string());
-                        error
-                    })?,
+                // An argument that applies a lowered function keys the
+                // instance by the application, which the register's
+                // constant has evaluated ([`closed_argument`]); a pack's
+                // element list holds values.
+                let variadic = matches!(declaration, ParamDecl::Value { variadic: true, .. });
+                let residual = argument
+                    .expr
+                    .as_ref()
+                    .filter(|_| !variadic)
+                    .and_then(|expr| closed_argument(expr, enclosing).ok())
+                    .filter(is_closed_residual);
+                let value = match (residual, constant_values.get(&value_reg.0), &argument.expr) {
+                    (Some(residual), _, _) => residual,
+                    (None, Some(value), _) => value.clone(),
+                    (None, None, Some(expr)) if variadic => {
+                        eval_ct(expr, enclosing).map_err(|mut error| {
+                            error.function.get_or_insert_with(|| target.to_string());
+                            error
+                        })?
+                    }
+                    (None, None, Some(expr)) => {
+                        closed_argument(expr, enclosing).map_err(|mut error| {
+                            error.function.get_or_insert_with(|| target.to_string());
+                            error
+                        })?
+                    }
                     // The checker's recorded solution for the call already
                     // bound the binder (a local `comptime` `DType` spelled in
                     // the brackets); the register is its runtime shadow.
-                    (None, None) if bindings.values.contains_key(&declaration.binder()) => {
+                    (None, None, None) if bindings.values.contains_key(&declaration.binder()) => {
                         continue;
                     }
                     // No instance of the callee reads a parameter it
                     // removed, so a runtime argument for it (a capturing
                     // callable the caller took as a runtime parameter)
                     // binds nothing.
-                    (None, None) if removed.contains(declaration.id()) => continue,
-                    (None, None) => {
+                    (None, None, None) if removed.contains(declaration.id()) => continue,
+                    (None, None, None) => {
                         return Err(MonoError {
                             kind: MonoErrorKind::Unsupported,
                             function: Some(target.to_string()),
@@ -215,7 +235,6 @@ pub(super) fn bind_explicit_value_arguments(
                 let binder = declaration.binder();
                 // A caller's pack forwarded whole (`total[*vs]()`) is its
                 // list, every element of it an argument.
-                let variadic = matches!(declaration, ParamDecl::Value { variadic: true, .. });
                 let values = match value {
                     CtValue::Tuple(elements)
                         if variadic
@@ -302,7 +321,7 @@ pub(super) fn apply_defaults(
             } if !bindings.values.contains_key(&decl.binder()) => {
                 // A literal default binds at its declared type, as a supplied
                 // argument's constant register reads.
-                let value = match eval_ct(default, bindings)? {
+                let value = match closed_argument(default, bindings)? {
                     CtValue::IntLiteral(literal) if !ty.is_int_literal() => literal
                         .to_i64()
                         .map_or(CtValue::IntLiteral(literal), CtValue::Int),
@@ -809,7 +828,7 @@ pub(super) fn unify_arg(
         // with the actual once the environment closes it.
         (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {
             Some(reference) => bind_value(reference, value, bindings),
-            None => match eval_ct(expr, bindings) {
+            None => match closed_argument(expr, bindings) {
                 Ok(closed) if mojito_types::param_expr::identity_eq(&closed, value) => Ok(()),
                 Ok(_) => Err("generic application arguments disagree".to_string()),
                 Err(_) if struct_value_agrees(expr, value, bindings) => Ok(()),
@@ -928,13 +947,33 @@ pub(super) fn bind_value(
     bindings: &mut Bindings,
 ) -> Result<(), String> {
     let name = &binder.name;
-    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) {
+    // A closed application keys the instance unevaluated
+    // ([`closed_argument`]); two solutions agree as the expressions do.
+    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) && !is_closed_residual(value) {
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(binder) {
         // As in `bind_type`, `Display` can collapse distinct values (an Int
         // and a UInt render alike), so the conflict text carries the
         // structural forms.
+        // One site kept a checked expression's application and another
+        // evaluated it: the application keys the instance, unless its
+        // answer is known to differ.
+        Some(old) if is_closed_residual(old) != is_closed_residual(value) => {
+            let (residual, evaluated) = if is_closed_residual(old) {
+                (old, value)
+            } else {
+                (value, old)
+            };
+            if answered_residual(residual, bindings).is_some_and(|answer| answer != *evaluated) {
+                return Err(format!(
+                    "conflicting solutions for `{name}`: `{old}` ({old:?}) and `{value}` ({value:?})"
+                ));
+            }
+            let residual = residual.clone();
+            bindings.values.insert(binder.clone(), residual);
+            Ok(())
+        }
         Some(old) if old != value => Err(format!(
             "conflicting solutions for `{name}`: `{old}` ({old:?}) and `{value}` ({value:?})"
         )),
@@ -944,6 +983,24 @@ pub(super) fn bind_value(
             Ok(())
         }
     }
+}
+
+/// The value the elaboration has already answered for the residual
+/// application `residual` ([`Applications::answer`]), if any.
+fn answered_residual(residual: &CtValue, bindings: &Bindings) -> Option<CtValue> {
+    let CtValue::Expr(expr) = residual else {
+        return None;
+    };
+    let ParamKind::Apply { function, args } = expr.kind() else {
+        return None;
+    };
+    bindings
+        .applications
+        .as_ref()?
+        .answered
+        .borrow()
+        .get(&(function.clone(), args.clone()))
+        .cloned()
 }
 
 /// One slot of a vector pattern against the argument's: a bare binder

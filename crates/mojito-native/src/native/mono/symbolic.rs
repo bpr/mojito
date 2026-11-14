@@ -25,6 +25,58 @@ pub(super) fn eval_reached_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<C
     eval_ct_at(expr, bindings, true)
 }
 
+/// The argument a parameter expression keys an instance by under the mono
+/// environment: its constant, or, where it still applies a lowered function
+/// once closed and folded, that closed application unevaluated, as the pin
+/// keys `S[h(3)]` by `#kgen.apply` and evaluates it only where a read of
+/// the binder materializes it. Nothing is run or recorded to run. Any other
+/// expression is [`eval_ct`]'s.
+pub(super) fn closed_argument(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
+    if let Some(applications) = &bindings.applications
+        && let Ok(folded) = fold_ct(expr, bindings, false, None)
+        && folded.as_constant().is_none()
+        && folded.frozen_struct().is_none()
+        && folded.is_closed()
+        && applies_lowered(&folded, applications)
+    {
+        return Ok(CtValue::Expr(folded));
+    }
+    eval_ct(expr, bindings)
+}
+
+/// Whether `value` is a residual [`closed_argument`] keys an instance by.
+pub(super) fn is_closed_residual(value: &CtValue) -> bool {
+    matches!(value, CtValue::Expr(expr) if expr.is_closed_application())
+}
+
+/// The applications a value argument of a struct type embedded in `expr`
+/// holds, at any depth: each keys its instance unevaluated
+/// ([`closed_argument`]), so nothing demands it for the type. A `SIMD`'s
+/// slots are its layout, not such a key.
+pub(super) fn keyed_applications(expr: &ParamExpr) -> Vec<(String, Vec<ParamExpr>)> {
+    let found = std::cell::RefCell::new(Vec::new());
+    let collect = |ty: &Ty| {
+        if let Some((_, args)) = ty.kind().as_non_simd_struct() {
+            for arg in args {
+                if let TyArg::Val(CtValue::Expr(value)) = arg {
+                    value.visit(&mut |node| {
+                        if let ParamKind::Apply { function, args } = node.kind() {
+                            found.borrow_mut().push((function.clone(), args.clone()));
+                        }
+                    });
+                }
+            }
+        }
+        false
+    };
+    expr.visit(&mut |node| {
+        for ty in node.embedded_types() {
+            mojito_types::types::mentions(ty, &collect);
+        }
+    });
+    found.into_inner()
+}
+
 /// The instance's solutions as parameter-expression bindings, each binder
 /// by its identity: a value binder's constant, and a type binder's closed
 /// type, which a type position inside an expression (a struct member's
@@ -299,6 +351,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
 pub(super) fn arg_has_symbolic(arg: &TyArg) -> bool {
     match arg {
         TyArg::Ty(ty) => is_symbolic(ty),
+        TyArg::Val(value) if is_closed_residual(value) => false,
         TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
         TyArg::Val(_) | TyArg::Origin(_) => false,
     }
@@ -464,6 +517,19 @@ pub(super) fn nominal_template(name: &str) -> &str {
 }
 
 fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<CtValue, MonoError> {
+    let replaced = fold_ct(expr, bindings, reached, bindings.applications.as_deref())?;
+    constant_of(&replaced, bindings)
+}
+
+/// `expr` under the mono environment, folded as far as [`eval_ct`] folds
+/// it, answering the applications of lowered functions only from
+/// `applications`: with none, each stays as it is applied.
+fn fold_ct(
+    expr: &ParamExpr,
+    bindings: &Bindings,
+    reached: bool,
+    applications: Option<&Applications>,
+) -> Result<ParamExpr, MonoError> {
     let context = ParamContext::detached();
     // A layout query the instance's oracle answers under its target, and
     // the first one it cannot. The oracle answers the current target too.
@@ -480,7 +546,7 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
                 type_member_answer(subject, name, args, bindings)
             })
         })
-        .and_then(|answered| match &bindings.applications {
+        .and_then(|answered| match applications {
             // A type binder among the arguments is the type the instance
             // binds it to, and a type the type the instance substitutes,
             // each application in it answered (`T[n=f()]()`). A builtin
@@ -549,6 +615,22 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
     if let Some(error) = layout_failure {
         return Err(error);
     }
+    Ok(replaced)
+}
+
+/// The constant the folded `replaced` denotes, or the error naming what
+/// leaves it open.
+/// Whether `expr` applies a function `applications` lowers.
+fn applies_lowered(expr: &ParamExpr, applications: &Applications) -> bool {
+    let mut applies = false;
+    expr.visit(&mut |node| {
+        applies |= matches!(node.kind(), ParamKind::Apply { function, .. }
+            if applications.lowers(function));
+    });
+    applies
+}
+
+fn constant_of(replaced: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
     // A construction whose fields all closed is the struct constant it
     // freezes to, as upstream folds one to its struct attribute.
     if let Some(frozen) = replaced.frozen_struct() {

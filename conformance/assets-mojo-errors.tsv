@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1194
+# swept-count	1195
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -865,6 +865,7 @@ assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	er
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
 assets/type_error/parameter_capturing_call_argument.mojo	compile-reject	agree	error: cannot use a dynamic value in type parameter
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/parameter_default_application_struct_method_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_default_none_application_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_default_none_application_struct_read.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/parameter_field_transfer.mojo	compile-reject	agree	error: cannot transfer from a parameter expression; did you want to introduce a local 'var'?
