@@ -2930,9 +2930,11 @@ its own parameter shape (upstream suppresses only by satisfaction, R570), and
 two different defaults reaching one conformer are rejected as at the pin. So
 an importer checks no library default and reads no library trait's syntax: a
 `Writer` conformer's `write` calls the package's `Writer.write`. The member
-is still checked through a `def` the check builds, with `Self` respelled
-`_Self` and its receiver an ordinary first argument, and a wrapper reaches it
-through a module binding under its symbol (R594, R595). MIR and
+is still checked through a `def` the check builds, its receiver an ordinary
+first argument; its signature and body keep the source's `Self`, which the
+check binds to the `_Self` binder (`Checker::bind_trait_self` sets `self_ty`)
+as upstream's name resolution does, and a wrapper reaches it through a
+module binding under its symbol (R595). MIR and
 the VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.

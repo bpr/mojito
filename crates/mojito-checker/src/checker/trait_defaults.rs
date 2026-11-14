@@ -13,7 +13,7 @@ use mojito_ast::ast::{
     ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind, Stmt,
     StmtKind, TraitMethod, Type, TypeParam,
 };
-use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_stmt_mut};
+use mojito_ast::visit::{MutVisitor, walk_block_mut};
 use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
@@ -30,9 +30,12 @@ use mojito_symbol::symbol::lifecycle_method_name;
 /// The declaration trait default `index` of `trait_stmt` is checked and
 /// lowered as: its trait's member, named `name`.
 ///
-/// Its first compile-time parameter is the trait's `Self` (spelled `_Self`,
-/// as upstream's diagnostics name it), its first argument the receiver, and
-/// its body the default's. `None` when the method declares no default.
+/// Its first compile-time parameter is the trait's `Self`, the binder
+/// `_Self` (as upstream's diagnostics name it), its first argument the
+/// receiver `self: _Self`, and its body the default's, which still spells
+/// `Self`: the check resolves that `Self` to the binder
+/// ([`Checker::bind_trait_self`]), as upstream's name resolution does.
+/// `None` when the method declares no default.
 ///
 /// Its syntax is derived from the trait statement's, so the check, the
 /// elaborator, and MIR each build the same declaration.
@@ -69,7 +72,7 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
         convention: method.self_convention,
         origin: method.self_origin.clone(),
     };
-    let mut function = Stmt {
+    let function = Stmt {
         kind: StmtKind::Def {
             name,
             decorators: method.decorators.clone(),
@@ -95,16 +98,6 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
             u32::try_from(index).unwrap_or(u32::MAX),
         ),
     };
-    walk_stmt_mut(&mut SpellSelfParam, &mut function);
-    if let StmtKind::Def { type_params, .. } = &mut function.kind {
-        for param in type_params {
-            for bound in &mut param.bounds {
-                if let Some(rest) = bound.strip_prefix("Self.") {
-                    *bound = format!("{SELF_PARAM}.{rest}");
-                }
-            }
-        }
-    }
     Some(function)
 }
 
@@ -513,7 +506,10 @@ impl Checker {
                     continue;
                 };
                 self.checking_trait_member = true;
+                self.binding_trait_self = true;
                 let checked = self.check_def(&declaration, false);
+                self.binding_trait_self = false;
+                self.self_ty = None;
                 self.checking_trait_member = false;
                 checked?;
                 self.trait_members.push(TraitMember {
@@ -525,6 +521,17 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Bind `Self` to the member's `_Self` binder once its scope is open,
+    /// while a trait member is checked: the binder's owner is the member's
+    /// provisional one in the first signature pass and its symbol after, so
+    /// it comes from the open scope. A nested `def` finds `Self` bound and
+    /// inherits it.
+    pub(super) fn bind_trait_self(&mut self) {
+        if self.binding_trait_self && self.self_ty.is_none() {
+            self.self_ty = self.lookup_tparam(SELF_PARAM);
+        }
     }
 
     /// Check the body of every wrapper a top-level struct of `stmts`
@@ -1182,31 +1189,3 @@ impl MutVisitor for DeriveSyntax {
 
 /// The trait's `Self` as its member names it.
 const SELF_PARAM: &str = "_Self";
-
-/// Respell the trait's `Self` as its member's [`SELF_PARAM`].
-struct SpellSelfParam;
-
-impl MutVisitor for SpellSelfParam {
-    fn visit_expr_mut(&mut self, expr: &mut Expr) {
-        match &mut expr.kind {
-            ExprKind::Identifier(name) | ExprKind::Call { name, .. } if name == "Self" => {
-                *name = SELF_PARAM.to_string();
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_type_mut(&mut self, ty: &mut Type) {
-        match ty {
-            Type::SelfType => *ty = Type::Named(SELF_PARAM.to_string(), Vec::new()),
-            Type::SelfParam(member) if !member.starts_with('*') => {
-                *ty = Type::Assoc {
-                    base: Box::new(Type::Named(SELF_PARAM.to_string(), Vec::new())),
-                    name: std::mem::take(member),
-                    args: Vec::new(),
-                };
-            }
-            _ => {}
-        }
-    }
-}

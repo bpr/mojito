@@ -794,6 +794,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default's `Self` now resolves to its member's `_Self` binder in
+  the check, as upstream's name resolution binds it, instead of the
+  member's declaration respelling the default's signature and body `_Self`;
+  the elaborated trait and `CheckedTraitMember::declaration` keep the
+  source's `Self` (R594).
+
 - A call of a homogeneous `*xs: T` callee now builds its `VariadicList` as
   upstream's does: it stores the elements' `!lit.ref`s in the
   `__passed_varargs__` `!pop.array` and calls the list's `@implicit`

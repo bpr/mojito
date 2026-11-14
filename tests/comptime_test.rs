@@ -1687,6 +1687,44 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
 }
 
 #[test]
+fn a_trait_members_self_resolves_to_its_binder_unrespelled() {
+    // Upstream's name resolution binds a default's `Self` to its member's
+    // `_Self` binder: the member's declaration keeps the source's `Self` in
+    // its signature and body, and only the binder and receiver say `_Self`.
+    let src = "trait T:\n    comptime N: Int\n    def req(self) -> Int:\n        ...\n    def d(self, other: Self) -> Int:\n        return Self.N + self.req() + other.req()\n\n@fieldwise_init\nstruct S(T):\n    comptime N = 4\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n\ndef main():\n    print(S(3).d(S(5)))\n";
+    let compiler = Compiler::default();
+    let compiled = compiler.compile_unlinked(src).unwrap();
+    let [member] = compiled.checked().trait_members() else {
+        panic!("one trait member: {:?}", compiled.checked().trait_members());
+    };
+    let mojito::ast::StmtKind::Def {
+        type_params,
+        params,
+        body,
+        ..
+    } = &member.declaration.kind
+    else {
+        panic!("the member is a def: {:?}", member.declaration);
+    };
+    assert_eq!(type_params[0].name, "_Self");
+    assert_eq!(
+        params[0].ty,
+        mojito::ast::Type::Named("_Self".to_string(), Vec::new())
+    );
+    assert_eq!(params[1].ty, mojito::ast::Type::SelfType);
+    let body = format!("{body:?}");
+    assert!(
+        !body.contains("\"_Self\""),
+        "the body is not respelled: {body}"
+    );
+    assert!(
+        body.contains("Identifier(\"Self\")"),
+        "the body keeps `Self`: {body}"
+    );
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "12\n");
+}
+
+#[test]
 fn comptime_scalar_conversions_follow_the_builtin_rule() {
     // A conversion between `Int`, `UInt`, `Float64`, and `Bool` folds at
     // compile time by the VM's rule, as the pin's interpreter folds the

@@ -535,6 +535,9 @@ pub struct Checker {
     /// Whether the declaration `check_def` checks next is a trait member,
     /// whose receiver is a method receiver.
     checking_trait_member: bool,
+    /// Whether the `def` being checked is a trait member, whose `Self` is
+    /// its `_Self` binder.
+    binding_trait_self: bool,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -1111,6 +1114,7 @@ impl Checker {
             default_wrappers: Vec::new(),
             trait_members: Vec::new(),
             checking_trait_member: false,
+            binding_trait_self: false,
             predeclared_structs: HashSet::new(),
             shells_awaiting_defaults: Vec::new(),
             declared_aliases: HashSet::new(),

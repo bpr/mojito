@@ -638,10 +638,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StructEmitter` emits them: each default is its trait's member
   `Trait.m` (`member_symbol`), whose declaration
   `trait_member_declaration` builds from the trait statement (first
-  compile-time parameter `_Self`, receiver first) for the elaborator, the
-  check, and the handoff alike. `Checker::check_trait_members` checks every
-  member after the module walk and `checked_trait_members` hands it over
-  as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
+  compile-time parameter `_Self`, receiver `self: _Self` first, the
+  default's signature and body as spelled) for the elaborator, the check,
+  and the handoff alike. `Checker::check_trait_members` checks every
+  member after the module walk, `Checker::bind_trait_self` binding its
+  `Self` to the `_Self` binder once the member's scope is open, and
+  `checked_trait_members` hands it over as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
   check records its defaults in its `TraitInfo` (a `DefaultShape` from
   `default_shapes`, naming its requirement row in `TraitInfo::methods` by
   overload index), which a package exports. The check builds each conformer's

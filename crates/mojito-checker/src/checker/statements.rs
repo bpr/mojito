@@ -3238,6 +3238,7 @@ impl Checker {
         // `T`), and value parameters as the typed references a dependent
         // parameter expression names (`Buf[n + 1]`).
         self.push_param_scope(&decls);
+        self.bind_trait_self();
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
                 self.pop_param_scope();
@@ -3988,8 +3989,11 @@ impl Checker {
         // bare `T`), and value parameters as the typed references a
         // dependent parameter expression names (`Buf[n + 1]`).
         self.push_param_scope(&decls);
+        let enclosing_self = self.self_ty.clone();
+        self.bind_trait_self();
         let signature =
             self.def_signature_in_scope(stmt, shape, owner, decls, unavailable, required);
+        self.self_ty = enclosing_self;
         self.pop_param_scope();
         signature
     }

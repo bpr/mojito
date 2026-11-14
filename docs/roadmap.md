@@ -9736,23 +9736,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
-
-  The elaborator and the check see a trait default through a declaration
-  whose `Self` an AST rewrite respells `_Self`, while upstream binds the
-  trait's `Self` to the member's `_Self` parameter where it resolves.
-  - `trait_member_declaration` (`checker/trait_defaults.rs`) runs
-    `SpellSelfParam` over the default's signature and body, and respells a
-    `Self.X` bound `_Self.X`.
-  - The elaborator writes the respelled body back into the trait, so MIR
-    and the checked tree hold `_Self` where the source says `Self`.
-  - The lever: the check binds `Self` to the `_Self` parameter
-    (`self_ty`, `associated_type_for_self` over a `Ty::Param`), and the
-    elaborator names the member's binders `Self` and `Self.<member>`.
-  - Found while landing R551 (2026-10-10).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R595 A trait member is checked as a function the check builds,
   and its wrapper reaches it through a module binding**
 

@@ -1075,6 +1075,12 @@ impl Checker {
                         .iter()
                         .filter(|declaration| declaration.name() == name)
                         .find_map(type_parameter)
+                })
+                // A trait member's `Self` is its `_Self` binder.
+                .or_else(|| {
+                    self.self_ty
+                        .clone()
+                        .filter(|ty| name == "Self" && matches!(ty.kind(), TyKind::Param { .. }))
                 });
             if let Some(ty) = type_parameter.as_ref()
                 && let TyKind::Param { binder, bounds, .. } = ty.kind()
@@ -1086,7 +1092,12 @@ impl Checker {
             {
                 if !(args.is_empty() && kwargs.is_empty()) {
                     return self.infer_type_param_copy_construction(
-                        span, name, ty, param_args, args, kwargs,
+                        span,
+                        &binder.name,
+                        ty,
+                        param_args,
+                        args,
+                        kwargs,
                     );
                 }
                 self.record_at(span).adjustment = Some(Box::new(
