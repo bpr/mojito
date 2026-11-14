@@ -308,7 +308,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `compile_comptime_or_pattern` disjoins the alternatives and merges each
   name into a conditional expression, and `check_comptime_case` declares
   the bindings, reads the guard through `substitute_bindings`, conjoins the
-  case's condition (`conjoin`), checks the body under `assume_condition`,
+  case's condition (`conjoin`), checks the body under `assume_arm` (its own condition and every earlier
+  case's failure),
   and `check_comptime_cases` records `MatchPlan::conditions` (the
   concluding case's dropped); `CheckedMatchCase::condition` carries it, and
   HIR's `comptime_match` emits `HirInstr::ComptimeIf`. HIR's `case_commands` is upstream's `emitCommands` then
@@ -851,13 +852,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ComptimeTest::Assert`, which words the diagnostics, and its message
   through `check_assert_message`), and
   `conformance_arm_assumptions` collects what a condition's `conforms_to`
-  atoms prove. `constraints.rs:assume_condition` opens the one assumption
-  level a condition's knowledge occupies — those atoms, and the conjuncts of
-  its residual proposition over the binders in scope
-  (`condition_propositions`) — for the arm `statements.rs:check_conditional`
-  (and a parameter-valued `IfExpr`) guards, and for the rest of a `comptime
-  assert`'s block, which `statements.rs:check_block` pops at the block's
-  end. A `DType`- or width-keyed body is
+  atoms prove when it holds, or when it fails (under `not`, through `or`).
+  `constraints.rs:assume_condition` opens the one assumption level a
+  condition's knowledge occupies — those atoms, and the conjuncts of its
+  residual proposition over the binders in scope (`condition_residual`)
+  — for the rest of a `comptime assert`'s block, which
+  `statements.rs:check_block` pops at the block's end; `assume_arm` opens it
+  for an arm of a chain (`statements.rs:check_conditional`, a
+  parameter-valued `IfExpr`, a `comptime match` case), adding what each
+  earlier condition's failure proves (its negated `conforms_to` atoms and
+  its residual's negation), as upstream's
+  `buildBranchAssumption`. A `DType`- or width-keyed body is
   validated with its lane symbolic: `annotations::dtype_from_arg` and
   `type_resolution::simd_width` resolve a binder in scope (bare, or `Self.x`
   through `constraints::self_param_value`) to a `SimdDtype::Expr`/

@@ -1093,6 +1093,7 @@ impl Checker {
         let before = self.uninitialized.borrow().clone();
         let mut exits = Vec::new();
         let mut fallthrough_reachable = true;
+        let mut failed = Vec::new();
         for (cond, body) in branches {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
             if let mojito_ast::ast::Condition::Case { pattern, value } = cond
@@ -1107,11 +1108,13 @@ impl Checker {
             let cond = Self::boolean_condition(cond, "if")?;
             if comptime {
                 let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
-                // What the condition proves holds in this arm alone.
-                self.assume_condition(cond, Some(&constraint))?;
+                // What the condition proves holds in this arm alone, beside
+                // the failure of every earlier condition.
+                self.assume_arm(Some((cond, Some(&constraint))), &failed)?;
                 let checked = self.check_scoped_block(body, ret, in_loop);
                 self.pop_assumptions();
                 checked?;
+                failed.push((cond.clone(), Some(constraint)));
             } else {
                 self.register_named_bindings(cond)?;
                 self.expect_bool(cond, "if condition")?;
@@ -1130,7 +1133,14 @@ impl Checker {
         }
         if let Some(body) = orelse {
             *self.uninitialized.borrow_mut() = before;
-            self.check_scoped_block(body, ret, in_loop)?;
+            if comptime {
+                self.assume_arm(None, &failed)?;
+                let checked = self.check_scoped_block(body, ret, in_loop);
+                self.pop_assumptions();
+                checked?;
+            } else {
+                self.check_scoped_block(body, ret, in_loop)?;
+            }
             if fallthrough_reachable {
                 exits.push(self.uninitialized.borrow().clone());
             }

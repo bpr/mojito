@@ -436,16 +436,19 @@ impl Checker {
         let mut programs = Vec::new();
         let mut conditions = Vec::new();
         let mut covers = Vec::new();
+        let mut failed = Vec::new();
         for case in cases {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
             self.push_scope();
-            let checked = self.check_comptime_case(case, subject, ret, in_loop);
+            let checked = self.check_comptime_case(case, subject, &failed, ret, in_loop);
             self.pop_scope();
             let ComptimeCase {
                 declarations,
                 condition,
+                constraint,
                 cover,
             } = checked?;
+            failed.extend(condition.clone().map(|condition| (condition, constraint)));
             programs.push(declarations);
             conditions.push(condition);
             covers.push(CoverCase {
@@ -495,6 +498,7 @@ impl Checker {
         &mut self,
         case: &MatchCase,
         subject: &MatchSubject,
+        failed: &[(Expr, Option<GenericConstraint>)],
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<ComptimeCase, TypeError> {
@@ -529,20 +533,21 @@ impl Checker {
             .as_ref()
             .map(|condition| self.check_comptime_condition(condition, ComptimeTest::If))
             .transpose()?;
-        let checked = match &condition {
-            Some(condition) => {
-                // What the condition proves holds in this arm alone.
-                self.assume_condition(condition, constraint.as_ref())?;
-                let checked = self.check_block(&case.body, ret, in_loop);
-                self.pop_assumptions();
-                checked
-            }
-            None => self.check_block(&case.body, ret, in_loop),
-        };
+        // What the condition proves holds in this case alone, beside the
+        // failure of every earlier case's condition.
+        self.assume_arm(
+            condition
+                .as_ref()
+                .map(|condition| (condition, constraint.as_ref())),
+            failed,
+        )?;
+        let checked = self.check_block(&case.body, ret, in_loop);
+        self.pop_assumptions();
         checked?;
         Ok(ComptimeCase {
             declarations,
             condition,
+            constraint,
             cover: commands.cover,
         })
     }
@@ -1740,6 +1745,7 @@ impl PathTable {
 struct ComptimeCase {
     declarations: Vec<PlannedCommand>,
     condition: Option<Expr>,
+    constraint: Option<GenericConstraint>,
     cover: Vec<CoverCommand>,
 }
 

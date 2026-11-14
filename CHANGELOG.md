@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time arm now knows that every earlier condition in its chain
+  failed, as upstream's `buildBranchAssumption` builds it, so `comptime if
+  not conforms_to(T, Writable): ... else: print(x)`, the same `elif`, a
+  `comptime match` case after a negating guard, and a parameter-valued
+  conditional's else branch may use `T` as `Writable`, and an `else`
+  after `not (n > 0)` proves a callee's `where n > 0` (R1244;
+  `assets/ok/comptime_if_else_assumes_failed_conditions.mojo`).
+
 - A callable binder solved by a thin function keeps `thin` in its
   solution, as at the pin, so `comptime if conforms_to(F,
   TrivialRegisterPassable)` and the `RegisterPassable` arm take the true

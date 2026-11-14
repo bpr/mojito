@@ -227,6 +227,7 @@ assets/ok/comptime_if_arm_destroy_joins.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_closed_arm_decides_drops.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_condition_applies_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_condition_reads_index.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_else_assumes_failed_conditions.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_lifecycle.mojo	main	exe-differential	sanitized

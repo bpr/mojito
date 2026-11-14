@@ -1763,32 +1763,46 @@ impl Checker {
     }
 
     /// The conformances a `comptime if` condition proves of its operands for
-    /// the arm it guards, as the pinned Mojo licenses them: every
-    /// `conforms_to(X, A & B)` atom under `and`, keyed by what `X` denotes — a
-    /// parameter's binder, a dependent element's canonical expression — so
-    /// the proof reaches exactly that element, and only below the condition.
-    /// `or`, `not`, and any other leaf prove nothing.
+    /// an arm, as the pinned Mojo licenses them: when the arm is the one the
+    /// condition guards (`holds`), every `conforms_to(X, A & B)` atom under
+    /// `and`; when the arm follows the condition's failure, every such atom
+    /// under `not` where the failure distributes it (`not (a or b)` is
+    /// `not a and not b`, and a double negation is its atom). Each is keyed
+    /// by what `X` denotes — a parameter's binder, a dependent element's
+    /// canonical expression — so the proof reaches exactly that element, and
+    /// only below the condition. Any other leaf proves nothing.
     pub(super) fn conformance_arm_assumptions(
         &self,
         cond: &Expr,
+        holds: bool,
     ) -> Result<Vec<ParamExpr>, TypeError> {
         let cond = self.inline_local_comptime_values(cond);
         let mut proved = Vec::new();
-        self.collect_arm_assumptions(&cond, &mut proved)?;
+        self.collect_arm_assumptions(&cond, holds, &mut proved)?;
         Ok(proved)
     }
 
     fn collect_arm_assumptions(
         &self,
         cond: &Expr,
+        holds: bool,
         proved: &mut Vec<ParamExpr>,
     ) -> Result<(), TypeError> {
         match &cond.kind {
-            ExprKind::Infix(InfixOp::And, left, right) => {
-                self.collect_arm_assumptions(left, proved)?;
-                self.collect_arm_assumptions(right, proved)
+            ExprKind::Infix(InfixOp::And, left, right) if holds => {
+                self.collect_arm_assumptions(left, holds, proved)?;
+                self.collect_arm_assumptions(right, holds, proved)
             }
-            ExprKind::Call { name, args, .. } if name == "conforms_to" && args.len() == 2 => {
+            ExprKind::Infix(InfixOp::Or, left, right) if !holds => {
+                self.collect_arm_assumptions(left, holds, proved)?;
+                self.collect_arm_assumptions(right, holds, proved)
+            }
+            ExprKind::Prefix(PrefixOp::Not, operand) => {
+                self.collect_arm_assumptions(operand, !holds, proved)
+            }
+            ExprKind::Call { name, args, .. }
+                if holds && name == "conforms_to" && args.len() == 2 =>
+            {
                 let Some(Ok(trait_names)) = self.conformance_traits(&args[1]) else {
                     return Ok(());
                 };

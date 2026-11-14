@@ -4885,27 +4885,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1244 A compile-time arm does not assume that the earlier
-  conditions failed**
-
-  Problem: `comptime if not conforms_to(T, Writable): ... else: print(x)`
-  is rejected ("an element of 'values' with type 'T' does not conform to
-  trait 'Writable'"), where the pin prints `1`, and so is a `comptime
-  match` case after `case U if not conforms_to(U, Writable)`.
-  - Upstream's `buildBranchAssumption` (`emitComptimeCases`) gives each
-    arm its own condition and the negation of every earlier arm's, so an
-    `else` arm knows that every condition failed.
-  - Mojito's arms assume their own condition alone:
-    `check_conditional`'s compile-time branch (`checker/statements.rs`)
-    and `check_comptime_case` (`checker/patterns.rs`) call
-    `assume_condition` over that condition only.
-  - Lever: assume each earlier condition's negation too, through
-    `conformance_arm_assumptions`, which must then read a `conforms_to`
-    atom under a double negation.
-  - Found while landing R1139 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R972 A generic caller omitting a parameter whose default reads
   an earlier one is rejected**
 

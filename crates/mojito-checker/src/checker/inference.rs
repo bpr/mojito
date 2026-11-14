@@ -3411,8 +3411,9 @@ impl Checker {
     /// upstream's `coerceTypesToEachOther` merges them
     /// ([`Self::coerce_to_each_other`]), a contextual type
     /// ([`Self::infer_in_context`]) taking part as its fourth step. A parameter-valued condition is
-    /// checked as a `comptime if` condition is, and its then arm under the
-    /// conformances it proves.
+    /// checked as a `comptime if` condition is, its then arm under the
+    /// conformances it proves and its else arm under those its failure
+    /// proves.
     fn infer_conditional(
         &self,
         expr: &Expr,
@@ -3420,18 +3421,21 @@ impl Checker {
         then_branch: &Expr,
         else_branch: &Expr,
     ) -> Result<Ty, TypeError> {
-        let tt = if self.parameter_valued_condition(cond) {
+        let (tt, et) = if self.parameter_valued_condition(cond) {
             let constraint = self.check_comptime_condition(cond, ComptimeTest::If)?;
             self.record_at(expr.source_span()).comptime_conditional = true;
             self.assume_condition(cond, Some(&constraint))?;
             let tt = self.infer(then_branch);
             self.pop_assumptions();
-            tt?
+            let tt = tt?;
+            self.assume_arm(None, &[(cond.clone(), Some(constraint))])?;
+            let et = self.infer(else_branch);
+            self.pop_assumptions();
+            (tt, et?)
         } else {
             self.expect_bool(cond, "conditional-expression condition")?;
-            self.infer(then_branch)?
+            (self.infer(then_branch)?, self.infer(else_branch)?)
         };
-        let et = self.infer(else_branch)?;
         // A place arm is copied into the conditional's owned result,
         // which only an implicitly copyable value allows.
         for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {

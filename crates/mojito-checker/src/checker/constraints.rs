@@ -5764,12 +5764,37 @@ impl Checker {
         cond: &Expr,
         constraint: Option<&GenericConstraint>,
     ) -> Result<(), TypeError> {
-        let mut known = self.conformance_arm_assumptions(cond)?;
-        known.extend(
-            constraint
-                .map(|constraint| self.condition_propositions(constraint))
-                .unwrap_or_default(),
-        );
+        self.assume_arm(Some((cond, constraint)), &[])
+    }
+
+    /// Open one assumption level for an arm of a compile-time chain, as
+    /// upstream's `buildBranchAssumption` builds it: what the arm's own
+    /// condition makes known ([`Self::assume_condition`]), when it has one,
+    /// and what the failure of each earlier arm's condition in `failed`
+    /// makes known — the conformances its negation proves, and the
+    /// conjuncts of its residual proposition's negation — so an `else` arm
+    /// knows that every condition failed. The caller pops the level.
+    pub(super) fn assume_arm(
+        &self,
+        own: Option<(&Expr, Option<&GenericConstraint>)>,
+        failed: &[(Expr, Option<GenericConstraint>)],
+    ) -> Result<(), TypeError> {
+        let mut known = Vec::new();
+        if let Some((cond, constraint)) = own {
+            known.extend(self.conformance_arm_assumptions(cond, true)?);
+            if let Some(proposition) = constraint.and_then(|c| self.condition_residual(c)) {
+                known.extend(conjuncts(&proposition));
+            }
+        }
+        for (cond, constraint) in failed {
+            known.extend(self.conformance_arm_assumptions(cond, false)?);
+            if let Some(proposition) = constraint.as_ref().and_then(|c| self.condition_residual(c))
+            {
+                known.extend(conjuncts(
+                    &self.param_context.not(&proposition).map_err(param_error)?,
+                ));
+            }
+        }
         self.push_assumptions(known);
         Ok(())
     }
@@ -5784,12 +5809,12 @@ impl Checker {
             .all(|conjunct| assumptions.iter().flatten().any(|known| known == conjunct))
     }
 
-    /// The conjuncts of the residual proposition `constraint` states with
-    /// every binder in scope standing for itself — the enclosing struct's,
-    /// then each open parameter scope's — as a declaration's own `where`
-    /// clause is read inside its body. A verdict the binders decide states
-    /// nothing to assume.
-    fn condition_propositions(&self, constraint: &GenericConstraint) -> Vec<ParamExpr> {
+    /// The residual proposition `constraint` states with every binder in
+    /// scope standing for itself — the enclosing struct's, then each open
+    /// parameter scope's — as a declaration's own `where` clause is read
+    /// inside its body. A verdict the binders decide states nothing to
+    /// assume.
+    fn condition_residual(&self, constraint: &GenericConstraint) -> Option<ParamExpr> {
         let declared = |expression: &ParamExpr| match expression.kind() {
             mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
             _ => None,
@@ -5827,8 +5852,8 @@ impl Checker {
                 .map(|(id, argument)| (id.clone(), argument)),
         );
         match self.constraint_verdict(constraint, &environment) {
-            Ok(ConstraintVerdict::Residual(proposition)) => conjuncts(&proposition),
-            _ => Vec::new(),
+            Ok(ConstraintVerdict::Residual(proposition)) => Some(proposition),
+            _ => None,
         }
     }
 

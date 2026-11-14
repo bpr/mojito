@@ -1676,9 +1676,13 @@ element `ListGet` of a `field_types()` list, viewed through the same bounded
 spelling). A field type has no declared bound: `T`'s own bound says nothing
 about a field, so a trait use of it is rejected until proved, and a
 `comptime if conforms_to(X, A & B)` condition proves exactly those traits of
-exactly that operand for the arm it guards, and a `comptime assert` of it
+exactly that operand for the arm it guards, its failure (`not
+conforms_to(...)`) proves them for every later arm of its chain, as
+upstream's `buildBranchAssumption` gives each arm the negation of the
+earlier conditions, and a `comptime assert` of it proves them
 for the rest of its block (`conformance_arm_assumptions`' `conforms_to`
-atoms, pushed on the one assumption store by `assume_condition`), which is what the pin
+atoms, pushed on the one assumption store by `assume_condition` and
+`assume_arm`), which is what the pin
 licenses for a plain parameter, a pack element, and a field type alike; a
 proof on another index, after the use, in another loop, or in an `or` proves
 nothing. A value read of a query over a parameter
