@@ -328,10 +328,14 @@ assets/ok/ctfe_display_binding_element_load.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_display_tuple_subscript_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_list_field_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_list_result_materialize.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_local_binding_reaches_print.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_method_reaches_print.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_module_comptime_prints.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_module_constant_requests.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_module_display_constant_requests.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_module_optional_constant.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_optional_result.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_parameter_argument_prints.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_pointer_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_reference_result_load.mojo	main	exe-differential	sanitized
@@ -348,6 +352,7 @@ assets/ok/def_callable_parameter_symbol.mojo	main	exe-differential	sanitized
 assets/ok/def_calls_later_def.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized
+assets/ok/default_evaluated_at_compile_time.mojo	main	exe-differential	sanitized
 assets/ok/default_reads_binder.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
 assets/ok/deinit_body_field_last_use.mojo	main	exe-differential	sanitized

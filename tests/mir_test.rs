@@ -6389,13 +6389,17 @@ def main():
         .instrs
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call {
-                func,
-                instantiated_args,
+            MirInstr::Const {
+                k: mojito::mir::Const::Param(application),
                 ..
-            } if func.0.starts_with("$default$Box.") => {
-                Some((func.0.as_str(), instantiated_args.len()))
-            }
+            } => match application.kind() {
+                mojito::param_expr::ParamKind::Apply { function, args }
+                    if function.starts_with("$default$Box.") =>
+                {
+                    Some((function.as_str(), args.len()))
+                }
+                _ => None,
+            },
             _ => None,
         })
         .collect();
@@ -6448,13 +6452,17 @@ def main() raises:
         instructions
             .iter()
             .filter_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func,
-                    instantiated_args,
+                MirInstr::Const {
+                    k: mojito::mir::Const::Param(application),
                     ..
-                } if func.0.starts_with("$default$") => {
-                    Some((func.0.clone(), instantiated_args.len()))
-                }
+                } => match application.kind() {
+                    mojito::param_expr::ParamKind::Apply { function, args }
+                        if function.starts_with("$default$") =>
+                    {
+                        Some((function.clone(), args.len()))
+                    }
+                    _ => None,
+                },
                 _ => None,
             })
             .collect()

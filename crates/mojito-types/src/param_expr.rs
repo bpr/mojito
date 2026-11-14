@@ -534,6 +534,20 @@ impl ParamContext {
         }
     }
 
+    /// The argument `argument` binds a generator's parameter to, as an
+    /// application spells it: a type's shape, a value's constant, and no
+    /// expression for an origin, which an application erases (`Ok(None)`).
+    pub fn argument_expr(
+        &self,
+        argument: &crate::types::TyArg,
+    ) -> Result<Option<ParamExpr>, ParamError> {
+        match argument {
+            crate::types::TyArg::Ty(ty) => Ok(Some(self.type_shape(ty.clone()))),
+            crate::types::TyArg::Val(value) => self.constant(value.clone()).map(Some),
+            crate::types::TyArg::Origin(_) => Ok(None),
+        }
+    }
+
     /// Select one of a finite, already-checked sequence of types by an integer
     /// expression. A constant in-range index folds to the selected type, and
     /// any index over a sequence of one repeated type to that type.

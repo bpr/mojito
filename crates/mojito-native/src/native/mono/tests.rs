@@ -3304,20 +3304,21 @@ fn a_forward_to_a_removed_argument_leaves_one_reduced_instance() {
 }
 
 /// A call omitting a removed argument evaluates no default for it, as
-/// upstream's rewritten call passes nothing: `ign(1)` runs neither
-/// `$default$ign$s` nor the read temporary's destructor, while `used(1)`
-/// still evaluates its own.
+/// upstream's rewritten call passes nothing: `ign(1)` evaluates no
+/// `$default$ign$s`, whose value's destruction runs no code, while
+/// `used(1)` evaluates its own, once, at compile time, and no call of
+/// either default function remains.
 #[test]
 fn a_removed_argument_left_out_evaluates_no_default() {
-    let source = "def make() -> String:\n\
+    let source = "def make() -> Int:\n\
      \x20   print(\"make\")\n\
-     \x20   return String(\"made\")\n\
+     \x20   return 4\n\
      @no_inline\n\
-     def ign(a: Int, s: String = make()) -> Int:\n\
+     def ign(a: Int, s: Int = make()) -> Int:\n\
      \x20   return a\n\
      @no_inline\n\
-     def used(a: Int, s: String = make()) -> Int:\n\
-     \x20   return a + s.byte_length()\n\
+     def used(a: Int, s: Int = make()) -> Int:\n\
+     \x20   return a + s\n\
      def main() raises:\n\
      \x20   print(ign(1), used(1))\n";
     let specialized = specialized_with_removed(source, &[]).expect("specialize");
@@ -3325,19 +3326,14 @@ fn a_removed_argument_left_out_evaluates_no_default() {
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
     );
+    assert_eq!(specialized.compile_time_output, "make\n");
     let defaults = instructions(&function(&specialized, "main").body)
         .into_iter()
-        .filter_map(|instruction| match instruction {
-            // `print`'s own `file` default is the library call's.
-            MirInstr::Call { func, .. }
-                if func.0.starts_with("$default$") && !func.0.starts_with("$default$print$") =>
-            {
-                Some(func.0.clone())
-            }
-            _ => None,
+        .filter(|instruction| {
+            matches!(instruction, MirInstr::Call { func, .. } if func.0.starts_with("$default$"))
         })
-        .collect::<Vec<_>>();
-    assert_eq!(defaults, ["$default$used$s"]);
+        .count();
+    assert_eq!(defaults, 0);
 }
 
 #[test]

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1195
+# swept-count	1192
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -432,8 +432,6 @@ assets/type_error/copyable_field_rejects_move_only.mojo	compile-reject	agree	err
 assets/type_error/copy_method_requires_copyable.mojo	compile-reject	agree	error: 'Plain' value has no attribute 'copy'
 assets/type_error/ctfe_constant_cycle.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/ctfe_list_result_implicit_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'List[Int]' to runtime because it is not 'ImplicitlyCopyable'
-assets/type_error/ctfe_local_binding_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
-assets/type_error/ctfe_method_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/ctfe_module_dict_constant_bare_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/def_callable_parameter_dynamic_value.mojo	compile-reject	agree	error: invalid call to 'g': cannot use a dynamic value in a parameter list
 assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'
@@ -538,7 +536,6 @@ assets/type_error/generic_abandoned_temporary.mojo	compile-reject	agree	error: '
 assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/generic_constructor_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'G[Int]' initializer call
 assets/type_error/generic_constructor_keyword_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'G[Int]' initializer call
-assets/type_error/generic_ctfe_impure.mojo	runs	subset	the pin runs it;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/generic_display_argument_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/generic_result_origin_mut_span_tail.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type
 assets/type_error/generic_result_origin_optional_param.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type

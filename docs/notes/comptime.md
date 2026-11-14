@@ -704,7 +704,9 @@ then plan a MIR/VM-backed CTFE phase before the AST interpreter grows too large.
 The VM-CTFE walk is an effect classifier, not an allowlist. It rejects up
 front:
 
-- the effectful builtins (`print`, `input`)
+- the input builtin (`input`); a `print` runs, and what it writes is the
+  elaboration's output (`SpecializedProgram::compile_time_output`), which
+  `mojito run` and `mojito compile` print and an executable never does
 - a raising call at the entry (`cannot call raising function in comptime
   initializer`, reported by the checked probe's non-raising signature)
 - non-deterministic builtins, as they are added
@@ -976,8 +978,8 @@ safety walk proves the helper call graph is CTFE-safe:
 - value-parameter generics are allowed and their value arguments are reified into
   VM frame locals
 - loops, branches, recursion, method dispatch, collection displays, and every
-  other deterministic body are allowed; only the effectful builtins (`print`,
-  `input`) reject up front
+  other deterministic body are allowed; only `input` rejects up front, and a
+  `print` writes the elaboration's output
 - VM execution burns the same program-wide comptime fuel as the elaborator
 - `Value` results convert back to `CtValue` only for runtime-materializable
   compile-time values (`Int`, `Bool`, `String`, `Tuple`, `List`, fieldwise

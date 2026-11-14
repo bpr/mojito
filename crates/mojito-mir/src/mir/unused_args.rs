@@ -601,7 +601,7 @@ fn argument_forwards_view<'a>(
     if discounted.is_empty() {
         return None;
     }
-    let mut erased = erase_unpassed_defaults(&mut view, &dropped, &original);
+    let mut erased = erase_unpassed_defaults(&mut view, declarations, &dropped, &original);
     view.reg_types.retain(|reg, _| !erased.contains(reg));
     erased.extend(erase_forward_chains(
         &mut view,
@@ -626,7 +626,7 @@ fn argument_forwards_view<'a>(
             &mut BTreeSet::new(),
             &mut kept,
         );
-        erase_unpassed_defaults(&mut view, &kept, &original);
+        erase_unpassed_defaults(&mut view, declarations, &kept, &original);
         erase_results(&mut view.body, &erased);
         erase_stored_slots(&mut view.body, &erased);
         undefined = kept

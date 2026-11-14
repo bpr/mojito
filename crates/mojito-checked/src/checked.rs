@@ -5160,8 +5160,10 @@ pub enum CheckedConst {
     },
     /// A default that is neither a folded literal nor a conversion of one
     /// (`String("a")`, `TWO + 1`): MIR lowers the expression as the
-    /// zero-parameter function `function`, which each call that takes the
-    /// slot runs, so the default is evaluated anew at every such call.
+    /// zero-parameter function `function`, and each call that takes the
+    /// slot materializes its compile-time application, which the elaborator
+    /// evaluates once per instance, as upstream's call binding writes the
+    /// default's parameter expression into the call.
     ///
     /// `arguments` applies the function's own compile-time parameters, in
     /// the order of its declaration, over the binders of the declaration

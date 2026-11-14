@@ -58,6 +58,11 @@ pub struct SpecializedProgram {
     /// beside its own, since an elaboration of that artifact looks up no
     /// others.
     pub imported: Vec<String>,
+    /// The standard output the elaboration's compile-time applications
+    /// wrote, in the order they ran: what upstream's interpreter prints
+    /// while it elaborates, which a program's run shows before its own
+    /// output and its native executable never prints.
+    pub compile_time_output: String,
 }
 
 impl SpecializedProgram {
@@ -76,6 +81,7 @@ impl SpecializedProgram {
             entries,
             mut counts,
             imported,
+            compile_time_output,
         } = self;
         let program = program
             .rewrite_bodies(rewrite)
@@ -93,6 +99,7 @@ impl SpecializedProgram {
             entries,
             counts,
             imported,
+            compile_time_output,
         })
     }
 
@@ -140,6 +147,7 @@ impl SpecializedProgram {
             entries,
             mut counts,
             imported,
+            compile_time_output,
         } = self;
         let program = program
             .pruned(|program| eliminate(program, &roots))
@@ -157,6 +165,7 @@ impl SpecializedProgram {
             entries,
             counts,
             imported,
+            compile_time_output,
         })
     }
 }

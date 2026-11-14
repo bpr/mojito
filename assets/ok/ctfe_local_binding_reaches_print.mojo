@@ -1,7 +1,7 @@
-# expect: is not safe for VM-backed compile-time execution
 # A local `comptime` binding that applies a callable runs at compile time,
-# so a `print` it reaches is rejected, as the request path rejects any
-# compile-time `print`; the pin prints at compile time (docs/non-goals.md).
+# and a `print` it reaches prints while the program elaborates, once per
+# instance: `mojito run` shows `side` before `main`'s output, as `mojo run`
+# does, and a native executable never prints it.
 def f(n: Int) -> Int:
     print("side")
     return n + 1

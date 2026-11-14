@@ -35,7 +35,10 @@ Dependency direction is enforced by Cargo. Bottom-up: `mojito-common`
 `mojito-comptime`} → the root facade. Note that the crate DAG is not the
 pipeline order: `mojito-native` sits **above** the VM because the elaborator
 owns its compile-time executor (`VmBackend::call_concrete`), as upstream's
-elaborator owns its interpreter, and `mojito-comptime` sits above the
+elaborator owns its interpreter (what a compile-time `print` writes is the
+elaboration's output, `SpecializedProgram::compile_time_output`, which the
+CLI prints before a run's output or at compile time and an executable never
+prints), and `mojito-comptime` sits above the
 checker because it elaborates the program the check consumes. `crates/mojito-runtime` remains the
 independently versioned native C-ABI runtime, depending on nothing above.
 `mojito-checked` also owns the checked declaration metadata MIR carries
@@ -2346,9 +2349,12 @@ a `LoweredCall` per call), and once every declaration is lowered and
 linked, before ownership analysis, `mir::fill_omitted_arguments` binds each
 recorded call against its callee's declaration and writes every omitted
 argument into the call: a literal's constant materialized at the parameter
-type, a conversion's constructor run on it, or a call of the default
-function under the call's own `instantiated_args`, the receiver type's
-struct arguments, and the enclosing binders in scope, each passed in the
+type, a conversion's constructor run on it, or the compile-time
+application (`Const::Param`) of the default function to the call's own
+`instantiated_args`, the receiver type's struct arguments, and the
+enclosing binders in scope, which the elaborator evaluates once per
+instance and the call materializes, as upstream's call writes the
+default's parameter expression, each passed in the
 omitted slot through the read-temporary or forwarding slot a written
 argument would get, so drop elaboration destroys a borrowed default after
 the call. A direct call, a method call, a static-method call, a
@@ -2364,9 +2370,10 @@ does not bind is an invariant error. The default of an argument the callee
 never uses is filled too, and the elaborator drops the operand as it drops a
 written one; the view of the caller it instantiates, with every call so
 rewritten (`mir::with_removed_argument_forwards_erased`), erases the
-default's `$default$` call and the read temporary bound to it, its
+default's `$default$` application and the read temporary bound to it, its
 destruction included, so the call evaluates nothing for the argument, as on
-the pin. The callee evaluates no default: the
+the pin; a temporary whose destruction runs code stays, evaluated at compile
+time and destroyed after the call, as upstream's caller destroys it. The callee evaluates no default: the
 elaborator enqueues no default function from a declaration, and a slot a
 call shape still leaves out is an explicit `Unsupported` error on both
 backends. A default reading a binder in scope (`Self.n`, an enclosing `n`,

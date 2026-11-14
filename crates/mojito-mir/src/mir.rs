@@ -2502,7 +2502,8 @@ impl<P> Copy for DefaultLowering<'_, P> {}
 
 /// A parameter's default metadata ([`mir_default`]), or, for any other
 /// default, the zero-parameter function `$default$<owner>$<parameter>`
-/// lowered from the expression, which a call leaving the slot out runs. A
+/// lowered from the expression, whose compile-time application a call
+/// leaving the slot out materializes. A
 /// default naming a binder in scope (`Self.n * 2`, an enclosing `n`) reads
 /// it as the function's own: the function declares those binders, and the
 /// elaborator instantiates it with its owner instance's arguments.

@@ -1151,12 +1151,16 @@ impl Checker {
             .map(|argument| {
                 argument
                     .clone()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => Ok(context.type_shape(ty)),
-                        TyArg::Val(value) => context.constant(value).map_err(param_error),
-                        TyArg::Origin(_) => Err(TypeError::Unsupported(
-                            "origin parameters on a parameterized comptime value".to_string(),
-                        )),
+                    .map(|argument| {
+                        context
+                            .argument_expr(&argument)
+                            .map_err(param_error)?
+                            .ok_or_else(|| {
+                                TypeError::Unsupported(
+                                    "origin parameters on a parameterized comptime value"
+                                        .to_string(),
+                                )
+                            })
                     })
                     .transpose()
             })

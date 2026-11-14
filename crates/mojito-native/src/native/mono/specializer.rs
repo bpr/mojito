@@ -158,6 +158,7 @@ impl<'a> Specializer<'a> {
             entries: entry_map,
             counts,
             imported: self.functions.imported(),
+            compile_time_output: self.vm.output(),
         })
     }
 
@@ -4629,9 +4630,12 @@ fn erase_constants(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashS
     }
 }
 
-/// The first effectful callee (the library `print`, the builtin `input`)
+/// The first callee that reads the program's input (the builtin `input`)
 /// `entry` reaches in `program`, through every edge by which one function
-/// names another; `template_of` names the template an instance closes.
+/// names another; `template_of` names the template an instance closes. A
+/// compile-time `print` runs, its output the elaboration's
+/// ([`SpecializedProgram::compile_time_output`]), as upstream's interpreter
+/// prints while it elaborates; nothing feeds a compile-time read.
 fn effectful_callee(
     program: &MirProgram,
     entry: &str,
@@ -4650,7 +4654,7 @@ fn effectful_callee(
         collect_referenced_functions(&function.body.instrs, &mut referenced);
         for callee in referenced {
             let template = template_of(&callee);
-            if matches!(template.as_str(), "print" | "input") {
+            if template == "input" {
                 return Some(template);
             }
             pending.push(callee);

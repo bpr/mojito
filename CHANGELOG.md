@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time evaluation may `print`, as at the pin (R387): what it
+  writes is printed while the program elaborates, once per instance, so
+  `mojito run` shows it before the program's own output, `mojito compile`
+  prints it, and a native executable never does. `g[noisy(n)]()` and
+  `comptime x = f(k)` over a printing callee no longer stop with "is not
+  safe for VM-backed compile-time execution"; reading `input` still does.
+
 - A struct's `comptime` type member read through an application over a
   parameter still symbolic runs, as at the pin (R1639): the member is its
   value with `Self` bound to the application, so `T[t].current.answer()`,
@@ -688,6 +695,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A default that is neither a literal nor an `@implicit` conversion of one
+  is evaluated once per instance at compile time, and each call leaving its
+  slot out materializes the value, as at the pin (R528): `fd2(x: Int =
+  side())` prints `side` once while the program elaborates, not at each
+  call. An unused default whose destruction runs code is evaluated and
+  destroyed after each call (`del` per `noisy(4)` over an unused `n: Noisy
+  = Noisy(5)`); one whose destruction runs no code is still never
+  evaluated. A conversion default still runs its constructor at each call
+  (R2172).
 - A compile-time call of a nested `def` that captures nothing is now the
   application of the nested function's generator, as at the pin:
   `first[mk()]()` and `comptime t = mk()` apply `outer$mk` to the binders

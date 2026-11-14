@@ -471,6 +471,11 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
         let _frontend = mojito::timing::span("frontend");
         compile_input(&compiler, file)?
     };
+    // `mojo run` prints what the elaboration's compile-time applications
+    // printed before the program's own output.
+    if let Ok(concrete) = compiled.concrete_mir() {
+        print!("{}", concrete.compile_time_output);
+    }
     let execution = {
         let _backend_span = mojito::timing::span("backend");
         compiler
@@ -626,6 +631,9 @@ fn compile_native_module(
     });
     let concrete = cli_timing("mir-concrete", || compiled.concrete_mir())
         .map_err(|error| error.to_string())?;
+    // What the elaboration's compile-time applications printed is the
+    // compiler's output, as `mojo build` prints it; the executable never does.
+    print!("{}", concrete.compile_time_output);
     let options = pliron::CompileOptions {
         // `main` is required: a program without one fails in the backend,
         // by name.

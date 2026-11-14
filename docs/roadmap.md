@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2172**.
+Next free ID: **R2174**.
 
 ## Ordered Work
 
@@ -4984,15 +4984,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R528 A default value is evaluated at each call; the pin evaluates it once at compile time**
+- [ ] **R2172 An `@implicit` conversion default runs its constructor at each
+  call; the pin evaluates it once at compile time**
 
-  Problem: `def fd2(x: Int = side())` returning `x`, where `side` prints, prints `side` at each `fd2()` call, where the pin evaluates the default once at compile time: `mojo run` prints `side` once before `main` runs, and a `mojo build` binary never prints it.
-  - `mir::fill_omitted_arguments` writes the default's evaluation into each call, a `$default$` call or an `@implicit` conversion's constructor call.
-  - Probe: `conv(a: Int, l: Loud = 3)` with an unused `l`, where `Loud`'s `@implicit __init__` and `__deinit__` print, called as `conv(1)`: Mojito prints `init 3` and `del 3`, the pin's binary only `del 3`. `erase_unpassed_defaults` erases only a `$default$` call, since the conversion's constructor call is spelled as a written one.
-  - Probe: `noisy(a: Int, n: Noisy = Noisy())` with an unused `n`, called as `noisy(4)`: Mojito runs neither `Noisy()` nor its destructor, the pin destroys the value it evaluated at compile time, printing `del` at each call.
-  - Evaluate a default once at compile time, as the pin does, and materialize the value at each call.
+  Problem: `conv(a: Int, l: Loud = 3)`, where `Loud`'s `@implicit __init__`
+  prints `init`, prints `init 3` at each `conv(1)`, where the pin prints it
+  once while compiling and its binary only destroys the value (`del 3`).
+  - `CheckedConst::Construct` records only the constructor and the literal,
+    so `mir::fill_omitted_arguments` can spell no compile-time application:
+    a constructor with its own parameters
+    (`StringSpan.__init__$ov$StringLiteral$V$value$lit`, the `sep`/`end` of
+    every `print`) needs them solved from the literal's type, which the
+    checker's `implicit_parameter_application` does.
+  - Record the conversion's application in the checked default and have the
+    fill materialize it, as an evaluated default's already is.
+  - The erasure of an unused one then follows the evaluated default's rule
+    (`erase_unpassed_defaults`): kept and destroyed when its destruction runs
+    code.
+  - Probe: `conv(1)` above prints `del 3`, then `1`, and `init 3` only while
+    the program elaborates.
+  - Watch elaboration time on a print-heavy fixture with `--timings`.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2173 Identical default expressions in two callees are evaluated
+  twice at compile time; the pin evaluates them once**
+
+  Problem: `noisy(a: Int, n: Noisy = Noisy())` and `noisy_var(var n: Noisy =
+  Noisy())` print `init` twice while the program elaborates, where the pin
+  prints it once.
+  - An evaluated default is the application of its callee's own lifted
+    function (`$default$noisy$n`), so equal expressions in two callees are
+    two applications.
+  - The pin's default is the expression's own parameter expression
+    (`apply @Noisy.__init__()`), uniqued by structure.
+  - Record a default that is an application (`Checker::called_application`)
+    as that `ParamExpr` in a reshaped `CheckedConst`, keeping the lifted
+    function only for an expression that must lift; carry it through
+    `bound_defaults.rs`, the trait wrapper default rewrite in `mir.rs`, and
+    package serialization.
+  - Probe: the two callees above print `init` once.
+  - Depends on R2172.
+  - Model: Opus, Not Planned.
 
 - [ ] **R522 Aliasing inside a frozen value is not preserved**
 
@@ -5864,23 +5897,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `print(S[2].w)`: `2` at the pin.
   - Found while landing R1990 (2026-11-08).
   - Depends on R511.
-  - Model: Fable, Not Planned.
-
-- [ ] **R387 A function applied in a parameter argument cannot print**
-
-  Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
-  it returns, is rejected with "is not safe for VM-backed compile-time
-  execution: it reaches `print`", where the pin prints once while compiling
-  and runs.
-  - The elaborator refuses to run a lifted function that reaches `print` or
-    `input` (`effectful_callee`, `mono/specializer.rs`).
-  - The pin's interpreter writes compile-time output when the instance is
-    elaborated.
-  - Decide where an elaboration-time `print` writes on each backend before
-    lifting the refusal.
-  - Found while landing an application in a type or a parameter argument
-    (2026-10-06).
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R388 A type over a lifted application is spelled by its function's

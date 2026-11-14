@@ -1,7 +1,6 @@
-# expect: is not safe for VM-backed compile-time execution
-# A compile-time evaluation that reaches `print` through a method call is
-# rejected, as one through a direct call is: the pin prints at compile time,
-# which Mojito does not (docs/non-goals.md).
+# A compile-time evaluation that reaches `print` through a method call
+# prints while the program elaborates, as one through a direct call does:
+# `side` is the compiler's output, never the executable's.
 @fieldwise_init
 struct P(Copyable):
     var v: Int

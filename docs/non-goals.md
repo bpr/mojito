@@ -142,7 +142,8 @@ upstream's does, and borrows nothing exclusively, so an access to its owner
 beside it is no longer rejected. R1623 withdrew one more: `Int`'s `%` by
 zero is `SIMD.__mod__`, which yields `0`. R1624 withdrew one more: an
 integer literal's `//` by zero is `IntLiteral.__floordiv__`'s
-`#pop<int_literal_bin>`, which yields `0`. Invariant 1 permits it:
+`#pop<int_literal_bin>`, which yields `0`. R387 withdrew one more: a
+compile-time `print` runs, its output the elaboration's. Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
 - Twelve `ownership_error`/`origin_error` fixtures report `invalidated interior
@@ -169,11 +170,6 @@ Mojito may reject valid Mojo.
 - `typelist_index_out_of_range.mojo` bounds-checks a `TypeList` index. The pin
   has no check and yields the malformed type `Int, Bool[2]`, failing only at a
   later use.
-- `generic_ctfe_impure.mojo` keeps VM-CTFE pure. The pin lets a compile-time
-  callee `print`, but that output has no stable home: it appears under
-  `mojo run` and is absent from a `mojo build` binary. A parameter default
-  is not compile-time execution: every call leaving its slot out evaluates
-  it at the call, so one that prints runs there, as the pin's does.
 
 The fixtures in the same sweep where Mojito's rejection is *not* deliberate are
 the opposite case and stay on `docs/roadmap.md` as `divergence` rows.

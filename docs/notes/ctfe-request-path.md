@@ -199,11 +199,11 @@ evaluates by demanding a concrete instance and running it on the VM.**
 
 ## Effects, crossing, raising
 
-- The effect rule is unchanged — `print`, `input`, and the three nested
-  declarations — but decided on MIR: each instance records whether its
-  body calls an effectful builtin, and a demand rejects a closure in which
-  any instance does, with today's "is not safe for VM-backed compile-time
-  execution". A trap or an uncaught raise inside the VM is today's "VM CTFE
+- The effect rule is decided on MIR: a demand rejects a closure that
+  reaches `input`, with "is not safe for VM-backed compile-time
+  execution". A `print` runs, as upstream's interpreter prints while it
+  elaborates; its output is the elaboration's
+  (`SpecializedProgram::compile_time_output`). A trap or an uncaught raise inside the VM is today's "VM CTFE
   failed" error.
 - A callee that may raise, applied in a compile-time position outside a
   `try`, is a checker error on the expression ("cannot call raising

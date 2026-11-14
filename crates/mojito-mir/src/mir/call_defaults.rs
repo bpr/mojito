@@ -1,9 +1,11 @@
 //! Omitted arguments, written into the call.
 //!
 //! Upstream's call binding writes every argument a call leaves out into the
-//! call, as the callee's default attribute evaluated in the caller: a
-//! borrowed default is the caller's temporary, destroyed once the call
-//! returns, and an owned one is handed to the callee. The lowering of each
+//! call, as the callee's default attribute evaluated in the caller: an
+//! evaluated default is its compile-time application, which the elaborator
+//! evaluates once per instance and each call materializes; a borrowed
+//! default is the caller's temporary, destroyed once the call returns, and
+//! an owned one is handed to the callee. The lowering of each
 //! checked call records the callee it selected ([`LoweredCall`]), and once
 //! every declaration is lowered [`fill_omitted_arguments`] binds each
 //! recorded call against that declaration and fills every slot it leaves
@@ -40,7 +42,7 @@ use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::{LiftedOwner, lifted_owner};
-use mojito_types::param_expr::{ParamBindings, ParamContext};
+use mojito_types::param_expr::{MetaTy, ParamBindings, ParamContext, ParamExpr, ParamKind};
 use mojito_types::types::{
     ParamDecl, Ty, TyArg, TyKind, default_literal, names_binder, replace_argument_parameters,
     replace_parameters,
@@ -60,9 +62,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// themselves), and for a nested body each enclosing declaration's, which
 /// stand for themselves inside it. A literal default is its constant,
 /// materialized at the parameter type as a written literal is; a recorded
-/// conversion of one runs its constructor; any other default is a call of
-/// the lifted default function (`$default$f$x`) under the binders it
-/// declares. The argument goes positionally when every earlier slot is
+/// conversion of one runs its constructor; any other default is the
+/// compile-time application of the lifted default function
+/// (`$default$f$x`) to the arguments of the binders it declares, which the
+/// elaborator evaluates once per instance and the call materializes. The argument goes positionally when every earlier slot is
 /// filled by position, else by name; a subscript carrying one becomes a
 /// `MultiIndex`. A memory-only default is bound to its call-result slot
 /// ([`CALL_RESULT_SLOT`]), which a borrowed parameter reads and an owned one
@@ -115,13 +118,16 @@ pub fn fill_omitted_arguments(
 /// each register before it. Upstream's `RemoveUnusedParams` rewrites such a
 /// call to pass nothing for a removed argument, so the caller evaluates no
 /// default for it. An operand only the call read goes with the lifted
-/// default's call (`$default$f$x`) that defines it; one loaded from the
-/// read temporary that call's result was bound to goes with the temporary:
+/// default's application (`$default$f$x`) that defines it; one loaded from
+/// the read temporary that value was bound to goes with the temporary:
 /// its binding, its loads, and its destruction, every instruction that
-/// only served it. A temporary whose destruction reaches a terminator, a
-/// region, or a slot the inliner did not introduce stays, with its default.
+/// only served it. A temporary whose destruction runs code stays, with its
+/// default, as upstream's caller still destroys the value it evaluated, and
+/// so does one whose destruction reaches a terminator, a region, or a slot
+/// the inliner did not introduce.
 pub fn erase_unpassed_defaults(
     function: &mut MirFunction,
+    declarations: &MirDeclarations,
     dropped: &BTreeSet<u32>,
     original: &[u32],
 ) -> HashSet<u32> {
@@ -141,7 +147,16 @@ pub fn erase_unpassed_defaults(
                 let Some(&[source]) = bindings.get(&slot).map(Vec::as_slice) else {
                     continue;
                 };
-                if !once(source) || !matches!(producers.get(&source), Some(Producer::Default)) {
+                // A temporary whose destruction runs code keeps its value,
+                // which the call's caller still destroys.
+                let destroyed = function
+                    .var_tys
+                    .get(&slot)
+                    .is_none_or(|ty| !declarations.drop_runs_no_code(ty));
+                if destroyed
+                    || !once(source)
+                    || !matches!(producers.get(&source), Some(Producer::Default))
+                {
                     continue;
                 }
                 if let Some((slice_slots, slice_regs)) = temporary_slice(function, slot, dropped) {
@@ -198,7 +213,16 @@ struct Omitted {
     name: String,
     ty: Ty,
     owned: bool,
-    default: CheckedConst,
+    default: OmittedDefault,
+}
+
+/// The value an omitted argument's default takes.
+enum OmittedDefault {
+    /// A compile-time application the elaborator evaluates once per
+    /// instance, materialized at the call.
+    Applied(ParamExpr),
+    /// A literal, or a recorded conversion of one.
+    Constant(CheckedConst),
 }
 
 fn fill_blocks(
@@ -2053,7 +2077,7 @@ fn omitted_argument(
             if thunk.raises {
                 return Err(format!("the default of '{name}' raises"));
             }
-            let arguments = if arguments.is_empty() {
+            let closed = if arguments.is_empty() {
                 thunk
                     .param_decls
                     .iter()
@@ -2076,16 +2100,22 @@ fn omitted_argument(
                     .map(|argument| substitute_argument(argument, &site.bound))
                     .collect::<Result<Vec<_>, _>>()?
             };
-            CheckedConst::Evaluate {
-                function: function.clone(),
-                arguments,
-            }
+            let ty = callee
+                .param_types
+                .get(slot)
+                .and_then(|ty| close_parameter_type(ty, &site.bound))
+                .ok_or_else(|| {
+                    format!("the type of '{name}' names a binder the call binds no argument for")
+                })?;
+            OmittedDefault::Applied(default_application(function, &closed, &ty).map_err(
+                |error| format!("the default of '{name}' applies to no argument: {error}"),
+            )?)
         }
         CheckedConst::Construct {
             target,
             arg,
             parameter,
-        } => CheckedConst::Construct {
+        } => OmittedDefault::Constant(CheckedConst::Construct {
             target: target.clone(),
             arg: arg.clone(),
             parameter: parameter
@@ -2098,8 +2128,8 @@ fn omitted_argument(
                     })
                 })
                 .transpose()?,
-        },
-        default => default.clone(),
+        }),
+        default => OmittedDefault::Constant(default.clone()),
     };
     let ty = callee
         .param_types
@@ -2159,17 +2189,31 @@ fn close_parameter_type(ty: &Ty, bound: &[(ParamDecl, TyArg)]) -> Option<Ty> {
 
 /// Emit the value `default` takes onto `prelude`: a literal's constant
 /// materialized at the parameter type, a recorded conversion's constructor
-/// run on its literal, or the lifted default function called under the
-/// arguments the call binds its binders to.
+/// run on its literal, or the compile-time value of the lifted default
+/// function under the arguments the call binds its binders to.
 fn evaluate_default(
     function: &mut MirFunction,
     default: &Omitted,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
-    evaluate_constant(function, &default.default, &default.ty, location, prelude)
+    match &default.default {
+        OmittedDefault::Applied(application) => {
+            let value = fresh_register(function, default.ty.clone(), location);
+            prelude.push(MirInstr::Const {
+                dest: value,
+                k: Const::Param(application.clone()),
+            });
+            value
+        }
+        OmittedDefault::Constant(constant) => {
+            evaluate_constant(function, constant, &default.ty, location, prelude)
+        }
+    }
 }
 
+/// Emit `default`, a literal or a recorded conversion of one, at the
+/// parameter type `ty` onto `prelude`.
 fn evaluate_constant(
     function: &mut MirFunction,
     default: &CheckedConst,
@@ -2178,27 +2222,6 @@ fn evaluate_constant(
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     match default {
-        CheckedConst::Evaluate {
-            function: thunk,
-            arguments,
-        } => {
-            let value = fresh_register(function, ty.clone(), location);
-            prelude.push(MirInstr::Call {
-                dest: value,
-                func: FuncRef::named(thunk),
-                raises: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                receiver: None,
-                instantiated_args: arguments.clone(),
-                spread: None,
-            });
-            value
-        }
         CheckedConst::Construct {
             target,
             arg,
@@ -2242,6 +2265,24 @@ fn evaluate_constant(
             materialize(function, value, &literal_ty, ty, location, prelude)
         }
     }
+}
+
+/// The compile-time application of the lifted default function `thunk` to
+/// `arguments`, the closed arguments of its binders, typed at the
+/// parameter type `ty`: the value the elaborator evaluates once per
+/// instance and each call materializes, as upstream's call binding writes
+/// the default's parameter expression into the call.
+fn default_application(thunk: &str, arguments: &[TyArg], ty: &Ty) -> Result<ParamExpr, String> {
+    let context = ParamContext::detached();
+    let mut applied = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        match context.argument_expr(argument) {
+            Ok(Some(argument)) => applied.push(argument),
+            Ok(None) => return Err("an origin binder, which no application binds".to_string()),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(context.apply(thunk, &applied, MetaTy::value(ty.clone())))
 }
 
 /// The type a literal default's constant has before conversion.
@@ -2298,8 +2339,7 @@ fn materialize(
     dest
 }
 
-/// Bind `value`, the default's result, to its call-result slot, in place
-/// as the default's call writes it: a borrowed parameter reads the slot,
+/// Bind `value`, the default's result, to its call-result slot: a borrowed parameter reads the slot,
 /// which the caller destroys once the call returns, and an owned one takes
 /// it.
 fn bind_temporary(
@@ -2319,7 +2359,9 @@ fn bind_temporary(
         var: variable,
         src: value,
         binding_ty: Some(default.ty.clone()),
-        in_place: true,
+        // A conversion's constructor call writes the slot in place; a
+        // materialized compile-time value is bound as a written one is.
+        in_place: !matches!(default.default, OmittedDefault::Applied(_)),
     });
     let read = fresh_register(function, default.ty.clone(), location);
     prelude.push(if default.owned {
@@ -2357,7 +2399,7 @@ fn register_operands(instruction: &mut MirInstr) -> Vec<u32> {
 
 /// What defines a register [`erase_unpassed_defaults`] may erase.
 enum Producer {
-    /// A call of a lifted default (`$default$f$x`).
+    /// The compile-time application of a lifted default (`$default$f$x`).
     Default,
     /// A whole load of a read temporary.
     Temporary(VarId),
@@ -2373,8 +2415,14 @@ fn collect_producers(
 ) {
     for instruction in &block.instrs {
         match instruction {
-            MirInstr::Call { dest, func, .. }
-                if matches!(lifted_owner(&func.0), Some(LiftedOwner::Default { .. })) =>
+            MirInstr::Const {
+                dest,
+                k: Const::Param(application),
+            } if matches!(
+                application.kind(),
+                ParamKind::Apply { function, .. }
+                    if matches!(lifted_owner(function), Some(LiftedOwner::Default { .. }))
+            ) =>
             {
                 producers.insert(dest.0, Producer::Default);
             }
