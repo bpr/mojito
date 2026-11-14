@@ -332,6 +332,64 @@ fn verifier_checks_make_ref_capability_types() {
 }
 
 #[test]
+fn verifier_reads_a_whole_pointer_slot_as_the_pointer() {
+    // The whole of a pointer local is the pointer, as upstream's `!lit.ref`
+    // of a pointer local addresses the local; it designates the pointee only
+    // read through the slot (an inlined handle parameter), and a `mut`
+    // pointer parameter's handle designates the caller's pointer.
+    let pointer = tracked_pointer_ty(Ty::int(), false);
+    let make_ref = |place: MirPlace, target: Ty, reference_parameter: bool| {
+        let mut made = function(
+            block(
+                vec![MirInstr::MakeRef {
+                    dest: Reg(0),
+                    place,
+                }],
+                MirTerm::Return(None),
+            ),
+            1,
+            &[(0, reference_ty(target, mojito::Mutability::Immutable))],
+        );
+        made.var_tys.insert(0, pointer.clone());
+        if reference_parameter {
+            made.n_params = 1;
+            made.param_types = vec![pointer.clone()];
+            made.owned_params = vec![false];
+            made.deinit_params = vec![false];
+            made.ref_params = vec![true];
+        }
+        program(made)
+    };
+    let whole = MirPlace::root(0, Some(pointer.clone()));
+    let mut through = MirPlace::root(0, Some(pointer.clone()));
+    through.ty = Some(Ty::int());
+    through.through = Some(0);
+
+    assert_eq!(
+        verify(&make_ref(whole.clone(), pointer.clone(), false)),
+        Vec::<String>::new()
+    );
+    expect_finding(
+        &make_ref(whole, Ty::int(), false),
+        "MakeRef destination targets Int, incompatible with place storage Pointer",
+    );
+    assert_eq!(
+        verify(&make_ref(through.clone(), Ty::int(), false)),
+        Vec::<String>::new()
+    );
+    expect_finding(
+        &make_ref(through, pointer.clone(), false),
+        "incompatible with place storage Int",
+    );
+    let mut parameter = MirPlace::root(0, Some(pointer.clone()));
+    parameter.through = Some(0);
+    assert_eq!(
+        verify(&make_ref(parameter, pointer.clone(), true)),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
     // A projected place ENDING at a stored reference admits the forwarding
     // interpretation: the destination is typed as the stored handle itself

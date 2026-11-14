@@ -708,11 +708,30 @@ fn enclosing_binders(name: &str, declarations: &MirDeclarations) -> HashSet<Stri
 /// The storage a `MakeRef` handle designates. A capability-typed root already
 /// contains a runtime frame/slot handle, so `MakeRef` forwards that handle and
 /// extends its projection instead of borrowing the capability slot itself.
-/// An ordinary root, including a struct field whose value happens to be a
-/// reference, is borrowed as storage and therefore retains `place.ty`.
-pub(super) fn make_ref_target(place: &MirPlace) -> Option<(&Ty, Option<ReferencePermission>)> {
+/// The whole of a pointer-typed root is the pointer, a value, as upstream's
+/// `!lit.ref` of a pointer local addresses the local: it designates the
+/// pointee only read through the slot (`through` naming the root) of a
+/// local, never of a `mut`/`ref` parameter of `function`, whose handle
+/// addresses the caller's pointer. An ordinary root, including a struct
+/// field whose value happens to be a reference, is borrowed as storage and
+/// therefore retains `place.ty`.
+pub(super) fn make_ref_target<'p>(
+    place: &'p MirPlace,
+    function: &MirFunction,
+) -> Option<(&'p Ty, Option<ReferencePermission>)> {
     let root_capability = place.root_ty.as_ref().and_then(reference_capability);
+    let reference_parameter = function
+        .ref_params
+        .get(place.root as usize)
+        .copied()
+        .unwrap_or(false);
+    let pointer_value = (place.through != Some(place.root) || reference_parameter)
+        && place
+            .root_ty
+            .as_ref()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Pointer { .. } | TyKind::LitRef { .. }));
     match (root_capability, place.is_whole_root()) {
+        (Some(_), true) if pointer_value => place.ty.as_ref().map(|target| (target, None)),
         (Some(capability), true) => Some((capability.target, Some(capability.permission))),
         (Some(capability), false) => place
             .ty

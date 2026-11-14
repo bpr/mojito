@@ -4493,7 +4493,8 @@ fn requirement_and_temporary_receiver_calls_pass_by_address_operands() {
     // upstream's call of a requirement reads its signature, and a
     // memory-only temporary `read` receiver passes its call-result slot.
     // A receiver over a parameter a pointer may instantiate (`T: Intable`)
-    // stays loaded: a reference to a whole pointer slot is its pointee.
+    // passes by address too: a reference to a whole pointer slot is the
+    // pointer.
     let src = "trait Shower:\n    def show(self) -> Int: ...\n    def take(self, other: Self) -> Int: ...\n    def bump(mut self): ...\n\nstruct Big(Shower, Copyable, Movable):\n    var a: Int\n    var b: String\n    def __init__(out self, a: Int):\n        self.a = a\n        self.b = \"x\"\n    def show(self) -> Int:\n        return self.a\n    def take(self, other: Self) -> Int:\n        return other.a\n    def bump(mut self):\n        self.a += 1\n\ndef use[T: Shower](mut x: T, y: T) -> Int:\n    x.bump()\n    return x.show() + x.take(y)\n\ndef conv[T: Intable](x: T) -> Int:\n    return x.__int__()\n\ndef main():\n    print(Big(5).show())\n";
     let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
     let checked =
@@ -4540,7 +4541,7 @@ fn requirement_and_temporary_receiver_calls_pass_by_address_operands() {
     );
     let pointer_bound = body("conv");
     assert!(
-        !addressed(&pointer_bound, operands(&pointer_bound, "__int__").0),
+        addressed(&pointer_bound, operands(&pointer_bound, "__int__").0),
         "{pointer_bound:#?}"
     );
     let main = body("main");
@@ -4672,14 +4673,15 @@ fn indirect_and_callable_bound_calls_pass_by_address_operands() {
 #[test]
 fn type_parameter_copy_construction_passes_its_source_by_address() {
     // `T(copy=x)` calls the copy initializer's `read copy: Self`, so a
-    // memory-only `T` no pointer may bind passes the source as a reference
-    // to its storage; a `T` a pointer may bind keeps its load (R1269).
+    // memory-only `T` passes the source as a reference to its storage, a
+    // `T` a pointer may bind included: a reference to a whole pointer slot
+    // is the pointer.
     let src = "trait Valued(Copyable, Movable):\n    def value(self) -> Int: ...\n\ndef make[T: Valued](x: T) -> T:\n    return T(copy=x)\n\ndef plain[T: Copyable & Movable](x: T) -> T:\n    return T(copy=x)\n";
     let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
     let checked =
         mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
-    for (name, expected) in [("make", true), ("plain", false)] {
+    for (name, expected) in [("make", true), ("plain", true)] {
         let (_, function) = mir
             .functions
             .iter()

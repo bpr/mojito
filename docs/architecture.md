@@ -2437,9 +2437,11 @@ place (`Flatten::lower_method_receiver`). Where an instance's receiver is
 a compiler-modelled type the elaborator answers itself, the elaborator
 reads each addressed operand through its reference ahead of the call
 (`mir::read_addressed_operands`), since the builtin takes values (R2177).
-An operand over a type parameter a pointer may instantiate keeps its load,
-since a `ref.make` of a whole pointer slot designates the pointee (R1269);
-so does a lifecycle requirement's receiver (`x.copy()`, R2180). A type
+An operand over a type parameter a pointer may instantiate is addressed
+too: a `ref.make` of the whole of a slot holding a pointer designates the
+slot, the pointer, as upstream's `!lit.ref` of a pointer local does
+(`make_ref_target`, `Prog::pointer_value_slot`). A lifecycle requirement's
+receiver (`x.copy()`) keeps its load (R2180). A type
 parameter's copy construction (`T(copy=x)`, `type.construct`) passes its
 source as its copy initializer's `read copy: Self` operand, a `ref.make`
 of the source's place when `T` is memory-only, as upstream's call of the
@@ -4415,6 +4417,14 @@ A place's storage type is distinct from its expression value type. For a field
 declared `ref[origin] T`, the place stores `TyKind::Ref`, while an ordinary load
 produces `T`. The VM now chooses reference read/write behavior from this checked
 place type; it does not inspect a runtime `Value::Ref` to rediscover semantics.
+The whole of a slot whose type is a pointer value (a `Pointer`, its
+`!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field) is
+the pointer, not its pointee, unless the place reads through the slot
+(`through` naming its root, an inlined handle parameter) or the slot is a
+`mut`/`ref` parameter, whose handle addresses the caller's pointer: the
+verifier's `make_ref_target`, the VM's `Prog::pointer_value_slot`, and
+Pliron's `designated_ty` (`lower/places.rs`) share that rule, as upstream
+addresses a pointer local only through a `!lit.ref`.
 
 ### Important MIR Instructions
 
@@ -7308,10 +7318,10 @@ point where a slot declared in a loop is uninitialized again.
   parameter's binding. The pass reads no control flow, so it splits
   structured and lowered bodies alike, and repeats until nothing splits,
   at most ten rounds (upstream's `loopLimit`), so a nested struct splits a
-  level a round. A pointer field keeps the slot, as the VM reads through
-  it when it is a
-  slot's whole value (R1269), and so does a `ref` field, whose own slot
-  would need each place past it to go `through` it. The `--timings` counters are `split_slots`
+  level a round. A pointer field keeps the slot until its own slot takes
+  the instance's pointer type and places past it read as the field's did
+  (R2181, R2182), and so does a `ref` field, whose own slot would need
+  each place past it to go `through` it (R2183). The `--timings` counters are `split_slots`
   and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**
   (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
@@ -8294,9 +8304,12 @@ value's `field.get` are the identity, and a `Proj::Field` over it
 addresses offset 0, the field's storage. Three VM rules narrow the VM's
 representation, each decided in `build_structs`, and are the VM's alone:
 
-- A struct whose field is a reference or a pointer stays boxed: either
-  may be a `Value::Ref`, which a frame slot holds only as a reference
-  alias to the VM (R1269).
+- A struct whose field is a reference stays boxed: a `Value::Ref` in a
+  slot that is not a pointer value reads as a reference alias to the VM,
+  which cannot tell a by-address `read` parameter's handle from a held
+  reference (R2184). A struct held as its pointer field is a pointer
+  value, as a `Pointer` slot is: its whole place is the pointer
+  (`Prog::pointer_value_slot`).
 - Every instance of a template is held or none is: an erased instance
   lays out as every instance agreeing on its kept arguments, though a
   conditional `TrivialRegisterPassable` row it cannot decide drops from its

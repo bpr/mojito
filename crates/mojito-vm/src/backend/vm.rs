@@ -830,6 +830,10 @@ struct Prog {
     /// raise's, staging the error as the raise stages it
     /// ([`VmBackend::stage_error`]).
     error_slots: Vec<HashSet<VarId>>,
+    /// Per function, the slots whose own type is a pointer value
+    /// ([`pointer_value_slots`]): their whole place is the pointer, never
+    /// its pointee ([`Prog::pointer_value_slot`]).
+    pointer_slots: Vec<HashSet<VarId>>,
 }
 
 /// What an initializer's `out self` receiver enters as ([`Prog::constructed`]).
@@ -878,6 +882,44 @@ fn simd_instance<'s>(
     structs
         .get_key_value(name.as_ref())
         .map(|(name, declaration)| (name.as_str(), declaration))
+}
+
+/// The slots of `function` whose own type is a pointer value: a `Pointer`,
+/// its `!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field
+/// ([`StructDef::register_field`]), but for a `mut`/`ref` parameter, whose
+/// slot holds the caller's handle to the pointer.
+fn pointer_value_slots(
+    structs: &HashMap<String, StructDef>,
+    function: &MirFunction,
+) -> HashSet<VarId> {
+    use mojito_types::types::TyKind;
+    let is_pointer = |ty: &Ty| {
+        matches!(
+            ty.kind(),
+            TyKind::Pointer { .. } | TyKind::KgenPointer(_) | TyKind::LitRef { .. }
+        )
+    };
+    function
+        .var_tys
+        .iter()
+        .filter(|(slot, _)| {
+            !function
+                .ref_params
+                .get(**slot as usize)
+                .copied()
+                .unwrap_or(false)
+        })
+        .filter(|(_, ty)| {
+            is_pointer(ty)
+                || held_field(structs, ty).is_some_and(|(name, field)| {
+                    structs[name]
+                        .fields
+                        .iter()
+                        .any(|(declared, ty)| declared == field && is_pointer(ty))
+                })
+        })
+        .map(|(slot, _)| *slot)
+        .collect()
 }
 
 /// Lower every field step whose base is a held struct to [`Proj::Rebind`]:
@@ -934,13 +976,30 @@ impl Prog {
         for (_, function) in &mut mir.functions {
             hold_register_fields(&structs, &mut function.body);
         }
+        let pointer_slots = mir
+            .functions
+            .iter()
+            .map(|(_, function)| pointer_value_slots(&structs, function))
+            .collect();
         Self {
             structs,
             sigs: build_sigs(&mir.declarations),
             mir,
             edge_errors,
             error_slots,
+            pointer_slots,
         }
+    }
+
+    /// Whether `place` of `function` is the whole of a slot holding a
+    /// pointer value, which designates the slot itself: the pointer, as
+    /// upstream's pointer local is a value only a `!lit.ref` addresses, and
+    /// as `var.use` reads it. A place that reads through the slot
+    /// (`through` naming its root) designates the pointee instead.
+    fn pointer_value_slot(&self, function: usize, place: &MirPlace) -> bool {
+        place.is_whole_root()
+            && place.through != Some(place.root)
+            && self.pointer_slots[function].contains(&place.root)
     }
 
     /// The struct a value of `ty` is and the field it is held as, when
@@ -1303,9 +1362,10 @@ struct StructDef {
     /// ([`mojito_mir::mir::MirDeclarations::register_field`]: one field and
     /// an unconditional `RegisterPassable` or `TrivialRegisterPassable`
     /// declaration, lifecycle members or not), but for a
-    /// reference or pointer field: a reference, and a pointer to a place,
-    /// are a [`Value::Ref`], which a frame slot holds only as a reference
-    /// alias to the VM, so a struct holding one stays boxed.
+    /// reference field: a reference is a [`Value::Ref`], which a frame slot
+    /// holds only as a reference alias to the VM, so a struct holding one
+    /// stays boxed. A struct held as its pointer field is a pointer value
+    /// ([`Prog::pointer_value_slot`]).
     register_field: Option<String>,
 }
 
@@ -1578,7 +1638,7 @@ fn edge_errors(block: &MirBlock, errors: &mut HashSet<u32>) {
 /// Build the VM registry from declaration metadata carried by MIR. Every
 /// instance of a template is held or none is: each has the template's
 /// unconditional register-passability, so instances disagree only through
-/// the reference/pointer field filter, and an erased instance
+/// the reference field filter, and an erased instance
 /// (`B$mono$V$REMOVED$ARG`) lays out as every instance agreeing on its
 /// kept arguments.
 fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String, StructDef> {
@@ -1598,13 +1658,7 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                         .collect(),
                     register_field: declarations
                         .register_field(&declaration.name)
-                        .filter(|(_, ty)| {
-                            !matches!(
-                                ty.kind(),
-                                mojito_types::types::TyKind::Ref(_)
-                                    | mojito_types::types::TyKind::Pointer { .. }
-                            )
-                        })
+                        .filter(|(_, ty)| !matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
                         .map(|(field, _)| field.clone()),
                 },
             )

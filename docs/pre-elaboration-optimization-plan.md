@@ -333,7 +333,7 @@ folds the operators over it (R840);
       fields the slot type's arguments resolve (R1266), whatever its drop
       runs, a memory-only slot once the calls taking it by address are
       inlined (R1267), and a register-passable struct argument the entry
-      stores into a local (R1268); pointer fields (R1269) still keep the
+      stores into a local (R1268); pointer fields (R2181, R2182) still keep the
       slot.
 12. **Generator CSE** (`CSEPass`) *(done, R926)*. The fourth round ends
     with the post-elaboration `cse`, which walks a structured body's

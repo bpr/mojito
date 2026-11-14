@@ -55,7 +55,7 @@ pub(super) fn verify_loan_instruction(
                     .through
                     .and_then(|through| cx.function.var_tys.get(&through))
                     .and_then(reference_capability);
-                let place_capability = make_ref_target(&loan.place);
+                let place_capability = make_ref_target(&loan.place, cx.function);
                 let permission = through_capability
                     .map(|capability| capability.permission)
                     .or_else(|| place_capability.and_then(|(_, permission)| permission));

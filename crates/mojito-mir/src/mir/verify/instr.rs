@@ -459,7 +459,7 @@ fn verify_reference_instruction(
                     ));
                     return;
                 };
-                if let Some((target, source_permission)) = make_ref_target(place) {
+                if let Some((target, source_permission)) = make_ref_target(place, cx.function) {
                     // A place ending at a stored reference admits a second
                     // interpretation beside the storage borrow: forwarding the
                     // stored handle itself (`ref s = self.src` reborrows).

@@ -619,6 +619,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The whole of a slot holding a pointer is now the pointer, not its
+  pointee, in the verifier, the VM, and Pliron, as upstream addresses a
+  pointer local only through a `!lit.ref` (R1269). A requirement,
+  copy-construction, or function-type call over a type parameter a
+  pointer instantiates passes the pointer slot's address, the VM holds a
+  one-field `TrivialRegisterPassable` struct of a pointer field as the
+  pointer, and assigning to a `mut` pointer parameter reseats the
+  caller's pointer, where it failed verification
+  (`assets/ok/pointer_slot_is_its_pointer.mojo`).
 - An instance is now keyed by a parameter argument that applies a function
   unevaluated, as the pin keys `S[h(3)]` by the application (R1736), and
   only a read the instance keeps evaluates it. Constructing a struct whose

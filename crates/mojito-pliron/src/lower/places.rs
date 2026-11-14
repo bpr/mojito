@@ -75,12 +75,6 @@ impl FnLowering<'_> {
             .get(&through_var)
             .cloned()
             .unwrap_or_else(|| root_ty.clone());
-        // A pointer root read through itself designates its pointee.
-        let designated_ty = match root_ty.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            TyKind::Pointer { element, .. } if place.through == Some(place.root) => element.clone(),
-            _ => root_ty.clone(),
-        };
         let ref_param_root = (through_var as usize) < self.func.n_params
             && self
                 .func
@@ -88,6 +82,18 @@ impl FnLowering<'_> {
                 .get(through_var as usize)
                 .copied()
                 .unwrap_or(false);
+        // A pointer local read through itself designates its pointee; a
+        // `mut`/`ref` pointer parameter's handle designates the caller's
+        // pointer.
+        let designated_ty = match root_ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            TyKind::Pointer { element, .. }
+                if place.through == Some(place.root) && !ref_param_root =>
+            {
+                element.clone()
+            }
+            _ => root_ty.clone(),
+        };
         let (mut ty, mut address, projected) =
             if let Some((recorded_ty, projected)) = recorded_prefix {
                 let handle = ScalarTy::Ptr.handle(ctx);
@@ -96,6 +102,9 @@ impl FnLowering<'_> {
                 (recorded_ty, load.get_result(ctx), projected)
             } else if place.through.is_some() || matches!(root_ty.kind(), TyKind::Ref(_)) {
                 let (ty, address) = match through_ty.kind() {
+                    // A `mut`/`ref` parameter is typed as its referent and its
+                    // aliased slot already IS the referent address.
+                    TyKind::Pointer { .. } if ref_param_root => (designated_ty, through_slot),
                     TyKind::Ref(_) | TyKind::Pointer { .. } => {
                         let handle = ScalarTy::Ptr.handle(ctx);
                         let load = LoadOp::new(ctx, through_slot, handle);

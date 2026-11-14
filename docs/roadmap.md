@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2181**.
+Next free ID: **R2185**.
 
 ## Ordered Work
 
@@ -2583,6 +2583,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     a `Pointer`-typed receiver's own methods before chasing it.
   - Probe: `p.__int__()`, `Int(p)`, `UInt(p)`, and `def addr[T:
     Intable](v: T) -> Int: return Int(v)` over `var p = Pointer(to=x)`.
+  - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
+    return inner(value)` over `def inner[T: Intable](value: T) -> Int:
+    return Int(value)`, called with `Pointer(to=x)`, fails "vm backend
+    does not support methods on Int yet"; the pin and Pliron print the
+    address.
   - Found while landing R1399 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9075,67 +9080,91 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1269 The VM reads a whole-slot place through a reference handle
-  the slot holds, so `sroa` keeps a struct with a pointer field**
+- [ ] **R2181 `sroa` types a split pointer field's slot from the erased
+  declaration, not the place**
 
-  The VM holds a `Pointer(to=x)` as a frame reference handle
-  (`Value::Ref`), and any place rooted at a slot holding one goes through
-  the handle (`place_handle`, `crates/mojito-vm/src/backend/vm/references.rs`),
-  so a pointer field moved into its own slot reads its pointee where the
-  field read the pointer.
-  - `sroa` refuses a struct with a pointer field for this reason
-    (`splittable_type`), where upstream's `SROA` splits it.
-  - A slot's place should read through a handle only when the slot is a
-    `ref` binding, which the place's `through` and the slot's type say,
-    not because of the value it holds.
-  - Probe: dropping the pointer test in `splittable_type` makes
-    `assets/ok/keyed_def_builds_loan_carrying_instance.mojo` fail with
-    "use of variable slot 0 after it was moved": the split `Box[Pointer]`
-    field's `drop.place` takes `xs` through the handle.
-  - `sroa` keeps a struct with a `ref` field whole for the same reason:
-    a place past the split field would need `through: Some(slot)` and a
-    `ref` root type, where the rewrite leaves `through: absent`, which
-    Pliron reads as the referent itself (native SIGSEGV on
-    `assets/extensions/ok/ref_field_written_nodebug_init.mojo`).
+  A split field's slot takes the type `MirDeclarations::field_types`
+  reports, and an erased instance declares a pointer field's pointee as
+  `None`, so the slot is `Pointer[None, …]` where its stores bind the
+  instance's pointer.
+  - Upstream's `SROA` gives each element allocation the struct's element
+    type at the instance.
+  - The place's recorded `projection_tys` carry the right type, which
+    Pliron's `Field` arm already prefers (`lower/places.rs`).
+  - Probe: dropping the `Pointer` test in `splittable_type`
+    (`crates/mojito-analysis/src/analysis/sroa.rs`) makes
+    `assets/ok/path_operations.mojo` fail post-elaboration verification in
+    `VariadicList.__iter__$mono` ("binding of Pointer[VariadicList$mono…]
+    to a slot of type Pointer[None, …]"), as about 49 corpus fixtures do.
+  - Keep the `Pointer` test in this entry: R2182 drops it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2182 `sroa` keeps a struct with a pointer field whole, where
+  upstream's `SROA` splits it**
+
+  `splittable_type` refuses any struct with a `Pointer` field. A whole
+  pointer slot now reads as the pointer in the VM and the verifier
+  (`Prog::pointer_value_slot`, `make_ref_target`), but places past a
+  split pointer slot still misbehave.
+  - Probe: `assets/ok/condition_truthiness_reads_in_place.mojo` fails "vm:
+    cannot project Field("v") through a heap pointer": the `MakeRef` heap
+    path (`vm/exec.rs`) admits only `Deref`/`Index` steps past a
+    `Value::Pointer` root.
+  - Probe: `assets/ok/pointer_field_deref_index.mojo` fails "MakeRef
+    destination recovers permission unavailable through its source
+    capability": the split root is an immutable-origin `Pointer`, so the
+    verifier now judges a `ref.make` the struct root never exposed.
+  - Probe: `assets/ok/array_fixed_size_core.mojo` prints `True` where it
+    prints `False` today, and
+    `assets/ok/destructure_subscript_targets.mojo` fails "use after
+    Pointer deallocation".
+  - Fix: drop the `Pointer` test, then make the VM's projections through a
+    split pointer slot and the verifier's permission over it agree with
+    the field place they replace.
+  - Depends on R2181.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2183 `sroa` keeps a struct with a `ref` field whole, where
+  upstream's `SROA` splits it**
+
+  A place past a split `ref` field's slot would need `through: Some(slot)`
+  and a `ref` root type, where the rewrite leaves `through: absent`, which
+  Pliron reads as the referent itself.
+  - Probe: splitting it makes
+    `assets/extensions/ok/ref_field_written_nodebug_init.mojo` SIGSEGV
+    natively.
   - Probe (from R1350): `print(outer(4))` and `print(bumped(4))`, over
     `var y = x` with `@always_inline("nodebug") def get() {imm y}` and
     `var c = x` with `bump() {mut c}`, keep `y` and `c` in memory: the
     closure storage's `ref` field stays whole and its `place.store_ref`
     takes the slot's address. The pin promotes both, and `main` folds to
-    `print(5)` and `print(10)`. Splitting the field leaves a `ref` slot
-    whose `place.store_ref` and `through` reads `mem-2-reg` must forward.
-  - Probe (from R1396): a one-field `TrivialRegisterPassable` struct whose
-    field is a reference or a pointer stays a boxed `Value::Struct` in the
-    VM (`build_structs`), where the pin holds it as the pointer. Held as
-    its field, `S[o]{p: UnsafePointer[Int, o]}` over `UnsafePointer(to=x)`
-    fails `s.get()` with "ReadRef r0 received Int(5)", since its slot then
-    holds the `Value::Ref` the VM takes for an alias.
-  - The same reading makes a `ref.make` of a whole slot holding a pointer
-    designate the pointee (the verifier's `make_ref_target`, the VM's
-    `MakeRef`), so a by-address operand over a type parameter a pointer
-    instantiates passes the pointee, not the pointer.
-    `mir::address_call_operands` therefore leaves a requirement call's
-    operand over such a parameter loaded (`pointer_may_bind`: `T:
-    Intable`, `T: Writable`, a lifecycle bound, or `Self`); drop that
-    guard with the fix.
-  - Probe: the same guard covers a type parameter's copy construction:
-    `def make[T: Copyable & Movable](x: T) -> T: return T(copy=x)` keeps a
-    `place.load` of `x` feeding `type.construct` in the template
-    `emit-mir` prints, where `T: Valued` over a user trait passes a
-    `ref.make`.
-  - Probe: the same guard covers a call through a function value or a
-    `def(...)` bound over such a parameter: `def apply[T: Copyable](f:
-    def(T) -> Int, x: T) -> Int: return f(x)` keeps `place.load` of `x`
-    feeding the `call.indirect` in `emit-mir`.
-  - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
-    return inner(value)` over `def inner[T: Intable](value: T) -> Int:
-    return Int(value)`, called with `Pointer(to=x)`, fails verification
-    after `inline-parametric` ("MakeRef destination targets Pointer[Int,
-    …], incompatible with place storage Int"): a direct call's operand
-    is addressed with no guard.
-  - Probe: with the guard dropped, `assets/ok/path_operations.mojo` fails
-    the same way in std's `cwd`, over `Int(res)` through `SIMD.__init__[T:
-    Intable]`.
+    `print(5)` and `print(10)`.
+  - Splitting the field leaves a `ref` slot whose `place.store_ref` and
+    `through` reads `mem-2-reg` must forward.
+  - Depends on R2182.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2184 The VM cannot tell a by-address `read` parameter's handle
+  from a held value, so a one-field register-passable struct of a `ref`
+  field stays boxed**
+
+  A memory-only `read` argument passes a `ref.make` of the caller's place,
+  and the VM binds the callee's slot to that `Value::Ref` with no static
+  mark: upstream types such a parameter `!lit.ref`, and `ref_params`
+  marks only `mut`/`ref` ones.
+  - So the VM reads any non-pointer slot holding a `Value::Ref` through
+    it, and a struct held as its `ref` field would read its referent
+    where it should read the reference.
+  - `build_structs` (`crates/mojito-vm/src/backend/vm.rs`) therefore keeps
+    a one-field `TrivialRegisterPassable` struct whose field is a `ref`
+    boxed, where the pin holds it as the reference.
+  - Probe: dropping the `Ref` filter in `build_structs` fails about 22
+    corpus fixtures, `FastMathFlag._mlir_attr`'s compile-time run among
+    them ("cannot use ref as an integer SIMD element").
+  - Fix: mark a by-address `read` parameter in the MIR function as
+    `ref_params` marks a `mut` one, read its places through the handle by
+    that mark, then drop the filter.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9214,8 +9243,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     table answers, as the program's own traits are.
   - Probe: `def cp[T: Copyable](a: T) -> T: return a.copy()` keeps
     `place.load` of `a` feeding the `call.method` in `emit-mir`.
-  - The `pointer_may_bind` guard (R1269) also covers this receiver until
-    R1269 lands.
   - Found while landing R2177 (2026-11-13).
   - Depends on R1269.
   - Model: Opus, Not Planned.

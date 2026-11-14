@@ -3,7 +3,7 @@
 # struct to its element: construction, field reads and writes through
 # `mut self`, nested fields, a `ref` binding, heap slots, `List`, `Optional`,
 # display, operators, and a compile-time value all behave as for any
-# struct, and a struct holding a pointer stays one.
+# struct, and a struct holding a pointer is held as that pointer.
 from std.memory.alloc import unsafe_alloc
 
 

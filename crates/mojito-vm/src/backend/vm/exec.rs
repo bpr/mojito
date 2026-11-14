@@ -29,13 +29,7 @@ impl VmBackend {
         // A pointer-typed variable holding a place handle is the
         // handle itself, as `UseVar` reads it: the whole slot is
         // the pointer, not its pointee.
-        let pointer_slot = place.is_whole_root()
-            && place.through.is_none()
-            && matches!(
-                (prog.mir.functions[function].1.var_tys.get(&place.root)).map(Ty::kind),
-                Some(TyKind::Pointer { .. })
-            );
-        Ok(if pointer_slot {
+        Ok(if prog.pointer_value_slot(function, place) {
             vars[place.root as usize].clone()
         } else if let Some((element, suffix)) =
             super::references::pointer_element(&vars[place.root as usize], place, regs)?
@@ -178,6 +172,13 @@ impl VmBackend {
             }
             MirInstr::InvalidateInteriors { .. } => {
                 return Err(parametric_instruction("interior invalidation"));
+            }
+            MirInstr::MakeRef { dest, place } if prog.pointer_value_slot(function, place) => {
+                regs[dest.0 as usize] = Value::Ref {
+                    frame: frame_id.0,
+                    slot: place.root as usize,
+                    projection: Vec::new(),
+                };
             }
             MirInstr::MakeRef { dest, place } => {
                 let root = vars[place.root as usize].clone();
@@ -644,12 +645,7 @@ impl VmBackend {
                         moved
                     }
                 } else if let Value::Ref { .. } = &vars[slot]
-                    && !matches!(
-                        (prog.mir.functions[function].1.var_tys.get(var)).map(Ty::kind),
-                        Some(
-                            TyKind::Pointer { .. } | TyKind::KgenPointer(_) | TyKind::LitRef { .. }
-                        )
-                    )
+                    && !prog.pointer_slots[function].contains(var)
                 {
                     // A pointer-typed variable holding a place handle (a
                     // `Pointer(to=x)` local, a bound pointer parameter, or
@@ -719,10 +715,7 @@ impl VmBackend {
                     // `p = q` on a local or on a `mut p: Pointer[...]`
                     // parameter — replaces the slot instead.
                     let writes_through = matches!(&vars[slot], Value::Ref { .. })
-                        && !matches!(
-                            (prog.mir.functions[function].1.var_tys.get(var)).map(Ty::kind),
-                            Some(TyKind::Pointer { .. })
-                        );
+                        && !prog.pointer_slots[function].contains(var);
                     let current = if writes_through {
                         self.read_reference(&vars[slot], frame_id, vars)?
                     } else {
@@ -2077,10 +2070,12 @@ impl VmBackend {
                 // walk. A final dynamic index is `store_at_place`'s own — a
                 // heap element, or a nominal `__setitem__` receiver — and
                 // keeps that path.
-                let handle = if matches!(place.steps().next_back(), Some(Proj::Index(_))) {
+                let handle = if prog.pointer_value_slot(function, place) {
+                    None
+                } else if matches!(place.steps().next_back(), Some(Proj::Index(_))) {
                     self.extend_reference(&vars[place.root as usize], place, regs)?
                 } else {
-                    self.place_handle(frame_id, place, regs, vars)?
+                    self.place_handle(prog, function, frame_id, place, regs, vars)?
                 };
                 let slot = super::references::pointer_element_slot(place);
                 if let Some(handle) = handle {
@@ -2117,7 +2112,11 @@ impl VmBackend {
                 // analysis has proven the moved field is not read again, and
                 // `mir::verify` that no destroy of the whole follows unless the
                 // field is stored again.
-                let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
+                let reference = if prog.pointer_value_slot(function, place) {
+                    None
+                } else {
+                    self.extend_reference(&vars[place.root as usize], place, regs)?
+                };
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;
                     self.write_reference(&reference, frame_id, vars, Value::Moved)?;
@@ -2232,7 +2231,7 @@ impl VmBackend {
                 }
             }
             MirInstr::DropPlace { place, destructor } => {
-                let value = self.take_place(frame_id, place, regs, vars)?;
+                let value = self.take_place(prog, function, frame_id, place, regs, vars)?;
                 self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
             // An owned register's death, its value's fields dropped by

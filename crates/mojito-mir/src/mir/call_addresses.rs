@@ -29,9 +29,8 @@ use crate::mir::{
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_symbol::symbol::{is_initializer_symbol, is_trait_dispatch_symbol};
-use mojito_types::conformance::{Conformance, LIFECYCLE_TRAITS, modelled_conformance};
 use mojito_types::origin::Mutability;
-use mojito_types::types::{FuncTy, Ty, TyKind, static_string_address_ty};
+use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
 
 /// The regular parameter each operand of a direct call of `declaration`
@@ -293,14 +292,6 @@ impl<'a> Contract<'a> {
                 },
             },
         })
-    }
-
-    /// Whether the contract's parameter types may name a type parameter a
-    /// pointer instantiates ([`pointer_may_bind`]): a requirement's or the
-    /// copy initializer's spelled over `Self`, or a function type's over
-    /// the caller's parameters.
-    const fn is_abstract(self) -> bool {
-        !matches!(self, Self::Declared(_))
     }
 
     /// How the callee receives a receiver of type `ty` by address.
@@ -971,10 +962,7 @@ fn push_operands(
     declarations: &MirDeclarations,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
-    let abstract_contract = bound.contract.is_abstract();
-    let addressable = |ty: &Ty| {
-        !(matches!(ty.kind(), TyKind::Ref(_)) || abstract_contract && pointer_may_bind(ty))
-    };
+    let addressable = |ty: &Ty| !matches!(ty.kind(), TyKind::Ref(_));
     if let Some((register, Some(place))) = bound.receiver
         && let Some(ty) = place.ty.as_ref().filter(|ty| addressable(ty))
         && let Some(mutability) = bound.contract.receiver(ty, declarations)
@@ -991,29 +979,6 @@ fn push_operands(
         if let Some(mutability) = bound.contract.parameter(*parameter, ty, declarations) {
             operands.push((*register, (*place).clone(), mutability));
         }
-    }
-}
-
-/// Whether a pointer may instantiate the type parameter `ty`: one each of
-/// whose bounds a `Pointer` conforms to (`T: Intable`, `T: Writable`), or
-/// `Self`.
-///
-/// A `ref.make` of a whole slot holding a pointer designates its pointee,
-/// not the slot (R1269), so an operand a requirement call addresses over
-/// such a parameter would pass the pointee once an instance binds a
-/// pointer; it keeps its load.
-fn pointer_may_bind(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Param { bounds, .. } => {
-            let pointer = static_string_address_ty();
-            bounds.iter().all(|bound| {
-                LIFECYCLE_TRAITS.contains(&bound.as_str())
-                    || modelled_conformance(&pointer, bound, &mut |_, _| Conformance::Refuted)
-                        .is_proven()
-            })
-        }
-        TyKind::SelfType => true,
-        _ => false,
     }
 }
 

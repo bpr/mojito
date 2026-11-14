@@ -715,14 +715,21 @@ impl VmBackend {
     /// handle extended with the place's projections, or — for a place that
     /// only reaches a handle below its root ([`place_crosses_reference`]) — a
     /// handle composed at the root slot. `None` leaves the place to ordinary
-    /// frame-storage navigation, which cannot interpret a [`Value::Ref`].
+    /// frame-storage navigation, which cannot interpret a [`Value::Ref`],
+    /// as it does for the whole of a slot holding a pointer value
+    /// ([`Prog::pointer_value_slot`]).
     pub(super) fn place_handle(
         &self,
+        prog: &Prog,
+        function: usize,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
+        if prog.pointer_value_slot(function, place) {
+            return Ok(None);
+        }
         if let Some(reference) =
             self.extend_reference(&variables[place.root as usize], place, registers)?
         {
@@ -739,12 +746,14 @@ impl VmBackend {
     /// or parameter's field included, or in frame storage.
     pub(super) fn take_place(
         &mut self,
+        prog: &Prog,
+        function: usize,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &mut [Value],
     ) -> Result<Value, RuntimeError> {
-        match self.place_handle(frame_id, place, registers, variables)? {
+        match self.place_handle(prog, function, frame_id, place, registers, variables)? {
             Some(reference) => {
                 let old = self.read_reference(&reference, frame_id, variables)?;
                 self.write_reference(&reference, frame_id, variables, Value::Moved)?;
