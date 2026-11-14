@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2180**.
+Next free ID: **R2181**.
 
 ## Ordered Work
 
@@ -9110,6 +9110,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     its field, `S[o]{p: UnsafePointer[Int, o]}` over `UnsafePointer(to=x)`
     fails `s.get()` with "ReadRef r0 received Int(5)", since its slot then
     holds the `Value::Ref` the VM takes for an alias.
+  - The same reading makes a `ref.make` of a whole slot holding a pointer
+    designate the pointee (the verifier's `make_ref_target`, the VM's
+    `MakeRef`), so a by-address operand over a type parameter a pointer
+    instantiates passes the pointee, not the pointer.
+    `mir::address_call_operands` therefore leaves a requirement call's
+    operand over such a parameter loaded (`pointer_may_bind`: `T:
+    Intable`, `T: Writable`, a lifecycle bound, or `Self`); drop that
+    guard with the fix.
+  - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
+    return inner(value)` over `def inner[T: Intable](value: T) -> Int:
+    return Int(value)`, called with `Pointer(to=x)`, fails verification
+    after `inline-parametric` ("MakeRef destination targets Pointer[Int,
+    …], incompatible with place storage Int"): a direct call's operand
+    is addressed with no guard.
+  - Probe: with the guard dropped, `assets/ok/path_operations.mojo` fails
+    the same way in std's `cwd`, over `Int(res)` through `SIMD.__init__[T:
+    Intable]`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9150,26 +9167,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok` and `assets/ownership_ok`, with `MOJITO_PRE_ELABORATION=0`
     too, since the rule runs after every pass in a debug build. File any
     new shape's cause.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2177 A trait-dispatched, callable-bound, or temporary-receiver
-  method call passes its operands as loaded values beside their places**
-
-  `mir::address_call_operands` addresses a `call.method` operand only
-  when it finds the callee's `MirFunctionDeclaration`, and the receiver
-  only when the call retains a `recv_place`.
-  - A `__trait_dispatch` symbol and a `def(...)` bound's `__call__` have
-    no declaration, so `x.show()` over `x: T` with `T: Shower` keeps a
-    `place.load` of `x`.
-  - A temporary receiver (`Big.make().show()`) has no `recv_place`, so
-    its call-result slot is loaded, where a direct `call`'s memory-only
-    temporary is addressed (`Flatten::temporary_operand`, R1917).
-  - Upstream addresses the operand by the requirement's or the callee's
-    convention, and passes the rvalue's materialized address.
-  - Fix: read the conventions off the `TraitRequirement` (its receiver's
-    and `param_conventions`) or the callable contract's `conventions`, and
-    give a temporary receiver its call-result slot as its place.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9215,8 +9212,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     instruction's operands.
   - Probe: `def apply(f: def(Big) -> Int, b: Big) -> Int: return f(b)`
     keeps `place.load` of `b` feeding the `call.indirect` in `emit-mir`.
+  - A `def(...)` bound's `__call__` (`call.method` of
+    `__trait_dispatch.__call__$ov$…`) has the same gap: the elaborator
+    rewrites it into the value's `call.indirect`
+    (`mir::indirect_from_bound_call`), so its operands may be addressed
+    only once an indirect call's are. Read its conventions off the bound's
+    `FuncTy` (`mir::callable_bound_requirement`) in
+    `address_call_operands`' `Contract`.
+  - Probe: `def apply[F: def(Big) -> Int](f: F, b: Big) -> Int: return
+    f(b)` keeps `place.load` of `b` feeding the `call.method` in
+    `emit-mir`.
   - Found while landing R1919 (2026-11-13).
-  - Depends on R2177 (the callable-contract convention reader).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2179 A type parameter's copy construction passes its source as a
@@ -9240,6 +9247,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     template `emit-mir` prints.
   - Found while landing R1919 (2026-11-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2180 A lifecycle trait declares no requirements, so `x.copy()`
+  over `T: Copyable` passes its receiver as a loaded value**
+
+  `Copyable`, `Movable`, and the other lifecycle traits
+  (`mojito_types::conformance::LIFECYCLE_TRAITS`) are compiler-known and
+  have no `TraitDeclaration`, so `MirDeclarations::bound_requirement` finds
+  no requirement for `__trait_dispatch.copy$ov$`, and
+  `mir::address_call_operands` leaves the receiver a `place.load`.
+  - Upstream's `Copyable` declares `copy(self) -> Self` with a `read`
+    receiver, so its call takes a `!lit.ref` of a memory-only `x`.
+  - Fix: record the lifecycle traits' requirements (`copy`, and any other
+    method a bound on them selects) as `TraitRequirement`s the declaration
+    table answers, as the program's own traits are.
+  - Probe: `def cp[T: Copyable](a: T) -> T: return a.copy()` keeps
+    `place.load` of `a` feeding the `call.method` in `emit-mir`.
+  - The `pointer_may_bind` guard (R1269) also covers this receiver until
+    R1269 lands.
+  - Found while landing R2177 (2026-11-13).
+  - Depends on R1269.
   - Model: Opus, Not Planned.
 
 - [ ] **R1920 A call keeps `arg_places` beside its address operand, and
@@ -9267,7 +9295,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     result" bit for `loans.rs`, delete the place-based argument paths, make
     the verifier require a reference at a by-address slot, and move the MIR
     text version with an upgrade of older calls.
-  - Depends on R1917, R1919, R2177, R2178, R2179.
+  - Depends on R1917, R1919, R2177, R2178, R2179, R1269, R2180.
   - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,

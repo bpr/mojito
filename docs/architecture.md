@@ -2428,9 +2428,20 @@ to the dying source with the load. A reference result at such a parameter
 retains its hidden handle slot's place, `through` that handle
 (`Flatten::lower_borrowed_read_operand`), so the rewrite passes the
 reference the call returned, as upstream passes the `!lit.ref` itself. A
-trait-dispatched, callable-bound, or temporary-receiver method call or
-subscript (R2177), an indirect call (R2178), and a type parameter's copy
-construction (R2179) keep the load.
+method call through a trait bound binds its operands by the requirement
+the bound declares (`MirDeclarations::bound_requirement`), its receiver
+by the call's recorded `receiver_convention`, as upstream's call of a
+requirement reads the requirement's signature, and a memory-only
+temporary a `read` receiver takes retains its call-result slot as its
+place (`Flatten::lower_method_receiver`). Where an instance's receiver is
+a compiler-modelled type the elaborator answers itself, the elaborator
+reads each addressed operand through its reference ahead of the call
+(`mir::read_addressed_operands`), since the builtin takes values (R2177).
+An operand over a type parameter a pointer may instantiate keeps its load,
+since a `ref.make` of a whole pointer slot designates the pointee (R1269);
+so does a lifecycle requirement's receiver (`x.copy()`, R2180), a
+`def(...)` bound's `__call__` and an indirect call (R2178), and a type
+parameter's copy construction (R2179).
 
 The same pass builds every call's positional collector, as upstream's call
 builds the `VariadicPack` or `VariadicList` its callee's `*xs` takes

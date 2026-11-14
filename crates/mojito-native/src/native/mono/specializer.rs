@@ -3304,6 +3304,9 @@ impl<'a> Specializer<'a> {
                     param_decls,
                     instantiated_args,
                     spread,
+                    recv_place,
+                    arg_places,
+                    kwarg_places,
                     ..
                 } => {
                     let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -3315,12 +3318,27 @@ impl<'a> Specializer<'a> {
                         && !peel_refs(receiver).kind().is_non_simd_struct()
                         && !self.declares_witness(peel_refs(receiver), dispatch)
                     {
-                        // The builtin answers the call itself and takes
-                        // none of the requirement's compile-time arguments.
+                        // The builtin answers the call itself, taking its
+                        // operands by value and none of the requirement's
+                        // compile-time arguments.
                         *resolved = None;
                         param_decls.clear();
                         instantiated_args.clear();
                         param_arg_regs.clear();
+                        let operands = std::iter::once((recv, recv_place.as_deref())).chain(
+                            args.iter_mut()
+                                .chain(kwargs.iter_mut().map(|(_, register)| register))
+                                .zip(
+                                    arg_places
+                                        .iter()
+                                        .chain(kwarg_places.iter())
+                                        .map(Option::as_ref),
+                                ),
+                        );
+                        let loads = mojito_mir::mir::read_addressed_operands(function, operands);
+                        if !loads.is_empty() {
+                            preludes.push((index, loads));
+                        }
                         continue;
                     }
                     // A borrowed receiver dispatches on its referent, as

@@ -1582,7 +1582,10 @@ impl<'a> Flatten<'a> {
     /// [`Self::lower_call_receiver`] for the receiver of method call `call`.
     /// A temporary receiver returned through memory is used in its
     /// call-result slot: a `var`/`deinit` receiver takes it, a declared
-    /// `read` receiver reads it, and any other (a `ref self`) reads it and
+    /// `read` receiver reads it, with the slot's place when it is
+    /// memory-only, whose address [`crate::mir::address_call_operands`]
+    /// passes as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
+    /// materialized, and any other (a `ref self`) reads it and
     /// binds the slot's place, exactly as a named
     /// receiver retains its own; such a receiver returned in registers is
     /// materialized ([`Self::materialize_receiver`]). A slot's last use is
@@ -1618,7 +1621,10 @@ impl<'a> Flatten<'a> {
             }
             CValue::Value(value) => self.materialize_receiver(receiver, value),
             slot @ CValue::Slot(_) if owned => (self.take_c(receiver, slot), None),
-            slot @ CValue::Slot(_) if read => (self.read_c(receiver, slot).0, None),
+            slot @ CValue::Slot(_) if read => {
+                let (value, place) = self.read_c(receiver, slot);
+                (value, place.filter(|_| receiver.indirect_result()))
+            }
             slot @ CValue::Slot(_) => self.read_c(receiver, slot),
         }
     }

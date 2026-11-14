@@ -4488,6 +4488,71 @@ fn method_call_passes_by_address_operands_as_references() {
 }
 
 #[test]
+fn requirement_and_temporary_receiver_calls_pass_by_address_operands() {
+    // A call through a trait bound binds the requirement's conventions, as
+    // upstream's call of a requirement reads its signature, and a
+    // memory-only temporary `read` receiver passes its call-result slot.
+    // A receiver over a parameter a pointer may instantiate (`T: Intable`)
+    // stays loaded: a reference to a whole pointer slot is its pointee.
+    let src = "trait Shower:\n    def show(self) -> Int: ...\n    def take(self, other: Self) -> Int: ...\n    def bump(mut self): ...\n\nstruct Big(Shower, Copyable, Movable):\n    var a: Int\n    var b: String\n    def __init__(out self, a: Int):\n        self.a = a\n        self.b = \"x\"\n    def show(self) -> Int:\n        return self.a\n    def take(self, other: Self) -> Int:\n        return other.a\n    def bump(mut self):\n        self.a += 1\n\ndef use[T: Shower](mut x: T, y: T) -> Int:\n    x.bump()\n    return x.show() + x.take(y)\n\ndef conv[T: Intable](x: T) -> Int:\n    return x.__int__()\n\ndef main():\n    print(Big(5).show())\n";
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let body = |name: &str| {
+        let (_, function) = mir
+            .functions
+            .iter()
+            .find(|(lowered, _)| lowered == name)
+            .unwrap_or_else(|| panic!("{name} lowered"));
+        nested_instructions(&function.body)
+    };
+    let operands = |instructions: &[&MirInstr], method: &str| {
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    method: name,
+                    recv,
+                    args,
+                    ..
+                } if name == method => Some((*recv, args.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("call of {method}"))
+    };
+    let addressed = |instructions: &[&MirInstr], register: Reg| {
+        instructions.iter().any(
+            |instruction| matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == register),
+        )
+    };
+    let generic = body("use");
+    let (receiver, arguments) = operands(&generic, "take");
+    assert!(addressed(&generic, receiver), "{generic:#?}");
+    assert!(addressed(&generic, arguments[0]), "{generic:#?}");
+    assert!(
+        addressed(&generic, operands(&generic, "bump").0),
+        "{generic:#?}"
+    );
+    assert!(
+        addressed(&generic, operands(&generic, "show").0),
+        "{generic:#?}"
+    );
+    let pointer_bound = body("conv");
+    assert!(
+        !addressed(&pointer_bound, operands(&pointer_bound, "__int__").0),
+        "{pointer_bound:#?}"
+    );
+    let main = body("main");
+    assert!(addressed(&main, operands(&main, "show").0), "{main:#?}");
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn subscript_passes_by_address_operands_as_references() {
     // A subscript is its accessor's call on the base: a memory-only base,
     // index, or stored value passes as a reference to the caller's storage,

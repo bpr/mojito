@@ -2318,7 +2318,9 @@ pub enum MirInstr {
     /// admits only read-only methods (the checker guarantees this); it is `None`
     /// unless the call result is a borrowing view, which is retained in its
     /// call-result slot (a register-passable one in a `$view_recv_r` slot)
-    /// whose loans keep the borrowed source alive across the chained call.
+    /// whose loans keep the borrowed source alive across the chained call, or
+    /// a memory-only one a `read` receiver takes by address, whose
+    /// call-result slot it names.
     MethodCall {
         dest: Reg,
         recv: Reg,

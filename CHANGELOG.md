@@ -756,6 +756,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method call through a trait bound passes its operands by the
+  requirement the bound declares, as upstream's call of a requirement
+  reads its signature: a `mut`/`ref` or memory-only `read` receiver or
+  argument is a `ref.make` of the caller's place, so `x.bump()`,
+  `x.show()`, and `x.take(y)` over `x, y: T` with `T: Shower` pass
+  addresses. A memory-only temporary `read` receiver
+  (`Big.make().show()`) passes its call-result slot's address, and where
+  the elaborator answers a requirement itself (`len` of a `Tuple` through
+  `Sized`) it reads the addressed operands back as values (R2177). A
+  requirement call over a type parameter a pointer may instantiate keeps
+  the load (R1269), as do `x.copy()` over `T: Copyable` (R2180) and a
+  `def(...)` bound's call (R2178).
+
 - A checked subscript passes its operands as its accessor's call does: a
   memory-only or `mut` base, and a memory-only index or stored value, is a
   `ref.make` of the caller's place instead of a whole load beside it, so

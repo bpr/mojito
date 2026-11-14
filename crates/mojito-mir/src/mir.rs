@@ -60,7 +60,7 @@ pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_
 mod call_addresses;
 pub use call_addresses::{
     address_call_operands, by_address_parameter, by_address_receiver, call_operand_parameters,
-    load_register_passable_operands, operand_value_ty,
+    load_register_passable_operands, operand_value_ty, read_addressed_operands,
 };
 mod call_defaults;
 pub use call_defaults::fill_omitted_arguments;

@@ -6,7 +6,9 @@
 //! a resolved `call.method`, and a checked subscript, its accessor's call on
 //! the base, pass such an operand as a `ref.make` of its retained place
 //! ([`address_call_operands`]), and the instruction's place table names the
-//! same storage.
+//! same storage. A method call through a trait bound binds its operands by
+//! the requirement the bound declares, as upstream's call of a requirement
+//! reads the requirement's signature.
 //!
 //! A register-passable `read` argument is passed by value, as upstream's
 //! `LowerArgConventions` caller half passes it: one an instance's
@@ -15,14 +17,15 @@
 
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
-    MirSubscriptArg, Proj, Reg, count_register_reads, instruction_regions, instruction_regions_mut,
-    mir_place_handle_ty,
+    MirSubscriptArg, Proj, Reg, TraitRequirement, count_register_reads, instruction_regions,
+    instruction_regions_mut, mir_place_handle_ty,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
-use mojito_symbol::symbol::is_initializer_symbol;
+use mojito_symbol::symbol::{is_initializer_symbol, is_trait_dispatch_symbol};
+use mojito_types::conformance::{Conformance, LIFECYCLE_TRAITS, modelled_conformance};
 use mojito_types::origin::Mutability;
-use mojito_types::types::{Ty, TyKind};
+use mojito_types::types::{Ty, TyKind, static_string_address_ty};
 use std::collections::HashMap;
 
 /// The regular parameter each operand of a direct call of `declaration`
@@ -46,7 +49,7 @@ pub fn call_operand_parameters(
         return None;
     }
     let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-    operand_parameters(declaration, positional, &keywords)
+    operand_parameters(&CallShape::declared(declaration), positional, &keywords)
 }
 
 /// How a callee receives its regular parameter `parameter` by address.
@@ -146,6 +149,46 @@ pub fn load_register_passable_operands(
     changed
 }
 
+/// Read each operand an instance's call passes by address through its
+/// reference, where a builtin answers the call and takes its operands by
+/// value.
+///
+/// The elaborator answers a requirement call itself when an instance's
+/// receiver is a compiler-modelled type with no witness (`len` of a
+/// `Tuple` through `Sized`), and the template passed the receiver and
+/// each memory-only `read` operand as a `ref.make` of its place
+/// ([`address_call_operands`]). Each `(register, place)` whose register is
+/// a reference to its place's type becomes a `ref.read` of it, returned
+/// for the caller to splice ahead of the call, as upstream's
+/// `LowerArgConventions` loads a by-value argument at the call.
+pub fn read_addressed_operands<'r>(
+    function: &mut MirFunction,
+    operands: impl IntoIterator<Item = (&'r mut Reg, Option<&'r MirPlace>)>,
+) -> Vec<MirInstr> {
+    let mut loads = Vec::new();
+    for (register, place) in operands {
+        let Some(TyKind::Ref(reference)) = function.reg_types.get(&register.0).map(Ty::kind) else {
+            continue;
+        };
+        if place.and_then(|place| place.ty.as_ref()) != Some(&reference.referent) {
+            continue;
+        }
+        let referent = reference.referent.clone();
+        let loaded = Reg(function.n_regs);
+        function.n_regs += 1;
+        function.reg_types.insert(loaded.0, referent);
+        if let Some(span) = function.spans.0.get(&register.0).cloned() {
+            function.spans.0.insert(loaded.0, span);
+        }
+        loads.push(MirInstr::ReadRef {
+            dest: loaded,
+            reference: *register,
+        });
+        *register = loaded;
+    }
+    loads
+}
+
 /// The declarations of the functions a program calls, by lowered name:
 /// its own, then an imported package's.
 struct Callees<'a> {
@@ -173,6 +216,122 @@ impl<'a> Callees<'a> {
                 .and_then(|imported| imported.function(name))
         })
     }
+
+    /// The requirement a method call of the trait-dispatch symbol
+    /// `dispatch` binds over a receiver of type `receiver`: the one the
+    /// bound it was selected through declares (`refined_bound`), else the
+    /// receiver type parameter's own bounds.
+    fn requirement(
+        &self,
+        dispatch: &str,
+        receiver: Option<&Ty>,
+        refined_bound: Option<&[String]>,
+    ) -> Option<&'a TraitRequirement> {
+        if !is_trait_dispatch_symbol(dispatch) {
+            return None;
+        }
+        let bounds = refined_bound.or_else(|| match receiver.map(Ty::kind) {
+            Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
+            _ => None,
+        })?;
+        self.declarations.bound_requirement(bounds, dispatch)
+    }
+}
+
+/// The contract a resolved call binds its operands by: its callee's
+/// declaration, or the requirement a call through a trait bound selects,
+/// beside the receiver convention the call records for it.
+#[derive(Clone, Copy)]
+enum Contract<'a> {
+    Declared(&'a MirFunctionDeclaration),
+    Required {
+        requirement: &'a TraitRequirement,
+        receiver: Option<ArgConvention>,
+    },
+}
+
+impl<'a> Contract<'a> {
+    fn shape(self) -> CallShape<'a> {
+        match self {
+            Self::Declared(declaration) => CallShape::declared(declaration),
+            Self::Required { requirement, .. } => CallShape {
+                names: &requirement.param_names,
+                required: &requirement.required,
+                positional_only: requirement.positional_only,
+                keyword_only: requirement.keyword_only,
+                variadics: CallVariadics {
+                    positional: requirement.variadic.is_some(),
+                    keyword: requirement.kw_variadic.is_some(),
+                },
+            },
+        }
+    }
+
+    /// How the callee receives a receiver of type `ty` by address.
+    fn receiver(self, ty: &Ty, declarations: &MirDeclarations) -> Option<Mutability> {
+        match self {
+            Self::Declared(declaration) => by_address_receiver(declaration, ty, declarations),
+            Self::Required { receiver, .. } => {
+                by_address(receiver, is_reference(receiver), ty, declarations)
+            }
+        }
+    }
+
+    /// How the callee receives its regular parameter `parameter`, whose
+    /// operand has type `operand_ty`, by address. A requirement spells its
+    /// parameters over `Self`, so the operand's type is the parameter's at
+    /// the call.
+    fn parameter(
+        self,
+        parameter: usize,
+        operand_ty: &Ty,
+        declarations: &MirDeclarations,
+    ) -> Option<Mutability> {
+        match self {
+            Self::Declared(declaration) => {
+                by_address_parameter(declaration, declarations, parameter)
+            }
+            Self::Required { requirement, .. } => {
+                let convention = requirement.param_conventions.get(parameter).copied()?;
+                by_address(
+                    convention,
+                    is_reference(convention),
+                    operand_ty,
+                    declarations,
+                )
+            }
+        }
+    }
+}
+
+/// The call shape a callee's operands bind by, as
+/// [`match_call_slots`] reads it.
+struct CallShape<'a> {
+    names: &'a [String],
+    required: &'a [bool],
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    variadics: CallVariadics,
+}
+
+impl<'a> CallShape<'a> {
+    fn declared(declaration: &'a MirFunctionDeclaration) -> Self {
+        Self {
+            names: &declaration.param_names,
+            required: &declaration.required,
+            positional_only: declaration.positional_only,
+            keyword_only: declaration.keyword_only,
+            variadics: CallVariadics {
+                positional: declaration.variadic.is_some(),
+                keyword: declaration.kw_variadic.is_some(),
+            },
+        }
+    }
+}
+
+/// Whether a parameter of `convention` binds its operand as a reference.
+const fn is_reference(convention: Option<ArgConvention>) -> bool {
+    matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
 }
 
 /// How a parameter of `convention` and type `ty` is received by address,
@@ -197,21 +356,18 @@ fn by_address(
 /// The regular parameter each of a call's operands binds, the receiver
 /// excluded ([`call_operand_parameters`]).
 fn operand_parameters(
-    declaration: &MirFunctionDeclaration,
+    shape: &CallShape<'_>,
     positional: usize,
     keywords: &[&str],
 ) -> Option<Vec<Option<usize>>> {
     let matched = match_call_slots(
-        &declaration.param_names,
-        &declaration.required,
-        declaration.positional_only,
-        declaration.keyword_only,
+        shape.names,
+        shape.required,
+        shape.positional_only,
+        shape.keyword_only,
         positional,
         keywords,
-        CallVariadics {
-            positional: declaration.variadic.is_some(),
-            keyword: declaration.kw_variadic.is_some(),
-        },
+        shape.variadics,
     )
     .ok()?;
     let mut parameters = vec![None; positional + keywords.len()];
@@ -225,9 +381,9 @@ fn operand_parameters(
     Some(parameters)
 }
 
-/// A resolved call's operands as its callee's declaration binds them.
+/// A resolved call's operands as its callee's contract binds them.
 struct BoundCall<'a, 'i> {
-    declaration: &'a MirFunctionDeclaration,
+    contract: Contract<'a>,
     /// The receiver operand and the place it reads, for a method call or a
     /// subscript.
     receiver: Option<(Reg, Option<&'i MirPlace>)>,
@@ -241,9 +397,15 @@ struct BoundCall<'a, 'i> {
 /// callee's declaration: a subscript is a call of its accessor on the base,
 /// as upstream's subscript emission calls `__getitem__`/`__setitem__` with
 /// the same operand conventions.
+///
+/// A method call through a trait bound (`__trait_dispatch.f$…`) binds the
+/// requirement the bound declares ([`MirDeclarations::bound_requirement`])
+/// over the receiver's type parameter, or the bound the call records it
+/// was selected through.
 fn bound_call<'a, 'i>(
     instruction: &'i MirInstr,
     callees: &Callees<'a>,
+    reg_types: &HashMap<u32, Ty>,
 ) -> Option<BoundCall<'a, 'i>> {
     match instruction {
         MirInstr::Call {
@@ -258,7 +420,7 @@ fn bound_call<'a, 'i>(
             let declaration = callees.get(&func.0)?;
             let parameters = call_operand_parameters(&func.0, declaration, args.len(), kwargs)?;
             Some(BoundCall {
-                declaration,
+                contract: Contract::Declared(declaration),
                 receiver: None,
                 operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
             })
@@ -272,14 +434,35 @@ fn bound_call<'a, 'i>(
             arg_places,
             kwarg_places,
             spread: None,
+            recv_writes,
+            receiver_convention,
+            refined_bound,
             ..
         } => {
-            let declaration = callees.get(callee)?;
+            let contract = callees.get(callee).map(Contract::Declared).or_else(|| {
+                let receiver_ty = recv_place
+                    .as_ref()
+                    .and_then(|place| place.ty.as_ref())
+                    .or_else(|| reg_types.get(&recv.0));
+                let requirement = callees.requirement(
+                    callee,
+                    receiver_ty,
+                    refined_bound.as_ref().map(|bound| bound.traits.as_slice()),
+                )?;
+                Some(Contract::Required {
+                    requirement,
+                    receiver: *receiver_convention,
+                })
+            })?;
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-            let parameters = operand_parameters(declaration, args.len(), &keywords)?;
+            let parameters = operand_parameters(&contract.shape(), args.len(), &keywords)?;
+            // A requirement call whose receiver convention went unrecorded
+            // but which writes its receiver is left to its place.
+            let unrecorded =
+                matches!(contract, Contract::Required { receiver: None, .. }) && *recv_writes;
             Some(BoundCall {
-                declaration,
-                receiver: Some((*recv, recv_place.as_deref())),
+                contract,
+                receiver: (!unrecorded).then_some((*recv, recv_place.as_deref())),
                 operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
             })
         }
@@ -287,13 +470,17 @@ fn bound_call<'a, 'i>(
             let subscript = SubscriptOperands::of(instruction)?;
             let declaration = callees.get(subscript.callee)?;
             let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
-            let parameters = operand_parameters(declaration, subscript.positional.len(), &names)?;
+            let parameters = operand_parameters(
+                &CallShape::declared(declaration),
+                subscript.positional.len(),
+                &names,
+            )?;
             let registers = subscript
                 .positional
                 .into_iter()
                 .chain(subscript.keywords.into_iter().map(|(_, register)| register));
             Some(BoundCall {
-                declaration,
+                contract: Contract::Declared(declaration),
                 receiver: Some(subscript.receiver),
                 operands: registers
                     .zip(subscript.places)
@@ -498,8 +685,11 @@ fn address_function_operands(
     let mut operands = Vec::new();
     collect(
         &function.body,
-        callees,
-        declarations,
+        &Collector {
+            callees,
+            declarations,
+            reg_types: &function.reg_types,
+        },
         &mut definitions,
         &mut operands,
     );
@@ -592,10 +782,16 @@ fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
         })
 }
 
+/// What [`collect`] reads a function's calls by.
+struct Collector<'c, 'a> {
+    callees: &'c Callees<'a>,
+    declarations: &'c MirDeclarations,
+    reg_types: &'c HashMap<u32, Ty>,
+}
+
 fn collect(
     block: &MirBlock,
-    callees: &Callees<'_>,
-    declarations: &MirDeclarations,
+    collector: &Collector<'_, '_>,
     definitions: &mut HashMap<u32, Definition>,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
@@ -611,13 +807,14 @@ fn collect(
                 definitions.insert(dest.0, Definition::Address(place.clone()));
             }
             _ => {
-                if let Some(bound) = bound_call(instruction, callees) {
-                    push_operands(&bound, declarations, operands);
+                if let Some(bound) = bound_call(instruction, collector.callees, collector.reg_types)
+                {
+                    push_operands(&bound, collector.declarations, operands);
                 }
             }
         }
         for region in instruction_regions(instruction) {
-            collect(region, callees, declarations, definitions, operands);
+            collect(region, collector, definitions, operands);
         }
     }
 }
@@ -629,10 +826,12 @@ fn push_operands(
     declarations: &MirDeclarations,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
+    let required = matches!(bound.contract, Contract::Required { .. });
+    let addressable =
+        |ty: &Ty| !(matches!(ty.kind(), TyKind::Ref(_)) || required && pointer_may_bind(ty));
     if let Some((register, Some(place))) = bound.receiver
-        && let Some(ty) = place.ty.as_ref()
-        && !matches!(ty.kind(), TyKind::Ref(_))
-        && let Some(mutability) = by_address_receiver(bound.declaration, ty, declarations)
+        && let Some(ty) = place.ty.as_ref().filter(|ty| addressable(ty))
+        && let Some(mutability) = bound.contract.receiver(ty, declarations)
     {
         operands.push((register, place.clone(), mutability));
     }
@@ -640,13 +839,35 @@ fn push_operands(
         let (Some(place), Some(parameter)) = (place, parameter) else {
             continue;
         };
-        if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)) | None) {
+        let Some(ty) = place.ty.as_ref().filter(|ty| addressable(ty)) else {
             continue;
-        }
-        if let Some(mutability) = by_address_parameter(bound.declaration, declarations, *parameter)
-        {
+        };
+        if let Some(mutability) = bound.contract.parameter(*parameter, ty, declarations) {
             operands.push((*register, (*place).clone(), mutability));
         }
+    }
+}
+
+/// Whether a pointer may instantiate the type parameter `ty`: one each of
+/// whose bounds a `Pointer` conforms to (`T: Intable`, `T: Writable`), or
+/// `Self`.
+///
+/// A `ref.make` of a whole slot holding a pointer designates its pointee,
+/// not the slot (R1269), so an operand a requirement call addresses over
+/// such a parameter would pass the pointee once an instance binds a
+/// pointer; it keeps its load.
+fn pointer_may_bind(ty: &Ty) -> bool {
+    match ty.kind() {
+        TyKind::Param { bounds, .. } => {
+            let pointer = static_string_address_ty();
+            bounds.iter().all(|bound| {
+                LIFECYCLE_TRAITS.contains(&bound.as_str())
+                    || modelled_conformance(&pointer, bound, &mut |_, _| Conformance::Refuted)
+                        .is_proven()
+            })
+        }
+        TyKind::SelfType => true,
+        _ => false,
     }
 }
 
@@ -692,24 +913,28 @@ fn load_in_blocks(
             changed |= load_in_blocks(region, reg_types, context);
         }
         let mut loads = Vec::new();
-        let by_value = bound_call(&block.instrs[index], context.callees).map(|bound| {
-            let receiver = bound.receiver.is_some_and(|(register, place)| {
-                place.is_some()
-                    && reg_types.get(&register.0).is_some_and(|ty| {
-                        by_value_receiver(bound.declaration, ty, context.declarations)
+        let by_value =
+            bound_call(&block.instrs[index], context.callees, reg_types).and_then(|bound| {
+                let Contract::Declared(declaration) = bound.contract else {
+                    return None;
+                };
+                let receiver = bound.receiver.is_some_and(|(register, place)| {
+                    place.is_some()
+                        && reg_types.get(&register.0).is_some_and(|ty| {
+                            by_value_receiver(declaration, ty, context.declarations)
+                        })
+                });
+                let operands: Vec<bool> = bound
+                    .operands
+                    .iter()
+                    .map(|(_, _, parameter)| {
+                        parameter.is_some_and(|parameter| {
+                            by_value_parameter(declaration, context.declarations, parameter)
+                        })
                     })
+                    .collect();
+                Some((receiver, operands))
             });
-            let operands: Vec<bool> = bound
-                .operands
-                .iter()
-                .map(|(_, _, parameter)| {
-                    parameter.is_some_and(|parameter| {
-                        by_value_parameter(bound.declaration, context.declarations, parameter)
-                    })
-                })
-                .collect();
-            (receiver, operands)
-        });
         if let Some((receiver, operands)) = by_value {
             let (receiver_register, registers) = operand_registers_mut(&mut block.instrs[index]);
             if receiver && let Some(register) = receiver_register {
