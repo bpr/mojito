@@ -115,7 +115,6 @@ which names the upstream pass each one follows. Each is measured by the
     `def`'s callable argument now is at the check (`mk[inc]` carries
     `ct_func_symbol("inc")`); admit `callable_bound` binders and
     function-typed slots.
-  - Related: R1650 (the callable binder's environment erased).
   - Found while landing R1644 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4665,30 +4664,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Restore that test's whole-program check with the fix.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1650 The elaborator binds a callable binder to its argument's
-  type with the environment erased, so `conforms_to` over a thin function
-  answers as for a contract**
-
-  `comptime if conforms_to(F, TrivialRegisterPassable)` in `def probe[F:
-  Copyable & def(Int) -> Int](f: F)` takes the false arm for `probe(inc)`
-  over a module `def inc`, where the pin takes the true arm; a closure
-  with trivial captures takes the true arm on both.
-  - Cause: `bind_type` (`native/mono/unify.rs`) stores the binder's
-    solution through `canonicalize_callable`, which rewrites every
-    `thin` and `capturing[...]` environment to the unqualified contract's,
-    so the specializer's `type_conforms` asks about `def(Int) -> Int`,
-    not `def(Int) thin -> Int`.
-  - Upstream's thin and capturing function types are distinct types, so
-    they are distinct instances; keep the environment in the binder's
-    solution and in instance identity, and erase only what the runtime
-    ABI erases (capture origins).
-  - Probe: the `RegisterPassable` arm of the same body is skipped too.
-  - The checker already answers both conformances for the thin argument
-    (R1584), so the gap is the elaborator's alone.
-  - Found while landing R1584 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1115 `where <cond> else "<message>"` is the preferred constraint
   message**

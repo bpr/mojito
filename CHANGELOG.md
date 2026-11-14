@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A callable binder solved by a thin function keeps `thin` in its
+  solution, as at the pin, so `comptime if conforms_to(F,
+  TrivialRegisterPassable)` and the `RegisterPassable` arm take the true
+  arm for `probe(inc)` over a module `def inc` (R1650;
+  `assets/ok/callable_binder_environment_conformance.mojo`).
+
 - A trait's parameterized value requirement (`comptime get[idx: Int]:
   Int`) is now a value requirement of generator type, as at the pin
   (R1488), so a conformer's `comptime get = K.k` witnesses it and
