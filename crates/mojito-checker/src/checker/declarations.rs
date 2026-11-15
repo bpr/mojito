@@ -1513,7 +1513,8 @@ impl Checker {
                     .lookup(name)
                     .map_or_else(|| "undefined".to_string(), ToString::to_string),
             })?;
-        if !self.value_coerces(&actual, expected) {
+        if super::is_unbound_parametric_function(&actual) || !self.value_coerces(&actual, expected)
+        {
             return Err(TypeError::TypeMismatch {
                 expected: expected.to_string(),
                 found: actual.to_string(),

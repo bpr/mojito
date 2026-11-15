@@ -1641,29 +1641,24 @@ impl Checker {
                         // `comptime _B = def[dtype: DType, //](…) thin -> …`)
                         // has no runtime value, as the pin reports.
                         if matches!(expected.kind(), TyKind::GenericFunc(_)) {
-                            let function = match &value.kind {
-                                ExprKind::Identifier(function) => format!(" '{function}'"),
-                                _ => String::new(),
+                            let generic = if matches!(found.kind(), TyKind::GenericFunc(_)) {
+                                &found
+                            } else {
+                                &expected
                             };
-                            return Err(TypeError::Unsupported(format!(
-                                "cannot use parametric function{function} as a runtime \
-                                 closure; specialize it explicitly"
-                            )));
+                            return Err(super::parametric_runtime_closure(generic));
                         }
                         // Current Mojo does not infer a generic function's
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
                         // generic function as a stored callable value.
-                        if matches!(found.kind(), TyKind::GenericFunc(_))
+                        if super::is_unbound_parametric_function(&found)
                             && matches!(expected.kind(), TyKind::Func(_))
-                            && matches!(value.kind, ExprKind::Identifier(_))
                         {
-                            return Err(TypeError::Unsupported(format!(
-                                "cannot materialize a generic function as the '{expected}' \
-                                 value of variable '{name}': current Mojo does not infer a \
-                                 specialization from a local annotation; specialize \
-                                 explicitly or bind a non-generic function"
-                            )));
+                            return Err(TypeError::GeneratorConversion {
+                                found: found.to_string(),
+                                expected: expected.to_string(),
+                            });
                         }
                         // A `SIMD[dt, _]` width is solved from the initializer
                         // before the conversion, so the value converts to the
@@ -1704,11 +1699,14 @@ impl Checker {
                         }
                     }
                     // Inferred `var x = e`: declare the value's materialized type.
-                    None if self.specializes_callable_value(value) => {
+                    None if self.specializes_callable_value(value)
+                        && !matches!(found.kind(), TyKind::GenericFunc(_)) =>
+                    {
                         // Explicitly specializing an Origin parameter produces
                         // a first-class, non-capturing function value whose
                         // checked `TyKind::Func` contains the bound origin. Plain
-                        // inferred function/closure values remain non-escaping.
+                        // inferred function/closure values remain non-escaping,
+                        // as does a bracket that binds no parameter.
                         found.clone()
                     }
                     // An un-annotated binding of a `@__nonmaterializable`
@@ -1716,6 +1714,13 @@ impl Checker {
                     // target, like the numeric literal defaults.
                     None if self.materializes_by_construction(&found) => {
                         self.materialize_at(&found, value.source_span())?
+                    }
+                    // A bare overload set selects no candidate without a
+                    // contextual type.
+                    None if matches!(found.kind(), TyKind::Overload(_))
+                        && let ExprKind::Identifier(function) = &value.kind =>
+                    {
+                        return Err(TypeError::OverloadedReference(function.clone()));
                     }
                     None => self.inferred_binding_ty(&found, name)?,
                 };
@@ -1901,12 +1906,18 @@ impl Checker {
                         };
                         // Assigning a closure, or an aggregate storing one,
                         // could move it to an outer binding; a thin function
-                        // value captures nothing. A named generic or
-                        // overloaded callable is not a first-class value here
-                        // whatever its environment, as at `return`.
-                        if matches!(found.kind(), TyKind::GenericFunc(_) | TyKind::Overload(_))
-                            || holds_closure(&found)
-                        {
+                        // value captures nothing. A parametric function binds
+                        // none of its parameters, so it converts to no
+                        // function type, and an overloaded callable is not a
+                        // first-class value here whatever its environment, as
+                        // at `return`.
+                        if matches!(found.kind(), TyKind::GenericFunc(_)) {
+                            return Err(TypeError::GeneratorConversion {
+                                found: found.to_string(),
+                                expected: target.to_string(),
+                            });
+                        }
+                        if matches!(found.kind(), TyKind::Overload(_)) || holds_closure(&found) {
                             return Err(TypeError::ClosureEscape);
                         }
                         // Recorded before the origins are read, as at the
@@ -2901,6 +2912,14 @@ impl Checker {
                 // callable storage is not. The latter is how a nominal Tuple's
                 // indexed accessor exposes a function element while the Tuple
                 // owner remains live.
+                // A parametric function binds none of its parameters, so it
+                // converts to no return type.
+                if !returning_reference && super::is_unbound_parametric_function(&found) {
+                    return Err(TypeError::GeneratorConversion {
+                        found: found.to_string(),
+                        expected: expected.to_string(),
+                    });
+                }
                 if !returning_reference
                     && (matches!(
                         found.kind(),

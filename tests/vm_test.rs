@@ -1937,7 +1937,10 @@ fn bound_generic_function_value_rejects_contextual_specialization() {
     // materialization at check time.
     let src = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = ident\n    print(callback(41))\n";
     let error = run_compiled(src).expect_err("contextual specialization rejects");
-    assert!(error.contains("does not infer a specialization"), "{error}");
+    assert!(
+        error.contains("cannot implicitly convert 'def[T: Copyable & Movable](T) thin -> T'"),
+        "{error}"
+    );
 }
 
 #[test]

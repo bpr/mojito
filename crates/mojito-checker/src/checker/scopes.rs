@@ -363,8 +363,9 @@ impl Checker {
     /// The type to declare for an **inferred** binding — `var x = e` (no
     /// annotation) or a var-less `x = e`. A numeric literal materializes to its
     /// default kind (`default_literal`); a value that cannot live in a named
-    /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign)
-    /// or another value outside the source language's first-class surface. A
+    /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign),
+    /// a parametric function, which binds none of its parameters, or another
+    /// value outside the source language's first-class surface. A
     /// `def(...) thin` value captures nothing, so it binds like any other
     /// value, and a closure's storage is a value of its own struct.
     #[allow(
@@ -381,9 +382,8 @@ impl Checker {
             {
                 Ok(value_ty.clone())
             }
-            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => {
-                Err(TypeError::ClosureEscape)
-            }
+            TyKind::GenericFunc(_) => Err(super::parametric_runtime_closure(value_ty)),
+            TyKind::Func(_) | TyKind::Overload(_) => Err(TypeError::ClosureEscape),
             _ => Ok(default_literal(value_ty)),
         }
     }

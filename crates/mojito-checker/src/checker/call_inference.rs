@@ -2884,7 +2884,8 @@ fn reject_generic_function_value(
 ) -> Result<(), TypeError> {
     if matches!(found.kind(), TyKind::GenericFunc(_))
         && matches!(expected.kind(), TyKind::Func(_))
-        && matches!(argument.kind, ExprKind::Identifier(_))
+        && (matches!(argument.kind, ExprKind::Identifier(_))
+            || argument.bracket_application().is_some())
     {
         return Err(TypeError::BadCall {
             func: func.to_string(),

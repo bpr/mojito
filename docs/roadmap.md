@@ -5872,6 +5872,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A plugin that sets a `PluginHooks` math hook (`unary_math_fn =
     my_exp`, typed `def[dtype: DType, width: SIMDLength, //](...)`) needs
     this, and a native layout for the hook's `OptionalReg` (R1706).
+  - Probe: `comptime k: def(Int) thin -> Int = h`, over `def h[b: Int =
+    3](y: Int)`, reports "not a compile-time Int constant: h" at module
+    scope and "a generic comptime alias must be declared at module scope"
+    inside a `def`, where the pin says "cannot implicitly convert … value
+    to 'def(Int) thin -> Int' in comptime initializer". Once the generic
+    function reaches `annotated_function_value`, its
+    `is_unbound_parametric_function` check rejects it.
   - Found while landing R1707 (2026-11-12).
   - Depends on R1706, R2147.
   - Model: Fable, Planned.
@@ -6277,34 +6284,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     types has no runtime value.
   - Upstream's result is a `TypeList` value, which Mojito's checker types
     only in compile-time positions.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R83 A bare reference to a parametric `def` reports a closure
-  escape**
-
-  Problem: `var g = inner`, for a nested `def inner[U: Copyable]`, reports
-  "closures cannot escape their defining scope (downward funargs only)".
-  The pin rejects it too, so the verdict is right and only the message is
-  wrong: the pin says "cannot use parametric function as a runtime
-  closure".
-  - A module-level parametric `def` bound the same way (`var g = as_int`
-    over `def as_int[T: Intable](x: T)`) reports the same escape message.
-  - The pin rejects `apply(as_int, 3)` with an `invalid call to 'apply'`
-    naming the conversion. Mojito's "cannot be converted from the generic
-    function …; specialize it explicitly" already says as much.
-  - Probe: `var o: OptionalReg[def[d: DType, w: SIMDLength, //](SIMD[d,
-    w]) thin -> SIMD[d, w]] = twice`, over a parametric `twice`, reports
-    "type mismatch for variable 'o'", where the pin says "cannot use
-    parametric function as a runtime closure". The direct `var o: _B =
-    twice` already gives the pin's message; the `@implicit` constructor's
-    argument does not.
-  - Probe: an empty bracket over a `def` whose parameters all default,
-    read as a value (`var g = h[]` over `def h[b: Int = 3](y: Int)`,
-    module-level or nested), runs with the defaults, where the pin
-    rejects it as a parametric runtime closure ("parameter 'b' is not
-    bound"); `h[2]` over `def h[a: Int, b: Int = 3]` defaults `b` at
-    both.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

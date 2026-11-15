@@ -394,6 +394,26 @@ pub(crate) fn is_closure_storage(ty: &Ty) -> bool {
         .is_some_and(|(name, _)| mojito_symbol::symbol::is_closure_storage_name(name))
 }
 
+/// The rejection of the parametric function type `ty` read as a runtime
+/// value, as the pin rejects a bare reference that binds none of its
+/// parameters: the note names the first unbound one.
+pub(crate) fn parametric_runtime_closure(ty: &Ty) -> TypeError {
+    TypeError::ParametricRuntimeClosure {
+        unbound: ty
+            .generator_params()
+            .and_then(mojito_types::types::ParamDecl::first_unbound),
+    }
+}
+
+/// Whether `ty` is a parametric function that leaves a declared parameter
+/// unbound, which converts to no non-parametric function type: upstream
+/// infers no specialization from the slot a reference fills.
+pub(crate) fn is_unbound_parametric_function(ty: &Ty) -> bool {
+    ty.generator_params()
+        .and_then(mojito_types::types::ParamDecl::first_unbound)
+        .is_some()
+}
+
 /// The module holding the functions the compiler calls by module path.
 pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
 
@@ -2001,6 +2021,10 @@ impl Checker {
         // A constructor's own parameters (`__init__[T: Movable](out self,
         // var value: T)`) are solved from the source, as a construction
         // solves them from its argument.
+        // A parametric function converts to no parameter of a parametric
+        // function type: upstream selects the constructor and rejects the
+        // argument as a runtime closure.
+        let parametric_parameter = std::cell::Cell::new(false);
         let matches = constructors
             .iter()
             .filter(|sig| {
@@ -2022,10 +2046,18 @@ impl Checker {
                     0,
                 )
                 .ok()?;
+                if matches!(from.kind(), TyKind::GenericFunc(_))
+                    && matches!(parameter.kind(), TyKind::GenericFunc(_))
+                {
+                    parametric_parameter.set(true);
+                }
                 (coerces(from, &parameter) && literal_admits_parameter(from, &parameter))
                     .then_some((sig, parameter, own_arguments))
             })
             .collect::<Vec<_>>();
+        if matches.is_empty() && parametric_parameter.get() {
+            return Err(parametric_runtime_closure(from));
+        }
         // A candidate binding the source to a regular parameter beats one
         // collecting it, as a call prefers a non-variadic overload.
         let mut matches = matches;

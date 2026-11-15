@@ -3373,6 +3373,31 @@ impl ParamDecl {
         }
     }
 
+    /// The first binder of `decls` a bare reference leaves unbound, with the
+    /// type it declares, as the pin's note on a parametric function used as
+    /// a runtime value names it (`parameter 'T' of type 'Intable'`).
+    pub fn first_unbound(decls: &[Self]) -> Option<(String, String)> {
+        let decl = Self::argument_binders(decls).find(|decl| !decl.is_pack_list())?;
+        let bounds_text = |bounds: &[String]| {
+            if bounds.is_empty() {
+                "AnyType".to_string()
+            } else {
+                bounds.join(" & ")
+            }
+        };
+        let declared = match decl {
+            Self::Type { bounds, .. } => bounds_text(bounds),
+            Self::Value { .. }
+                if let Some(Self::Type { bounds, .. }) = Self::pack_list(decls, decl) =>
+            {
+                bounds_text(bounds)
+            }
+            Self::Value { ty, .. } => decl.value_element_ty().unwrap_or(ty).to_string(),
+            Self::Origin { mutability, .. } => mutability.to_string(),
+        };
+        Some((decl.name().to_string(), declared))
+    }
+
     /// Whether this is an origin binder ([`Self::Origin`]).
     pub const fn is_origin(&self) -> bool {
         matches!(self, Self::Origin { .. })

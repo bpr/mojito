@@ -300,6 +300,13 @@ pub enum TypeError {
     /// A function value tried to escape by being returned (downward funargs
     /// only). The static counterpart of `RuntimeError::ClosureEscape`.
     ClosureEscape,
+    /// A parametric function read as a runtime value, which binds none of
+    /// its parameters: the pin's "cannot use parametric function as a
+    /// runtime closure", naming the first unbound parameter and the type it
+    /// declares when one is known.
+    ParametricRuntimeClosure {
+        unbound: Option<(String, String)>,
+    },
     /// `return` appearing outside any function body.
     ReturnOutsideFunction,
     /// `break` appearing outside any loop.
@@ -955,6 +962,16 @@ impl fmt::Display for TypeError {
                     f,
                     "closures cannot escape their defining scope (downward funargs only)"
                 )
+            }
+            Self::ParametricRuntimeClosure { unbound } => {
+                write!(f, "cannot use parametric function as a runtime closure")?;
+                if let Some((parameter, declared)) = unbound {
+                    write!(
+                        f,
+                        ": parameter '{parameter}' of type '{declared}' is not bound"
+                    )?;
+                }
+                Ok(())
             }
             Self::ReturnOutsideFunction => write!(f, "'return' outside of a function"),
             Self::BreakOutsideLoop => write!(f, "'break' outside of a loop"),

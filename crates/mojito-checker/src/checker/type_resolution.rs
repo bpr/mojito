@@ -726,6 +726,19 @@ impl Checker {
         if super::is_closure_storage(&actual) {
             return Err(TypeError::DynamicParameterValue);
         }
+        // A parametric function binds none of its parameters, so it is no
+        // value of a non-parametric function type: upstream infers no
+        // specialization from the slot.
+        if matches!(ty.kind(), TyKind::Func(_)) && super::is_unbound_parametric_function(&actual) {
+            return Err(TypeError::ParamValueType {
+                callee: mojito_symbol::symbol::declaration_owner_name(&decl.id().owner)
+                    .unwrap_or(&decl.id().owner)
+                    .to_string(),
+                param: name.to_string(),
+                expected: ty.to_string(),
+                found: actual.to_string(),
+            });
+        }
         if !self.value_coerces(&actual, ty) {
             return Err(TypeError::TypeMismatch {
                 expected: ty.to_string(),

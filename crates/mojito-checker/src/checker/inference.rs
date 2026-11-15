@@ -1516,13 +1516,8 @@ impl Checker {
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
                     // as the pin reports for a display element.
-                    if let (ExprKind::Identifier(name), TyKind::GenericFunc(_)) =
-                        (&value.kind, ty.kind())
-                    {
-                        return Err(TypeError::Unsupported(format!(
-                            "cannot use parametric function '{name}' as a runtime closure; \
-                             specialize it explicitly"
-                        )));
+                    if matches!(ty.kind(), TyKind::GenericFunc(_)) {
+                        return Err(super::parametric_runtime_closure(ty));
                     }
                     self.check_consuming(value, ty, "Tuple display element")?;
                 }

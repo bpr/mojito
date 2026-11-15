@@ -1170,6 +1170,14 @@ impl Checker {
             )));
         }
         match callable.kind() {
+            // A bare reference or an empty bracket binds none of the
+            // declared parameters, defaulted ones included, so the function
+            // stays parametric; only inferred origins are left to bind.
+            TyKind::GenericFunc(generic)
+                if arguments.is_empty() && ParamDecl::first_unbound(&generic.decls).is_some() =>
+            {
+                Ok((callable, Vec::new()))
+            }
             TyKind::GenericFunc(_) => {
                 self.instantiate_generic_callable_value(name, callable, &ordinary)
             }

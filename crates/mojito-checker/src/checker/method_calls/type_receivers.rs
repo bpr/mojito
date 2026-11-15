@@ -197,7 +197,7 @@ impl Checker {
         // A parametric struct's static is a member of one of its instances
         // (`P[Int].st`, `Self.st`), whose arguments its type is read at.
         let receiver = if parametric {
-            self.static_value_receiver(object, &owner, method, record)?
+            self.static_value_receiver(object, &owner, record)?
         } else {
             Vec::new()
         };
@@ -208,11 +208,8 @@ impl Checker {
                 .get(method)
                 .is_some_and(|signatures| signatures.iter().all(MethodSig::takes_ref_receiver))
         }) {
-            return Err(TypeError::BadCall {
-                func: format!("{owner}.{method}"),
-                reason: "cannot use parametric function as a runtime closure: parameter \
-                         'self_is_mut' is not bound"
-                    .to_string(),
+            return Err(TypeError::ParametricRuntimeClosure {
+                unbound: Some(("self_is_mut".to_string(), "Bool".to_string())),
             });
         }
         // A movable struct's `__init__` overload set holds the move
@@ -683,7 +680,6 @@ impl Checker {
         &self,
         object: &Expr,
         owner: &str,
-        method: &str,
         record: bool,
     ) -> Result<Vec<TyArg>, TypeError> {
         if let Some(instance) = self.alias_application_instance(object) {
@@ -709,16 +705,11 @@ impl Checker {
             }
             return Ok(arguments);
         }
-        let unbound = self
-            .structs
-            .get(owner)
-            .and_then(|info| info.argument_binders().next())
-            .map_or_else(String::new, |decl| {
-                format!(": parameter '{}' is not bound", decl.name())
-            });
-        Err(TypeError::BadCall {
-            func: format!("{owner}.{method}"),
-            reason: format!("cannot use parametric function as a runtime closure{unbound}"),
+        Err(TypeError::ParametricRuntimeClosure {
+            unbound: self
+                .structs
+                .get(owner)
+                .and_then(|info| mojito_types::types::ParamDecl::first_unbound(&info.decls())),
         })
     }
 }

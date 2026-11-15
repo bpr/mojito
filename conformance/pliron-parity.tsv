@@ -937,6 +937,7 @@ assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member_dependent_type.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member_substituted_signature.mojo	main	exe-differential	sanitized
+assets/ok/parametric_function_bracket_defaults.mojo	main	exe-differential	sanitized
 assets/ok/parametric_function_type_inline.mojo	main	exe-differential	sanitized
 assets/ok/parametric_setitem_store.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_method_value.mojo	main	exe-differential	sanitized

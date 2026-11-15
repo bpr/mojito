@@ -1919,7 +1919,10 @@ fn a_comptime_alias_of_a_parametric_function_type_is_a_type_argument() {
     );
     let error = run(&runtime).unwrap_err();
     assert!(
-        error.contains("cannot use parametric function 'add' as a runtime closure"),
+        error.contains(
+            "cannot use parametric function as a runtime closure: parameter 'dtype' of type \
+             'DType' is not bound"
+        ),
         "{error}"
     );
     let unbound =

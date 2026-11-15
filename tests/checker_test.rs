@@ -2932,7 +2932,7 @@ fn reads_a_static_method_through_its_struct_as_a_function_value() {
     ));
     let unbound = err_std(&format!("{parametric}def main():\n    var f = P.st\n"));
     assert!(
-        matches!(&unbound, TypeError::BadCall { reason, .. } if reason.contains("runtime closure")),
+        matches!(&unbound, TypeError::ParametricRuntimeClosure { unbound: Some((parameter, _)) } if parameter == "T"),
         "got {unbound:?}"
     );
 }

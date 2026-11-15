@@ -651,6 +651,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A bare reference to a parametric `def`, top-level or nested, or an empty
+  bracket over one, is now rejected as the pin rejects it: bound to a
+  variable, made a display element, or passed to an implicit constructor
+  (`Optional[_B]`), it is "cannot use parametric function as a runtime
+  closure" naming the first unbound parameter, instead of a closure escape
+  or a type mismatch; assigned or returned, it is an implicit-conversion
+  failure; and given to a non-parametric callable parameter or callable
+  default, it is rejected instead of running with its defaults. An empty
+  bracket no longer applies a function's defaulted parameters, and an
+  overload set bound without a contextual type cannot form a reference
+  (R83; `assets/type_error/parametric_function_*.mojo`,
+  `parametric_nested_function_value_binding.mojo`,
+  `overloaded_function_value_binding.mojo`,
+  `assets/ok/parametric_function_bracket_defaults.mojo`).
+
 - `reflect[T]` of a scalar or `SIMD` type (`reflect[Int].field_count()`,
   a generic `T` bound to `Float64`, `reflect[Int].field_ref[0](x)`) now
   reflects `SIMD`'s declaration, its one `_mlir_value` field, in the check

@@ -327,7 +327,7 @@ def main():
     assert!(
         error
             .to_string()
-            .contains("cannot use parametric function 'identity' as a runtime closure"),
+            .contains("cannot use parametric function as a runtime closure: parameter 'T'"),
         "{error}"
     );
 }

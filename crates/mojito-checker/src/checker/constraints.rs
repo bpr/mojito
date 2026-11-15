@@ -3160,7 +3160,9 @@ impl Checker {
                     let Some((actual, symbol)) = selected else {
                         return symbol;
                     };
-                    if !self.value_coerces(&actual, &expected) {
+                    if super::is_unbound_parametric_function(&actual)
+                        || !self.value_coerces(&actual, &expected)
+                    {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
                             found: actual.to_string(),
