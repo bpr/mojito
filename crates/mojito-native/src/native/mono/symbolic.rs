@@ -127,8 +127,9 @@ pub(super) fn type_member_application(
 }
 
 /// The answer to a reflection query over `subject` at the instance: a
-/// source struct's fields at its arguments, under the policy the checker
-/// applies to a closed subject. A subject the bindings leave symbolic, or a
+/// source struct's fields at its arguments, `SIMD`'s included
+/// ([`declared_struct_instance`]), under the policy the checker applies to
+/// a closed subject. A subject the bindings leave symbolic, or a
 /// struct the source does not declare, keeps the query.
 fn reflection_answer(
     subject: &ParamExpr,
@@ -158,11 +159,10 @@ fn reflection_answer(
     let answer = match subject.kind() {
         // A type name spells any closed type, a struct's with its
         // arguments as they stand.
-        struct_ty
-            if let Some((_, args)) = struct_ty.as_non_simd_struct()
-                && !matches!(query, ReflectQuery::TypeName(_)) =>
-        {
-            let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
+        TyKind::Struct(_, args) if !matches!(query, ReflectQuery::TypeName(_)) => {
+            let Some(instance) =
+                declared_struct_instance(&subject, bindings).map_err(unsupported)?
+            else {
                 return Ok(None);
             };
             let fields = instance

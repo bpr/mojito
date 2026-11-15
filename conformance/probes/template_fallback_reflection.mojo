@@ -8,12 +8,12 @@
 # bound struct. Re-run whenever discovery scheduling, the certificate rules,
 # or the elaborator's reflection answer change.
 #
-# A narrower question stays open: the pin answers `reflect[Int].field_count()`
-# through a generic `def` with 1, while Mojito rejects a non-struct operand
-# ("requires a struct type"). Roadmap R76 carries it.
+# A scalar bound to the same kind of template answers from `SIMD`'s one
+# declared field (`assets/ok/reflection_simd_subject.mojo`).
 #
 # Observed 2026-09-23 and 2026-10-05 against
-# `Mojo 1.2.0.dev2026092105 (e9569894)`.
+# `Mojo 1.2.0.dev2026092105 (e9569894)`, re-observed 2026-11-14 against
+# `Mojo 1.3.0.dev2026110105`.
 #
 # Run:    mojo run template_fallback_reflection.mojo
 #         cargo run -- run conformance/probes/template_fallback_reflection.mojo

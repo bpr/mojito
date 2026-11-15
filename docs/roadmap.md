@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2226**.
+Next free ID: **R2227**.
 
 ## Ordered Work
 
@@ -6226,28 +6226,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R76 `reflect[T]` of a non-struct type is rejected**
+- [ ] **R2226 `is_struct()` of an MLIR type reached as a reflected field
+  type answers `True`**
 
-  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 1, and
-  Mojito rejects it with "requires a struct type".
-  - `ReflectQuery::answer` (`param_expr.rs`) raises it for every query but
-    `is_struct()` when the check passes no field table (`fields: None`),
-    which it does for every type outside the program's struct table, the
-    builtin scalars among them.
-  - Probe: `show[R.field["x"].T]()` over `def show[T: AnyType]() -> Int:
-    return reflect[T].field_count()` and an `Int` field fails the instance
-    the same way, where the pin prints `1`.
-  - `conformance/probes/template_fallback_reflection.mojo` records the
-    observation, made 2026-09-20.
-  - Which handle methods answer for a scalar, and with what, needs a probe per
-    method before the lever is chosen.
-  - Probe: `reflect[Int].field_ref[0](3)` is rejected as "reflect[Int].field_ref
-    over a type that is not a struct"
-    (`Checker::reflected_fields`, `checker/reflection.rs`), where the pin
-    accepts it: the result is `Int`'s `!kgen.scalar<index>` storage, which
-    `print` then rejects as not `Writable`.
+  Problem: the pin answers `reflect[T].is_struct()` with `False` when `T` is
+  `comptime T = reflect[Int].field["_mlir_value"].T`, its
+  `!kgen.scalar<index>`, and Mojito answers `True`.
+  - `ReflectQuery::answer` (`param_expr.rs`) answers `is_struct()` `True`
+    for every type passed with no field table, so it cannot tell an MLIR
+    type (`TyKind::Index`, `KgenSimd`, `KgenDtype`, `KgenString`, …) from
+    a struct.
+  - The same type spelled directly answers `True` at the pin:
+    `reflect[__mlir_type.index].is_struct()`, literally or bound through a
+    generic `T`. Why the spelling matters (perhaps a source-spelled MLIR
+    type is wrapped in a struct-like attribute) needs a probe before the
+    rule is chosen.
+  - Probe: `print(reflect[T].is_struct())` and `is_s[T]()` over `def
+    is_s[T: AnyType]() -> Bool: return reflect[T].is_struct()`, with the
+    `T` above, print `False` twice at `Mojo 1.3.0.dev2026110105`; Mojito
+    prints `True` twice.
+  - `conformance/probes/reflection_builtin_is_struct.mojo` records it.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R513 A `comptime for` over another struct's compile-time list is
   rejected**

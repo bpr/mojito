@@ -651,6 +651,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `reflect[T]` of a scalar or `SIMD` type (`reflect[Int].field_count()`,
+  a generic `T` bound to `Float64`, `reflect[Int].field_ref[0](x)`) now
+  reflects `SIMD`'s declaration, its one `_mlir_value` field, in the check
+  and per instance in the elaborator, instead of being rejected as no
+  struct, as at the pin (R76; `assets/ok/reflection_simd_subject.mojo`,
+  `assets/type_error/reflection_mlir_field_type_has_no_fields.mojo`;
+  `is_struct()` of the field's MLIR type is R2226).
+
 - A trait default with a `where` clause that its conformer inherits is now
   rejected with the pin's "'where' clauses on trait methods are not
   supported", the same message as every other trait method's clause, rather

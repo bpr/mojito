@@ -5200,10 +5200,10 @@ impl ReflectQuery {
     }
 
     /// The answer for a closed `subject`. `fields` are a struct's fields,
-    /// their types at the subject's arguments; any other type passes `None`
-    /// and answers `is_struct()` alone, `True` (only an MLIR primitive, which
-    /// Mojito never spells, answers `False` at the pin), and the type-name
-    /// queries, which every type answers through `type_name`.
+    /// their types at the subject's arguments (`SIMD`'s `_mlir_value` for a
+    /// scalar); any other type passes `None` and answers `is_struct()`
+    /// alone, `True`, and the type-name queries, which every type answers
+    /// through `type_name`.
     pub fn answer(
         &self,
         subject: &Ty,

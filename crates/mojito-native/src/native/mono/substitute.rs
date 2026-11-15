@@ -257,14 +257,28 @@ pub(super) struct StructInstance<'b> {
 }
 
 /// The source struct `ty` instantiates, read off the shapes `bindings`
-/// carries. `None` where `ty` is no struct the source declares.
+/// carries. `None` where `ty` is no struct the source declares, or is a
+/// `SIMD` application, whose associated and `comptime` members are still
+/// the compiler's own rules (R1575); reflection and field projection read
+/// [`declared_struct_instance`] instead.
 pub(super) fn struct_instance<'b>(
     ty: &'b Ty,
     bindings: &'b Bindings,
 ) -> Result<Option<StructInstance<'b>>, MonoError> {
-    let Some((struct_name, struct_args)) =
-        mojito_types::types::nominal_parts(ty).filter(|_| !ty.is_simd())
-    else {
+    if ty.is_simd() {
+        return Ok(None);
+    }
+    declared_struct_instance(ty, bindings)
+}
+
+/// The source struct `ty` instantiates, `SIMD` included: a scalar's fields
+/// are `SIMD`'s declared `_mlir_value`, as upstream's reflection reads
+/// them. `None` where `ty` is no struct the source declares.
+pub(super) fn declared_struct_instance<'b>(
+    ty: &'b Ty,
+    bindings: &'b Bindings,
+) -> Result<Option<StructInstance<'b>>, MonoError> {
+    let Some((struct_name, struct_args)) = mojito_types::types::nominal_parts(ty) else {
         return Ok(None);
     };
     let Some((template, declaration)) = [struct_name, nominal_template(struct_name)]
@@ -1133,7 +1147,7 @@ fn close_field_step(
     let Some(base) = base.filter(|base| !is_symbolic(base)) else {
         return Ok(());
     };
-    let Some(instance) = struct_instance(base, bindings)? else {
+    let Some(instance) = declared_struct_instance(base, bindings)? else {
         return Err(MonoError {
             kind: MonoErrorKind::Instantiation,
             function: None,

@@ -1,16 +1,19 @@
 # PROBE: every type Mojito names is a struct to the pin's reflection.
 #
-# `Reflected[T].is_struct()` is `#kgen.is_struct_type<T>`, `False` only for
-# an MLIR primitive (`__mlir_type.index`), which no Mojito program spells:
-# a builtin scalar, `String`, `NoneType`, a vector, `DType`, a function's
-# type, and a field handle over an `Int` field all answer `True`. Both
-# compilers print the `True` lines.
+# `Reflected[T].is_struct()` is `#kgen.is_struct_type<T>`: a builtin scalar,
+# `String`, `NoneType`, a vector, `DType`, a function's type, and a field
+# handle over an `Int` field all answer `True`. A scalar is `SIMD`'s
+# application, so its `field_count()` is `SIMD`'s one `_mlir_value` field.
+# Both compilers print every line, the last `1 1 1 3` (`Int`, `Float64`,
+# `Bool`, `String`).
 #
-# The trailing `field_count()` line is the pin's alone: it prints `1 1 1 3`
-# (`Int`, `Float64`, `Bool`, `String`), while Mojito rejects a non-struct
-# operand ("requires a struct type"; roadmap R76).
+# A spelled MLIR type (`__mlir_type.index`) also answers `True` at the pin,
+# while the same `!kgen.scalar<index>` reached as `reflect[Int]`'s field
+# type answers `False`, where Mojito answers `True`.
 #
-# Observed 2026-10-04 against `Mojo 1.2.0.dev2026092105 (e9569894)`.
+# Observed 2026-10-04 against `Mojo 1.2.0.dev2026092105 (e9569894)`; the
+# `field_count()` line re-observed 2026-11-14 against
+# `Mojo 1.3.0.dev2026110105`.
 #
 # Run:    mojo run reflection_builtin_is_struct.mojo
 #         cargo run -- run conformance/probes/reflection_builtin_is_struct.mojo

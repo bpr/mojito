@@ -965,7 +965,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/reflection.rs` owns `reflect[T]` under the checker, the one
   answerer above `native::mono`: no reflection is evaluated above the check.
   `eval_reflection` answers a query from the struct table for a registered
-  struct whose fields have resolved (`StructInfo::fields_resolved`),
+  struct whose fields have resolved (`StructInfo::fields_resolved`), a
+  `SIMD` application included (its `_mlir_value`, as `reflected_fields`
+  reads it for `field_ref`),
   through `ReflectQuery::answer` (`mojito-types`, `param_expr.rs`, the one
   closed-subject policy the elaborator shares), and as a
   `ParamKind::Reflect` node (`ParamContext::reflect_query`) for a subject
@@ -3216,7 +3218,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`mono/symbolic.rs`) answers a reflection query through
   `ParamContext::answer_reflections` with `reflection_answer`, which reads
   the bound struct's fields off `Bindings::struct_shapes`
-  (`struct_instance`, `mono/substitute.rs`) and applies
+  (`declared_struct_instance`, `mono/substitute.rs`, which reads `SIMD`'s
+  declaration too, as `close_field_step` does; `struct_instance` keeps
+  `SIMD` out for its compiler-owned member rules) and applies
   `ReflectQuery::answer`; an unanswerable query
   (`ParamError::Reflect`) is a `MonoErrorKind::Instantiation` error that
   `param_constant` propagates. It then answers a builtin application

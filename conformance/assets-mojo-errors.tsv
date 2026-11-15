@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1199
+# swept-count	1200
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -960,6 +960,7 @@ assets/type_error/reflected_type_argument_is_anytype.mojo	compile-reject	agree	e
 assets/type_error/reflection_field_ref_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/reflection_field_ref_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/reflection_field_ref_wrong_argument.mojo	compile-reject	agree	error: invalid call to 'field_ref': value passed to 's' cannot be converted from 'Q' to ref 'P'
+assets/type_error/reflection_mlir_field_type_has_no_fields.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/reflection_runtime_query_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/reflection_template_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/reflection_type_name_runtime_flag.mojo	compile-reject	agree	error: invalid call to 'name': cannot use a dynamic value in a parameter list
