@@ -1,6 +1,5 @@
-# expect: DType ui128 is not supported yet
-# A `#kgen.dtype.constant` naming a dtype Mojito has no representation for
-# rejects explicitly, as its `DType` member does (R65); the pin runs it.
+# A `#kgen.dtype.constant` naming a dtype with no `SIMD` lane in Mojito
+# (`ui128`) is still a `!kgen.dtype` value: its code is upstream's.
 def main():
     comptime a = __mlir_attr.`#kgen.dtype.constant<ui128> : !kgen.dtype`
     var x: __mlir_type.`!kgen.dtype` = a

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2219**.
+Next free ID: **R2226**.
 
 ## Ordered Work
 
@@ -6209,59 +6209,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R65 Upstream `DType` names with no Mojito dtype are rejected**
-
-  Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
-  reports "DType.uint128 is not supported yet"
-  (`assets/type_error/dtype_upstream_only_rejected.mojo`, a `divergence` row of
-  `conformance/assets-mojo-errors.tsv`).
-  - The names are `bfloat16`, `int128`, `uint128`, `int256`, `uint256`, the
-    `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/`_uint4`
-    (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
-  - `Dtype::UInt` (R1389) is the latest dtype added, with every table row
-    and Pliron's predicate arms included.
-  - The declared float queries `max_exponent` and `exponent_width` in
-    `stdlib/std/builtin/dtype.mojo` answer only `float16`/`float32`/
-    `float64`; a new float format restores its upstream arms there.
-  - `llvm_intrinsic::fpclass_lane`'s smallest-normal match has a wildcard
-    arm, so a new float format adds its row there by hand.
-  - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
-    where no `SIMD` lane of it exists yet, so the value can print and compare.
-  - `Float16` set the pattern for a new lane: extend the table methods in
-    `mojito-ast`, route rounding through `Dtype::round_lane` and
-    `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
-    list the rest. The native lowering matches with wildcards, so its sites
-    need a manual `rg` pass.
-  - Each also restores its `comptime` member, its `write_to` and
-    `_from_str` arms, and the `is_float8`/`is_half_float`/`is_numeric`
-    comparisons the bundled `struct DType` omits
-    (`stdlib/std/builtin/dtype.mojo`'s header lists them).
-  - Probe: `` __mlir_attr.`#kgen.dtype.constant<ui128> : !kgen.dtype` `` is
-    rejected ("DType ui128 is not supported yet",
-    `assets/type_error/mlir_kgen_dtype_unknown_mnemonic.mojo`), where the
-    pin's `pop.dtype.to_ui8` of it prints `142`.
-  - Probe: `pop.dtype.from_ui8` of a code no `Dtype` has (`200`) fails on
-    the VM ("DType code 200 is not supported yet"), whose `Value::Dtype`
-    holds only a `Dtype`, where the pin and Pliron pass the byte through and
-    `pop.dtype.to_ui8` gives `200` back.
-  - Restore `_uint_type_of_width`'s `_uint1`, `_uint2`, `_uint4`,
-    `uint128`, and `uint256` arms in `stdlib/std/builtin/dtype.mojo`, and
-    drop its second `comptime assert`.
-  - Restore `SIMD.__hash__`'s `and Self.dtype != DType.float8_e8m0fnu`
-    conjunct and its comment in `stdlib/std/simd.mojo`.
-  - Restore `SIMD.cast`'s float8 branches, which call
-    `self.cast[DType.float32]()` and so put `cast` on a cycle of `nodebug`
-    calls. Probe: a `nodebug` `leaf[n]` holding `comptime assert k < 3`
-    and `_ = UInt64(x)` over an `Int` `x`, called from `gen[n]` and
-    `gen[5]` from `main`, keeps its instance on the pin (the trace carries
-    `("k": 5)`), since `UInt64(x)` reaches `cast` and `inline-parametric`
-    refuses a callee reaching a cycle (R924); Mojito's error names `gen`.
-  - Probe: `SIMD[DType.bool, 4](fill=True).reduce_bit_count()` prints `4`
-    at the pin but fails `pack_bits`'s assert, as do bool widths 2, 128,
-    and 256 (found while landing R1586).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R459 A reached struct instance instantiates every constructor
   overload, called or not**
 
@@ -9278,6 +9225,125 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2219 A `SIMD` lane of `DType.bfloat16` is refused**
+
+  `print(SIMD[DType.bfloat16, 2](1.5))` prints `[1.5, 1.5]` at the pin,
+  while Mojito reports "unsupported SIMD lanes of DType.bfloat16"
+  (`assets/type_error/simd_lane_dtype_unsupported.mojo`, a `divergence`
+  row of `conformance/assets-mojo-errors.tsv`).
+  - Cause: `Dtype::has_lane` (`mojito-ast`) admits no `bfloat16` lane, and
+    the elaborator's per-instance guard (`laneless_simd_lane`,
+    `mir/verify/concrete.rs`) refuses an instance holding one.
+  - Follow `Float16`'s pattern: add the rounding to `Dtype::round_lane`
+    and `Dtype::float_literal_lane`, Pliron's `BF16Type` arm, and an `rg`
+    pass over the wildcard `Dtype::Float16` sites in the VM and the native
+    lowering. `fpclass_lane` already has its row.
+  - Restore `std/utils/numerics.mojo`'s `bfloat16` arms (`nan`, `inf`,
+    `neg_inf`, `max_finite`, and the classifiers), which spell
+    `!kgen.scalar<bf16>` attributes.
+  - Then move the fixture to `assets/ok` with the pin's output.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2220 A `SIMD` lane of `DType._uint1`, `_uint2`, or `_uint4` is
+  refused**
+
+  `SIMD[DType.bool, 4](fill=True).reduce_bit_count()` prints `4` at the
+  pin, while Mojito reports "unsupported SIMD lanes of DType._uint4":
+  `pack_bits` bitcasts a narrow `bool` vector to
+  `SIMD[_uint_type_of_width[w](), 1]`.
+  - Cause: `Dtype::has_lane` admits no sub-byte integer lane. A sub-byte
+    lane is stored in a byte (`lane_layout`) but holds `bit_width` bits,
+    which `pop.bitcast`'s `storage_bits` and the VM's lane packing must
+    agree on, as LLVM's `i4` does.
+  - `ct::wrap_lane` already masks the three widths, and
+    `integer_dtype_bits` answers them.
+  - Probe: bool width 2 fails the same way (`_uint2`).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2221 A `SIMD` lane of `DType.uint128` or `DType.int128` is
+  refused**
+
+  `print(SIMD[DType.uint128, 1](7))` prints `7` at the pin, while Mojito
+  reports "unsupported SIMD lanes of DType.uint128".
+  - Cause: an integer lane is an `i128` (`CtLane::Int`, the VM's
+    `SimdLanes::Int`), which holds every `int128` but not a `uint128` above
+    `i128::MAX`, and `int_lane_binop`'s wrapping relies on the lane being
+    wider than 64 bits.
+  - `Dtype::has_lane` admits neither. `lane_layout` (16/16) and
+    `integer_dtype_bits` already answer them.
+  - Probe: `SIMD[DType.bool, 128](fill=True).reduce_bit_count()` prints
+    `128` at the pin.
+  - Probe: `var x: UInt128 = 7` is refused the same way.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2222 A `SIMD` lane of `DType.uint256` or `DType.int256` is
+  refused**
+
+  `print(SIMD[DType.int256, 1](7))` runs at the pin, while Mojito reports
+  "unsupported SIMD lanes of DType.int256".
+  - Cause: no lane representation holds 256 bits. R2221's widened integer
+    lane must reach 256 bits too, on the VM, in the compile-time fold, and
+    in Pliron's constants.
+  - Probe: `SIMD[DType.bool, 256](fill=True).reduce_bit_count()` prints
+    `256` at the pin.
+  - Depends on R2221.
+  - Model: Opus, Planned.
+
+- [ ] **R2223 A `SIMD` lane of a `float8` format is refused**
+
+  A `SIMD[DType.float8_e5m2, 1]` value runs at the pin, while Mojito
+  reports "unsupported SIMD lanes of DType.float8_e5m2".
+  - Cause: `Dtype::has_lane` admits none of the six `float8` formats, and
+    no lane rounds to one (`Dtype::round_lane`).
+  - Upstream converts each through `float32` in `SIMD.cast` (R2224's
+    branches), and `numerics.mojo`'s `float8_e3m4` classifiers cast up to
+    `bfloat16` (R2219).
+  - `float4_e2m1fn` and the two `float6` formats stay laneless: the pin's
+    `_simd_dtype_checks` refuses a `SIMD` of one too, but with its own
+    message, which Mojito's guard reports before.
+  - Restore `std/utils/numerics.mojo`'s `float8_*` and `float4_e2m1fn`
+    arms with their `!kgen.scalar<f8…>` attributes.
+  - Depends on R2219, R2224.
+  - Model: Fable, Planned.
+
+- [ ] **R2224 `SIMD.cast` omits upstream's float8, `float8_e8m0fnu`,
+  sub-byte, and GPU `bfloat16` branches**
+
+  The bundled `cast` (`stdlib/std/simd.mojo`) drops branches whose bodies
+  call `self.cast[DType.float32]()`, so `cast` is on no cycle of `nodebug`
+  calls, where upstream's is, and `inline-parametric` inlines callees the
+  pin keeps (R924's reach rule).
+  - Restoring them needs upstream's helpers `_convert_f32_to_float8`,
+    `_convert_f32_to_float8_ue8m0`, `_convert_float8_to_f16`,
+    `_convert_float8_to_f32`, and `_convert_float8_ue8m0_to_f32`, and the
+    `_has_native_bf16_support`/`_has_native_f8_support` queries.
+  - Expect inline-decision churn in `tests/mir_passes` and corpus traces.
+  - Probe: a `nodebug` `leaf[n]` holding `comptime assert k < 3` and
+    `_ = UInt64(x)` over an `Int` `x`, called from `gen[n]` and `gen[5]`
+    from `main`, keeps its instance on the pin (the trace carries
+    `("k": 5)`), since `UInt64(x)` reaches `cast`. Mojito's error names
+    `gen`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2225 A `!kgen.dtype` value holds a Mojito `Dtype` rather than
+  upstream's code byte**
+
+  `DType._from_ui8(UInt8(200)._mlir_value)` round-trips to `200` and prints
+  `<<unknown>>` at the pin, while the VM fails with "DType code 200 is not
+  supported yet". Pliron already passes the byte through.
+  - Cause: `CtValue::Dtype` and the VM's `Value::Dtype` hold an
+    `ast::Dtype`, so `fold_dtype_from_ui8` (`param_expr/fold.rs`) must
+    decode the byte to a member.
+  - Lever: hold the code (a newtype over `u8`), decoding to `Dtype` only
+    where a lane type is formed. About 30 sites build or read the two
+    variants.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -10993,12 +11059,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     already Mojo, in place of the bundled module's staged `_write_float`
     leaf, and delete the `_mojito_float_text` builtin with its checker,
     VM, and Pliron arms.
-  - Its `float64` cache is `UInt128` tables, which wait on R65.
+  - Its `float64` cache is `UInt128` tables, which need R2221's lane.
   - Probe: `Float64(-2.25).write_to(b)` into a writer that marks each
     `write_string` with `|` and wraps each `write` in `<`/`>` gives
     `|-2.25`, where the pin's Dragonbox writes
     `<|-><<|>|2><|.><<|>|2><<|>|5>`.
-  - Depends on R65.
+  - Depends on R65, R2221.
   - Model: Opus, Planned.
 
 - [ ] **R2008 No builtin body of the bundled `struct DType` folds in the
@@ -11620,7 +11686,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     must respect a non-owning flag, on both backends.
   - Upstream's `__deinit__` reaches `_drop_ref` → `capacity_bytes` →
     `_is_inline` → `UInt64(self._capacity_or_data)` → `SIMD.cast`, a cycle
-    once R65 restores `cast`'s float8 branches, so the pin keeps a
+    once R2224 restores `cast`'s float8 branches, so the pin keeps a
     `nodebug` callee that destroys a `String`, where `inline-parametric`
     inlines it (R924's reach rule). Probe: `gen[n]` calls `leaf[n](x)`,
     whose body adds the shape to `comptime assert k < 3`, `main` calls

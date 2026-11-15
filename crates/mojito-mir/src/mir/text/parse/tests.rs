@@ -461,6 +461,7 @@ fn constant_families_reprint_byte_identically() {
             ))),
         },
         Const::Dtype(Dtype::UInt16),
+        Const::Dtype(Dtype::UInt1),
         Const::None,
         Const::UninitMem,
     ];

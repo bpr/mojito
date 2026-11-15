@@ -2916,6 +2916,28 @@ pub fn mentions_open(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
     mentions_below(ty, predicate, true)
 }
 
+/// The dtype of a `SIMD` type, or of `!kgen.simd` storage, in `ty` (itself
+/// or nested) that names a known dtype no lane exists for
+/// ([`Dtype::has_lane`]), or `None`.
+pub fn laneless_simd_dtype(ty: &Ty) -> Option<Dtype> {
+    let found = std::cell::Cell::new(None);
+    mentions(ty, &|ty| {
+        let laneless = simd_slots(ty.kind())
+            .or_else(|| kgen_simd_slots(ty.kind()))
+            .and_then(|(dtype, _)| dtype.known())
+            .filter(|dtype| !dtype.has_lane());
+        found.set(found.get().or(laneless));
+        laneless.is_some()
+    });
+    found.get()
+}
+
+/// The construct a refusal of `SIMD` lanes of `dtype` names, lanes
+/// [`Dtype::has_lane`] does not admit.
+pub fn laneless_simd_message(dtype: Dtype) -> String {
+    format!("SIMD lanes of DType.{}", dtype.name())
+}
+
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
 /// from `[name: X]` by whether `X` is a trait or a type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

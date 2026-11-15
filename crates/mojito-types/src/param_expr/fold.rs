@@ -500,7 +500,8 @@ pub fn fold_get_env(ty: &Ty, name: &CtValue) -> Result<CtValue, ParamError> {
 }
 
 /// `pop.dtype.from_ui8` over a concrete `ui8` code: the dtype it names.
-/// A code no Mojito dtype has is unsupported.
+/// A code no `DType` member has is unsupported, since a `!kgen.dtype`
+/// value holds a member rather than the byte.
 pub fn fold_dtype_from_ui8(code: &CtValue) -> Result<CtValue, ParamError> {
     let lane = match code {
         CtValue::Simd {

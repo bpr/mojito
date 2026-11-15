@@ -1,6 +1,5 @@
 # Upstream's `std/memory/unsafe.mojo`: `bitcast`, `_llvm_bitwidth`, and
-# `pack_bits`. `_llvm_bitwidth` omits its `_uint1`, `_uint2`,
-# `_uint4`, `uint128`, and `uint256` arms until R65 admits those dtypes.
+# `pack_bits`.
 """Provides utility functions for unsafe manipulation of SIMD values.
 
 You can import these APIs from the `memory` package. For example:
@@ -107,10 +106,15 @@ def bitcast[
 def _llvm_bitwidth(dtype: DType) -> Int:
     # fmt: off
     return (
+        1 if dtype == ._uint1 else
+        2 if dtype == ._uint2 else
+        4 if dtype == ._uint4 else
         8 if dtype == .uint8 else
         16 if dtype == .uint16 else
         32 if dtype == .uint32 else
         64 if dtype == .uint64 else
+        128 if dtype == .uint128 else
+        256 if dtype == .uint256 else
         -1
     )
     # fmt: on

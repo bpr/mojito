@@ -1021,7 +1021,7 @@ pub fn fpclass_lane(dtype: Dtype, lane: f64, test: u32) -> bool {
     let negative = lane.is_sign_negative();
     let smallest_normal = match dtype {
         Dtype::Float16 => 2f64.powi(-14),
-        Dtype::Float32 => f64::from(f32::MIN_POSITIVE),
+        Dtype::Float32 | Dtype::BFloat16 => f64::from(f32::MIN_POSITIVE),
         _ => f64::MIN_POSITIVE,
     };
     let class = if lane.is_nan() {

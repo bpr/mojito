@@ -20,6 +20,9 @@ use mojito_types::types::{TyKind, has_no_llvm_type};
 
 /// The concreteness findings for one function body.
 ///
+/// A `SIMD` of a dtype no lane exists for ([`laneless_simd_lane`]) is the
+/// one finding reported, alone.
+///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
 /// a compile-time argument slot a call still carries, a reference slot read
@@ -36,6 +39,12 @@ pub fn concrete_function_findings(
     function: &MirFunction,
     declarations: Option<&MirDeclarations>,
 ) -> Vec<String> {
+    if let Some(dtype) = laneless_simd_lane(function) {
+        return vec![format!(
+            "MIR function '{name}' holds {}, which are not supported yet",
+            mojito_types::types::laneless_simd_message(dtype)
+        )];
+    }
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
     let signature = function
@@ -59,6 +68,31 @@ pub fn concrete_function_findings(
     }
     concrete_block(name, function, declarations, &function.body, &mut errors);
     errors
+}
+
+/// The first laneless dtype a `SIMD` value of `function` names.
+///
+/// A dtype is laneless when [`Dtype::has_lane`] refuses it. The values are
+/// the signature's and those of the registers an instruction of the body
+/// defines: a register table entry no instruction defines is the residue
+/// of a pruned `comptime if` branch, which holds no value.
+///
+/// [`Dtype::has_lane`]: mojito_ast::ast::Dtype::has_lane
+pub fn laneless_simd_lane(function: &MirFunction) -> Option<mojito_ast::ast::Dtype> {
+    let mut defined = Vec::new();
+    crate::mir::defined_registers(&function.body, &mut defined);
+    defined.sort_unstable_by_key(|register| register.0);
+    function
+        .param_types
+        .iter()
+        .chain(function.ret_ty.iter())
+        .chain(function.error_ty.iter())
+        .chain(
+            defined
+                .iter()
+                .filter_map(|register| function.reg_types.get(&register.0)),
+        )
+        .find_map(mojito_types::types::laneless_simd_dtype)
 }
 
 /// What LLVM translation rejects in a folded function body.

@@ -1476,9 +1476,9 @@ impl ParamContext {
     /// `@always_inline("builtin")` body folds into the parameter
     /// expression: a `_match` tests a mask bit of the dtype's code
     /// ([`ParamOp::DtypeToUi8`]), beside comparisons with `DType.int` and
-    /// `DType.uint`. A comparison with a dtype Mojito does not represent
-    /// (`bfloat16`, the eight-bit and narrower floats) is `False`. `None`
-    /// for any other method.
+    /// `DType.uint`, and `is_float8`, `is_half_float`, and `is_numeric`
+    /// compare with the low-precision float members as upstream's bodies do.
+    /// `None` for any other method.
     pub fn dtype_predicate(
         &self,
         method: &str,
@@ -1532,9 +1532,26 @@ impl ParamContext {
                     )?,
                 )
             })(),
-            "is_numeric" => (|| or(integral()?, floating()?))(),
-            "is_float8" => Ok(self.boolean(false)),
-            "is_half_float" => is(Dtype::Float16),
+            "is_numeric" => (|| {
+                let isnt = |other| self.not(&is(other)?);
+                let arithmetic = and(
+                    and(isnt(Dtype::Float4E2M1Fn)?, isnt(Dtype::Float6E2M3Fn)?)?,
+                    and(isnt(Dtype::Float6E3M2Fn)?, isnt(Dtype::Float8E8M0Fnu)?)?,
+                )?;
+                or(integral()?, and(floating()?, arithmetic)?)
+            })(),
+            "is_float8" => (|| {
+                [
+                    Dtype::Float8E3M4,
+                    Dtype::Float8E4M3Fn,
+                    Dtype::Float8E4M3Fnuz,
+                    Dtype::Float8E5M2,
+                    Dtype::Float8E5M2Fnuz,
+                ]
+                .into_iter()
+                .try_fold(is(Dtype::Float8E8M0Fnu)?, |any, other| or(any, is(other)?))
+            })(),
+            "is_half_float" => (|| or(is(Dtype::BFloat16)?, is(Dtype::Float16)?))(),
             _ => return None,
         })
     }
@@ -2691,6 +2708,12 @@ impl ParamContext {
                 });
             }
         };
+        if let Some(dtype) = crate::types::laneless_simd_dtype(&ty) {
+            return Err(ParamError::Unsupported(format!(
+                "{} are not supported yet",
+                crate::types::laneless_simd_message(dtype)
+            )));
+        }
         if let [Some(result), Some(value)] = [operands[0].as_constant(), operands[1].as_constant()]
         {
             self.count_fold();

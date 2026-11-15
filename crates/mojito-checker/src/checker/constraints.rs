@@ -7355,16 +7355,19 @@ fn simd_construction(
 ) -> Result<CtValue, TypeError> {
     let lanes =
         mojito_types::ct::simd_construction_lanes(dtype, width, values).map_err(|error| {
-            TypeError::NotComptime(match error {
-                SimdConstructionError::Arity => format!(
-                    "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
-                    dtype.name()
-                ),
-                SimdConstructionError::Lane => format!(
-                    "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
-                    dtype.name()
-                ),
-            })
+            let name = dtype.name();
+            match error {
+                SimdConstructionError::Dtype => TypeError::Unsupported(format!(
+                    "{} are not supported yet",
+                    mojito_types::types::laneless_simd_message(dtype)
+                )),
+                SimdConstructionError::Arity => TypeError::NotComptime(format!(
+                    "SIMD[DType.{name}, {width}] construction expects one lane or {width} lanes"
+                )),
+                SimdConstructionError::Lane => TypeError::NotComptime(format!(
+                    "a SIMD[DType.{name}, {width}] lane needs a compile-time scalar"
+                )),
+            }
         })?;
     Ok(CtValue::Simd { dtype, lanes })
 }

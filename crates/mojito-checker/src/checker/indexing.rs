@@ -2207,15 +2207,9 @@ impl Checker {
         Some(
             mojito_ast::ast::Dtype::from_name(field)
                 .map(SimdDtype::Known)
-                .ok_or_else(|| {
-                    if mojito_ast::ast::UPSTREAM_ONLY_DTYPE_NAMES.contains(&field) {
-                        TypeError::Unsupported(format!("DType.{field} is not supported yet"))
-                    } else {
-                        TypeError::NoSuchField {
-                            object_type: "DType".to_string(),
-                            field: field.to_string(),
-                        }
-                    }
+                .ok_or_else(|| TypeError::NoSuchField {
+                    object_type: "DType".to_string(),
+                    field: field.to_string(),
                 }),
         )
     }

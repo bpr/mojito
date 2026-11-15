@@ -5,7 +5,8 @@
 # The `comptime match` cases for the `float8_*` and `bfloat16` dtypes,
 # `max_finite`'s `float4_e2m1fn`, `float8_*`, and `bfloat16` arms, and the
 # classifiers' `float8_*`, `float4_e2m1fn`, and `bfloat16` arms and
-# `dtype in (…)` tests are omitted: Mojito has none of those dtypes (R65).
+# `dtype in (…)` tests are omitted until those dtypes have `SIMD` lanes
+# (R2219, R2223).
 # `get_accum_type`, `nextafter`, and `FlushDenormals` are not ported.
 """Defines utilities to work with numeric types.
 

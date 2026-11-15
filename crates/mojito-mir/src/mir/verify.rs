@@ -131,7 +131,7 @@ mod types;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use calls::*;
 use concrete::verify_concrete_program;
-pub use concrete::{concrete_function_findings, llvm_translation_findings};
+pub use concrete::{concrete_function_findings, laneless_simd_lane, llvm_translation_findings};
 use drops::{verify_register_destroys, verify_slot_ends};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;

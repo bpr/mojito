@@ -7832,9 +7832,8 @@ fn index_array_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), T
 /// The constant `` `body : ty` `` spells and its type, for the typed
 /// attributes the subset reads ([`mlir_attribute`]).
 /// `` `#kgen.dtype.constant<mnemonic> : !kgen.dtype` ``, upstream's spelling
-/// of a `DType` member's code: the dtype the mnemonic names. A mnemonic
-/// upstream has and Mojito does not (`ui128`) is rejected, as its `DType`
-/// member is (R65). `None` for any other attribute.
+/// of a `DType` member's code: the dtype the mnemonic names, and an error
+/// for a mnemonic no `DType` member has. `None` for any other attribute.
 fn dtype_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), TypeError>> {
     let mnemonic = body
         .strip_prefix("#kgen.dtype.constant<")?
@@ -7846,9 +7845,7 @@ fn dtype_attribute(body: &str, ty: &str) -> Option<Result<(CtValue, Ty), TypeErr
     Some(
         mojito_ast::ast::Dtype::from_kgen_mnemonic(mnemonic)
             .map(|dtype| (CtValue::Dtype(dtype), Ty::kgen_dtype()))
-            .ok_or_else(|| {
-                TypeError::Unsupported(format!("DType {mnemonic} is not supported yet"))
-            }),
+            .ok_or_else(|| TypeError::Unsupported(format!("unknown DType mnemonic `{mnemonic}`"))),
     )
 }
 

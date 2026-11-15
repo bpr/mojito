@@ -3,17 +3,8 @@
 # `_uint_type_of_width`, `_integral_type_of`, and
 # `_unsigned_integral_type_of`.
 #
-# The members `_uint1`, `_uint2`, `_uint4`, `uint128`, `int128`, `uint256`,
-# `int256`, `float4_e2m1fn`, `float6_*`, `float8_*`, and `bfloat16` are
-# omitted until R65 admits those dtypes, with their `write_to` and
-# `_from_str` arms; `is_float8` is `False`, `is_half_float` tests `float16`
-# alone, `is_numeric` drops the comparisons with omitted members, and the
-# float queries `mantissa_width`, `max_exponent`, `exponent_width`, and
-# `exponent_bias` drop their arms over omitted members. `__mlir_type`, whose
-# `!kgen.deferred` result is outside the subset, is omitted. The `int128`,
-# `int256`, `_uint1`, `_uint2`, `_uint4`, `uint128`, and `uint256` arms of
-# the free functions are omitted too; a second assert rejects their widths
-# explicitly.
+# `__mlir_type`, whose `!kgen.deferred` result is outside the subset, is
+# omitted.
 #
 # `struct DType` omits `KeyElement` from its conformances, which the bundled
 # library does not declare (R237); `Equatable`, `Hashable`, and
@@ -112,6 +103,16 @@ struct DType(
     """Represents an unsigned integral type whose bitwidth is the maximum
     unsigned integral value on the system."""
 
+    comptime _uint1 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<ui1> : !kgen.dtype`
+    )
+    comptime _uint2 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<ui2> : !kgen.dtype`
+    )
+    comptime _uint4 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<ui4> : !kgen.dtype`
+    )
+
     comptime uint8 = DType(
         mlir_value=__mlir_attr.`#kgen.dtype.constant<ui8> : !kgen.dtype`
     )
@@ -144,7 +145,173 @@ struct DType(
         mlir_value=__mlir_attr.`#kgen.dtype.constant<si64> : !kgen.dtype`
     )
     """Represents a signed integer type whose bitwidth is 64."""
+    comptime uint128 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<ui128> : !kgen.dtype`
+    )
+    """Represents an unsigned integer type whose bitwidth is 128."""
+    comptime int128 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<si128> : !kgen.dtype`
+    )
+    """Represents a signed integer type whose bitwidth is 128."""
+    comptime uint256 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<ui256> : !kgen.dtype`
+    )
+    """Represents an unsigned integer type whose bitwidth is 256."""
+    comptime int256 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<si256> : !kgen.dtype`
+    )
+    """Represents a signed integer type whose bitwidth is 256."""
 
+    comptime float4_e2m1fn = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f4e2m1fn> : !kgen.dtype`
+    )
+    """Represents a 4-bit `e2m1` floating point format.
+
+    This type is encoded as `s.ee.m` and defined by the
+    [Open Compute MX Format Specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf):
+
+    - (s)ign: 1 bit
+    - (e)xponent: 2 bits
+    - (m)antissa: 1 bits
+    - exponent_bias: 1
+    """
+
+    comptime float6_e2m3fn = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f6e2m3fn> : !kgen.dtype`
+    )
+    """Represents a 6-bit `e2m3` floating point format.
+
+    This type is encoded as `s.ee.mmm` and defined by the
+    [Open Compute MX Format Specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf):
+
+    - (s)ign: 1 bit
+    - (e)xponent: 2 bits
+    - (m)antissa: 3 bits
+    - exponent_bias: 1
+    - fn: finite (no inf or nan encodings; every bit pattern is a number)
+    - max: 7.5, min normal: 1.0, min subnormal: 0.125
+    """
+
+    comptime float6_e3m2fn = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f6e3m2fn> : !kgen.dtype`
+    )
+    """Represents a 6-bit `e3m2` floating point format.
+
+    This type is encoded as `s.eee.mm` and defined by the
+    [Open Compute MX Format Specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf):
+
+    - (s)ign: 1 bit
+    - (e)xponent: 3 bits
+    - (m)antissa: 2 bits
+    - exponent_bias: 3
+    - fn: finite (no inf or nan encodings; every bit pattern is a number)
+    - max: 28.0, min normal: 0.25, min subnormal: 0.0625
+    """
+
+    comptime float8_e8m0fnu = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e8m0fnu> : !kgen.dtype`
+    )
+    """Represents the 8-bit `E8M0Fnu` floating point format.
+
+    This type is defined in section 5.4 of the
+    [OFP8 standard](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf),
+    encoded as `eeeeeeee`:
+
+    - (e)xponent: 8 bits
+    - (m)antissa: 0 bits
+    - exponent bias: 127
+    - nan: 11111111
+    - fn: finite (no inf or -inf encodings)
+    - u: no sign or zero value.
+    """
+    comptime float8_e3m4 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e3m4> : !kgen.dtype`
+    )
+    """Represents an 8-bit `e3m4` floating point format.
+
+    This type is encoded as `s.eee.mmmm`:
+
+    - (s)ign: 1 bit
+    - (e)xponent: 3 bits
+    - (m)antissa: 4 bits
+    - exponent bias: 3
+    - nan: {0,1}.111.1111
+    - fn: finite (no inf or -inf encodings)
+    - -0: 1.000.0000
+    """
+    comptime float8_e4m3fn = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e4m3fn> : !kgen.dtype`
+    )
+    """Represents the 8-bit `E4M3` floating point format defined in the
+    [OFP8 standard](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1).
+
+    This type is named differently across libraries and vendors, for example:
+    - Mojo, PyTorch, JAX, and LLVM refer to it as `e4m3fn`.
+    - OCP, NVIDIA CUDA, and AMD ROCm refer to it as `e4m3`.
+
+    In these contexts, they are all referring to the same finite type specified
+    in the OFP8 standard above, encoded as `s.eeee.mmm`:
+
+    - (s)ign: 1 bit
+    - (e)xponent: 4 bits
+    - (m)antissa: 3 bits
+    - exponent bias: 7
+    - nan: {0,1}.1111.111
+    - fn: finite (no inf or -inf encodings)
+    - -0: 1.0000.000
+    """
+    comptime float8_e4m3fnuz = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e4m3fnuz> : !kgen.dtype`
+    )
+    """Represents an 8-bit `e4m3fnuz` floating point format.
+
+    See the [format reference](https://arxiv.org/pdf/2206.02915), encoded as `s.eeee.mmm`:
+
+    - (s)ign: 1 bit
+    - (e)xponent: 4 bits
+    - (m)antissa: 3 bits
+    - exponent bias: 8
+    - nan: 1.0000.000
+    - fn: finite (no inf or -inf encodings)
+    - uz: unsigned zero (no -0 encoding)
+    """
+    comptime float8_e5m2 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e5m2> : !kgen.dtype`
+    )
+    """Represents the 8-bit `E5M2` floating point format.
+
+    This type is defined in the
+    [OFP8 standard](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1),
+    encoded as `s.eeeee.mm`:
+
+    - (s)ign: 1 bit
+    - (e)xponent: 5 bits
+    - (m)antissa: 2 bits
+    - exponent bias: 15
+    - nan: {0,1}.11111.{01,10,11}
+    - inf: {0,1}.11111.00
+    - -0: 1.00000.00
+    """
+    comptime float8_e5m2fnuz = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<f8e5m2fnuz> : !kgen.dtype`
+    )
+    """Represents an 8-bit `e5m2fnuz` floating point format.
+
+    See the [format reference](https://arxiv.org/pdf/2206.02915), encoded as `s.eeeee.mm`:
+
+    - (s)ign: 1 bit
+    - (e)xponent: 5 bits
+    - (m)antissa: 2 bits
+    - exponent bias: 16
+    - nan: 1.00000.00
+    - fn: finite (no inf or -inf encodings)
+    - uz: unsigned zero (no -0 encoding)
+    """
+
+    comptime bfloat16 = DType(
+        mlir_value=__mlir_attr.`#kgen.dtype.constant<bf16> : !kgen.dtype`
+    )
+    """Represents a brain floating point value whose bitwidth is 16."""
     comptime float16 = DType(
         mlir_value=__mlir_attr.`#kgen.dtype.constant<f16> : !kgen.dtype`
     )
@@ -209,6 +376,34 @@ struct DType(
                 return DType.uint64
             case "int64":
                 return DType.int64
+            case "uint128":
+                return DType.uint128
+            case "int128":
+                return DType.int128
+            case "uint256":
+                return DType.uint256
+            case "int256":
+                return DType.int256
+            case "float4_e2m1fn":
+                return DType.float4_e2m1fn
+            case "float6_e2m3fn":
+                return DType.float6_e2m3fn
+            case "float6_e3m2fn":
+                return DType.float6_e3m2fn
+            case "float8_e3m4":
+                return DType.float8_e3m4
+            case "float8_e4m3fn":
+                return DType.float8_e4m3fn
+            case "float8_e4m3fnuz":
+                return DType.float8_e4m3fnuz
+            case "float8_e8m0fnu":
+                return DType.float8_e8m0fnu
+            case "float8_e5m2":
+                return DType.float8_e5m2
+            case "float8_e5m2fnuz":
+                return DType.float8_e5m2fnuz
+            case "bfloat16":
+                return DType.bfloat16
             case "float16":
                 return DType.float16
             case "float32":
@@ -258,7 +453,37 @@ struct DType(
                 return writer.write_string("uint64")
             case .int64:
                 return writer.write_string("int64")
+            case .uint128:
+                return writer.write_string("uint128")
+            case .int128:
+                return writer.write_string("int128")
+            case .uint256:
+                return writer.write_string("uint256")
+            case .int256:
+                return writer.write_string("int256")
 
+            case .float4_e2m1fn:
+                return writer.write_string("float4_e2m1fn")
+            case .float6_e2m3fn:
+                return writer.write_string("float6_e2m3fn")
+            case .float6_e3m2fn:
+                return writer.write_string("float6_e3m2fn")
+
+            case .float8_e3m4:
+                return writer.write_string("float8_e3m4")
+            case .float8_e4m3fn:
+                return writer.write_string("float8_e4m3fn")
+            case .float8_e4m3fnuz:
+                return writer.write_string("float8_e4m3fnuz")
+            case .float8_e8m0fnu:
+                return writer.write_string("float8_e8m0fnu")
+            case .float8_e5m2:
+                return writer.write_string("float8_e5m2")
+            case .float8_e5m2fnuz:
+                return writer.write_string("float8_e5m2fnuz")
+
+            case .bfloat16:
+                return writer.write_string("bfloat16")
             case .float16:
                 return writer.write_string("float16")
 
@@ -434,7 +659,14 @@ struct DType(
             True if the dtype is a 8bit-precision float, false otherwise.
         """
 
-        return False
+        return (
+            self == DType.float8_e8m0fnu
+            or self == DType.float8_e3m4
+            or self == DType.float8_e4m3fn
+            or self == DType.float8_e4m3fnuz
+            or self == DType.float8_e5m2
+            or self == DType.float8_e5m2fnuz
+        )
 
     @always_inline("builtin")
     def is_half_float(self) -> Bool:
@@ -445,7 +677,7 @@ struct DType(
             True if the dtype is a half-precision float, false otherwise..
         """
 
-        return self == DType.float16
+        return self == DType.bfloat16 or self == DType.float16
 
     @always_inline("builtin")
     def is_numeric(self) -> Bool:
@@ -456,7 +688,15 @@ struct DType(
             Returns True if the input type parameter is either integral or
               floating-point.
         """
-        return self.is_integral() or self.is_floating_point()
+        return self.is_integral() or (
+            self.is_floating_point()
+            and (
+                self != DType.float4_e2m1fn
+                and self != DType.float6_e2m3fn
+                and self != DType.float6_e3m2fn
+                and self != DType.float8_e8m0fnu
+            )
+        )
 
     # ===-------------------------------------------------------------------===#
     # Floating point generics
@@ -476,7 +716,15 @@ struct DType(
         comptime assert (
             dtype.is_floating_point()
         ), "dtype must be floating point"
-        return bit_width_of[dtype]() - DType.exponent_width[dtype]() - 1
+        comptime match dtype:
+            case DType.float4_e2m1fn:
+                return 1
+            case DType.float6_e2m3fn:
+                return 3
+            case DType.float6_e3m2fn:
+                return 2
+            case _:
+                return bit_width_of[dtype]() - DType.exponent_width[dtype]() - 1
 
     @staticmethod
     @inline(.nodebug)
@@ -495,9 +743,17 @@ struct DType(
             dtype.is_floating_point()
         ), "dtype must be floating point"
 
-        comptime if dtype == DType.float16:
+        comptime if dtype == DType.float4_e2m1fn:
+            return 2
+        elif dtype == DType.float6_e2m3fn:
+            return 2
+        elif dtype == DType.float6_e3m2fn:
+            return 4
+        elif dtype in (DType.float8_e4m3fn, DType.float8_e4m3fnuz):
+            return 8
+        elif dtype in (DType.float8_e5m2, DType.float8_e5m2fnuz, DType.float16):
             return 16
-        elif dtype == DType.float32:
+        elif dtype in (DType.bfloat16, DType.float32):
             return 128
         elif dtype == DType.float64:
             return 1024
@@ -519,9 +775,17 @@ struct DType(
             dtype.is_floating_point()
         ), "dtype must be floating point"
 
-        comptime if dtype == DType.float16:
+        comptime if dtype == DType.float4_e2m1fn:
+            return 2
+        elif dtype == DType.float6_e2m3fn:
+            return 2
+        elif dtype == DType.float6_e3m2fn:
+            return 3
+        elif dtype in (DType.float8_e4m3fn, DType.float8_e4m3fnuz):
+            return 4
+        elif dtype in (DType.float8_e5m2, DType.float8_e5m2fnuz, DType.float16):
             return 5
-        elif dtype == DType.float32:
+        elif dtype in (DType.float32, DType.bfloat16):
             return 8
         elif dtype == DType.float64:
             return 11
@@ -540,7 +804,10 @@ struct DType(
             The exponent bias.
         """
 
-        return DType.max_exponent[dtype]() - 1
+        comptime if dtype in (DType.float8_e4m3fnuz, DType.float8_e5m2fnuz):
+            return DType.max_exponent[dtype]()
+        else:
+            return DType.max_exponent[dtype]() - 1
 
 
 # ===-------------------------------------------------------------------===#
@@ -558,12 +825,6 @@ def _int_type_of_width[width: Int]() -> DType:
         128,
         256,
     ), "width must be either 8, 16, 32, 64, 128, or 256"
-    comptime assert width in (
-        8,
-        16,
-        32,
-        64,
-    ), "an int DType of width 128 or 256 is not supported yet"
 
     comptime match width:
         case 8:
@@ -572,8 +833,12 @@ def _int_type_of_width[width: Int]() -> DType:
             return DType.int16
         case 32:
             return DType.int32
-        case _:
+        case 64:
             return DType.int64
+        case 128:
+            return DType.int128
+        case _:
+            return DType.int256
 
 
 # ===-------------------------------------------------------------------===#
@@ -587,14 +852,16 @@ def _uint_type_of_width[width: Int]() -> DType:
     comptime assert width in (
         1, 2, 4, 8, 16, 32, 64, 128, 256,
     ), "width must be 1, 2, 4, 8, 16, 32, 64, 128, or 256"
-    comptime assert width in (
-        8, 16, 32, 64,
-    ), "a uint DType of width 1, 2, 4, 128, or 256 is not supported yet"
     return (
+        DType._uint1 if width == 1 else
+        DType._uint2 if width == 2 else
+        DType._uint4 if width == 4 else
         DType.uint8 if width == 8 else
         DType.uint16 if width == 16 else
         DType.uint32 if width == 32 else
-        DType.uint64
+        DType.uint64 if width == 64 else
+        DType.uint128 if width == 128 else
+        DType.uint256
     )
     # fmt: on
 

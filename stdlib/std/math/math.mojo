@@ -11,10 +11,9 @@
 # kernels `_assert_float64_supported`, `_log_kernel`, `_is_zero_bits`,
 # `_is_subnormal_bits`, `_frexp_bits`, `_log_reduce`, `_log_combine`, and
 # `_log_accurate`, verbatim (the buffer overload of `iota` is omitted).
-# The traits precede the functions, where upstream interleaves them. The
-# masks' `bfloat16` cases are omitted (R65), and so
-# are `log`'s `is_nvidia_gpu()` arm through `log2` and `exp`'s `is_gpu()`
-# arm through `exp2`, which are not ported (R1760). The
+# The traits precede the functions, where upstream interleaves them.
+# `log`'s `is_nvidia_gpu()` arm through `log2` and `exp`'s `is_gpu()`
+# arm through `exp2` are not ported (R1760). The
 # `std.string` import is explicit, as bundled modules' are. Upstream's
 # `from . import` line omits `nextafter`, which the package does not yet
 # re-export. The prelude exports `Absable`, `Roundable`, `abs`, `divmod`,
@@ -328,6 +327,8 @@ def _frexp_mask1[
     comptime match dtype:
         case .float16:
             return 0x7C00
+        case .bfloat16:
+            return 0x7F80
         case .float32:
             return 0x7F800000
         case _:
@@ -342,6 +343,8 @@ def _frexp_mask2[
     comptime match dtype:
         case .float16:
             return 0x3800
+        case .bfloat16:
+            return 0x3F00
         case .float32:
             return 0x3F000000
         case _:

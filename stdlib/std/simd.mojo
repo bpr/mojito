@@ -33,19 +33,14 @@
 # R1585, R1586; `_dynamic_shuffle` is R1777's),
 # `write_padded` is not ported
 # (R1663). `py=` is not ported.
-# `_simd_dtype_checks` is `True`: Mojito has no
-# sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
-# conjunct for the same reason. The struct declares
+# The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
-# trait list has no `Floatable`. The type aliases omit `Int128`,
-# `UInt128`, `Int256`, `UInt256`, `BFloat16`, and the float4 and float8
-# ones (R65), and `Scalar` spells its length `1` through `SIMDLength`'s
+# trait list has no `Floatable`. `Scalar` spells its length `1` through
+# `SIMDLength`'s
 # implicit conversion, where upstream spells the `#lit.struct` attribute.
 # `cast` omits upstream's `bfloat16` branches on NVIDIA and AMD, and its
-# float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4` branches (R65):
-# Mojito has none of those dtypes.
-# `_scalar_repr_alias` omits the `int128`, `uint128`, `int256`, `uint256`,
-# `bfloat16`, `float4`, and `float8` cases (R65). `Optional` and
+# float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4` branches, with
+# the float8 conversion helpers they call (R2224). `Optional` and
 # `StaticString` are imported, which upstream's prelude provides (R894).
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
@@ -151,6 +146,98 @@ comptime Int64 = Scalar[DType.int64]
 """Represents a 64-bit signed scalar integer."""
 comptime UInt64 = Scalar[DType.uint64]
 """Represents a 64-bit unsigned scalar integer."""
+comptime Int128 = Scalar[DType.int128]
+"""Represents a 128-bit signed scalar integer."""
+comptime UInt128 = Scalar[DType.uint128]
+"""Represents a 128-bit unsigned scalar integer."""
+comptime Int256 = Scalar[DType.int256]
+"""Represents a 256-bit signed scalar integer."""
+comptime UInt256 = Scalar[DType.uint256]
+"""Represents a 256-bit unsigned scalar integer."""
+
+comptime Float4_e2m1fn = Scalar[DType.float4_e2m1fn]
+"""Represents a 4-bit `e2m1` floating point format.
+
+This type is encoded as `s.ee.m` and defined by the
+[Open Compute MX Format Specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf):
+
+- (s)ign: 1 bit
+- (e)xponent: 2 bits
+- (m)antissa: 1 bits
+- exponent_bias: 1
+"""
+comptime Float8_e5m2 = Scalar[DType.float8_e5m2]
+"""Represents the 8-bit E5M2 floating point format.
+
+This type is from the [OFP8
+standard](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1),
+encoded as `seeeeemm`:
+- (s)ign: 1 bit
+- (e)xponent: 5 bits
+- (m)antissa: 2 bits
+- exponent bias: 15
+- nan: {0,1}11111{01,10,11}
+- inf: 01111100
+- -inf: 11111100
+- -0: 10000000
+"""
+comptime Float8_e5m2fnuz = Scalar[DType.float8_e5m2fnuz]
+"""Represents an 8-bit floating point format.
+
+This type is encoded as `seeeeemm`:
+- (s)ign: 1 bit
+- (e)xponent: 5 bits
+- (m)antissa: 2 bits
+- exponent bias: 16
+- nan: 10000000
+- fn: finite (no inf or -inf encodings)
+- uz: unsigned zero (no -0 encoding)
+"""
+comptime Float8_e4m3fn = Scalar[DType.float8_e4m3fn]
+"""Represents the E4M3 floating point format defined in the [OFP8
+standard](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1).
+
+This type is named differently across libraries and vendors, for example:
+- Mojo, PyTorch, JAX, and LLVM refer to it as `e4m3fn`.
+- OCP, NVIDIA CUDA, and AMD ROCm refer to it as `e4m3`.
+
+In these contexts, they are all referring to the same finite type specified
+in the OFP8 standard above, encoded as `seeeemmm`:
+- (s)ign: 1 bit
+- (e)xponent: 4 bits
+- (m)antissa: 3 bits
+- exponent bias: 7
+- nan: 01111111, 11111111
+- -0: 10000000
+- fn: finite (no inf or -inf encodings)
+"""
+comptime Float8_e4m3fnuz = Scalar[DType.float8_e4m3fnuz]
+"""Represents an 8-bit e4m3fnuz floating point format.
+
+This type is encoded as `seeeemmm`:
+- (s)ign: 1 bit
+- (e)xponent: 4 bits
+- (m)antissa: 3 bits
+- exponent bias: 8
+- nan: 10000000
+- fn: finite (no inf or -inf encodings)
+- uz: unsigned zero (no -0 encoding)
+"""
+comptime Float8_e8m0fnu = Scalar[DType.float8_e8m0fnu]
+"""Represents the 8-bit E8M0FNU floating point format.
+
+This type is defined in the [OCP MX
+spec](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf),
+encoded as `eeeeeeee`:
+- (e)xponent: 8 bits
+- (m)antissa: 0 bits
+- exponent bias: 127
+- nan: 11111111
+- fn: finite (no inf or -inf encodings)
+- u: unsigned (no sign bit or zero value)
+"""
+comptime BFloat16 = Scalar[DType.bfloat16]
+"""Represents a 16-bit brain floating point value."""
 comptime Float16 = Scalar[DType.float16]
 """Represents a 16-bit floating point value."""
 comptime Float32 = Scalar[DType.float32]
@@ -184,7 +271,11 @@ def _simd_dtype_checks[dtype: DType]() -> Bool:
     Returns:
         Whether a SIMD value may be constructed with this element dtype.
     """
-    return True
+    return (
+        dtype != DType.float4_e2m1fn
+        and dtype != DType.float6_e2m3fn
+        and dtype != DType.float6_e3m2fn
+    )
 
 
 @always_inline("builtin")
@@ -2050,7 +2141,12 @@ struct SIMD[dtype: DType, length: SIMDLength](
             hasher: The hasher instance.
         """
 
-        comptime if Self.dtype.is_floating_point():
+        # `float8_e8m0fnu` encodes no zero at all, so asking for the bit
+        # pattern of one is a compile error rather than a value to fold.
+        comptime if (
+            Self.dtype.is_floating_point()
+            and Self.dtype != DType.float8_e8m0fnu
+        ):
             comptime neg_zero = Scalar[Self.dtype](-0.0).to_bits()
 
             # The `fnuz` encodings have no negative zero, so nothing to fold.
@@ -3487,13 +3583,35 @@ def _scalar_repr_alias[dtype: DType]() -> Optional[StaticString]:
             return StaticString("Int64")
         case .uint64:
             return StaticString("UInt64")
+        case .int128:
+            return StaticString("Int128")
+        case .uint128:
+            return StaticString("UInt128")
+        case .int256:
+            return StaticString("Int256")
+        case .uint256:
+            return StaticString("UInt256")
+        case .float4_e2m1fn:
+            return StaticString("Float4_e2m1fn")
+        case .float8_e5m2:
+            return StaticString("Float8_e5m2")
+        case .float8_e5m2fnuz:
+            return StaticString("Float8_e5m2fnuz")
+        case .float8_e4m3fn:
+            return StaticString("Float8_e4m3fn")
+        case .float8_e4m3fnuz:
+            return StaticString("Float8_e4m3fnuz")
+        case .float8_e8m0fnu:
+            return StaticString("Float8_e8m0fnu")
+        case .bfloat16:
+            return StaticString("BFloat16")
         case .float16:
             return StaticString("Float16")
         case .float32:
             return StaticString("Float32")
         case .float64:
             return StaticString("Float64")
-        case .bool:
+        case .bool | .float8_e3m4:
             return None
         case _:
             comptime assert False, (

@@ -235,7 +235,7 @@ impl fmt::Display for Value {
             // Int; NaN spells `nan` as upstream prints it.
             Self::Float64(x) => write!(f, "{}", float_display(*x)),
             Self::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
-            Self::Dtype(dtype) => write!(f, "{}", dtype.name()),
+            Self::Dtype(dtype) => write!(f, "{}", dtype.write_name().unwrap_or("<<unknown>>")),
             Self::Str(s) => write!(f, "{s}"),
             Self::None => write!(f, "None"),
             Self::Function(name) => write!(f, "<function {name}>"),
@@ -1773,7 +1773,27 @@ pub const fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
         Dtype::UInt16 => (16, false),
         Dtype::UInt32 => (32, false),
         Dtype::UInt | Dtype::UInt64 => (64, false),
-        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
+        Dtype::UInt1 => (1, false),
+        Dtype::UInt2 => (2, false),
+        Dtype::UInt4 => (4, false),
+        Dtype::UInt128 => (128, false),
+        Dtype::Int128 => (128, true),
+        Dtype::UInt256 => (256, false),
+        Dtype::Int256 => (256, true),
+        Dtype::Float16
+        | Dtype::Float32
+        | Dtype::Float64
+        | Dtype::Bool
+        | Dtype::Float4E2M1Fn
+        | Dtype::Float6E2M3Fn
+        | Dtype::Float6E3M2Fn
+        | Dtype::Float8E8M0Fnu
+        | Dtype::Float8E3M4
+        | Dtype::Float8E4M3Fn
+        | Dtype::Float8E4M3Fnuz
+        | Dtype::Float8E5M2
+        | Dtype::Float8E5M2Fnuz
+        | Dtype::BFloat16 => return None,
     })
 }
 

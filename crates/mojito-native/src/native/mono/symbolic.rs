@@ -470,6 +470,13 @@ pub(super) fn ensure_concrete_function(
     name: &str,
     function: &MirFunction,
 ) -> Result<(), MonoError> {
+    if let Some(dtype) = mojito_mir::mir::verify::laneless_simd_lane(function) {
+        return Err(MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: Some(template.to_string()),
+            construct: mojito_types::types::laneless_simd_message(dtype),
+        });
+    }
     let findings = mojito_mir::mir::verify::concrete_function_findings(name, function, None);
     if findings.is_empty() {
         Ok(())

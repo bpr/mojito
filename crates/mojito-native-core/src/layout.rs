@@ -256,12 +256,28 @@ impl std::fmt::Display for LayoutError {
 /// (`Int8`, `UInt32`, `Float16`, …): the lane's natural width and alignment.
 pub const fn lane_layout(dtype: Dtype) -> Layout {
     match dtype {
-        Dtype::Int8 | Dtype::UInt8 | Dtype::Bool => Layout::new(1, 1),
-        Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 => Layout::new(2, 2),
+        Dtype::Int8
+        | Dtype::UInt8
+        | Dtype::Bool
+        | Dtype::UInt1
+        | Dtype::UInt2
+        | Dtype::UInt4
+        | Dtype::Float4E2M1Fn
+        | Dtype::Float6E2M3Fn
+        | Dtype::Float6E3M2Fn
+        | Dtype::Float8E8M0Fnu
+        | Dtype::Float8E3M4
+        | Dtype::Float8E4M3Fn
+        | Dtype::Float8E4M3Fnuz
+        | Dtype::Float8E5M2
+        | Dtype::Float8E5M2Fnuz => Layout::new(1, 1),
+        Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 | Dtype::BFloat16 => Layout::new(2, 2),
         Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => Layout::new(4, 4),
         Dtype::Int | Dtype::UInt | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => {
             Layout::new(8, 8)
         }
+        Dtype::Int128 | Dtype::UInt128 => Layout::new(16, 16),
+        Dtype::Int256 | Dtype::UInt256 => Layout::new(32, 32),
     }
 }
 

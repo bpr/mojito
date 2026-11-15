@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Every member of upstream's `struct DType` is now a value: `_uint1`,
+  `_uint2`, `_uint4`, `uint128`, `int128`, `uint256`, `int256`, the
+  `float4`/`float6`/`float8` formats, and `bfloat16` print, compare, hash,
+  answer their predicates and float queries, and parse from their names, on
+  both backends, as at the pin; the bundled `dtype.mojo`, `unsafe.mojo`,
+  `math.mojo`, and `simd.mojo` restore upstream's arms over them, and the
+  prelude exports their scalar aliases. A `SIMD` lane of one is refused
+  explicitly when its instance is elaborated (R65;
+  `assets/ok/dtype_upstream_only_names.mojo`,
+  `assets/type_error/simd_lane_dtype_unsupported.mojo`; the lanes are
+  R2219–R2223).
+
 - `Pointer.unsafe_bitcast[U]()` is accepted, as at the pin: it retypes a
   pointer to `Pointer[U, origin]` with its address and origin unchanged,
   lowered as MIR's new `pointer.bitcast` (upstream's `pop.pointer.bitcast`;

@@ -70,7 +70,9 @@ impl FnLowering<'_> {
 
     /// A `DType`'s display text — its name, or with `repr` its `DType.<name>`
     /// spelling — as a `(data, len)` pair over interned constants, selected
-    /// by comparing the code against each dtype's.
+    /// by comparing the code against each dtype's. A code with no
+    /// `write_to` arm (`_uint4`, or no member's) prints `<<unknown>>`, as
+    /// upstream's `write_to` does.
     pub(super) fn dtype_text(
         &mut self,
         ctx: &mut Context,
@@ -78,20 +80,22 @@ impl FnLowering<'_> {
         repr: bool,
         dest: Reg,
     ) -> (Value, Value) {
-        let text = |dtype: Dtype| {
+        let text = |name: &str| {
             if repr {
-                format!("DType.{}", dtype.name())
+                format!("DType.{name}")
             } else {
-                dtype.name().to_string()
+                name.to_string()
             }
         };
-        let [first, rest @ ..] = Dtype::ALL;
-        let first_text = text(first);
-        let global = self.shared.intern_string(ctx, first_text.as_bytes());
+        let unknown = text("<<unknown>>");
+        let global = self.shared.intern_string(ctx, unknown.as_bytes());
         let mut data = self.global_address(ctx, &global, dest);
-        let mut len = self.uint_constant(ctx, first_text.len() as u64);
-        for dtype in rest {
-            let candidate = text(dtype);
+        let mut len = self.uint_constant(ctx, unknown.len() as u64);
+        for dtype in Dtype::ALL {
+            let Some(name) = dtype.write_name() else {
+                continue;
+            };
+            let candidate = text(name);
             let global = self.shared.intern_string(ctx, candidate.as_bytes());
             let candidate_data = self.global_address(ctx, &global, dest);
             let candidate_len = self.uint_constant(ctx, candidate.len() as u64);

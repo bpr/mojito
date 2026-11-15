@@ -39,7 +39,14 @@ from std.builtin.error import Error
 from std.builtin.none import NoneType
 from std.simd import (
     SIMD,
+    BFloat16,
     Byte,
+    Float4_e2m1fn,
+    Float8_e4m3fn,
+    Float8_e4m3fnuz,
+    Float8_e5m2,
+    Float8_e5m2fnuz,
+    Float8_e8m0fnu,
     Float16,
     Float32,
     Float64,
@@ -48,11 +55,15 @@ from std.simd import (
     Int16,
     Int32,
     Int64,
+    Int128,
+    Int256,
     Scalar,
     UInt8,
     UInt16,
     UInt32,
     UInt64,
+    UInt128,
+    UInt256,
     UInt,
 )
 from std.builtin.string_literal import StringLiteral

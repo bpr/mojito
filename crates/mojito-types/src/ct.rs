@@ -215,6 +215,8 @@ pub enum SimdConstructionError {
     Arity,
     /// A value does not fit a lane of the dtype.
     Lane,
+    /// No lane of the dtype exists ([`mojito_ast::ast::Dtype::has_lane`]).
+    Dtype,
 }
 
 /// The lanes of `SIMD[dtype, width](values…)`.
@@ -230,6 +232,9 @@ pub fn simd_construction_lanes(
     width: usize,
     values: &[CtValue],
 ) -> Result<Vec<CtLane>, SimdConstructionError> {
+    if !dtype.has_lane() {
+        return Err(SimdConstructionError::Dtype);
+    }
     let lane = |lane: Option<CtLane>| lane.ok_or(SimdConstructionError::Lane);
     match values {
         [value] => Ok(vec![lane(CtLane::from_value(value, dtype))?; width]),
@@ -254,7 +259,26 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
         Dtype::UInt16 => i128::from(value as u16),
         Dtype::UInt32 => i128::from(value as u32),
         Dtype::UInt | Dtype::UInt64 => i128::from(value as u64),
+        Dtype::UInt1 => value & 0b1,
+        Dtype::UInt2 => value & 0b11,
+        Dtype::UInt4 => value & 0b1111,
         Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => value,
+        // No lane of these dtypes exists (`Dtype::has_lane`), so no lane
+        // arithmetic reaches them.
+        Dtype::UInt128
+        | Dtype::Int128
+        | Dtype::UInt256
+        | Dtype::Int256
+        | Dtype::Float4E2M1Fn
+        | Dtype::Float6E2M3Fn
+        | Dtype::Float6E3M2Fn
+        | Dtype::Float8E8M0Fnu
+        | Dtype::Float8E3M4
+        | Dtype::Float8E4M3Fn
+        | Dtype::Float8E4M3Fnuz
+        | Dtype::Float8E5M2
+        | Dtype::Float8E5M2Fnuz
+        | Dtype::BFloat16 => value,
     }
 }
 

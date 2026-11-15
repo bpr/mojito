@@ -438,10 +438,11 @@ pub enum ParamArg {
 
 /// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
 ///
-/// Mojito supports the signed and unsigned index integers, the fixed-width
-/// integers up to 64 bits,
-/// `float16`, `float32`, `float64`, and `bool`; upstream's other names are
-/// [`UPSTREAM_ONLY_DTYPE_NAMES`].
+/// Every member of upstream's `struct DType` is a variant, so its value
+/// prints, compares, and answers its predicates. A `SIMD` lane exists only
+/// for the dtypes [`Self::has_lane`] admits: the index integers, the
+/// fixed-width integers up to 64 bits, `float16`, `float32`, `float64`, and
+/// `bool`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Dtype {
     /// Platform-sized signed integer, used by `Int = Scalar[DType.int]`.
@@ -460,6 +461,26 @@ pub enum Dtype {
     Float32,
     Float64,
     Bool,
+    /// Upstream's `_uint1`.
+    UInt1,
+    /// Upstream's `_uint2`.
+    UInt2,
+    /// Upstream's `_uint4`.
+    UInt4,
+    UInt128,
+    Int128,
+    UInt256,
+    Int256,
+    Float4E2M1Fn,
+    Float6E2M3Fn,
+    Float6E3M2Fn,
+    Float8E8M0Fnu,
+    Float8E3M4,
+    Float8E4M3Fn,
+    Float8E4M3Fnuz,
+    Float8E5M2,
+    Float8E5M2Fnuz,
+    BFloat16,
 }
 
 impl Dtype {
@@ -480,6 +501,23 @@ impl Dtype {
             "float32" => Self::Float32,
             "float64" => Self::Float64,
             "bool" => Self::Bool,
+            "_uint1" => Self::UInt1,
+            "_uint2" => Self::UInt2,
+            "_uint4" => Self::UInt4,
+            "uint128" => Self::UInt128,
+            "int128" => Self::Int128,
+            "uint256" => Self::UInt256,
+            "int256" => Self::Int256,
+            "float4_e2m1fn" => Self::Float4E2M1Fn,
+            "float6_e2m3fn" => Self::Float6E2M3Fn,
+            "float6_e3m2fn" => Self::Float6E3M2Fn,
+            "float8_e8m0fnu" => Self::Float8E8M0Fnu,
+            "float8_e3m4" => Self::Float8E3M4,
+            "float8_e4m3fn" => Self::Float8E4M3Fn,
+            "float8_e4m3fnuz" => Self::Float8E4M3Fnuz,
+            "float8_e5m2" => Self::Float8E5M2,
+            "float8_e5m2fnuz" => Self::Float8E5M2Fnuz,
+            "bfloat16" => Self::BFloat16,
             _ => return None,
         })
     }
@@ -501,6 +539,23 @@ impl Dtype {
             Self::Float32 => "float32",
             Self::Float64 => "float64",
             Self::Bool => "bool",
+            Self::UInt1 => "_uint1",
+            Self::UInt2 => "_uint2",
+            Self::UInt4 => "_uint4",
+            Self::UInt128 => "uint128",
+            Self::Int128 => "int128",
+            Self::UInt256 => "uint256",
+            Self::Int256 => "int256",
+            Self::Float4E2M1Fn => "float4_e2m1fn",
+            Self::Float6E2M3Fn => "float6_e2m3fn",
+            Self::Float6E3M2Fn => "float6_e3m2fn",
+            Self::Float8E8M0Fnu => "float8_e8m0fnu",
+            Self::Float8E3M4 => "float8_e3m4",
+            Self::Float8E4M3Fn => "float8_e4m3fn",
+            Self::Float8E4M3Fnuz => "float8_e4m3fnuz",
+            Self::Float8E5M2 => "float8_e5m2",
+            Self::Float8E5M2Fnuz => "float8_e5m2fnuz",
+            Self::BFloat16 => "bfloat16",
         }
     }
 
@@ -522,6 +577,23 @@ impl Dtype {
             Self::Float32 => "f32",
             Self::Float64 => "f64",
             Self::Bool => "bool",
+            Self::UInt1 => "ui1",
+            Self::UInt2 => "ui2",
+            Self::UInt4 => "ui4",
+            Self::UInt128 => "ui128",
+            Self::Int128 => "si128",
+            Self::UInt256 => "ui256",
+            Self::Int256 => "si256",
+            Self::Float4E2M1Fn => "f4e2m1fn",
+            Self::Float6E2M3Fn => "f6e2m3fn",
+            Self::Float6E3M2Fn => "f6e3m2fn",
+            Self::Float8E8M0Fnu => "f8e8m0fnu",
+            Self::Float8E3M4 => "f8e3m4",
+            Self::Float8E4M3Fn => "f8e4m3fn",
+            Self::Float8E4M3Fnuz => "f8e4m3fnuz",
+            Self::Float8E5M2 => "f8e5m2",
+            Self::Float8E5M2Fnuz => "f8e5m2fnuz",
+            Self::BFloat16 => "bf16",
         }
     }
 
@@ -547,9 +619,10 @@ impl Dtype {
             Self::Float16 => "Float16",
             Self::Float32 => "Float32",
             // `Int`, `UInt`, and `Float64` name their scalars too, but
-            // conversion routes them as the builtin numeric names, and `bool`
-            // is spelled by `Bool`.
-            Self::Int | Self::UInt | Self::Float64 | Self::Bool => return None,
+            // conversion routes them as the builtin numeric names, `bool`
+            // is spelled by `Bool`, and the dtypes `has_lane` refuses have
+            // no lane to convert to.
+            _ => return None,
         })
     }
 
@@ -589,20 +662,67 @@ impl Dtype {
         .find(|d| d.scalar_alias() == Some(name))
     }
 
-    /// The bit width of one lane (`bool` is one bit).
+    /// The logical bit width of one lane (`bool` is one bit, `_uint4` and
+    /// `float4_e2m1fn` four); a sub-byte lane is stored in a byte.
     pub const fn bit_width(self) -> u32 {
         match self {
-            Self::Bool => 1,
-            Self::Int8 | Self::UInt8 => 8,
-            Self::Int16 | Self::UInt16 | Self::Float16 => 16,
+            Self::Bool | Self::UInt1 => 1,
+            Self::UInt2 => 2,
+            Self::UInt4 | Self::Float4E2M1Fn => 4,
+            Self::Float6E2M3Fn | Self::Float6E3M2Fn => 6,
+            Self::Int8
+            | Self::UInt8
+            | Self::Float8E8M0Fnu
+            | Self::Float8E3M4
+            | Self::Float8E4M3Fn
+            | Self::Float8E4M3Fnuz
+            | Self::Float8E5M2
+            | Self::Float8E5M2Fnuz => 8,
+            Self::Int16 | Self::UInt16 | Self::Float16 | Self::BFloat16 => 16,
             Self::Int32 | Self::UInt32 | Self::Float32 => 32,
             Self::Int | Self::UInt | Self::Int64 | Self::UInt64 | Self::Float64 => 64,
+            Self::Int128 | Self::UInt128 => 128,
+            Self::Int256 | Self::UInt256 => 256,
+        }
+    }
+
+    /// Whether a `SIMD` lane of this dtype exists: every dtype but the
+    /// sub-byte and wide integers and the float formats other than
+    /// `float16`, `float32`, and `float64`. A concrete `SIMD` of any other
+    /// dtype is refused when its instance is elaborated.
+    pub const fn has_lane(self) -> bool {
+        matches!(
+            self,
+            Self::Int
+                | Self::UInt
+                | Self::Int8
+                | Self::Int16
+                | Self::Int32
+                | Self::Int64
+                | Self::UInt8
+                | Self::UInt16
+                | Self::UInt32
+                | Self::UInt64
+                | Self::Float16
+                | Self::Float32
+                | Self::Float64
+                | Self::Bool
+        )
+    }
+
+    /// The name `DType.write_to` prints for this dtype, or `None` for the
+    /// sub-byte unsigned integers, which upstream's `write_to` has no arm
+    /// for and prints `<<unknown>>`.
+    pub const fn write_name(self) -> Option<&'static str> {
+        match self {
+            Self::UInt1 | Self::UInt2 | Self::UInt4 => None,
+            _ => Some(self.name()),
         }
     }
 
     /// Whether this dtype's lanes are floating-point.
     pub const fn is_float(self) -> bool {
-        matches!(self, Self::Float16 | Self::Float32 | Self::Float64)
+        self.is_floating_point()
     }
 
     /// Whether this is a float lane narrower than `f64`: the VM and the
@@ -651,6 +771,23 @@ impl Dtype {
             Self::Float16 => 79,
             Self::Float32 => 81,
             Self::Float64 => 82,
+            Self::UInt1 => 128,
+            Self::UInt2 => 130,
+            Self::UInt4 => 132,
+            Self::UInt128 => 142,
+            Self::Int128 => 143,
+            Self::UInt256 => 144,
+            Self::Int256 => 145,
+            Self::Float4E2M1Fn => 64,
+            Self::Float6E2M3Fn => 65,
+            Self::Float6E3M2Fn => 66,
+            Self::Float8E8M0Fnu => 73,
+            Self::Float8E3M4 => 74,
+            Self::Float8E4M3Fn => 75,
+            Self::Float8E4M3Fnuz => 76,
+            Self::Float8E5M2 => 77,
+            Self::Float8E5M2Fnuz => 78,
+            Self::BFloat16 => 80,
         }
     }
 
@@ -661,7 +798,7 @@ impl Dtype {
     }
 
     /// Every dtype, in declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 31] = [
         Self::Int,
         Self::UInt,
         Self::Int8,
@@ -676,6 +813,23 @@ impl Dtype {
         Self::Float32,
         Self::Float64,
         Self::Bool,
+        Self::UInt1,
+        Self::UInt2,
+        Self::UInt4,
+        Self::UInt128,
+        Self::Int128,
+        Self::UInt256,
+        Self::Int256,
+        Self::Float4E2M1Fn,
+        Self::Float6E2M3Fn,
+        Self::Float6E3M2Fn,
+        Self::Float8E8M0Fnu,
+        Self::Float8E3M4,
+        Self::Float8E4M3Fn,
+        Self::Float8E4M3Fnuz,
+        Self::Float8E5M2,
+        Self::Float8E5M2Fnuz,
+        Self::BFloat16,
     ];
 
     /// `DType.is_floating_point()`.
@@ -700,22 +854,37 @@ impl Dtype {
             || (self.matches_mask(DTYPE_INTEGER_MASK) && !self.matches_mask(DTYPE_SIGNED_MASK))
     }
 
-    /// `DType.is_float8()`: none of the eight-bit float formats is a
-    /// Mojito dtype.
+    /// `DType.is_float8()`: one of the six eight-bit float formats.
     pub const fn is_float8(self) -> bool {
-        false
+        matches!(
+            self,
+            Self::Float8E8M0Fnu
+                | Self::Float8E3M4
+                | Self::Float8E4M3Fn
+                | Self::Float8E4M3Fnuz
+                | Self::Float8E5M2
+                | Self::Float8E5M2Fnuz
+        )
     }
 
-    /// `DType.is_half_float()`: `float16` (`bfloat16` is not a Mojito
-    /// dtype).
+    /// `DType.is_half_float()`: `bfloat16` or `float16`.
     pub const fn is_half_float(self) -> bool {
-        matches!(self, Self::Float16)
+        matches!(self, Self::BFloat16 | Self::Float16)
     }
 
     /// `DType.is_numeric()`: integral, or a float other than the
-    /// non-arithmetic low-precision formats (none of which is a Mojito dtype).
+    /// non-arithmetic low-precision formats `float4_e2m1fn`, `float6_*`,
+    /// and `float8_e8m0fnu`.
     pub const fn is_numeric(self) -> bool {
-        self.is_integral() || self.is_floating_point()
+        self.is_integral()
+            || (self.is_floating_point()
+                && !matches!(
+                    self,
+                    Self::Float4E2M1Fn
+                        | Self::Float6E2M3Fn
+                        | Self::Float6E3M2Fn
+                        | Self::Float8E8M0Fnu
+                ))
     }
 
     const fn matches_mask(self, mask: u8) -> bool {
@@ -740,28 +909,6 @@ pub const DTYPE_SIGNED_MASK: u8 = 1;
 pub const DTYPE_FLOAT_MASK: u8 = 64;
 /// Upstream's `_mIsInteger` bit of a dtype code (sized integers only).
 pub const DTYPE_INTEGER_MASK: u8 = 128;
-
-/// `DType.<name>` spellings upstream defines that no Mojito dtype represents;
-/// they reject as unsupported rather than as unknown attributes.
-pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 17] = [
-    "bfloat16",
-    "_uint1",
-    "_uint2",
-    "_uint4",
-    "uint128",
-    "int128",
-    "uint256",
-    "int256",
-    "float4_e2m1fn",
-    "float6_e2m3fn",
-    "float6_e3m2fn",
-    "float8_e8m0fnu",
-    "float8_e3m4",
-    "float8_e4m3fn",
-    "float8_e4m3fnuz",
-    "float8_e5m2",
-    "float8_e5m2fnuz",
-];
 
 /// A typed struct field, e.g. `a: Int`. (Function parameters use `FnParam`.)
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -3654,15 +3801,36 @@ mod tests {
         for dtype in Dtype::ALL {
             let expected = match dtype {
                 Dtype::Bool => [false, false, false, false, false],
-                Dtype::Int | Dtype::Int8 | Dtype::Int16 | Dtype::Int32 | Dtype::Int64 => {
-                    [true, false, true, false, true]
-                }
-                Dtype::UInt | Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64 => {
-                    [true, false, false, true, true]
-                }
-                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
-                    [false, true, true, false, true]
-                }
+                Dtype::Int
+                | Dtype::Int8
+                | Dtype::Int16
+                | Dtype::Int32
+                | Dtype::Int64
+                | Dtype::Int128
+                | Dtype::Int256 => [true, false, true, false, true],
+                Dtype::UInt
+                | Dtype::UInt8
+                | Dtype::UInt16
+                | Dtype::UInt32
+                | Dtype::UInt64
+                | Dtype::UInt1
+                | Dtype::UInt2
+                | Dtype::UInt4
+                | Dtype::UInt128
+                | Dtype::UInt256 => [true, false, false, true, true],
+                Dtype::Float4E2M1Fn
+                | Dtype::Float6E2M3Fn
+                | Dtype::Float6E3M2Fn
+                | Dtype::Float8E8M0Fnu => [false, true, true, false, false],
+                Dtype::Float16
+                | Dtype::Float32
+                | Dtype::Float64
+                | Dtype::BFloat16
+                | Dtype::Float8E3M4
+                | Dtype::Float8E4M3Fn
+                | Dtype::Float8E4M3Fnuz
+                | Dtype::Float8E5M2
+                | Dtype::Float8E5M2Fnuz => [false, true, true, false, true],
             };
             let actual = [
                 dtype.is_integral(),
@@ -3672,10 +3840,15 @@ mod tests {
                 dtype.is_numeric(),
             ];
             assert_eq!(actual, expected, "{}", dtype.name());
-            assert!(!dtype.is_float8(), "{}", dtype.name());
+            assert_eq!(
+                dtype.is_float8(),
+                dtype.name().starts_with("float8_"),
+                "{}",
+                dtype.name()
+            );
             assert_eq!(
                 dtype.is_half_float(),
-                dtype == Dtype::Float16,
+                matches!(dtype, Dtype::Float16 | Dtype::BFloat16),
                 "{}",
                 dtype.name()
             );
