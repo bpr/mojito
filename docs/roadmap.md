@@ -6617,31 +6617,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2218 Folding a run-time `SIMD` operator over nested calls of an
-  overloaded function costs time exponential in the nesting depth**
-
-  A run-time operator whose builtin dunder asserts (`x + 1`, `-x` over a
-  scalar) records its folded value through `record_folded_simd_operation`
-  (`checker/operators.rs`), which builds the operands' compile-time
-  expression. A call operand is a compile-time application, and
-  `selected_application` (`checker/comptime_validation.rs`) compiles its
-  arguments once per applicable overload (`applied_arguments` under a
-  `find_map`), so every overloaded call nested below multiplies the fold
-  by its candidate count.
-  - Upstream's emitter folds an operand once, from the value its call
-    already resolved, never per candidate.
-  - Lever: resolve the operand's application once (from the call's
-    checked overload, or a memo per expression), then compile its
-    arguments against that one callee.
-  - Probe: four `def f` overloads (`Int`, `Float64`, `String`, `Bool`)
-    and `var x = f(f(f(f(f(f(1) + 1) + 1) + 1) + 1) + 1)` checks in
-    20 s in a debug build; five levels check in 1.3 s.
-  - Probe: `f(-f(-f(-f(-f(-f(-f(-f(1))))))))` over the same `f` checks in
-    70 s; six levels check in 1.2 s.
-  - Found while landing R2168 (2026-11-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R138 An applied module constant is not a struct's own type
   argument**
 

@@ -694,6 +694,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Checking a run-time scalar operator over nested calls of an overloaded
+  function no longer costs time exponential in the nesting depth: with
+  four `def f` overloads, `f(f(f(f(f(f(1) + 1) + 1) + 1) + 1) + 1)` and
+  `f(-f(-f(-f(-f(-f(-f(-f(1))))))))` check in about a second, where they
+  took 20 s and 70 s. The operator's compile-time fold applies the
+  overload each call already resolved, selects a call's application once,
+  and applies the dunder to the operands it already built, as upstream
+  folds an operand once from its resolved callee
+  (`assets/ok/nested_overloaded_operator_folds.mojo`, R2218).
+
 - The heavy lane's parity sweep no longer demands a trap category from
   `assets/runtime_error/simd_element_list_too_few.mojo`, whose read past the
   element pack is undefined at the pin: the fixture's row is `undefined`, so

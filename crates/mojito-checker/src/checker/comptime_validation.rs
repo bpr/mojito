@@ -135,6 +135,15 @@ pub(super) struct ForwardedPack {
     pub(super) owned: bool,
 }
 
+/// An operand [`Checker::with_built_operands`] holds the built value of,
+/// and the positions it was built in.
+#[derive(Clone, PartialEq, Eq)]
+pub(in crate::checker) struct BuiltOperandKey {
+    span: SourceSpan,
+    comptime_positions: usize,
+    lifting_positions: usize,
+}
+
 /// A callable a compile-time call applies by name
 /// ([`Checker::called_application`]): a module `def`, a static method of a
 /// struct, a struct's `__init__`, or an `@always_inline("builtin")` method
@@ -2104,10 +2113,10 @@ impl Checker {
     /// it is not the value it computes: `h(n)` is not `n * 2`, unless `h`
     /// is builtin. `None` for any other expression.
     pub(super) fn lifted_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        let called = self.called_application(expr);
+        let (called, raising) = self.called_application_raising(expr);
         // A signature or a field type has no body to lift a function from,
         // and no compile-time argument calls a raising function.
-        if self.outside_bodies() || self.calls_raising_application(expr).is_some() {
+        if self.outside_bodies() || raising {
             return called;
         }
         let names = names_read(expr);
@@ -2280,6 +2289,28 @@ impl Checker {
             return None;
         }
         self.selected_call_folding(selected)
+    }
+
+    /// Run `apply` with each of `operands` standing for the value already
+    /// built for it, as upstream emits an operator's operands once and
+    /// applies its dunder to the emitted values: the dunder's receiver and
+    /// arguments read them ([`Self::built_operand`]) rather than building
+    /// each operand again, which would cost a nest of operators time
+    /// exponential in its depth.
+    pub(super) fn with_built_operands<R>(
+        &self,
+        operands: &[(&Expr, &ParamExpr)],
+        apply: impl FnOnce() -> R,
+    ) -> R {
+        let mark = self.built_operands.borrow().len();
+        let entries: Vec<_> = operands
+            .iter()
+            .map(|(operand, built)| (self.built_operand_key(operand), (*built).clone()))
+            .collect();
+        self.built_operands.borrow_mut().extend(entries);
+        let result = apply();
+        self.built_operands.borrow_mut().truncate(mark);
+        result
     }
 
     /// Whether `expr` calls an `@always_inline("builtin")` callable whose
@@ -2606,6 +2637,30 @@ impl Checker {
     pub(super) fn calls_raising_application(&self, expr: &Expr) -> Option<&str> {
         let function = self.selected_application(expr)?.function;
         function.symbol().filter(|_| function.raises)
+    }
+
+    /// [`Self::called_application`], and whether `expr` calls a `raises`
+    /// callable ([`Self::calls_raising_application`]): a plain call's
+    /// overload is selected once for both, so its arguments compile once.
+    fn called_application_raising(&self, expr: &Expr) -> (Option<ParamExpr>, bool) {
+        if self.type_member_construction(expr).is_some()
+            || self.type_of_construction(expr).is_some()
+        {
+            return (
+                self.called_application(expr),
+                self.calls_raising_application(expr).is_some(),
+            );
+        }
+        let Some(selected) = self.selected_application(expr) else {
+            return (None, false);
+        };
+        let raising = selected.function.raises && selected.function.symbol().is_some();
+        let called = if self.application_constraint_failure(&selected).is_some() {
+            None
+        } else {
+            self.selected_call(selected)
+        };
+        (called, raising)
     }
 
     /// Emit the `where` clauses of each callable `stmts` declare that a
@@ -3284,8 +3339,27 @@ impl Checker {
             ExprKind::Call { .. } if let Some(nested) = self.nested_application(&name) => nested,
             _ => self.applicable_functions.get(&name)?,
         };
+        // A call the check has already resolved applies the overload its
+        // run-time call selected, as upstream folds a call from its resolved
+        // callee: its arguments compile against that one candidate, so
+        // nested overloaded calls stay linear in their depth.
+        let resolved = self
+            .node_facts
+            .borrow()
+            .get(&expr.source_span())
+            .and_then(|facts| facts.overload_target.clone())
+            .filter(|target| {
+                overloads
+                    .iter()
+                    .any(|function| function.symbol() == Some(target.as_str()))
+            });
         let mut selected = overloads
             .iter()
+            .filter(|function| {
+                resolved
+                    .as_deref()
+                    .is_none_or(|target| function.symbol() == Some(target))
+            })
             .filter(|function| function.takes_self() == receiver.is_some())
             .filter(|function| explicit_initializer.is_none() || function.constructs())
             .filter_map(|function| {
@@ -3818,10 +3892,10 @@ impl Checker {
         if let Some((owner, instance)) = self.applied_owner(object, method) {
             return Some((format!("{owner}.{method}"), instance, None));
         }
-        let receiver = {
+        let receiver = self.built_operand(object).or_else(|| {
             let _lifting = self.lifting_position();
-            self.compile_dependent_ct_expr(object).ok()?
-        };
+            self.compile_dependent_ct_expr(object).ok()
+        })?;
         let instance = receiver.meta().as_value()?.clone();
         // A numeric literal is its declared struct's application, whose
         // dunders a literal construction (`type_of(exp)()`) applies; a
@@ -3839,6 +3913,26 @@ impl Checker {
             .iter()
             .any(ApplicableFunction::takes_self)
             .then_some((name, instance, Some(receiver)))
+    }
+
+    /// The value [`Self::with_built_operands`] holds for `expr`, built in
+    /// the positions the check stands in now.
+    fn built_operand(&self, expr: &Expr) -> Option<ParamExpr> {
+        let key = self.built_operand_key(expr);
+        self.built_operands
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(built, _)| *built == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    fn built_operand_key(&self, expr: &Expr) -> BuiltOperandKey {
+        BuiltOperandKey {
+            span: expr.source_span(),
+            comptime_positions: self.comptime_positions.get(),
+            lifting_positions: self.lifting_positions.get(),
+        }
     }
 
     /// The rejection of `selected`'s call by a `where` clause of its
@@ -3971,6 +4065,11 @@ impl Checker {
             // An initializer list is the construction its run-time typing
             // spelled for the slot (`{1, 2}` at a `Box`).
             let spelled = self.spelled_construction(argument);
+            if spelled.is_none()
+                && let Some(built) = self.built_operand(argument)
+            {
+                return Some(built);
+            }
             let _lifting = self.lifting_position();
             if let Some(pack) = self.pack_visible_binder(argument) {
                 return Some(pack);

@@ -690,6 +690,10 @@ pub struct Checker {
     /// The expressions typed while an overload set is ranked
     /// ([`Self::with_argument_memo`]).
     argument_memo: RefCell<argument_memo::ArgumentMemo>,
+    /// The operands an operator has already built, which its dunder's
+    /// application reads as its receiver and argument rather than building
+    /// them again ([`Self::with_built_operands`]).
+    built_operands: RefCell<Vec<(comptime_validation::BuiltOperandKey, ParamExpr)>>,
     /// Whether the compile-time value being built is only probed for an
     /// exact literal ([`Self::exact_literal_value`]), whose failure no one
     /// reads: a shape no arm builds fails without typing it again to say
@@ -1179,6 +1183,7 @@ impl Checker {
             lifting_positions: std::rc::Rc::default(),
             instance_inferences: RefCell::new(HashSet::new()),
             argument_memo: RefCell::default(),
+            built_operands: RefCell::default(),
             probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),

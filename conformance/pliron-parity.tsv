@@ -764,6 +764,7 @@ assets/ok/nested_method_unread_owner_instances.mojo	main	exe-differential	saniti
 assets/ok/nested_operands_type_once.mojo	main	exe-differential	sanitized
 assets/ok/nested_origin_binder_not_captured.mojo	main	exe-differential	sanitized
 assets/ok/nested_origins_read_only_decorator.mojo	main	exe-differential	sanitized
+assets/ok/nested_overloaded_operator_folds.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nested_unread_enclosing_instances.mojo	main	exe-differential	sanitized
 assets/ok/never_call_ends_returning_path.mojo	main	exe-differential	sanitized

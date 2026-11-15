@@ -2554,16 +2554,27 @@ impl Checker {
             // `Bool` builtin dunder not folded yet stays its application,
             // so a builtin body over it (`__eq__`'s `~(self != rhs)`)
             // folds after it does.
+            // The dunder applies to the operands built above, a converted
+            // `SIMDLength` operand built again as itself.
+            let mut built = vec![(left, &left_built)];
+            if !converted {
+                built.push((right, &right_built));
+            }
             if !struct_operand(&left_built) && !struct_operand(&right_built) {
                 let bools = bool_valued(&left_built) && bool_valued(&right_built);
-                return match candidates.iter().find_map(|(receiver, dunder, operand)| {
-                    self.operator_application(&dunder_call(expr, receiver, dunder, *operand))
-                }) {
+                let applied = self.with_built_operands(&built, || {
+                    candidates.iter().find_map(|(receiver, dunder, operand)| {
+                        self.operator_application(&dunder_call(expr, receiver, dunder, *operand))
+                    })
+                });
+                return match applied {
                     Some((application, unfolded)) if !unfolded || bools => Ok(application),
                     _ => self.fold_infix(op, &left_built, &right_built),
                 };
             }
-            let applied = self.struct_operator_value(expr, op.symbol(), &candidates);
+            let applied = self.with_built_operands(&built, || {
+                self.struct_operator_value(expr, op.symbol(), &candidates)
+            });
             // A `SIMDLength` before a vector or a literal, under an operator
             // `SIMDLength` declares no dunder for, converts to the right
             // operand's type, whose reflected dunder takes it (`n // 2` is
