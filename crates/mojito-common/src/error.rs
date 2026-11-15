@@ -101,6 +101,9 @@ pub enum TypeError {
     /// An inherited default's compile-time parameter is named like one of
     /// its conformer's own parameters.
     TraitDefaultParameterConflict(String),
+    /// A struct's conformance list names trait `0` more than once, with
+    /// constraints that compile to different conditions.
+    RepeatedConformance(String),
     /// A position that names a concrete type (a result, a struct field, an
     /// uninitialized local, a type argument) spelled a parametric struct
     /// with parameters left unbound; the payload is the type as shown
@@ -733,6 +736,11 @@ impl fmt::Display for TypeError {
                 f,
                 "name conflict between parameter '{name}' in the default trait method and a \
                  parameter in the struct"
+            ),
+            Self::RepeatedConformance(name) => write!(
+                f,
+                "trait '{name}' appears multiple times in the conformance list with different \
+                 constraints"
             ),
             Self::NotConcrete(shown) => write!(
                 f,

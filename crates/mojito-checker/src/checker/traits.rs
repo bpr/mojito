@@ -930,6 +930,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         self.compile_header_conditions(name, true)?;
+        self.check_repeated_conformances(declaration)?;
         if !declaration.where_clauses.is_empty() {
             let decls = self
                 .structs
@@ -2945,6 +2946,50 @@ impl Checker {
                 })
             })
             .collect()
+    }
+
+    /// Reject a trait the conformance list names more than once with
+    /// constraints whose canonical conditions differ, as upstream does: an
+    /// entry without `where` is the condition `True`, and a closed
+    /// condition folds to its verdict.
+    fn check_repeated_conformances(
+        &self,
+        declaration: &StructDeclaration<'_>,
+    ) -> Result<(), TypeError> {
+        let mut seen: Vec<&str> = Vec::new();
+        let repeated = declaration.conforms.iter().filter(|trait_name| {
+            let repeat = seen.contains(&trait_name.as_str());
+            seen.push(trait_name);
+            repeat
+        });
+        let Some(info) = self.structs.get(declaration.name) else {
+            return Ok(());
+        };
+        let decls = info.decls().into_owned();
+        for trait_name in repeated {
+            let written = declaration
+                .conforms
+                .iter()
+                .filter(|listed| *listed == trait_name)
+                .count();
+            let conditions = declaration
+                .conformance_conditions
+                .iter()
+                .filter(|(conditioned, _)| conditioned == trait_name)
+                .map(|(_, condition)| {
+                    self.in_param_scope(&decls, |this| this.compile_condition(&decls, condition))
+                        .map(|compiled| self.fold_closed_constraint(compiled).canonical())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let unconditioned =
+                (conditions.len() < written).then_some(GenericConstraint::Bool(true));
+            let mut all = conditions.iter().chain(unconditioned.as_ref());
+            let first = all.next();
+            if all.any(|condition| Some(condition) != first) {
+                return Err(TypeError::RepeatedConformance(trait_name.clone()));
+            }
+        }
+        Ok(())
     }
 
     /// The conditions under which an instance of the struct `name` conforms

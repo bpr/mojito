@@ -2904,20 +2904,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2242 A trait listed twice with different constraints is accepted**
-
-  `struct S(Movable, Movable where False)` compiles, where the pin rejects
-  it with "trait 'Movable' appears multiple times in the conformance list
-  with different constraints".
-  - Cause: `Parser::parse_struct_conformance` pushes each entry, and the
-    checker reads one condition per trait (`struct_conformance_conditions`,
-    `checker/traits.rs`) without comparing repeats.
-  - The `not` spelling is already checked at parse: a trait listed and
-    opted out, or opted out twice, is rejected in the pin's words.
-  - Found while landing R2238 (2026-11-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2090 A trait's associated type does not meet its own bound in
   the trait's signatures**
 

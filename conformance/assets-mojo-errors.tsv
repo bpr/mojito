@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1205
+# swept-count	1206
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -1086,6 +1086,7 @@ assets/type_error/struct_callable_parameter_identity.mojo	compile-reject	agree	e
 assets/type_error/struct_callable_parameter_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'f'; use 'Self.f' instead
 assets/type_error/struct_comptime_member_index_annotation.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
 assets/type_error/struct_comptime_member_value_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
+assets/type_error/struct_conformance_repeated_different_constraints.mojo	compile-reject	agree	error: trait 'Movable' appears multiple times in the conformance list with different constraints
 assets/type_error/struct_construction_field_unfolded.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, Extent(n, Int(1)).rows]' value to 'SIMD[.int8, n]'
 assets/type_error/struct_construction_parameter_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(n, (n + Int(1)))]' value to 'Tagged[Extent((n + Int(1)), n)]'
 assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'

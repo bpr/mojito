@@ -1749,7 +1749,10 @@ impl Checker {
     /// A condition over no parameter is a fact: the closed verdict of
     /// `constraint`, as the pin folds a constant parameter expression, or
     /// the constraint itself while a leaf stays open for the elaborator.
-    fn fold_closed_constraint(&self, constraint: GenericConstraint) -> GenericConstraint {
+    pub(super) fn fold_closed_constraint(
+        &self,
+        constraint: GenericConstraint,
+    ) -> GenericConstraint {
         if !constraint_is_closed(&constraint) {
             return constraint;
         }

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait listed more than once in a conformance list must carry the same
+  constraint each time, compared after folding and putting commutative
+  operands in one order, as the pin compares them: `struct S(Movable,
+  Movable where False)` is now the pin's "appears multiple times in the
+  conformance list with different constraints"
+  (`assets/type_error/struct_conformance_repeated_different_constraints.mojo`,
+  R2242).
+
 - A conformance list accepts upstream's `not Trait [else "reason"]` entry,
   read as `Trait where False` (or `where (False, "reason")`): an opted-out
   trait's requirements and defaults are not asked for, the reason of

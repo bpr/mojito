@@ -3196,6 +3196,67 @@ pub enum GenericConstraint {
 }
 
 impl GenericConstraint {
+    /// This constraint in the form upstream compares two constraints by: its
+    /// diagnostic messages dropped, `<` and `<=` turned to `>` and `>=` over
+    /// swapped operands, and the operands of `==`, `!=`, `and`, and `or`
+    /// put in one order.
+    #[must_use]
+    pub fn canonical(&self) -> Self {
+        fn key<T: std::fmt::Debug>(value: &T) -> String {
+            format!("{value:?}")
+        }
+        let symmetric = |a: &ConstraintOperand, b: &ConstraintOperand| {
+            if key(a) <= key(b) {
+                (a.clone(), b.clone())
+            } else {
+                (b.clone(), a.clone())
+            }
+        };
+        let associative = |split: fn(&Self) -> Option<(&Self, &Self)>,
+                           rebuild: fn(Box<Self>, Box<Self>) -> Self| {
+            let mut operands = Vec::new();
+            flatten_constraint(self, split, &mut operands);
+            let mut operands = operands
+                .into_iter()
+                .map(Self::canonical)
+                .collect::<Vec<_>>();
+            operands.sort_by_cached_key(key);
+            operands
+                .into_iter()
+                .reduce(|left, right| rebuild(Box::new(left), Box::new(right)))
+                .unwrap_or(Self::Bool(true))
+        };
+        match self {
+            Self::WithMessage(inner, _) => inner.canonical(),
+            Self::Lt(a, b) => Self::Gt(b.clone(), a.clone()),
+            Self::Le(a, b) => Self::Ge(b.clone(), a.clone()),
+            Self::Eq(a, b) => {
+                let (a, b) = symmetric(a, b);
+                Self::Eq(a, b)
+            }
+            Self::Ne(a, b) => {
+                let (a, b) = symmetric(a, b);
+                Self::Ne(a, b)
+            }
+            Self::And(..) => associative(
+                |constraint| match constraint {
+                    Self::And(a, b) => Some((a, b)),
+                    _ => None,
+                },
+                Self::And,
+            ),
+            Self::Or(..) => associative(
+                |constraint| match constraint {
+                    Self::Or(a, b) => Some((a, b)),
+                    _ => None,
+                },
+                Self::Or,
+            ),
+            Self::Not(inner) => Self::Not(Box::new(inner.canonical())),
+            other => other.clone(),
+        }
+    }
+
     /// This constraint with every binder reference replaced by `binder` and
     /// every other operand by `operand`.
     #[must_use]
@@ -8238,6 +8299,22 @@ fn generator_binder_renaming(from: &[ParamDecl], to: &[ParamDecl]) -> TySubst {
             _ => None,
         })
         .collect()
+}
+
+/// The operands of the chain of one associative operator `split` names at
+/// the root of `constraint`, left to right.
+fn flatten_constraint<'a>(
+    constraint: &'a GenericConstraint,
+    split: fn(&GenericConstraint) -> Option<(&GenericConstraint, &GenericConstraint)>,
+    out: &mut Vec<&'a GenericConstraint>,
+) {
+    match split(constraint) {
+        Some((left, right)) => {
+            flatten_constraint(left, split, out);
+            flatten_constraint(right, split, out);
+        }
+        None => out.push(constraint),
+    }
 }
 
 #[cfg(test)]
