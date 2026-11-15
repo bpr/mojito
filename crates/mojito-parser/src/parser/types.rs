@@ -430,6 +430,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             "Expected '[' to begin parameter arguments",
         )?;
         let mut args = Vec::new();
+        if matches!(self.peek_token()?, Some(Token::RBracket)) {
+            self.next_token()?;
+            return Ok(args);
+        }
         loop {
             let mut arg = self.parse_param_arg()?;
             if matches!(self.peek_token()?, Some(Token::Assign)) {

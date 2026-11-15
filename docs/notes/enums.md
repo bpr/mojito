@@ -58,7 +58,8 @@ working, as at the pin.
   - `UnionLike(SumType)` adds `_union_case_types`,
     `_union_elt_type_for_case`, and `_unsafe_get_union_payload`. Every
     `union` conforms, and so do `Optional` and `OptionalReg`, whose `None`
-    case carries `Tuple[]` and is matched `.None()`.
+    case carries `Tuple[]` and is matched `.None()`; `.None(x)` binds the
+    empty tuple `Optional` stores in a zero-sized `_none` field.
   - A case pattern asks `SumType` for the case and `UnionLike` for the
     payload (`checker/patterns.rs`). A parenthesized pattern over a subject
     that is not `UnionLike` is an error, and so is a bare one over a subject

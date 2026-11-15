@@ -7173,7 +7173,11 @@ point where a slot declared in a loop is uninitialized again.
   count, and a builtin receiver keep the dispatch. A
   value binder's read is already its parameter constant, which the
   substitution closes (`Const::of_parameter_value`, or `Const::Param` while
-  symbolic). A callable value binder
+  symbolic). A `comptime if` whose one condition the substitution closed
+  keeps its live arm and an `unreachable` dead one, as its canonicalizer
+  leaves it (`purge_closed_comptime_arm`): the dead arm was written for
+  other bindings, so its places need not type at these (`Optional`'s
+  `_unsafe_get_union_payload[0]` rebinding its `Some` place). A callable value binder
   (`f: def(Int) thin -> Int`, a `value_param` of function type bound to a
   deferred value) is read as its parameter constant too; the call's
   `param_arg_regs` entry naming the binder's declaration holds its

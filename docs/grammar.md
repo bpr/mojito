@@ -537,7 +537,7 @@ template and each specialization spells the concrete struct.
 the call/construction parentheses, or as type arguments in an annotation:
 
 ```
-param_args: '[' ','.param_arg+ ']'
+param_args: '[' ','.param_arg* ']'   # empty brackets apply nothing (`Tuple[]`)
 param_arg:
     | [NAME '='] (type | expression)       # a positional/named type or comptime value
     | '*' typelist_expr                    # a spread of a type list

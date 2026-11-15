@@ -428,6 +428,15 @@ fn parses_uint_and_float64_annotations() {
 }
 
 #[test]
+fn parses_empty_parameter_list_annotation() {
+    assert!(matches!(
+        &parse("var t: Tuple[] = ()")[0].kind,
+        StmtKind::VarDecl { ty: Some(Type::Named(name, args)), .. }
+            if name == "Tuple" && args.is_empty()
+    ));
+}
+
+#[test]
 fn parses_typed_var_decl() {
     assert_eq!(
         parse("var x: Int = 1 + 2")[0],

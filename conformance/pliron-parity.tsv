@@ -1778,6 +1778,7 @@ assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-different
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
 assets/extensions/ok/match_coverage_enum_like_conformers.mojo	main	exe-differential	sanitized
 assets/extensions/ok/match_coverage_enums_and_products.mojo	main	exe-differential	sanitized
+assets/extensions/ok/match_enum_case_none_payload.mojo	main	exe-differential	sanitized
 assets/extensions/ok/match_enum_cases_custom.mojo	main	exe-differential	sanitized
 assets/extensions/ok/match_enum_cases_optional.mojo	main	exe-differential	sanitized
 assets/extensions/ok/match_enum_tag_clusters.mojo	main	exe-differential	sanitized

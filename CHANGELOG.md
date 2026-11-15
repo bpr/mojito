@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `None` case pattern binds `Optional`'s and `OptionalReg`'s empty-tuple
+  payload (`case .None(x):`), which their `_unsafe_get_union_payload[0]`
+  now returns instead of failing its `comptime assert`, as every
+  `UnionLike` case carries a payload under upstream's enum proposal. A
+  type annotation may spell an empty parameter list (`Tuple[]`), and
+  `inline-parametric` drops the dead arm of a `comptime if` its
+  substitution decides (`assets/extensions/ok/match_enum_case_none_payload.mojo`,
+  R2239).
+
 - `enum` and `union` follow upstream's enum proposal
   (`Mojo/proposals/enums.md`), which splits the pin's `__enum` in two. An
   `enum` declares payload-free cases, listed on one line or one per

@@ -4705,22 +4705,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2239 A pattern cannot bind `Optional`'s `None` payload**
-
-  `case .None(x):` over an `Optional` fails with "cannot get payload for
-  None case", where upstream's enum proposal gives every `UnionLike` case a
-  payload to bind.
-  - `Optional` and `OptionalReg` declare `Tuple[]` as their `None` payload
-    (`stdlib/std/collections/optional.mojo`).
-  - Their `_unsafe_get_union_payload` keeps the pin's `comptime assert id != 0`,
-    since neither stores an empty tuple to refer to.
-  - `.None()` and `.None(_)` read no payload and run.
-  - `assets/extensions/type_error/match_enum_case_none_payload.mojo` pins
-    the rejection.
-  - Found while landing R2237 (2026-11-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2238 An `enum` cannot opt out of its implicit value conformances**
 
   The proposal lets an enum decline one of its automatic conformances with

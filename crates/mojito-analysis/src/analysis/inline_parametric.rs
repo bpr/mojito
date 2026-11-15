@@ -5399,9 +5399,13 @@ fn accessed_through(
 /// Fold each `Const::Param` of `blocks` the substitution closed into the
 /// constant its register reads it as, and an LLVM intrinsic call's closed
 /// name and side-effect flag and a `pop` op's closed fast-math flag into
-/// values.
+/// values. A `comptime if` whose one condition closed keeps its live arm
+/// and an `unreachable` dead one, as its canonicalizer leaves it: the dead
+/// arm was written for other bindings, and its types need not hold at
+/// these.
 fn fold_parameter_constants(block: &mut MirBlock, reg_types: &std::collections::HashMap<u32, Ty>) {
     for instruction in &mut block.instrs {
+        purge_closed_comptime_arm(instruction);
         for region in instruction_regions_mut(instruction) {
             fold_parameter_constants(region, reg_types);
         }
@@ -5427,6 +5431,37 @@ fn fold_parameter_constants(block: &mut MirBlock, reg_types: &std::collections::
             }
         }
     }
+}
+
+/// Close the one condition of the `comptime if` `instruction` the
+/// substitution decided, and make its dead arm one `unreachable` block.
+fn purge_closed_comptime_arm(instruction: &mut MirInstr) {
+    let MirInstr::ComptimeIf {
+        values,
+        arms,
+        orelse,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let [value] = values.as_mut_slice() else {
+        return;
+    };
+    let closed = match value {
+        Const::Bool(closed) => *closed,
+        Const::Param(expr) => match expr.as_bool() {
+            Some(closed) => closed,
+            None => return,
+        },
+        _ => return,
+    };
+    *value = Const::Bool(closed);
+    let dead = if closed { &mut **orelse } else { &mut arms[0] };
+    *dead = MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Unreachable,
+    };
 }
 
 /// Whether the call `instruction` passes a compile-time argument's run-time

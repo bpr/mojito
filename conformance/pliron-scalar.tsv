@@ -1760,6 +1760,7 @@ assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-sc
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/match_coverage_enum_like_conformers.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/match_coverage_enums_and_products.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/match_enum_case_none_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/match_enum_cases_custom.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/match_enum_cases_optional.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/match_enum_tag_clusters.mojo	-	ineligible	no-scalar-entry-shape

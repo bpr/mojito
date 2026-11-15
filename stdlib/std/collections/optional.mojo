@@ -115,10 +115,14 @@ struct Optional[T: AnyType](
 
     var data: UnsafePointer[Self.T]
     var _size: Int
+    # The `None` case's empty-tuple payload, which
+    # `_unsafe_get_union_payload[0]` refers to.
+    var _none: Tuple[]
 
     def __init__(out self):
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
 
     # `None` implicitly converts to the empty Optional (upstream's convention):
     # this constructor is what makes `var x: Optional[T] = None`, `f(arg=None)`,
@@ -128,6 +132,7 @@ struct Optional[T: AnyType](
     def __init__(out self, value: NoneType):
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
 
     # Upstream's second `None` initializer, from the raw `!kgen.none`: a
     # `None` argument converts in one step rather than through `NoneType`.
@@ -138,6 +143,7 @@ struct Optional[T: AnyType](
     def __init__(out self, value: __mlir_type.`!kgen.none`):
         self._size = 0
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
 
     # Upstream's `@implicit` value constructor: `var x: Optional[Int] = 5` and
     # `f(5)` for an `Optional[Int]` parameter both convert.
@@ -145,16 +151,19 @@ struct Optional[T: AnyType](
     def __init__(out self, var value: Self.T) where conforms_to(Self.T, Movable):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
         self.data[0] = value^
 
     def __init__[F: def() -> Self.T](out self, *, init_with: F):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
         self.data[0] = init_with()
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self._size = copy._size
         self.data = unsafe_alloc[Self.T](1)
+        self._none = ()
         if copy._size == 1:
             self.data.unsafe_write(copy=copy.data[0])
 
@@ -164,6 +173,7 @@ struct Optional[T: AnyType](
     def __init__(out self, *, deinit move: Self):
         self._size = move._size
         self.data = move.data^
+        self._none = ()
 
     def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
         if self._size == 1:
@@ -282,16 +292,21 @@ struct Optional[T: AnyType](
     ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
-        """Return a reference to the `Some` payload.
+        """Return a reference to the active case's payload: the empty tuple
+        for `None` and the value for `Some`.
 
-        Only valid when the discriminant is `1` (`Some`).
+        Only valid when the discriminant is `id`.
         """
-        comptime assert id != 0, "cannot get payload for None case"
-        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
-            Pointer(to=self._unsafe_unchecked_value()).unsafe_origin_cast[
-                origin_of(self)
-            ]()[]
-        )
+        comptime if id == 0:
+            return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
+                self._none
+            )
+        else:
+            return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
+                Pointer(to=self._unsafe_unchecked_value()).unsafe_origin_cast[
+                    origin_of(self)
+                ]()[]
+            )
 
     def take(mut self) -> Self.T where conforms_to(Self.T, Movable):
         if self._size == 0:
@@ -430,18 +445,25 @@ struct OptionalReg[T: TrivialRegisterPassable](
     ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
-        """Return a reference to the `Some` payload.
+        """Return a reference to the active case's payload: the empty tuple
+        for `None` and the value for `Some`.
 
-        Only valid when the discriminant is `1` (`Some`).
+        Only valid when the discriminant is `id`.
         """
-        comptime assert id != 0, "cannot get payload for None case"
-        # The payload sits in the wrapped `Optional`, not upstream's
-        # `Variant` storage, so the pointer is to its unchecked value.
-        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
-            Pointer(to=self._value._unsafe_unchecked_value()).unsafe_origin_cast[
-                origin_of(self)
-            ]()[]
-        )
+        # The payloads sit in the wrapped `Optional`, not upstream's
+        # `Variant` storage, so the reference is to its payload.
+        comptime if id == 0:
+            return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
+                Pointer(to=self._value._none).unsafe_origin_cast[
+                    origin_of(self)
+                ]()[]
+            )
+        else:
+            return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
+                Pointer(
+                    to=self._value._unsafe_unchecked_value()
+                ).unsafe_origin_cast[origin_of(self)]()[]
+            )
 
     def or_else(var self, var default: Self.T) -> Self.T:
         if self._value:
