@@ -17,8 +17,17 @@ to evolve under the `0.x` compatibility rules.
   payload (`()` is `Tuple[]`, several types a `Tuple`), and its case
   patterns always take parentheses, several subpatterns forming one tuple
   pattern (`.span(a, b)`). An `enum` case with a payload is now an error
-  that points at `union` (`assets/extensions/*/{enum,union}_*.mojo`; the
-  proposal's `SumType` traits are R2237).
+  that points at `union` (`assets/extensions/*/{enum,union}_*.mojo`).
+
+- Case patterns and reflection run on the enum proposal's `SumType`,
+  `EnumLike`, and `UnionLike` traits, which replace the pin's one `EnumLike`
+  protocol in the bundled library, the generated `enum` and `union`
+  members, and the checker. `Optional` and `OptionalReg` are `UnionLike`,
+  so their `None` case is matched `.None()`; `Bool` and `FastMathFlag` are
+  `EnumLike`. A union may now carry a `NoneType` payload. A program written
+  against the pin's members (`_enum_case_names`, `_get_enum_discriminant`,
+  …) or matching a bare `.None` is rejected, and the fixtures that spell
+  the proposal moved to `assets/extensions/` (R2237).
 
 - Every member of upstream's `struct DType` is now a value: `_uint1`,
   `_uint2`, `_uint4`, `uint128`, `int128`, `uint256`, `int256`, the

@@ -1,11 +1,13 @@
-# Enum case patterns over `Optional`, which declares `EnumLike`: a case
-# tests `_get_enum_discriminant()` against its index in
-# `_enum_case_names`, then matches its payload pattern over
-# `_unsafe_get_enum_payload[case]()`. Leading-dot and qualified heads,
+# Case patterns over `Optional`, which declares `UnionLike`: a case
+# tests `_get_sum_discriminant()` against its index in
+# `_sum_case_names`, then matches its payload pattern over
+# `_unsafe_get_union_payload[case]()`. Leading-dot and qualified heads,
 # refined payloads before a whole-payload case, `ref` payloads writing
-# through a place, bare tag tests, nested and tuple payloads, `if case`,
+# through a place, ignored payloads, nested and tuple payloads, `if case`,
 # `|`, guards, a generic `Optional[T]`, and the equality a qualified head
-# is over a subject that is no enum (`DType`).
+# is over a subject that is no sum type (`DType`).
+# `Optional` is `UnionLike` under upstream's enum proposal, so its `None`
+# case is matched `.None()`, which the pin rejects (`docs/non-goals.md`).
 @fieldwise_init
 struct Holder(Copyable):
     var o: Optional[Int]
@@ -15,7 +17,7 @@ def describe(o: Optional[Int]):
     match o:
         case .Some(x):
             print("some", x)
-        case .None:
+        case .None():
             print("none")
 
 
@@ -26,13 +28,13 @@ def refine(o: Optional[Int]):
         case Optional.Some(var x):
             x += 1
             print("some+1", x)
-        case Optional.None:
+        case Optional.None():
             print("none")
 
 
 def tag[T: Copyable & Writable](o: Optional[T]):
     match o:
-        case .None:
+        case .None():
             print("generic none")
         case .Some(_):
             print("generic some")
@@ -49,25 +51,25 @@ def main():
     match o:
         case .Some(ref s):
             s += "!"
-        case .None:
+        case .None():
             pass
     print(o.value())
     match Optional(String("tmp")):
         case .Some(ref s):
             print(s)
-        case .None:
+        case .None():
             pass
     if case .Some(v) = o:
         print("if-case", v)
     match o:
-        case .Some(_) | .None:
+        case .Some(_) | .None():
             print("any")
     match o:
         case .Some(x) if x.byte_length() > 10:
             print("long")
         case .Some(x):
             print("short", x)
-        case .None:
+        case .None():
             print("none")
 
     var pair = Optional((1, 2))
@@ -80,17 +82,17 @@ def main():
     match nested:
         case .Some(.Some(x)):
             print("nested", x)
-        case .Some(.None):
+        case .Some(.None()):
             print("inner none")
-        case .None:
+        case .None():
             print("outer none")
     var inner_none = Optional(Optional[Int]())
     match inner_none:
         case .Some(.Some(x)):
             print("nested", x)
-        case .Some(.None):
+        case .Some(.None()):
             print("inner none")
-        case .None:
+        case .None():
             print("outer none")
     var text = Optional(String("ab"))
     match text:
@@ -101,12 +103,12 @@ def main():
 
     var n = Optional[Int](3)
     match n:
-        case .Some:
+        case .Some(_):
             print("bare tag")
         case _:
             print("other")
     match n:
-        case Optional.Some:
+        case Optional.Some(_):
             print("qualified bare tag")
         case _:
             print("other")
@@ -115,11 +117,11 @@ def main():
             print("nominal owner", q)
         case _:
             pass
-    if case .None = Optional[Int]():
+    if case .None() = Optional[Int]():
         print("if-case none")
     var t = (Optional(1), Optional[Int]())
     match t:
-        case (.Some(a), .None):
+        case (.Some(a), .None()):
             print("tuple", a)
         case _:
             print("nope")

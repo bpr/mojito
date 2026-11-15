@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2239**.
+Next free ID: **R2240**.
 
 ## Ordered Work
 
@@ -2841,7 +2841,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   batch-7 instantiation baselines with "MakeRef destination recovers
   permission unavailable through its source capability".
   - `for_destructuring_lifetimes.mojo`, `for_destructuring_targets.mojo`,
-    and `match_enum_cases_optional.mojo` fail in `main` after the
+    and `match_enum_cases_optional.mojo` (now under `assets/extensions/ok`)
+    fail in `main` after the
     pre-elaboration `inline-parametric` pass, and every later pass repeats
     the finding.
   - A fourth, `view_temporaries.mojo`, which failed in the
@@ -4704,28 +4705,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2237 `enum` and `union` still match through the pin's `EnumLike` protocol, not the proposal's `SumType` traits**
+- [ ] **R2239 A pattern cannot bind `Optional`'s `None` payload**
 
-  Upstream's enum proposal (`Mojo/proposals/enums.md`, 2026-11-07) bases
-  case patterns and reflection on three traits that Mojito does not declare
-  yet.
-  - The proposal: `SumType` (`_sum_case_names`, `_get_sum_discriminant`),
-    `EnumLike(SumType)` for enums, and `UnionLike(SumType)` adding
-    `_union_case_types`, `_union_elt_type_for_case`, and
-    `_unsafe_get_union_payload`.
-  - Today every declaration synthesizes the pin's `EnumLike`
-    (`_enum_case_names`, `_enum_case_types` with `NoneType` for no payload,
-    `_get_enum_discriminant`, `_unsafe_get_enum_payload`), and the bundled
-    `__Union` marker stands in for `UnionLike` in `checker/patterns.rs`.
-  - The switch rewrites `Bool` and `FastMathFlag` as `EnumLike`, `Optional`
-    and `OptionalReg` as `UnionLike` (so `.None` becomes `.None()`), and
-    `std.format`'s reflective writer.
-  - About 25 pin fixtures in `assets/ok` and `assets/type_error` hand-conform
-    to the pin's `EnumLike` or match `.None`. They move to
-    `assets/extensions/` or are rewritten.
-  - Deferred by the owner when `enum` and `union` landed (2026-11-15).
+  `case .None(x):` over an `Optional` fails with "cannot get payload for
+  None case", where upstream's enum proposal gives every `UnionLike` case a
+  payload to bind.
+  - `Optional` and `OptionalReg` declare `Tuple[]` as their `None` payload
+    (`stdlib/std/collections/optional.mojo`).
+  - Their `_unsafe_get_union_payload` keeps the pin's `comptime assert id != 0`,
+    since neither stores an empty tuple to refer to.
+  - `.None()` and `.None(_)` read no payload and run.
+  - `assets/extensions/type_error/match_enum_case_none_payload.mojo` pins
+    the rejection.
+  - Found while landing R2237 (2026-11-15).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2238 An `enum` cannot opt out of its implicit value conformances**
 
@@ -11540,10 +11534,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where upstream's are `__Enum`'s trait defaults**
 
   `mojito_parser::enums` writes `__enum_init`, `__get_enum_storage`,
-  `_get_enum_discriminant`, and `_unsafe_get_enum_payload` into every enum,
-  and each case constructor writes its own storage, where upstream's
-  `std/builtin/_enum.mojo` declares the four as defaults of `trait
-  __Enum(EnumLike)` and the case constructors call `__enum_init[id,
+  `_get_sum_discriminant`, and a union's `_unsafe_get_union_payload` into
+  every declaration, and each case constructor writes its own storage, where
+  upstream's `std/builtin/_enum.mojo` declares the four (the last two as
+  `_get_enum_discriminant` and `_unsafe_get_enum_payload`) as defaults of
+  `trait __Enum(EnumLike)` and the case constructors call `__enum_init[id,
   Case](payload0^, ...)`.
   - Upstream's `__enum_init` is a `@staticmethod` with an `out` result over
     a `var *payload: *Ts` pack, writing each element in place through
@@ -11600,8 +11595,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the text matches.
   - `Writable`'s defaults are now the trait's own bodies, so deleting the
     generation leaves an enum to `_enum_reflection_write_to`, which a
-    hand-written `EnumLike` conformer already runs
-    (`assets/ok/enum_like_callable_binder_cases.mojo`).
+    hand-written `UnionLike` conformer already runs
+    (`assets/extensions/ok/enum_like_callable_binder_cases.mojo`).
+  - The bundled writer writes a tuple payload as one value
+    (`Name.span((1, 2))`), where the generated text writes its elements
+    (`Name.span(1, 2)`).
   - Found while landing `enum` (2026-10-25).
   - Depends on R1879 and R1880.
   - Model: Opus, Not Planned.
@@ -12679,8 +12677,6 @@ residue found inside a task moves to the task that owns its fix.
     pack).
   - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
     variadics-private stand-ins, as R811 does for `ParameterList`.
-  - Restore `FastMathFlag._enum_case_types` in `stdlib/std/simd.mojo` to
-    upstream's `TypeList.splat[...]` spelling.
   - Found while landing R1168 (2026-10-20).
   - Depends on R808 (generator parameters), R1485 (`Self._MapTabulator[
     ToTrait, Mapper, idx=_]`), and R1486 (a type generator applied in a
@@ -13228,12 +13224,13 @@ residue found inside a task moves to the task that owns its fix.
 
   `from std.sys.info import Endian` fails, where the pin prints `True` for
   `Endian.native() == .little`.
-  - `Endian` declares `EnumLike` over `TypeList.splat` (R1181).
+  - Upstream's `Endian` declares the pin's `EnumLike` over `TypeList.splat`.
+    The bundled `EnumLike` has no case types, so the port needs no `splat`.
   - `KgenTarget::field` (`crates/mojito-types/src/ct.rs`) does not answer
     `target_get_field`'s `endianness` field. Add it, read from the data
     layout's leading `e`/`E`, together with `reads_field`.
   - Restore the `std.sys` re-exports of all three.
-  - Depends on R1181.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1760 `std.math` has no `exp2` or `log2`**

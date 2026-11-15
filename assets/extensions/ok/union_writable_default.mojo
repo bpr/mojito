@@ -1,5 +1,5 @@
 # A `union` declaring `Writable` without writing it is written as
-# upstream's `_enum_reflection_write_to` writes an `EnumLike`: the type name,
+# upstream's `_enum_reflection_write_to` writes a `UnionLike`: the type name,
 # the case, and the payload's own text or `repr` in parentheses, a tuple
 # payload element by element and an empty one as `()`.
 # `union` is the declaration upstream's enum proposal gives cases with

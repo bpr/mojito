@@ -4914,7 +4914,7 @@ fn compiler_reports_match_coverage_warnings_without_stderr() {
 fn compiler_reports_enum_and_product_coverage_warnings_in_pin_order() {
     let warnings = |fixture: &str| {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/ok")
+            .join("assets/extensions/ok")
             .join(fixture);
         let source = std::fs::read_to_string(&path).expect("read the fixture");
         let program = Compiler::default()
@@ -4937,19 +4937,19 @@ fn compiler_reports_enum_and_product_coverage_warnings_in_pin_order() {
     assert_eq!(
         warnings("match_coverage_enums_and_products.mojo"),
         [
-            (39, missing("case for 'Some'")),
-            (50, covered("Some")),
-            (64, unreachable.to_string()),
-            (72, covered("Some")),
-            (69, missing("case for 'None'")),
-            (77, missing("case for 'Some, False'")),
-            (87, missing("case for 'False, True'")),
+            (41, missing("case for 'Some'")),
+            (52, covered("Some")),
+            (66, unreachable.to_string()),
+            (74, covered("Some")),
+            (71, missing("case for 'None'")),
+            (79, missing("case for 'Some, False'")),
+            (89, missing("case for 'False, True'")),
             (
-                105,
+                107,
                 missing("cases for 'False, False', 'False, True', and 'True, False'")
             ),
             (
-                111,
+                113,
                 missing(
                     "cases for 'False, False, False, False', 'False, False, False, True', \
                      'False, False, True, False', 'False, False, True, True', \
@@ -4958,19 +4958,19 @@ fn compiler_reports_enum_and_product_coverage_warnings_in_pin_order() {
                 )
             ),
             (
-                119,
+                121,
                 "'match' is too complex to check for exhaustivity; add a '_' case".to_string()
             ),
-            (144, covered("4")),
-            (156, covered("0.5")),
-            (168, covered("\"a\"")),
-            (180, unreachable.to_string()),
-            (188, covered("Some")),
+            (146, covered("4")),
+            (158, covered("0.5")),
+            (170, covered("\"a\"")),
+            (182, unreachable.to_string()),
+            (190, covered("Some")),
         ]
     );
     assert_eq!(
         warnings("match_coverage_enum_like_conformers.mojo"),
-        [(67, missing("case for 'Leaf'")), (89, covered("A"))]
+        [(69, missing("case for 'Leaf'")), (91, covered("A"))]
     );
 }
 

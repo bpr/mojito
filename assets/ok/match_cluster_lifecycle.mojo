@@ -64,12 +64,12 @@ def main():
             print("some")
         case .Some(var a):
             print("a", a.n)
-        case .None:
+        case _:
             print("none")
     match o:
         case .Some(ref r):
             print("r", r.n)
-        case .None:
+        case _:
             print("none")
     if o:
         print("truthy", o.value().n)

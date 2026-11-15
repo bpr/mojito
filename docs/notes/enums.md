@@ -48,13 +48,27 @@ working, as at the pin.
   subpattern are errors; a struct payload destructures by its fields
   (`.at({start=x, end=y})`).
 - **No stored state.** A `var` member is an error in either declaration.
-- **Traits.** The proposal bases matching on `SumType`, `EnumLike`, and
-  `UnionLike`. Mojito still runs matching and reflection on the pin's
-  `EnumLike` protocol (`_enum_case_names`, `_enum_case_types`,
-  `_get_enum_discriminant`, `_unsafe_get_enum_payload`), so that the pin's
-  `Optional`, `Bool`, and hand-written conformers keep their behavior. The
-  bundled `__Union` trait, which every union declares, stands in for
-  `UnionLike` where a pattern's rules differ (R2237).
+- **Traits.** The proposal bases matching and reflection on three traits,
+  which Mojito bundles in `stdlib/std/builtin/enum_like.mojo` in place of
+  the pin's one `EnumLike` protocol (`_enum_case_names`, `_enum_case_types`,
+  `_get_enum_discriminant`, `_unsafe_get_enum_payload`):
+  - `SumType` declares `_sum_case_names` and `_get_sum_discriminant`.
+  - `EnumLike(SumType)` adds nothing. Every `enum` conforms, and so do
+    `Bool` and `FastMathFlag`.
+  - `UnionLike(SumType)` adds `_union_case_types`,
+    `_union_elt_type_for_case`, and `_unsafe_get_union_payload`. Every
+    `union` conforms, and so do `Optional` and `OptionalReg`, whose `None`
+    case carries `Tuple[]` and is matched `.None()`.
+  - A case pattern asks `SumType` for the case and `UnionLike` for the
+    payload (`checker/patterns.rs`). A parenthesized pattern over a subject
+    that is not `UnionLike` is an error, and so is a bare one over a subject
+    that is.
+  - `SumType` keeps the pin's defaulted `_enum_is_exhaustive`, which the
+    proposal's sketch does not mention: the pin and upstream's newer sources
+    both have open enums, and coverage reads the flag.
+  - A program written against the pin's protocol, or matching a bare
+    `.None`, is rejected. Upstream had not implemented the three traits by
+    2026-11-13 (`e6e596ce2c`), so the proposal's text is the only source.
 
 ## What the pin generates, and what Mojito generates
 
@@ -75,15 +89,18 @@ constructors calling `Token.__enum_init[i, Case](payload0^, ...)`;
 in place), `__get_enum_storage`, `_get_enum_discriminant`, and
 `_unsafe_get_enum_payload`.
 
-Mojito generates the same names and lists, written as Mojo and parsed
-(`mojito_parser::enums`). An enum case is the pin's case without a payload:
-a `comptime` member over a `NoneType` storage alternative. A union case is
-the pin's case with one: a static constructor, whose `()` payload is the
-storage alternative `Tuple[]` rather than `NoneType`, so a union rejects a
-`NoneType` payload, which the `EnumLike` protocol reads as no payload. The
-remaining differences from the pin:
+Mojito generates the storage and the constructors the same way, written as
+Mojo and parsed (`mojito_parser::enums`), under the proposal's member names:
+`_sum_case_names` and `_get_sum_discriminant` on both declarations, and
+`_union_case_types` and `_unsafe_get_union_payload` on a union alone. An
+enum case is the pin's case without a payload: a `comptime` member over a
+`NoneType` storage alternative, with no case type listed. A union case is
+the pin's case with one: a static constructor, whose `()` payload is
+`Tuple[]`. No payload type marks an absent payload, so `NoneType` is a
+payload type like any other. `__Enum` refines `EnumLike` and `__Union`
+refines `UnionLike`. The remaining differences from the pin:
 
-- **The four `__Enum` members are generated on each declaration**, not
+- **The `__Enum` members are generated on each declaration**, not
   inherited as trait defaults: upstream's defaults are a `@staticmethod`
   with an `out` result over a payload pack and `ref`-returning methods,
   which Mojito's trait defaults cannot hold yet (R942, R549, R571), and
@@ -106,7 +123,9 @@ remaining differences from the pin:
 - **The default `Writable` text** is generated per declaration (`write_to`,
   `write_repr_to`), with upstream's `_enum_reflection_write_to` shape, where
   upstream's enum inherits `Writable`'s own bodies, which reach
-  `_enum_reflection_write_to` (R1409). A tuple payload is written element
+  `_enum_reflection_write_to` (R1409). The bundled
+  `_enum_reflection_write_to` writes any `SumType`'s case name and a
+  `UnionLike`'s payload after it. A tuple payload is written element
   by element (`Token.span(1, 2)`), as upstream's newer sources write it.
 
 An enum case is a `comptime` member whose value the check freezes as the
@@ -122,6 +141,8 @@ constructor; `std.iter.map`), splits into the
 pin's on the VM and natively for the same programs written with `__enum`,
 except where noted in `docs/features.md`. The fixtures for what the
 proposal adds (`enum_derived_conformances`, `enum_nullary_constants`,
-`union_tuple_payload_patterns`, and the `union_*`/`enum_case_*` diagnostics)
-have no pin to compare against; their words are Mojito's where upstream has
-published none.
+`union_tuple_payload_patterns`, the `union_*`/`enum_case_*` diagnostics, and
+the trait fixtures `enum_like_*`, `union_like_*`, and `match_*` under
+`assets/extensions/`) have no pin to compare against; their words are
+Mojito's where upstream has published none. The `match_*` ones ran at the
+pin under its protocol, with `.None` for `.None()`, before they moved.

@@ -45,9 +45,9 @@ def pick(bright: Bool) -> Light:
 
 
 def main():
-    print(describe(Light.off), Light.off._get_enum_discriminant())
-    print(describe(pick(True)), pick(True)._get_enum_discriminant())
+    print(describe(Light.off), Light.off._get_sum_discriminant())
+    print(describe(pick(True)), pick(True)._get_sum_discriminant())
     var dimmed: Light = .dimmed
     var copy = dimmed
-    print(describe(copy), copy._get_enum_discriminant())
+    print(describe(copy), copy._get_sum_discriminant())
     print(describe_level(Level.low), describe_level(.high))

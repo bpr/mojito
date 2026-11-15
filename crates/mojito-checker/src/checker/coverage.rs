@@ -4,10 +4,10 @@
 //! subject's type. The space proves when the cases cover every value, finds
 //! the cases earlier ones already cover, and names the values none covers.
 //!
-//! The space is a closed `EnumLike`'s constructors (`Bool`'s
+//! The space is a closed `SumType`'s constructors (`Bool`'s
 //! `False` and `True` among them), an open one's (`_enum_is_exhaustive =
 //! False`, which only a catch-all closes), the Cartesian cells of a tuple or
-//! struct whose every leaf is a closed `EnumLike` (at most 1024, else too
+//! struct whose every leaf is a closed `SumType` (at most 1024, else too
 //! complex to track), or, over any other type, the spellings of the root
 //! literals compared so far, which find duplicates and prove nothing. A
 //! constructor or cell is covered only by a pattern that matches all of it:
@@ -169,9 +169,9 @@ impl Checker {
     }
 
     /// The covering space of the subject type `ty`, upstream's
-    /// `createRootCoveringSpace`: an `EnumLike`'s constructors (opaque when
+    /// `createRootCoveringSpace`: an `SumType`'s constructors (opaque when
     /// its names are unknown or empty), else the cells of a product of
-    /// closed `EnumLike` leaves, else the open set of literal spellings.
+    /// closed `SumType` leaves, else the open set of literal spellings.
     fn covering_space(&self, ty: &Ty) -> Result<Space, TypeError> {
         if let Some(constructors) = self.enum_constructors(ty)? {
             let Some(names) = constructors.names.filter(|names| !names.is_empty()) else {
@@ -199,10 +199,10 @@ impl Checker {
         )
     }
 
-    /// Append the closed `EnumLike` leaves of `ty`, at `path`, to `dims`,
-    /// upstream's `collectFiniteDims`: an `EnumLike` is one leaf, a tuple
+    /// Append the closed `SumType` leaves of `ty`, at `path`, to `dims`,
+    /// upstream's `collectFiniteDims`: an `SumType` is one leaf, a tuple
     /// its elements' leaves, a struct its stored fields' in declaration
-    /// order. Whether every leaf is a closed `EnumLike`; an open one, or
+    /// order. Whether every leaf is a closed `SumType`; an open one, or
     /// any other type, makes the product the open literal set.
     fn finite_dims(
         &self,
@@ -251,14 +251,14 @@ impl Checker {
         Ok(true)
     }
 
-    /// The constructors of `ty` when it is an `EnumLike`: the case names
-    /// `_enum_case_names` folds to and the `_enum_is_exhaustive` flag, each
+    /// The constructors of `ty` when it is an `SumType`: the case names
+    /// `_sum_case_names` folds to and the `_enum_is_exhaustive` flag, each
     /// unknown when it does not fold.
     fn enum_constructors(&self, ty: &Ty) -> Result<Option<Constructors>, TypeError> {
-        if !self.conforms_to(ty, &enum_like_trait()) {
+        if !self.conforms_to(ty, &sum_type_trait()) {
             return Ok(None);
         }
-        let names = self.enum_like_list(ty, "_enum_case_names")?.map(|names| {
+        let names = self.sum_type_list(ty, "_sum_case_names")?.map(|names| {
             names
                 .iter()
                 .map(|name| match name.as_constant() {
@@ -299,10 +299,10 @@ const MAX_SUGGESTED: usize = 8;
 /// The values a `match`'s cases have not yet covered, as upstream's
 /// `MatchCoveringSpace` tracks them.
 enum Space {
-    /// An `EnumLike` whose case names are unknown or empty: only a
+    /// An `SumType` whose case names are unknown or empty: only a
     /// catch-all closes it.
     Opaque,
-    /// An `EnumLike` root: per constructor, whether it is still open. An
+    /// An `SumType` root: per constructor, whether it is still open. An
     /// open enum (not `exhaustive`) is closed by a catch-all alone, which
     /// covers its unknown values.
     Ctors {
@@ -311,7 +311,7 @@ enum Space {
         exhaustive: bool,
         universe_covered: bool,
     },
-    /// A tuple or struct of closed `EnumLike` leaves: per cell, row-major
+    /// A tuple or struct of closed `SumType` leaves: per cell, row-major
     /// with the last leaf varying fastest, whether it is still open.
     Product { dims: Vec<Dim>, cells: Vec<bool> },
     /// A product above `MAX_CELLS`, tracked not at all.
@@ -376,7 +376,7 @@ impl Space {
         })
     }
 
-    /// Credit one alternative against an `EnumLike` root, upstream's
+    /// Credit one alternative against an `SumType` root, upstream's
     /// `coverFiniteCtorsCommands`: whether it matched an open constructor,
     /// `None` when it tests no one root constructor.
     fn credit_ctors(&mut self, alternative: &[&CoverCommand]) -> Option<bool> {
@@ -530,7 +530,7 @@ struct Dim {
     names: Vec<String>,
 }
 
-/// An `EnumLike`'s constructors as its members fold: unknown names or an
+/// An `SumType`'s constructors as its members fold: unknown names or an
 /// unknown exhaustiveness flag are `None`.
 struct Constructors {
     names: Option<Vec<String>>,
@@ -553,11 +553,11 @@ fn warning(message: String, span: &SourceSpan) -> Warning {
     }
 }
 
-/// The rejection of an `EnumLike` whose `_enum_is_exhaustive` does not
+/// The rejection of an `SumType` whose `_enum_is_exhaustive` does not
 /// fold.
 fn exhaustiveness_not_static() -> TypeError {
     TypeError::MatchPattern(
-        "'_enum_is_exhaustive' must be statically known when matching an EnumLike type".into(),
+        "'_enum_is_exhaustive' must be statically known when matching a SumType".into(),
     )
 }
 

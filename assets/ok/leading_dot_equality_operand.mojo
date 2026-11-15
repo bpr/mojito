@@ -1,5 +1,5 @@
 # A leading-dot right operand of `==` and `!=`, and a leading-dot case head
-# over a subject that is not `EnumLike`, take the `__eq__` parameter's type as
+# over a subject that is no `SumType`, take the `__eq__` parameter's type as
 # their context: a struct's `Self`, and `DType`'s (upstream's `DType.__eq__(
 # self, rhs: Self)`), in an annotated binding, a `[dt: DType]` binder's
 # `comptime if`, and a match over a type's member included.

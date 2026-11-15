@@ -3,7 +3,7 @@
 # conformer, as the pin synthesizes the conformer's witness: a value
 # (`get[idx: Int]: Int = idx + Self.K`) read by name and through a bound,
 # including a refining trait's conformer, and a type (`E[id: Int]: AnyType`)
-# read in a type annotation, upstream's `EnumLike._enum_elt_type_for_case`
+# read in a type annotation, the bundled `UnionLike._union_elt_type_for_case`
 # shape over the conformer's raw list of case types.
 from std.builtin.variadics import TypeList, _MLIR
 

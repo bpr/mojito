@@ -1,67 +1,69 @@
-# Neighbouring cases whose first command tests an enum case on the same
+# Neighbouring cases whose first command tests a sum type's case on the same
 # path form a cluster, as upstream's `emitCaseCluster` emits them: the
 # discriminant is read once, one arm per case index runs its members in
 # case order, and a payload the members test is read once for them all. A
 # binding moves behind its case's remaining tests, so a tuple member reads
 # its payload only once the later element matches. A `|` is not clustered:
 # each alternative reads what it needs afresh, as does a binding after it.
+# `UnionLike` is upstream's enum proposal's trait, which the pin does not
+# declare (`docs/non-goals.md`).
 from std.builtin.variadics import TypeList, _MLIR
 
 
-struct Rec(EnumLike, ImplicitlyCopyable):
+struct Rec(UnionLike, ImplicitlyCopyable):
     var tag: Int
     var n: Int
 
-    comptime _enum_case_names = ParameterList.of[
+    comptime _sum_case_names = ParameterList.of[
         "Leaf".value, "Node".value, "Pair".value
     ].values
-    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
-        Trait=AnyType, NoneType, Int, Int
+    comptime _union_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, Tuple[], Int, Int
     ].values
 
     def __init__(out self, tag: Int, n: Int):
         self.tag = tag
         self.n = n
 
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         print("  disc")
         return self.tag
 
-    def _unsafe_get_enum_payload[
+    def _unsafe_get_union_payload[
         id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
         print("  payload", id)
-        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
             Pointer(to=self.n).unsafe_origin_cast[origin_of(self)]()[]
         )
 
 
-struct Box(EnumLike, ImplicitlyCopyable):
+struct Box(UnionLike, ImplicitlyCopyable):
     var tag: Int
     var t: Tuple[Int, Int]
 
-    comptime _enum_case_names = ParameterList.of["Empty".value, "Full".value].values
-    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
-        Trait=AnyType, NoneType, Tuple[Int, Int]
+    comptime _sum_case_names = ParameterList.of["Empty".value, "Full".value].values
+    comptime _union_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, Tuple[], Tuple[Int, Int]
     ].values
 
     def __init__(out self, tag: Int, a: Int, b: Int):
         self.tag = tag
         self.t = (a, b)
 
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         print("  disc")
         return self.tag
 
-    def _unsafe_get_enum_payload[
+    def _unsafe_get_union_payload[
         id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
         print("  payload", id)
-        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
             Pointer(to=self.t).unsafe_origin_cast[origin_of(self)]()[]
         )
 
@@ -88,7 +90,7 @@ def main():
             print("pair", x)
         case .Node(x):
             print("node", x)
-        case .Leaf:
+        case .Leaf():
             print("leaf")
     print("payload literals")
     match r:
@@ -102,7 +104,7 @@ def main():
     match r:
         case .Node(x) if g("a"):
             print("node-a", x)
-        case .Leaf:
+        case .Leaf():
             print("leaf")
         case .Node(y):
             print("node-b", y)
@@ -115,11 +117,11 @@ def main():
         case Rec.Node(var x):
             x += 1
             print("node", x)
-        case .Leaf:
+        case .Leaf():
             print("leaf")
     print("a binding ends the run")
     match r:
-        case .Leaf:
+        case .Leaf():
             print("leaf")
         case v if g("v"):
             print("v", v.n)
@@ -144,7 +146,7 @@ def main():
             print("other")
     print("alternatives read afresh")
     match r:
-        case .Leaf | .Node(_):
+        case .Leaf() | .Node(_):
             print("any")
     var b = Box(1, 7, 2)
     match b:
@@ -152,7 +154,7 @@ def main():
             print("small", x)
         case .Full((y, _)):
             print("other", y)
-        case .Empty:
+        case .Empty():
             print("empty")
     print("payload elements cluster below the tag")
     match b:

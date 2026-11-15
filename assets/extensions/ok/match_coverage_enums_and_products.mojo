@@ -5,6 +5,8 @@
 # and a case earlier ones cover warns and is never reached. A subject with
 # an open leaf (`Int`) only finds repeated root literal spellings, so
 # `0x4` is no repeat of `4`. Each shape is its own function.
+# `Optional` is `UnionLike` under upstream's enum proposal, so its `None`
+# case is matched `.None()`, which the pin rejects (`docs/non-goals.md`).
 @fieldwise_init
 struct P(Copyable, Movable):
     var a: Bool
@@ -13,7 +15,7 @@ struct P(Copyable, Movable):
 
 def optional_returns(o: Optional[Int]) -> Int:
     match o:
-        case .None:
+        case .None():
             return 0
         case .Some(x):
             return x
@@ -28,7 +30,7 @@ def bool_alternatives_return(b: Bool) -> Int:
 def optional_initializes(o: Optional[Int]) -> Int:
     var y: Int
     match o:
-        case .None:
+        case .None():
             y = 0
         case .Some(v):
             y = v
@@ -39,7 +41,7 @@ def payload_refines(o: Optional[Int]):
     match o:
         case .Some(0):
             print("some zero")
-        case .None:
+        case .None():
             print("none")
 
 
@@ -49,7 +51,7 @@ def payload_after_whole(o: Optional[Int]):
             print("some")
         case .Some(0):
             print("some zero")
-        case .None:
+        case .None():
             print("none")
 
 
@@ -59,7 +61,7 @@ def catch_all_after_optional_cases(o: Optional[Int]):
     match o:
         case .Some(_):
             print("some")
-        case .None:
+        case .None():
             print("none")
         case _:
             print("after")
@@ -77,7 +79,7 @@ def optional_and_bool(o: Optional[Int], b: Bool):
     match (o, b):
         case (.Some(_), True):
             print("some, true")
-        case (.None, _):
+        case (.None(), _):
             print("none")
         case (.Some(1), False):
             print("one, false")
@@ -187,7 +189,7 @@ def mid_list_unreachable_arm(o: Optional[Int]) -> Int:
             return x
         case .Some(y):
             pass
-        case .None:
+        case .None():
             return 0
 
 

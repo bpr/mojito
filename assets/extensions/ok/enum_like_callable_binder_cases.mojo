@@ -1,35 +1,37 @@
-# A generic body over a hand-written `EnumLike` conformer and a callable
-# parameter reads the case list (`ParameterList[T._enum_case_names]()`) and
+# A generic body over a hand-written `UnionLike` conformer and a callable
+# parameter reads the case list (`ParameterList[T._sum_case_names]()`) and
 # calls the callable per case in a `comptime for`, with a plain and a
 # generic callable. `print` of a conformer without `write_to` goes through
 # `Writable`'s default, and a taken `comptime if` arm that returns skips a
 # reflection loop over the conformer's fields.
+# `SumType` and `UnionLike` are upstream's enum proposal's traits, which the
+# pin does not declare (`docs/non-goals.md`).
 from std.builtin.variadics import TypeList, _MLIR
 from std.utils import IndexList
 
 
-struct Shape(EnumLike, Writable):
+struct Shape(UnionLike, Writable):
     var tag: Int
 
-    comptime _enum_case_names = ParameterList.of[
+    comptime _sum_case_names = ParameterList.of[
         "Empty".value, "Circle".value, "Square".value
     ].values
-    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+    comptime _union_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
         Trait=AnyType, Int, Int, Int
     ].values
 
     def __init__(out self, tag: Int):
         self.tag = tag
 
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         return self.tag
 
-    def _unsafe_get_enum_payload[
+    def _unsafe_get_union_payload[
         id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
-        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
             Pointer(to=self.tag).unsafe_origin_cast[origin_of(self)]()[]
         )
 
@@ -38,8 +40,8 @@ def inc(x: Int) -> Int:
     return x + 10
 
 
-def h[T: EnumLike, //, f: def(Int) thin -> Int](this: T) -> Int:
-    comptime names = ParameterList[T._enum_case_names]()
+def h[T: SumType, //, f: def(Int) thin -> Int](this: T) -> Int:
+    comptime names = ParameterList[T._sum_case_names]()
     var total = 0
     comptime for i in range(names.length):
         total += f(i)
@@ -51,11 +53,11 @@ def show[F: Writable](field: F) -> String:
 
 
 def g[
-    T: EnumLike, //, f: def[F: Writable](field: F) thin -> String
+    T: SumType, //, f: def[F: Writable](field: F) thin -> String
 ](this: T) -> String:
-    comptime names = ParameterList[T._enum_case_names]()
+    comptime names = ParameterList[T._sum_case_names]()
     var out = String()
-    var d = this._get_enum_discriminant()
+    var d = this._get_sum_discriminant()
     comptime for i in range(names.length):
         if d == i:
             out += StaticString(names[i])
@@ -70,7 +72,7 @@ struct P(Copyable):
 
 
 def fields[T: AnyType](this: T):
-    comptime if conforms_to(T, EnumLike):
+    comptime if conforms_to(T, SumType):
         print("enum")
         return
     comptime r = reflect[T]

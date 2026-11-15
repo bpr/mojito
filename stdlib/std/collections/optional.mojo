@@ -12,7 +12,7 @@ from std.reflection.type_info import _unqualified_type_name
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.memory.alloc import unsafe_alloc
-from std.builtin.enum_like import EnumLike
+from std.builtin.enum_like import UnionLike
 from std.builtin.variadics import ParameterList, TypeList, _MLIR
 from std.hash.hasher import Hasher
 
@@ -97,7 +97,7 @@ struct Optional[T: AnyType](
     Copyable where conforms_to(T, Copyable),
     Defaultable,
     Deinitable where conforms_to(T, Deinitable),
-    EnumLike,
+    UnionLike,
     Equatable where conforms_to(T, Equatable),
     Hashable where conforms_to(T, Hashable),
     ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable),
@@ -261,25 +261,25 @@ struct Optional[T: AnyType](
         return self.data[0]
 
     # ===-------------------------------------------------------------------===#
-    # EnumLike
+    # UnionLike
     # ===-------------------------------------------------------------------===#
 
-    comptime _enum_case_names = ParameterList.of[
+    comptime _sum_case_names = ParameterList.of[
         "None".value, "Some".value
     ].values
-    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
-        Trait=AnyType, NoneType, Self.T
+    comptime _union_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, Tuple[], Self.T
     ].values
 
     @inline(.always)
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         """Return 0 for `None` and 1 for `Some`."""
         return 1 if self else 0
 
     @inline(.always)
-    def _unsafe_get_enum_payload[
+    def _unsafe_get_union_payload[
         id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
         """Return a reference to the `Some` payload.
@@ -287,7 +287,7 @@ struct Optional[T: AnyType](
         Only valid when the discriminant is `1` (`Some`).
         """
         comptime assert id != 0, "cannot get payload for None case"
-        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
             Pointer(to=self._unsafe_unchecked_value()).unsafe_origin_cast[
                 origin_of(self)
             ]()[]
@@ -366,7 +366,7 @@ struct Optional[T: AnyType](
 # `_to_device_type`/`get_type_name`); the payload lives in an `Optional` rather than an
 # MLIR register variant, so the register-passing guarantee is nominal.
 struct OptionalReg[T: TrivialRegisterPassable](
-    Boolable, Defaultable, EnumLike, TrivialRegisterPassable
+    Boolable, Defaultable, UnionLike, TrivialRegisterPassable
 ):
     var _value: Optional[Self.T]
 
@@ -409,25 +409,25 @@ struct OptionalReg[T: TrivialRegisterPassable](
         return self._value.unsafe_value()
 
     # ===-------------------------------------------------------------------===#
-    # EnumLike
+    # UnionLike
     # ===-------------------------------------------------------------------===#
 
-    comptime _enum_case_names = ParameterList.of[
+    comptime _sum_case_names = ParameterList.of[
         "None".value, "Some".value
     ].values
-    comptime _enum_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
-        Trait=AnyType, NoneType, Self.T
+    comptime _union_case_types: _MLIR.KGENParamListType[AnyType] = TypeList.of[
+        Trait=AnyType, Tuple[], Self.T
     ].values
 
     @inline(.always)
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         """Return 0 for `None` and 1 for `Some`."""
         return 1 if self else 0
 
     @inline(.always)
-    def _unsafe_get_enum_payload[
+    def _unsafe_get_union_payload[
         id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[
         id
     ]:
         """Return a reference to the `Some` payload.
@@ -437,7 +437,7 @@ struct OptionalReg[T: TrivialRegisterPassable](
         comptime assert id != 0, "cannot get payload for None case"
         # The payload sits in the wrapped `Optional`, not upstream's
         # `Variant` storage, so the pointer is to its unchecked value.
-        return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](
+        return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](
             Pointer(to=self._value._unsafe_unchecked_value()).unsafe_origin_cast[
                 origin_of(self)
             ]()[]

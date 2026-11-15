@@ -13,13 +13,14 @@
 //!     case span(Int, Int)
 //! ```
 //!
-//! each gets the `EnumLike` case lists, its one field (the case-indexed
-//! `__EnumStorage` over the case payload types), and the four members
+//! each gets the `SumType` case names, its one field (the case-indexed
+//! `__EnumStorage` over the case payload types), and the members
 //! upstream's `__Enum` supplies as defaults (`docs/notes/enums.md`). An
 //! enum case is a `comptime` value of the enum, and the enum is
 //! `ImplicitlyCopyable`, with `Equatable`, `Comparable`, and `Hashable`
 //! over its cases when it asks for them. A union case is a static
-//! constructor taking the payload. The members are written as Mojo and
+//! constructor taking the payload, and a union also gets `UnionLike`'s
+//! case types and payload getter. The members are written as Mojo and
 //! parsed, so they link, check, and lower as written source does; each is
 //! located at the case it is generated for, or at the declaration.
 
@@ -139,9 +140,8 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
 /// is, as upstream's compiler finds the module implementing enums by path.
 const ENUM_TRAIT: &str = "__module$std$builtin$$enum$__Enum";
 
-/// `std.builtin._enum.__Union`, which every `union` declares: it marks the
-/// subjects whose case patterns take the proposal's tuple-formed payload
-/// subpatterns.
+/// `std.builtin._enum.__Union`, which every `union` declares, and which
+/// brings `UnionLike`.
 const UNION_TRAIT: &str = "__module$std$builtin$$enum$__Union";
 
 /// `std.hash.hasher.Hasher` by its linked name, which a derived `__hash__`
@@ -153,11 +153,11 @@ const HASHER_TRAIT: &str = "__module$std$hash$hasher$Hasher";
 /// an enum may declare it to open its cases.
 const SYNTHESIZED_NAMES: [&str; 8] = [
     "__enum_storage",
-    "_enum_case_names",
-    "_enum_case_types",
-    "_get_enum_discriminant",
-    "_unsafe_get_enum_payload",
-    "_enum_elt_type_for_case",
+    "_sum_case_names",
+    "_union_case_types",
+    "_get_sum_discriminant",
+    "_unsafe_get_union_payload",
+    "_union_elt_type_for_case",
     "__enum_init",
     "__get_enum_storage",
 ];
@@ -217,9 +217,8 @@ fn check_member_names(
 }
 
 /// The payload and conformance rules upstream's declaration resolution
-/// applies to a union's cases: `NoneType` marks an `EnumLike` case without a
-/// payload, so it is no payload type, and a payload holding the union itself
-/// by value has no size. Neither declaration's storage is trivially
+/// applies to a union's cases: a payload holding the union itself by value
+/// has no size. Neither declaration's storage is trivially
 /// register-passable.
 fn check_case_payloads(
     kind: SumKind,
@@ -240,13 +239,6 @@ fn check_case_payloads(
     }
     for case in cases {
         let error = |message: String| Err(ParseError::Message(message).at(case.span));
-        if matches!(case.payload.as_slice(), [Type::Named(payload, args)] if payload == "NoneType" && args.is_empty())
-        {
-            return error(format!(
-                "union case payload must not be 'NoneType'; an empty payload is written 'case {}()'",
-                case.name
-            ));
-        }
         if case.payload.iter().any(|payload| match payload {
             Type::SelfType => true,
             Type::Named(payload, args) => payload == name && args.is_empty(),
@@ -348,10 +340,17 @@ fn generated_members(
         .join(", ");
     let mut text = format!(
         "struct {name}:\n\
-         \x20   comptime _enum_case_names = ParameterList.of[{names}].values\n\
-         \x20   comptime _enum_case_types = TypeList.of[{types}].values\n\
+         \x20   comptime _sum_case_names = ParameterList.of[{names}].values\n\
          \x20   var __enum_storage: {storage}\n"
     );
+    if kind == SumKind::Union {
+        let _ = writeln!(
+            text,
+            "    comptime _union_case_types = TypeList.of[{types}].values\n\
+             \x20   def _unsafe_get_union_payload[id: Int](ref self) -> ref[self] TypeList[Trait=AnyType, Self._union_case_types]()[id]:\n\
+             \x20       return rebind[TypeList[Trait=AnyType, Self._union_case_types]()[id]](self.__enum_storage[id])"
+        );
+    }
     for (index, (case, payload)) in cases.iter().zip(payloads).enumerate() {
         let case_name = &case.name;
         if kind == SumKind::Enum {
@@ -391,10 +390,8 @@ fn generated_members(
          \x20       Pointer(to=result.__enum_storage).unsafe_write(storage^)\n\
          \x20   def __get_enum_storage(ref self) -> ref[self] {storage}:\n\
          \x20       return self.__enum_storage\n\
-         \x20   def _get_enum_discriminant(self) -> Int:\n\
-         \x20       return self.__enum_storage.get_discriminant()\n\
-         \x20   def _unsafe_get_enum_payload[id: Int](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[id]:\n\
-         \x20       return rebind[TypeList[Trait=AnyType, Self._enum_case_types]()[id]](self.__enum_storage[id])"
+         \x20   def _get_sum_discriminant(self) -> Int:\n\
+         \x20       return self.__enum_storage.get_discriminant()"
     );
     text
 }
@@ -405,13 +402,13 @@ fn generated_members(
 fn derived_enum_member(member: &str) -> String {
     match member {
         "__eq__" => "    def __eq__(self, other: Self) -> Bool:\n\
-                     \x20       return self._get_enum_discriminant() == other._get_enum_discriminant()\n"
+                     \x20       return self._get_sum_discriminant() == other._get_sum_discriminant()\n"
             .to_string(),
         "__lt__" => "    def __lt__(self, rhs: Self) -> Bool:\n\
-                     \x20       return self._get_enum_discriminant() < rhs._get_enum_discriminant()\n"
+                     \x20       return self._get_sum_discriminant() < rhs._get_sum_discriminant()\n"
             .to_string(),
         _ => "    def __hash__(self, mut hasher: Some[Hasher]):\n\
-              \x20       self._get_enum_discriminant().__hash__(hasher)\n"
+              \x20       self._get_sum_discriminant().__hash__(hasher)\n"
             .to_string(),
     }
 }
@@ -419,7 +416,7 @@ fn derived_enum_member(member: &str) -> String {
 /// `Writable`'s default for an enum or union, `Name.case` for an enum case
 /// and `Name.case(payload)` for a union case, with each payload element
 /// written as `payload` spells it (its text, or its `repr`), as upstream's
-/// `_enum_reflection_write_to` writes any `EnumLike`.
+/// `_enum_reflection_write_to` writes any `SumType`.
 fn generated_write(
     member: &str,
     payload: &str,
@@ -430,7 +427,7 @@ fn generated_write(
     let mut text = format!(
         "    def {member}(self, mut writer: Some[Writer]):\n\
          \x20       writer.write(\"{name}.\")\n\
-         \x20       var discriminant = self._get_enum_discriminant()\n"
+         \x20       var discriminant = self._get_sum_discriminant()\n"
     );
     for (index, (case, elements)) in cases.iter().zip(payloads).enumerate() {
         let keyword = if index == 0 { "if" } else { "elif" };
@@ -443,7 +440,7 @@ fn generated_write(
         if cases.kind == SumKind::Enum {
             continue;
         }
-        let projection = format!("self._unsafe_get_enum_payload[{index}]()");
+        let projection = format!("self._unsafe_get_union_payload[{index}]()");
         let written = match elements.len() {
             1 => vec![payload.replace("{}", &projection)],
             count => (0..count)

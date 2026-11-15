@@ -1172,7 +1172,7 @@ fn close_field_step(
 
 /// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
 /// the pack and `T`, or an `enum` storage's case index (`id` in
-/// `_unsafe_get_enum_payload[id]`) once it binds the index. A `T` the pack
+/// `_unsafe_get_union_payload[id]`) once it binds the index. A `T` the pack
 /// lacks fails the instance, as upstream's `Variant._check[T]()` does; an
 /// index the bindings leave open stays for the concreteness check to name.
 fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<(), MonoError> {

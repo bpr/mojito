@@ -1,5 +1,5 @@
 # expect: 'Z' is not a case of 'Optional[Int]'
-# An enum case pattern names a case of the subject's `_enum_case_names`.
+# A case pattern names one of the subject's declared case names.
 def main():
     var o = Optional[Int](3)
     match o:

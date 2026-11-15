@@ -892,7 +892,7 @@ The public entry points for each compiler phase remain in its root module.
 
 **Enum declarations.** Parsing a module generates each `enum`'s members
 from its cases before linking (`mojito_parser::enums`), so the generated
-case lists, storage field, case constructors, and `EnumLike` members link,
+case names, storage field, case constructors, and `SumType` members link,
 check, and lower as written members do; the `StmtKind::Struct` keeps its
 `enum_cases` for diagnostics. The storage is the case-indexed
 `__EnumStorage` intrinsic (a `TyKind::Variant` its operations select by
@@ -3484,7 +3484,7 @@ else region advances that case and `match.complete` follows it, where the
 pin falls through (`docs/non-goals.md`). A case earlier ones cover is a
 region sealed `Unreachable`. A command names the chain of path reads its
 path needs — the hidden `$elem<id>` declarations of sequence elements,
-slices, and enum payloads (`parent._unsafe_get_enum_payload[case]()`) —
+slices, and union payloads (`parent._unsafe_get_union_payload[case]()`) —
 and the emission makes each when the first command it emits needs it,
 through a per-region `PatternState`, upstream's `getPathValue` memo: a
 cluster's members name the shared read (`Cfg::aliases`), and a `|`

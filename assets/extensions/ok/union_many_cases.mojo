@@ -288,9 +288,9 @@ def main():
     var past_byte: Many = .c256()
     var last: Many = .last("x")
     print(
-        first._get_enum_discriminant(),
-        past_byte._get_enum_discriminant(),
-        last._get_enum_discriminant(),
+        first._get_sum_discriminant(),
+        past_byte._get_sum_discriminant(),
+        last._get_sum_discriminant(),
     )
     var copy = last.copy()
     last = .c255()

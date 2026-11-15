@@ -129,7 +129,7 @@ def main():
     comptime match o:
         case .Some(x):
             print("some", x)
-        case .None:
+        case _:
             print("none")
     comptime p = P(1, 2)
     comptime match p:

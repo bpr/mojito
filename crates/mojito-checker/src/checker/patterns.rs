@@ -25,13 +25,13 @@
 //! the slice `$match<id>[1:$match<id>.__len__() - k]`, read like an element,
 //! so `*_` slices nothing.
 //!
-//! An enum case `.Case(p)` or `Owner.Case(p)` over a subject that declares
-//! the bundled `EnumLike` tests the case's index, looked up by name in the
-//! subject's `_enum_case_names`, against `_get_enum_discriminant()`, then
-//! compiles `p` over the payload `_unsafe_get_enum_payload[case]()`, read
-//! like an element (lazily, once per case, immutably under a temporary
-//! subject); a bare `.Case` tests the tag alone. Over any other subject a
-//! bare head is an equality test, as upstream's.
+//! A case `.Case` or `Owner.Case` over a subject that declares the bundled
+//! `SumType` tests the case's index, looked up by name in the subject's
+//! `_sum_case_names`, against `_get_sum_discriminant()`. Over a `UnionLike`
+//! subject the case takes parentheses, `.Case(p)`, and then compiles `p`
+//! over the payload `_unsafe_get_union_payload[case]()`, read like an
+//! element (lazily, once per case, immutably under a temporary subject).
+//! Over any other subject a bare head is an equality test, as upstream's.
 //!
 //! Each command's shape is recorded at its path for `coverage.rs`, whose
 //! verdict concludes the match and seals the cases earlier ones cover.
@@ -277,10 +277,10 @@ impl Checker {
         ))
     }
 
-    /// The elements of the `EnumLike` value member `member` of `ty`, read
+    /// The elements of the `SumType` value member `member` of `ty`, read
     /// at its application: `None` when `ty` is no struct or the list does
     /// not fold to known elements.
-    pub(super) fn enum_like_list(
+    pub(super) fn sum_type_list(
         &self,
         ty: &Ty,
         member: &str,
@@ -628,7 +628,7 @@ impl Checker {
             MatchPatternKind::Tuple(items) => {
                 self.compile_tuple_pattern(items, subject, join, commands)
             }
-            MatchPatternKind::Call { head, args, kwargs } if self.is_enum_like(subject) => {
+            MatchPatternKind::Call { head, args, kwargs } if self.is_sum_type(subject) => {
                 self.compile_enum_case(head, args, kwargs, subject, join, commands)
             }
             MatchPatternKind::Call { head, args, kwargs } => {
@@ -640,12 +640,23 @@ impl Checker {
             MatchPatternKind::Or(alternatives) => {
                 self.compile_or_pattern(alternatives, subject, join, commands)
             }
-            MatchPatternKind::Head(head) if self.is_enum_like(subject) => {
+            MatchPatternKind::Head(head) if self.is_sum_type(subject) => {
                 let (case, name) = self.enum_case(head, subject)?;
-                if self.is_union(subject) {
-                    return Err(TypeError::MatchPattern(format!(
-                        "union case '{name}' requires a payload pattern in parentheses; use '.{name}(_)' to ignore the payload"
-                    )));
+                if self.is_union_like(subject) {
+                    let empty = self
+                        .enum_case_payload(&subject.ty, case)
+                        .is_ok_and(|payload| {
+                            tuple_elements(&payload).is_some_and(|elements| elements.is_empty())
+                        });
+                    return Err(TypeError::MatchPattern(if empty {
+                        format!(
+                            "union case '{name}' requires a payload pattern in parentheses; write '.{name}()'"
+                        )
+                    } else {
+                        format!(
+                            "union case '{name}' requires a payload pattern in parentheses; use '.{name}(_)' to ignore the payload"
+                        )
+                    }));
                 }
                 let (tested, reads) = self.materialize(subject, commands)?;
                 self.enum_tag_test(case, &tested, reads, commands)?;
@@ -1115,13 +1126,14 @@ impl Checker {
         self.compile_field_patterns(kwargs, subject, join, commands)
     }
 
-    /// `.Case(p)` or `Owner.Case(p)` over an `EnumLike` subject, checked in
-    /// upstream's order: the head's shape and owner, the case, its payload
-    /// type, then the one positional payload pattern. The tag test, then
-    /// `p` over the payload `subject._unsafe_get_enum_payload[case]()`.
-    /// Over a `union`, the subpatterns other than exactly one form one tuple
-    /// pattern over the payload: `.eof()` matches the empty tuple, and
-    /// `.span(a, b)` the elements of a `Tuple[Int, Int]` payload.
+    /// `.Case(p)` or `Owner.Case(p)` over a `SumType` subject, checked in
+    /// upstream's order: the head's shape and owner, the case, that the
+    /// subject is `UnionLike`, its payload type, then the payload pattern.
+    /// The tag test, then the pattern over the payload
+    /// `subject._unsafe_get_union_payload[case]()`. One subpattern matches
+    /// the whole payload, and any other count forms one tuple pattern over
+    /// it: `.eof()` matches the empty tuple, and `.span(a, b)` the elements
+    /// of a `Tuple[Int, Int]` payload.
     fn compile_enum_case(
         &mut self,
         head: &Expr,
@@ -1137,40 +1149,23 @@ impl Checker {
             ));
         }
         let (case, name) = self.enum_case(head, subject)?;
-        let payload = self.enum_case_payload(&subject.ty, case)?;
-        if payload.kind().is_none_type() {
+        if !self.is_union_like(subject) {
             return Err(TypeError::MatchPattern(format!(
                 "enum case '{name}' has no associated value"
             )));
         }
-        let union = self.is_union(subject);
+        let payload = self.enum_case_payload(&subject.ty, case)?;
+        if !kwargs.is_empty() {
+            return Err(TypeError::MatchPattern(
+                "union case patterns do not support keyword arguments; match a struct payload by its fields".into(),
+            ));
+        }
         let formed;
-        let pattern = match (args, kwargs) {
-            (_, [_, ..]) if union => {
-                return Err(TypeError::MatchPattern(
-                    "union case patterns do not support keyword arguments; match a struct payload by its fields".into(),
-                ));
-            }
-            ([pattern], []) => pattern,
-            (_, []) if union => {
-                formed = MatchPattern::new(MatchPatternKind::Tuple(args.to_vec()), head.span);
-                &formed
-            }
-            ([], []) => {
-                return Err(TypeError::MatchPattern(format!(
-                    "enum case '{name}' requires a payload pattern inside the parentheses"
-                )));
-            }
-            (_, [_, ..]) => {
-                return Err(TypeError::MatchPattern(
-                    "enum case patterns do not support keyword arguments".into(),
-                ));
-            }
-            _ => {
-                return Err(TypeError::MatchPattern(
-                    "enum case patterns currently support at most one payload subpattern".into(),
-                ));
-            }
+        let pattern = if let [pattern] = args {
+            pattern
+        } else {
+            formed = MatchPattern::new(MatchPatternKind::Tuple(args.to_vec()), head.span);
+            &formed
         };
         let (tested, reads) = self.materialize(subject, commands)?;
         self.enum_tag_test(case, &tested, reads, commands)?;
@@ -1189,8 +1184,8 @@ impl Checker {
         self.compile_pattern(pattern, &child, join, commands)
     }
 
-    /// The case an enum head `.Case` or `Owner.Case` selects over the
-    /// `EnumLike` subject, and its name. A qualified head at the root
+    /// The case a head `.Case` or `Owner.Case` selects over the
+    /// `SumType` subject, and its name. A qualified head at the root
     /// names the subject's own type, its parameters aside, as upstream
     /// checks it; nested, the owner goes unchecked, as upstream's.
     fn enum_case(&self, head: &Expr, subject: &MatchSubject) -> Result<(usize, String), TypeError> {
@@ -1238,21 +1233,22 @@ impl Checker {
     }
 
     /// Whether `subject` is a typed value whose type declares the bundled
-    /// `EnumLike`, which makes its patterns enum cases.
-    fn is_enum_like(&self, subject: &MatchSubject) -> bool {
-        !subject.untyped() && self.conforms_to(&subject.ty, &enum_like_trait())
+    /// `SumType`, which makes its patterns cases.
+    fn is_sum_type(&self, subject: &MatchSubject) -> bool {
+        !subject.untyped() && self.conforms_to(&subject.ty, &sum_type_trait())
     }
 
-    /// Whether `subject` is a `union`'s value, whose case patterns always
-    /// take a parenthesized payload pattern.
-    fn is_union(&self, subject: &MatchSubject) -> bool {
-        !subject.untyped() && self.conforms_to(&subject.ty, &union_trait())
+    /// Whether `subject` is a typed value whose type declares the bundled
+    /// `UnionLike`, whose case patterns always take a parenthesized payload
+    /// pattern.
+    fn is_union_like(&self, subject: &MatchSubject) -> bool {
+        !subject.untyped() && self.conforms_to(&subject.ty, &union_like_trait())
     }
 
-    /// The index of the case `name` in `ty`'s `_enum_case_names`, the first
+    /// The index of the case `name` in `ty`'s `_sum_case_names`, the first
     /// of a repeated name, as upstream reads it.
     fn enum_case_index(&self, ty: &Ty, name: &str) -> Result<usize, TypeError> {
-        let Some(names) = self.enum_like_list(ty, "_enum_case_names")? else {
+        let Some(names) = self.sum_type_list(ty, "_sum_case_names")? else {
             return Err(TypeError::MatchPattern(
                 "cannot match on a parametric enum type".into(),
             ));
@@ -1266,25 +1262,25 @@ impl Checker {
             .ok_or_else(|| TypeError::MatchPattern(format!("'{name}' is not a case of '{ty}'")))
     }
 
-    /// The payload type of case `index` in `ty`'s `_enum_case_types`, read
+    /// The payload type of case `index` in `ty`'s `_union_case_types`, read
     /// lazily: only a payload pattern needs the list to reach its case.
     fn enum_case_payload(&self, ty: &Ty, index: usize) -> Result<Ty, TypeError> {
-        self.enum_like_list(ty, "_enum_case_types")?
+        self.sum_type_list(ty, "_union_case_types")?
             .and_then(|types| types.into_iter().nth(index))
             .map(mojito_types::types::DependentType::resolve)
             .map(|payload| subject_binder(payload, ty))
             .ok_or_else(|| {
                 TypeError::MatchPattern(
-                    "'_enum_case_types' must be a parameter list covering every case".into(),
+                    "'_union_case_types' must be a parameter list covering every case".into(),
                 )
             })
     }
 
     /// Push the tag test of `case` over `subject`, whose path needs the
     /// case's `reads`: the discriminant `var $tag<id> =
-    /// subject._get_enum_discriminant()`, then `$tag<id> == case`, so that a
+    /// subject._get_sum_discriminant()`, then `$tag<id> == case`, so that a
     /// cluster reads it once, as upstream's `emitTestableValue`; in
-    /// compile-time mode the conjunct `subject._get_enum_discriminant() ==
+    /// compile-time mode the conjunct `subject._get_sum_discriminant() ==
     /// case`.
     fn enum_tag_test(
         &mut self,
@@ -1296,7 +1292,7 @@ impl Checker {
         let synth = subject.synth;
         let discriminant = synth.expr(ExprKind::MethodCall {
             object: Box::new(subject.value()),
-            method: "_get_enum_discriminant".to_string(),
+            method: "_get_sum_discriminant".to_string(),
             args: Vec::new(),
             kwargs: Vec::new(),
         });
@@ -1857,7 +1853,7 @@ const UNTYPED_ELEMENT: &str = "an untyped sequence element";
 /// place, under `steps`, each sequence step spelled as upstream's path
 /// values are: an element from the end and a slice's end read the parent's
 /// `__len__` afresh, and a payload is the getter
-/// `parent._unsafe_get_enum_payload[case]()`.
+/// `parent._unsafe_get_union_payload[case]()`.
 fn spell(synth: &Synth, name: &str, base: Option<&Expr>, steps: &[Step]) -> Expr {
     // `parent.__len__() - offset`, the parent being `steps[..depth]`, read
     // afresh.
@@ -1899,7 +1895,7 @@ fn spell(synth: &Synth, name: &str, base: Option<&Expr>, steps: &[Step]) -> Expr
             Step::EnumPayload(case) => synth.expr(ExprKind::Invoke {
                 callee: Box::new(synth.expr(ExprKind::Member {
                     object,
-                    field: "_unsafe_get_enum_payload".to_string(),
+                    field: "_unsafe_get_union_payload".to_string(),
                 })),
                 param_args: vec![mojito_ast::ast::ParamArg::Value(synth.int(*case))],
                 args: Vec::new(),

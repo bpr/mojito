@@ -80,7 +80,7 @@ from std.math import (
     pow,
     round,
 )
-from std.builtin.enum_like import EnumLike
+from std.builtin.enum_like import EnumLike, SumType, UnionLike
 from std.builtin.tuple import Tuple
 from std.builtin.rebind import rebind_var
 from std.builtin.variadics import (

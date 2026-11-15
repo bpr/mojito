@@ -33,12 +33,12 @@ def take(token: Token) -> String:
 
 
 def main():
-    print(describe(Token.integer(42)), Token.integer(42)._get_enum_discriminant())
+    print(describe(Token.integer(42)), Token.integer(42)._get_sum_discriminant())
     var ident: Token = .identifier("main")
-    print(describe(ident), ident._get_enum_discriminant())
-    print(describe(Token.span(3, 7)), Token.span(3, 7)._get_enum_discriminant())
+    print(describe(ident), ident._get_sum_discriminant())
+    print(describe(Token.span(3, 7)), Token.span(3, 7)._get_sum_discriminant())
     var kw: Token = .keyword("def")
-    print(describe(kw), kw._get_enum_discriminant())
+    print(describe(kw), kw._get_sum_discriminant())
     print(take(.integer(1)), take(.span(1, 2)), take(.eof()))
     match Token.span(4, 6):
         case .span(pair):

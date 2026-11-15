@@ -3285,7 +3285,7 @@ impl CheckedMatchCase {
 /// the declaration the check synthesized for it.
 ///
 /// The declaration is `ref $elem<id> = parent[i]` or `ref $elem<id> =
-/// parent._unsafe_get_enum_payload[case]()` over a reference result, and
+/// parent._unsafe_get_union_payload[case]()` over a reference result, and
 /// `var $elem<id> = parent[i]` over an owned one; later reads of the path
 /// name it, as upstream's `PatternEmitState::getPathValue` memoizes it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -3331,7 +3331,7 @@ pub enum CheckedCommand {
     },
     /// Test an enum-like subject's case, as upstream's `EnumTag` on the
     /// path: the declaration of the discriminant the check synthesized
-    /// (`var $tag<id> = $match<id>._get_enum_discriminant()`), then the
+    /// (`var $tag<id> = $match<id>._get_sum_discriminant()`), then the
     /// node of its comparison (`$tag<id> == case`), whose `Bool` selects.
     EnumTag {
         tag: CheckedStmtId,
@@ -3580,7 +3580,7 @@ pub enum PlannedCommand {
     Equal { test: Expr, reads: Vec<u32> },
     /// The length test `list_length_matches($match<id>, arity, True)`.
     ListLength { test: Expr, reads: Vec<u32> },
-    /// The discriminant `var $tag<id> = $match<id>._get_enum_discriminant()`
+    /// The discriminant `var $tag<id> = $match<id>._get_sum_discriminant()`
     /// and the case test `$tag<id> == case`.
     EnumTag {
         tag: Box<Stmt>,
@@ -3600,7 +3600,7 @@ pub enum PlannedCommand {
 
 /// One planned path read: the match-wide id of its path, and its
 /// declaration (`ref $elem<id> = parent[i]`, `var $elem<id> = parent[i]`,
-/// or `ref $elem<id> = parent._unsafe_get_enum_payload[case]()`).
+/// or `ref $elem<id> = parent._unsafe_get_union_payload[case]()`).
 #[derive(Debug, Clone)]
 pub struct PlannedRead {
     pub path: u32,

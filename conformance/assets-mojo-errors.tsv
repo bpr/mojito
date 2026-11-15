@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1209
+# swept-count	1202
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -487,8 +487,6 @@ assets/type_error/element_call_non_callable_element.mojo	compile-reject	agree	er
 assets/type_error/element_call_type_brackets_reject.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/empty_subscript_non_pointer.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/entry_redeclares_imported_name.mojo	compile-reject	agree	error: cannot define a struct here with name 'List'
-assets/type_error/enum_like_missing_payload_getter.mojo	compile-reject	agree	error: 'Missing' does not implement all requirements for 'EnumLike'
-assets/type_error/enum_like_none_payload.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/equatable_no_ordering.mojo	compile-reject	agree	error: 'T' does not implement the '__lt__' method
 assets/type_error/erased_origin_parameter.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/explicit_destroy_conditional.mojo	compile-reject	agree	error: 'resource' abandoned without being explicitly destroyed: close the resource
@@ -689,17 +687,12 @@ assets/type_error/match_binding_scope.mojo	compile-reject	agree	error: use of un
 assets/type_error/match_binding_after_case.mojo	compile-reject	agree	error: use of unknown declaration 'x'
 assets/type_error/match_enum_case_call_head.mojo	compile-reject	agree	error: enum case pattern must be written as 'Type.Case(...)' or '.Case(...)'
 assets/type_error/match_enum_case_keyword.mojo	compile-reject	agree	error: enum case patterns do not support keyword arguments
-assets/type_error/match_enum_case_missing_payload.mojo	compile-reject	agree	error: enum case 'Some' requires a payload pattern inside the parentheses
-assets/type_error/match_enum_case_none_payload.mojo	compile-reject	agree	error: enum case 'None' has no associated value
 assets/type_error/match_enum_case_not_enum_like.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
 assets/type_error/match_enum_case_parametric.mojo	compile-reject	agree	error: cannot match on a parametric enum type
 assets/type_error/match_enum_case_payload_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/match_enum_case_temporary_payload_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
-assets/type_error/match_enum_case_two_payloads.mojo	compile-reject	agree	error: enum case patterns currently support at most one payload subpattern
-assets/type_error/match_enum_case_types_short.mojo	compile-reject	agree	error: '_enum_case_types' must be a parameter list covering every case
 assets/type_error/match_enum_case_unknown.mojo	compile-reject	agree	error: 'Z' is not a case of 'Optional[Int]'
 assets/type_error/match_enum_case_wrong_owner.mojo	compile-reject	agree	error: cannot match value of type 'Optional[Int]' against enum case of type 'Rec'
-assets/type_error/match_enum_exhaustive_not_static.mojo	compile-reject	agree	error: '_enum_is_exhaustive' must be statically known when matching an EnumLike type
 assets/type_error/match_literal_type_mismatch.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
 assets/type_error/match_none_literal_pattern.mojo	compile-reject	agree	error: expression is not a valid match pattern; use '==' to compare against its value
 assets/type_error/match_or_missing_name.mojo	compile-reject	agree	error: or-pattern alternatives must bind the same names; 'a' is bound in one alternative but not the other

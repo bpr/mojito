@@ -1,5 +1,5 @@
 # A trait's signature reads a `comptime` member of a struct declared in the
-# same module, before or after the trait, as std's `EnumLike` reads
+# same module, before or after the trait, as std's `SumType` reads
 # `_MLIR.KGENParamListType`.
 
 

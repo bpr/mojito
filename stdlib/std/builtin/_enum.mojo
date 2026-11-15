@@ -13,10 +13,10 @@
 # the compiler generates, written as Mojo:
 #
 #     struct Token(__Union):
-#         comptime _enum_case_names = ParameterList.of[
+#         comptime _sum_case_names = ParameterList.of[
 #             "eof".value, "ident".value, "span".value
 #         ].values
-#         comptime _enum_case_types = TypeList.of[
+#         comptime _union_case_types = TypeList.of[
 #             Trait=AnyType, Tuple[], String, Tuple[Int, Int]
 #         ].values
 #         var __enum_storage: __EnumStorage[Tuple[], String, Tuple[Int, Int]]
@@ -30,16 +30,16 @@
 #
 # and an `enum`'s cases, which carry no payload, are `comptime` values of
 # `NoneType` storage instead (`comptime red: Color = Color.__enum_init(
-# __EnumStorage[NoneType, ...](None, index=0))`), declaring `__Enum`.
-# Both get `__enum_init`, `__get_enum_storage`, `_get_enum_discriminant`,
-# and `_unsafe_get_enum_payload` generated on the declaration itself
-# (`mojito_parser::enums`). Upstream declares those four as `__Enum`'s
+# __EnumStorage[NoneType, ...](None, index=0))`), declaring `__Enum` and no
+# case types. Both get `__enum_init`, `__get_enum_storage`, and
+# `_get_sum_discriminant` generated on the declaration itself, and a union
+# `_unsafe_get_union_payload` as well (`mojito_parser::enums`). Upstream declares those four as `__Enum`'s
 # defaults and `__EnumStorage` as a struct over `!kgen.variant`; here
 # `__EnumStorage[*Ts]` is the compiler's case-indexed storage, the same
 # intrinsic `Variant`'s `__VariantStorage` is (`docs/notes/enums.md`).
 """The runtime half of `enum` and `union`."""
 
-from std.builtin.enum_like import EnumLike
+from std.builtin.enum_like import EnumLike, UnionLike
 
 
 @doc_hidden
@@ -53,14 +53,14 @@ def __enum_discriminant_dtype(num_cases: Int) -> DType:
 
 
 trait __Enum(EnumLike):
-    """An `enum` or `union`: a struct whose only field, `__enum_storage`, is an
-    `__EnumStorage` over its case types."""
+    """An `enum`: a struct whose only field, `__enum_storage`, is an
+    `__EnumStorage` with one `NoneType` alternative per case."""
 
     pass
 
 
-trait __Union(__Enum):
-    """A `union`: an `__Enum` whose every case carries one payload, so its
-    case patterns take their payload subpatterns as a tuple pattern."""
+trait __Union(UnionLike):
+    """A `union`: a struct whose only field, `__enum_storage`, is an
+    `__EnumStorage` over its cases' payload types."""
 
     pass

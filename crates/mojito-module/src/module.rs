@@ -2343,6 +2343,8 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "round",
     "Hashable",
     "EnumLike",
+    "SumType",
+    "UnionLike",
     "range",
     "Slice",
     "slice",

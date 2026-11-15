@@ -872,11 +872,11 @@ closed_pattern:
     | '(' ')' | '(' pattern ')' | '(' pattern (',' pattern)* ','? ')'   # grouping or tuple
     | '[' [seq_pattern (',' seq_pattern)* ','?] ']'     # sequence, at most one star
     | '{' [NAME '=' pattern (',' NAME '=' pattern)* ','?] '}'          # contextual struct fields
-    | head                                              # `.None`, `Optional.None`
-    | head '(' [pattern_arg (',' pattern_arg)* ','?] ')'               # `Point(x=0)`, `.Some(x)`
+    | head                                              # `.red`, `Color.red`
+    | head '(' [pattern_arg (',' pattern_arg)* ','?] ')'               # `Point(x=0)`, `.Some(x)`, `.None()`
 seq_pattern: pattern | '*' closed_pattern
 head: '.' NAME | NAME ('.' NAME)* | NAME '[' param_args ']' ('.' NAME)*
-pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or a payload (enum-like)
+pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or a payload (union-like)
 ```
 
 `match` evaluates its subject once (a comma list forms a tuple) and tries

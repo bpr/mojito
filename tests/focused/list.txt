@@ -37,7 +37,7 @@ fixture assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo
 # Gate failures (2026-11-15 overnight run)
 fixture assets/ok/for_destructuring_lifetimes.mojo
 fixture assets/ok/for_destructuring_targets.mojo
-fixture assets/ok/match_enum_cases_optional.mojo
+fixture assets/extensions/ok/match_enum_cases_optional.mojo
 fixture assets/ok/mut_pointer_parameter_reassign.mojo
 fixture assets/ok/parameter_default_application_removed_receiver.mojo
 fixture assets/type_error/struct_method_instance_clone_fails.mojo
@@ -112,7 +112,7 @@ fixture assets/ok/implicit_copy_var_receiver_owned_once.mojo
 fixture assets/ok/application_string_parameter.mojo
 fixture assets/ok/comptime_application_ref_parameter.mojo
 fixture assets/ok/comptime_annotated_implicit_conversion.mojo
-fixture assets/ok/enum_like_protocol.mojo
+fixture assets/extensions/ok/enum_like_protocol.mojo
 fixture assets/ok/std_plugin_hooks.mojo
 fixture assets/ok/simd_pow_dunders.mojo
 fixture assets/ok/index_list.mojo

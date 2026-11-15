@@ -107,9 +107,15 @@ Mojito spells them without the leading underscores, and will spell the
 proposal's guards `guard` the same way. Every `enum` and `union` program
 is rejected at the pin, and Mojito does not accept `__enum` or `__union`.
 
-- The generated members and the storage follow the pin's `__enum`
-  (`docs/notes/enums.md`): an enum case is the pin's case without a payload,
-  and a union case one with a payload, an empty `()` being `Tuple[]`.
+- The storage follows the pin's `__enum` (`docs/notes/enums.md`): an enum
+  case is the pin's case without a payload, and a union case one with a
+  payload, an empty `()` being `Tuple[]`.
+- Matching and reflection run on the proposal's `SumType`, `EnumLike`, and
+  `UnionLike` traits, which replace the pin's one `EnumLike` protocol. The
+  bundled `Optional` and `OptionalReg` are `UnionLike`, so their `None` case
+  is matched `.None()`, and `Bool` and `FastMathFlag` are `EnumLike`. A
+  program written against the pin's members or matching a bare `.None` is
+  rejected.
 - What the proposal adds beyond the pin: an enum's cases listed on one
   line, its implicit `ImplicitlyCopyable`, and its derived `Equatable`,
   `Comparable`, and `Hashable`; a union's always-parenthesized cases; and
@@ -117,13 +123,16 @@ is rejected at the pin, and Mojito does not accept `__enum` or `__union`.
 - `enum` and `union` are contextual keywords: only `enum Name` or
   `union Name` starting a statement declares one, so each stays an
   ordinary name elsewhere, as at the pin.
-- The fixtures live under `assets/extensions/<folder>/{enum,union}_*.mojo`.
+- The fixtures live under `assets/extensions/<folder>/{enum,union}_*.mojo`,
+  with the hand-written conformers and `Optional` case patterns in
+  `enum_like_*.mojo`, `union_like_*.mojo`, and `match_*.mojo` there.
   Those carried over from the pin's `__enum` were checked against the pin's
   output under that spelling.
 - Reopen when upstream settles the keywords: if it keeps the
   double-underscore spellings, accept them beside or instead of these; if
   it adopts `enum` and `union`, promote the fixtures to the ordinary
-  folders.
+  folders. Likewise when a pin declares the three traits: the fixtures
+  spelling them return to the ordinary folders.
 
 These are the three admitted extensions under the match-or-subset rule
 (`AGENTS.md` invariant 1).

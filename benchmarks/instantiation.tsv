@@ -165,7 +165,6 @@ assets/ok/comptime_call_callee_shapes.mojo	elaborated	57	6318	29	50	1535	3096	17
 assets/ok/comptime_call_signature.mojo	elaborated	47	3766	26	40	1521	2410	160	411	145
 assets/ok/comptime_collections.mojo	elaborated	126	7533	61	106	2293	5747	704	596	547
 assets/ok/comptime_condition_bool_conversion.mojo	elaborated	17	1132	8	11	647	772	45	178	27
-assets/ok/comptime_conditions_short_circuit.mojo	elaborated	11	560	5	5	167	176	29	51	9
 assets/ok/comptime_ctfe.mojo	elaborated	27	1161	18	20	1007	895	85	270	68
 assets/ok/comptime_display_binding_alias.mojo	elaborated	49	2843	28	37	1542	2491	174	404	133
 assets/ok/comptime_display_binding_arguments.mojo	elaborated	49	4477	25	38	1571	4242	164	405	130
@@ -415,8 +414,6 @@ assets/ok/dunder_vec2.mojo	elaborated	39	1766	21	26	1333	1199	124	362	82
 assets/ok/dying_slot_copy_moves.mojo	elaborated	32	1735	19	22	1009	928	102	271	70
 assets/ok/element_store_from_same_list.mojo	elaborated	62	2981	33	49	1214	1972	245	321	173
 assets/ok/entry_redeclares_library_names.mojo	elaborated	42	2483	24	30	1123	1478	174	311	118
-assets/ok/enum_like_callable_binder_cases.mojo	elaborated	72	5262	40	56	1687	3755	224	437	166
-assets/ok/enum_like_protocol.mojo	elaborated	47	2613	31	37	1188	1555	130	299	100
 assets/ok/env_roundtrip.mojo	elaborated	18	2269	6	8	231	397	120	60	14
 assets/ok/erased_clone_result_members.mojo	elaborated	34	1604	21	26	1167	1164	101	322	81
 assets/ok/errno_strerror.mojo	elaborated	53	3236	28	35	1592	2269	215	396	130
@@ -647,12 +644,7 @@ assets/ok/mapping_key_iteration_reads.mojo	elaborated	95	5459	53	78	2121	4109	53
 assets/ok/match_binding_kinds_on_temporary.mojo	elaborated	29	1969	18	20	1007	924	105	270	68
 assets/ok/match_case_layouts.mojo	elaborated	11	950	5	5	167	176	47	51	9
 assets/ok/match_cluster_lifecycle.mojo	elaborated	39	3680	23	29	1041	1067	192	279	79
-assets/ok/match_coverage_enum_like_conformers.mojo	elaborated	34	1870	20	22	1017	934	121	272	70
-assets/ok/match_coverage_enums_and_products.mojo	elaborated	69	5690	23	47	1042	1156	397	279	97
 assets/ok/match_coverage_warnings.mojo	elaborated	31	1784	19	22	1009	920	120	271	70
-assets/ok/match_enum_cases_custom.mojo	elaborated	31	2711	19	22	1101	1097	149	293	72
-assets/ok/match_enum_cases_optional.mojo	elaborated	54	6055	27	42	1249	1647	358	339	106
-assets/ok/match_enum_tag_clusters.mojo	elaborated	41	5883	22	30	1209	1481	283	322	84
 assets/ok/match_equality_effects.mojo	elaborated	32	2240	19	23	1009	1049	136	271	71
 assets/ok/match_equality_effects_and_bindings.mojo	elaborated	32	2608	18	22	1007	1182	134	270	70
 assets/ok/match_exits_and_return_analysis.mojo	elaborated	51	2842	29	36	1195	1627	222	319	112
@@ -663,10 +655,8 @@ assets/ok/match_literal_cases.mojo	elaborated	32	2653	18	21	1007	1082	159	270	69
 assets/ok/match_literal_clusters.mojo	elaborated	34	6111	19	24	1009	1157	305	271	72
 assets/ok/match_literal_forms.mojo	elaborated	34	2921	19	25	1009	934	181	271	73
 assets/ok/match_noncopyable_subject.mojo	elaborated	28	1619	18	20	1007	924	98	270	68
-assets/ok/match_optional_enum_cases.mojo	elaborated	47	2867	24	31	1118	1238	194	297	81
 assets/ok/match_or_alternatives_bind.mojo	elaborated	32	2249	19	24	1009	1107	167	271	72
 assets/ok/match_or_failed_alternative_copies.mojo	elaborated	33	1977	19	22	1009	928	121	271	70
-assets/ok/match_payload_reads_beside_hidden_subject.mojo	elaborated	34	1854	20	24	1103	1101	118	294	74
 assets/ok/match_raises_and_finally.mojo	elaborated	32	2191	19	22	1010	1035	131	271	70
 assets/ok/match_ref_and_as_bindings.mojo	elaborated	28	1919	18	20	1007	924	112	270	68
 assets/ok/match_sequence_custom_sized.mojo	elaborated	30	1891	19	22	1094	1140	117	293	72

@@ -402,7 +402,7 @@ struct FastMathFlag(EnumLike, Equatable, ImplicitlyCopyable, RegisterPassable):
     comptime FAST = Self(8)
     """Enable all fast-math optimizations."""
 
-    comptime _enum_case_names = ParameterList.of[
+    comptime _sum_case_names = ParameterList.of[
         "NONE".value,
         "NNAN".value,
         "NINF".value,
@@ -414,32 +414,9 @@ struct FastMathFlag(EnumLike, Equatable, ImplicitlyCopyable, RegisterPassable):
         "FAST".value,
     ].values
 
-    # Upstream spells this `TypeList.splat[ParameterList[
-    # Self._enum_case_names].length, NoneType].values` (R1181).
-    comptime _enum_case_types = TypeList.of[
-        Trait=AnyType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-        NoneType,
-    ].values
-
     @inline(.always)
-    def _get_enum_discriminant(self) -> Int:
+    def _get_sum_discriminant(self) -> Int:
         return Int(self._value)
-
-    @inline(.always)
-    def _unsafe_get_enum_payload[
-        id: Int
-    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
-        id
-    ]:
-        comptime assert False, "FastMathFlag has no payload"
 
     def __eq__(self, other: Self) -> Bool:
         """Compares two FastMathFlag values for identity.

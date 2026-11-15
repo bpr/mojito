@@ -3022,7 +3022,7 @@ impl Checker {
     }
 
     /// `storage[id]` over an `enum`'s storage: the payload of case `id`, a
-    /// compile-time `Int` (the generated `_unsafe_get_enum_payload[id]`'s
+    /// compile-time `Int` (the generated `_unsafe_get_union_payload[id]`'s
     /// own parameter), as upstream's `payload_ptr[id]()` addresses it. Over
     /// a symbolic `id` the payload's type is the selection of `id` among the
     /// case types, which each instance closes.

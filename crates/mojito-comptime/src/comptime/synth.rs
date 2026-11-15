@@ -113,8 +113,8 @@ pub(super) fn stamp_enum_storage_writes(program: &mut [Stmt]) {
     const ENUM_MEMBERS: [&str; 4] = [
         "__enum_init",
         "__get_enum_storage",
-        "_get_enum_discriminant",
-        "_unsafe_get_enum_payload",
+        "_get_sum_discriminant",
+        "_unsafe_get_union_payload",
     ];
     let Some(source) = mojito_checker::checker::enum_support_source() else {
         return;

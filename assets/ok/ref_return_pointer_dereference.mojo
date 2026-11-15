@@ -1,6 +1,6 @@
 # A returned pointer dereference names the pointer's own origin, as
 # upstream's `Pointer.__getitem__(self) -> ref[Self.origin]` does: the
-# origin-cast temporary of `Optional._unsafe_get_enum_payload`'s body
+# origin-cast temporary of `Optional._unsafe_get_union_payload`'s body
 # returns under `ref[self]`, as do a cast held in a local and a pointer
 # straight to a field under that field's origin.
 @fieldwise_init

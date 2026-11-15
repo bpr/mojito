@@ -5,5 +5,5 @@ def main():
     match Optional(String("tmp")):
         case .Some(ref s):
             s += "!"
-        case .None:
+        case _:
             pass

@@ -4,7 +4,7 @@
 # empty payload and `.span(a, b)` its elements; one subpattern matches the
 # whole payload, and a struct payload destructures by its fields. Case
 # patterns are refutable patterns `if case` takes too, and an unapplied case
-# is its constructor.
+# is its constructor. `NoneType` is a payload type like any other.
 # `union` is the declaration upstream's enum proposal gives cases with
 # payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
@@ -44,6 +44,11 @@ union Poll[T: Copyable & Deinitable](Copyable):
     case ready(Self.T)
 
 
+union Slot(Copyable, Writable):
+    case nothing(NoneType)
+    case full(Int)
+
+
 def main():
     print(describe(Token.eof()), describe(Token.identifier("x")))
     print(describe(Token.integer(0)), describe(Token.integer(3)))
@@ -56,3 +61,12 @@ def main():
     poll = pending()
     if case .pending() = poll:
         print("pending")
+    var slot = Slot.nothing(None)
+    match slot:
+        case .nothing(nothing):
+            print("nothing", nothing, slot)
+        case .full(value):
+            print("full", value)
+    slot = .full(8)
+    if case .full(value) = slot:
+        print("full", value, slot)

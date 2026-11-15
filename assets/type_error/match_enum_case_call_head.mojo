@@ -1,6 +1,6 @@
 # expect: must be written as 'Type.Case(...)'
-# Over an `EnumLike` subject every call-shaped pattern is an enum case, so
-# its head must name a case.
+# Over a subject that declares cases every call-shaped pattern is a case
+# pattern, so its head must name a case.
 def main():
     var o = Optional[Int](3)
     match o:

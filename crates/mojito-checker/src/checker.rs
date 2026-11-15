@@ -417,22 +417,22 @@ pub(crate) fn is_unbound_parametric_function(ty: &Ty) -> bool {
 /// The module holding the functions the compiler calls by module path.
 pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
 
-/// The linked name of the bundled `EnumLike` trait, which pattern matching
+/// The linked name of the bundled `SumType` trait, which pattern matching
 /// reads a subject's cases through: the compiler names it by module path,
 /// as upstream's `getBuiltinTrait` does, never by its spelling.
-pub(crate) fn enum_like_trait() -> String {
-    mojito_module::module::linked_item_name("std.builtin.enum_like", "EnumLike")
+pub(crate) fn sum_type_trait() -> String {
+    mojito_module::module::linked_item_name("std.builtin.enum_like", "SumType")
+}
+
+/// The linked name of the bundled `UnionLike` trait, whose conformers' case
+/// patterns take a parenthesized payload pattern.
+pub(crate) fn union_like_trait() -> String {
+    mojito_module::module::linked_item_name("std.builtin.enum_like", "UnionLike")
 }
 
 /// The linked name of the bundled `__Enum` trait every `enum` declares.
 pub(crate) fn enum_trait() -> String {
     mojito_module::module::linked_item_name("std.builtin._enum", "__Enum")
-}
-
-/// The linked name of the bundled `__Union` trait every `union` declares,
-/// whose case patterns take tuple-formed payload subpatterns.
-pub(crate) fn union_trait() -> String {
-    mojito_module::module::linked_item_name("std.builtin._enum", "__Union")
 }
 
 /// The linked name of the bundled `Hasher` trait, which the prelude does
