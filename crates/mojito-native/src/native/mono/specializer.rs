@@ -159,6 +159,7 @@ impl<'a> Specializer<'a> {
             counts,
             imported: self.functions.imported(),
             compile_time_output: self.vm.output(),
+            compile_time_stderr: self.vm.stderr(),
         })
     }
 

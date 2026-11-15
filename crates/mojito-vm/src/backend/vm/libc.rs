@@ -7,7 +7,8 @@
 //! and the native backend's real C calls produce identical program output.
 //! Host state lives in [`HostState`]: a descriptor table (fds 0-2 are the
 //! process streams, with fd 1 appending to the captured stdout buffer so
-//! `write(1, ..)` and `print` interleave exactly), open directory
+//! `write(1, ..)` and `print` interleave exactly, and fd 2 to the captured
+//! stderr buffer), open directory
 //! snapshots, the `errno` slot, and a per-VM environment overlay.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -349,8 +350,8 @@ impl VmBackend {
     }
 
     /// Write `bytes` to an open descriptor: fd 1 appends to the captured
-    /// stdout (so `print` and raw writes interleave in order), fd 2 is the
-    /// process stderr, and any other descriptor is a file in the table
+    /// stdout (so `print` and raw writes interleave in order), fd 2 to the
+    /// captured stderr, and any other descriptor is a file in the table
     /// (`EBADF` otherwise).
     pub(super) fn host_write_bytes(&mut self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
         match fd {
@@ -358,7 +359,10 @@ impl VmBackend {
                 self.output.push_str(&String::from_utf8_lossy(bytes));
                 Ok(bytes.len())
             }
-            2 => std::io::stderr().write_all(bytes).map(|()| bytes.len()),
+            2 => {
+                self.stderr.push_str(&String::from_utf8_lossy(bytes));
+                Ok(bytes.len())
+            }
             _ => match self.host.files.get_mut(&fd) {
                 Some(file) => file.write(bytes),
                 None => Err(std::io::Error::from_raw_os_error(EBADF)),

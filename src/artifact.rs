@@ -51,6 +51,7 @@ pub fn run_artifact(
         .map_err(ArtifactRunError::Runtime)?;
     Ok(Execution {
         output: backend.output(),
+        stderr: backend.stderr(),
         bindings: backend.bindings(),
     })
 }

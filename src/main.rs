@@ -475,6 +475,7 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
     // printed before the program's own output.
     if let Ok(concrete) = compiled.concrete_mir() {
         print!("{}", concrete.compile_time_output);
+        eprint!("{}", concrete.compile_time_stderr);
     }
     let execution = {
         let _backend_span = mojito::timing::span("backend");
@@ -482,12 +483,12 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
             .execute_keeping_output(&compiled)
             .map_err(|failure| {
                 print!("{}", failure.output);
+                eprint!("{}", failure.stderr);
                 failure.error.to_string()
             })?
     };
-    if !execution.output.is_empty() {
-        print!("{}", execution.output);
-    }
+    print!("{}", execution.output);
+    eprint!("{}", execution.stderr);
     // Echo final bindings only for stdin snippets: file-based programs run
     // through `main`, and their observable output must match `mojo run`
     // exactly (a module-scope `comptime` value would otherwise leak an extra
@@ -637,6 +638,7 @@ fn compile_native_module(
     // What the elaboration's compile-time applications printed is the
     // compiler's output, as `mojo build` prints it; the executable never does.
     print!("{}", concrete.compile_time_output);
+    eprint!("{}", concrete.compile_time_stderr);
     let options = pliron::CompileOptions {
         // `main` is required: a program without one fails in the backend,
         // by name.
@@ -845,9 +847,8 @@ fn stage_exec(file: Option<&str>, cli: &CliArgs) -> ExitCode {
         Ok(execution) => {
             // Artifacts are compiled programs: print their output verbatim and
             // never echo bindings, matching file-based `run`'s parity rationale.
-            if !execution.output.is_empty() {
-                print!("{}", execution.output);
-            }
+            print!("{}", execution.output);
+            eprint!("{}", execution.stderr);
             ExitCode::SUCCESS
         }
         Err(mojito::ArtifactRunError::Load(report)) => {

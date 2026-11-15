@@ -214,14 +214,16 @@ fn scalar_capability_manifest_and_differential() {
 ///
 /// - Every `assets/ok` and `assets/ownership_ok` fixture with a `main` entry
 ///   either compiles natively — then its executable's stdout at `O0` and
-///   `O1` must equal the VM's execution output byte-for-byte with exit 0 and
-///   empty stderr (handled raises and `finally` paths included), and its
-///   `O0` AddressSanitizer/LeakSanitizer build must run equally clean (no
-///   leak, double free, or invalid access anywhere in the run) — or is
+///   `O1` must equal the VM's execution output byte-for-byte with exit 0,
+///   and its stderr must equal the VM's captured stderr (empty unless the
+///   program writes fd 2; handled raises and `finally` paths included), and
+///   its `O0` AddressSanitizer/LeakSanitizer build must run equally clean
+///   (no leak, double free, or invalid access anywhere in the run) — or is
 ///   recorded `excluded` with its first rejection diagnostic.
 /// - Every `assets/runtime_error/pliron_raise_*` fixture must raise in the VM
 ///   and exit natively with the unhandled-error category (69), reporting
-///   `unhandled error: <message>` on stderr at both levels. (The VM's `run`
+///   `unhandled error: <message>` on stderr at both levels, after whatever
+///   the VM's run wrote to stderr before it stopped. (The VM's `run`
 ///   discards buffered partial stdout on an error while native executables
 ///   stream it — a recorded CLI-level divergence, so stdout is not compared
 ///   on the raise rows.)
@@ -282,7 +284,7 @@ fn parity_exe_manifest_and_differential() {
             }
             Ok(mut module) => {
                 let stdin = fixture_stdin(&rel);
-                let vm_output = match stdin {
+                let (vm_output, vm_stderr) = match stdin {
                     // `input()` fixtures run on a VM with the same bytes the
                     // executables get piped, prompts captured in the output.
                     Some(bytes) => {
@@ -296,15 +298,13 @@ fn parity_exe_manifest_and_differential() {
                         vm.run_concrete(concrete).unwrap_or_else(|error| {
                             panic!("{rel}: fixture must run on the VM: {error}")
                         });
-                        vm.output()
+                        (vm.output(), vm.stderr())
                     }
                     None => {
-                        compiler
-                            .execute(&compiled)
-                            .unwrap_or_else(|error| {
-                                panic!("{rel}: fixture must run on the VM: {error}")
-                            })
-                            .output
+                        let execution = compiler.execute(&compiled).unwrap_or_else(|error| {
+                            panic!("{rel}: fixture must run on the VM: {error}")
+                        });
+                        (execution.output, execution.stderr)
                     }
                 };
                 let dir = tempfile::tempdir().expect("tempdir");
@@ -319,10 +319,10 @@ fn parity_exe_manifest_and_differential() {
                     "{rel}: sanitizer run failed:\n{}",
                     String::from_utf8_lossy(&run.stderr)
                 );
-                assert!(
-                    run.stderr.is_empty(),
-                    "{rel}: sanitizer diagnostics:\n{}",
-                    String::from_utf8_lossy(&run.stderr)
+                assert_eq!(
+                    String::from_utf8_lossy(&run.stderr),
+                    vm_stderr,
+                    "{rel}: sanitized stderr diverges from the VM (sanitizer diagnostics?)"
                 );
                 for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
                     let exe = dir.path().join(format!("parity-{level}"));
@@ -343,10 +343,10 @@ fn parity_exe_manifest_and_differential() {
                         vm_output,
                         "{rel}: stdout bytes diverge from the VM at {level}"
                     );
-                    assert!(
-                        run.stderr.is_empty(),
-                        "{rel}: stderr must be empty at {level}: {}",
-                        String::from_utf8_lossy(&run.stderr)
+                    assert_eq!(
+                        String::from_utf8_lossy(&run.stderr),
+                        vm_stderr,
+                        "{rel}: stderr bytes diverge from the VM at {level}"
                     );
                 }
                 (
@@ -369,10 +369,11 @@ fn parity_exe_manifest_and_differential() {
                 "non-conforming-snippet".into(),
             );
         };
-        let vm_error = match compiler
-            .execute(&compiled)
-            .expect_err("runtime-error fixture must fail on the VM")
-        {
+        let failure = compiler
+            .execute_keeping_output(&compiled)
+            .expect_err("runtime-error fixture must fail on the VM");
+        let vm_stderr = failure.stderr;
+        let vm_error = match failure.error {
             CompilerError::Runtime(error) => error,
             error => panic!("{rel}: expected a runtime error, got {error}"),
         };
@@ -423,8 +424,13 @@ fn parity_exe_manifest_and_differential() {
                 "{rel}: runtime-error category diverges at {level}"
             );
             let expected_stderr = match category {
-                TrapCategory::UnhandledError | TrapCategory::Abort => format!("{vm_error}\n"),
-                _ => format!("mojito runtime trap: {}\n", category.runtime_message()),
+                TrapCategory::UnhandledError | TrapCategory::Abort => {
+                    format!("{vm_stderr}{vm_error}\n")
+                }
+                _ => format!(
+                    "{vm_stderr}mojito runtime trap: {}\n",
+                    category.runtime_message()
+                ),
             };
             assert_eq!(
                 String::from_utf8_lossy(&run.stderr),

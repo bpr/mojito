@@ -57,6 +57,9 @@ impl ConcreteProgram {
 #[derive(Default)]
 pub struct VmBackend {
     output: String,
+    /// Captured standard error: what the program wrote to fd 2, which the
+    /// caller writes to the process's stderr after the run.
+    stderr: String,
     /// The final top-level (`__toplevel__`) variable values, by name — the global
     /// bindings, captured after execution for the CLI `run` dump and tests.
     bindings: Vec<(String, Value)>,
@@ -509,6 +512,11 @@ impl VmBackend {
     /// Captured standard output.
     pub fn output(&self) -> String {
         self.output.clone()
+    }
+
+    /// Captured standard error.
+    pub fn stderr(&self) -> String {
+        self.stderr.clone()
     }
 
     /// Final top-level bindings, for the CLI `run` dump.

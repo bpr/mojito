@@ -63,6 +63,9 @@ pub struct SpecializedProgram {
     /// while it elaborates, which a program's run shows before its own
     /// output and its native executable never prints.
     pub compile_time_output: String,
+    /// The standard error the elaboration's compile-time applications
+    /// wrote, which a program's run and build write to stderr.
+    pub compile_time_stderr: String,
 }
 
 impl SpecializedProgram {
@@ -82,6 +85,7 @@ impl SpecializedProgram {
             mut counts,
             imported,
             compile_time_output,
+            compile_time_stderr,
         } = self;
         let program = program
             .rewrite_bodies(rewrite)
@@ -100,6 +104,7 @@ impl SpecializedProgram {
             counts,
             imported,
             compile_time_output,
+            compile_time_stderr,
         })
     }
 
@@ -148,6 +153,7 @@ impl SpecializedProgram {
             mut counts,
             imported,
             compile_time_output,
+            compile_time_stderr,
         } = self;
         let program = program
             .pruned(|program| eliminate(program, &roots))
@@ -166,6 +172,7 @@ impl SpecializedProgram {
             counts,
             imported,
             compile_time_output,
+            compile_time_stderr,
         })
     }
 }

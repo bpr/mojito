@@ -42,6 +42,13 @@ impl Backend {
         }
     }
 
+    /// Captured standard error.
+    pub fn stderr(&self) -> String {
+        match self {
+            Self::Vm(vm) => vm.stderr(),
+        }
+    }
+
     /// Final top-level bindings, for the CLI `run` dump. Empty for backends with
     /// no global environment — a debugging nicety, not core semantics.
     pub fn bindings(&self) -> Vec<(String, Value)> {

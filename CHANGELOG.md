@@ -651,6 +651,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The VM captures what a program writes to fd 2 (`print(..., file=stderr)`,
+  `write(2, ..)`) beside its stdout, carried as `Execution::stderr` and
+  written to stderr by `mojito run` and `exec`, so the native parity gate
+  compares each executable's stderr with the VM's instead of demanding it
+  be empty, and passes `print_library_keywords` again (R2232).
 - The Pliron capability matrix matches the MIR vocabulary again: the 14
   mnemonics added since late October (`pop`, `llvm.intrinsic`, the
   `array.get`/`array.replace` family, `variant.tag`, the SIMD lane ops,

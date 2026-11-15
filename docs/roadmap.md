@@ -956,30 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2232 The parity gate demands empty stderr, but
-  `print_library_keywords` prints to stderr by design**
-
-  `parity_exe_manifest_and_differential` (`tests/heavy/main.rs`) fails on
-  `assets/ok/print_library_keywords.mojo`, whose
-  `print("err", 1, file=stderr)` writes `err 1` to fd 2, as at the pin.
-  - The sanitizer run and the O0 and release runs each assert that native
-    stderr is empty.
-  - The VM cannot serve as the oracle: it writes fd 2 straight to the
-    process's stderr (`crates/mojito-vm/src/backend/vm/libc.rs`) and
-    captures only stdout.
-  - Lever: buffer fd-2 bytes in `VmBackend` as stdout is, carry them on
-    `Compiler::execute`'s result beside `output`, and have the CLI's `run`
-    write them to stderr.
-  - Then the three native runs compare stderr bytes with the VM's
-    instead of requiring them to be empty.
-  - The panic kills one sweep worker and skips the manifest comparison,
-    the runtime-error half, and the coverage ratchets. It has failed in
-    every gate run since 2026-11-13.
-  - Verify with
-    `MOJITO_PARITY_ONLY=print_library_keywords cargo nextest run --features backend-pliron -E 'binary(heavy)'`,
-    which the owner allows for this entry.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2233 `maybe_uninit_deinit_uninitialized` no longer compiles
   natively: `Bool` has no declaration to lay out**
 
