@@ -116,7 +116,7 @@ assets/ok/callable_struct_transfer_after_last_use.mojo	elaborated	45	1968	28	32	
 assets/ok/capturing_callable_parameter_with_locals.mojo	elaborated	28	1120	18	19	1010	830	84	271	67
 assets/ok/capturing_generic_callable_parameter_environment.mojo	elaborated	39	1389	25	30	1088	982	95	284	78
 assets/ok/capturing_lambda_array_display.mojo	elaborated	56	2893	28	37	1161	1709	251	310	164
-assets/ok/capturing_lambda_display_inlined.mojo	elaborated	49	2347	22	30	1058	1480	190	290	131
+assets/ok/capturing_lambda_display_inlined.mojo	elaborated	49	2345	22	30	1058	1480	190	290	131
 assets/ok/capturing_lambda_storage.mojo	elaborated	59	3096	26	32	1115	1385	181	292	87
 assets/ok/chained_comparison.mojo	elaborated	11	507	5	5	224	215	25	59	11
 assets/ok/chained_comparison_converted_middle.mojo	elaborated	14	909	7	8	318	399	34	83	16
@@ -689,7 +689,7 @@ assets/ok/member_alias_application.mojo	elaborated	36	2417	20	28	1366	1554	132	3
 assets/ok/member_call_unread_struct_parameter_instances.mojo	elaborated	51	2037	39	43	1128	1049	114	304	96
 assets/ok/member_read_through_construction.mojo	elaborated	25	1269	17	18	1000	805	81	269	66
 assets/ok/memory_bitcast.mojo	elaborated	75	6254	21	67	1369	5139	385	385	362
-assets/ok/memory_only_read_temporary_address.mojo	elaborated	39	1809	20	24	1026	1009	109	274	72
+assets/ok/memory_only_read_temporary_address.mojo	elaborated	39	1807	20	24	1026	1009	109	274	72
 assets/ok/merge_common_type.mojo	elaborated	129	8246	55	116	2428	5533	737	642	503
 assets/ok/method_call_callee_binder_spelling.mojo	elaborated	25	1152	17	18	1000	805	81	269	66
 assets/ok/method_capturing_callable_parameter.mojo	elaborated	28	1104	18	19	1011	824	84	271	67
@@ -1757,4 +1757,4 @@ benchmarks/compile/stdlib_heavy.mojo	elaborated	120	7680	53	102	2204	5877	673	57
 benchmarks/compile/trait_defaults.mojo	elaborated	137	8044	49	97	1539	6325	319	406	210
 benchmarks/compile/tstring.mojo	elaborated	36	1249	21	27	1033	955	96	281	75
 benchmarks/compile/tuple.mojo	elaborated	44	1717	23	33	1086	1088	115	285	86
-total	1758	78227	4944197	41029	58338	2148047	3191994	348085	574635	230686
+total	1758	78227	4944193	41029	58338	2148047	3191994	348085	574635	230686
