@@ -651,6 +651,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The heavy lane's parity sweep no longer demands a trap category from
+  `assets/runtime_error/simd_element_list_too_few.mojo`, whose read past the
+  element pack is undefined at the pin: the fixture's row is `undefined`, so
+  the sweep compiles it natively and runs neither executable, and its
+  SIGSEGV no longer ends the sweep before the manifest comparison. The error
+  ratchet drops to 34 (R2236).
+
 - A pending error that a `finally` or `__exit__` swallows compiles natively
   again: the function's error slot stages its `MjError` in the variable's own
   storage, so the swallowed error's inlined destructor frees the pointer the

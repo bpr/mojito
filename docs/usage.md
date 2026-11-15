@@ -58,7 +58,8 @@ gates broke, in about four minutes (its budget is ten). The list has two line ki
   path, then the native differential its `conformance/pliron-parity.tsv` row
   allows: an `exe-differential` fixture must print the same on both
   backends, an `error-differential` one must fail on both, and one without
-  such a row is checked on the VM alone;
+  such a row (an `undefined` one, whose run the pin leaves undefined,
+  included) is checked on the VM alone;
 - `test <root test target> <name>` runs that named test, after confirming
   the target still lists it.
 

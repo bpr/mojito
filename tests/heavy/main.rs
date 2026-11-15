@@ -38,6 +38,16 @@ use support::{
     parallel_map, ret_kind_name, run_executable, runtime_jit_symbols,
 };
 
+/// The runtime-error fixtures whose run is undefined at the pin, by file stem.
+/// The parity sweep compiles each natively but runs neither executable: no
+/// exit status is an oracle for a read the language leaves undefined.
+const UNDEFINED_RUNS: &[&str] = &[
+    // Too few elements read past the element pack: the pin's default
+    // `ASSERT` mode skips the arity assert, and the native read finds
+    // whatever the stack holds.
+    "simd_element_list_too_few",
+];
+
 /// The Stage 2 acceptance gate in one pass (one production compile per
 /// eligible fixture — the compile dominates the cost, so manifest generation,
 /// the O0/O1 value differential, and the trap-category differential share it):
@@ -230,6 +240,9 @@ fn scalar_capability_manifest_and_differential() {
 ///   discards buffered partial stdout on an error while native executables
 ///   stream it — a recorded CLI-level divergence, so stdout is not compared
 ///   on the raise rows.)
+/// - A runtime-error fixture in [`UNDEFINED_RUNS`] must compile natively and
+///   is recorded `undefined`: its run's outcome is undefined at the pin, so
+///   no native exit status is an oracle for it.
 ///
 /// The checked-in `conformance/pliron-parity.tsv` manifest must match
 /// regeneration byte-exactly, and the trailing guards fail if eligible
@@ -415,6 +428,17 @@ fn parity_exe_manifest_and_differential() {
             .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"));
         let mut module = native::compile(concrete, &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+        if UNDEFINED_RUNS
+            .iter()
+            .any(|stem| rel.ends_with(&format!("/{stem}.mojo")))
+        {
+            return (
+                rel,
+                entry_detail,
+                "undefined".to_string(),
+                format!("vm-category={category:?}"),
+            );
+        }
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
             let exe = dir.path().join(format!("error-{level}"));
@@ -479,6 +503,7 @@ fn parity_exe_manifest_and_differential() {
          # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |\n\
          #         error-differential (VM/native runtime-error category oracle, O0+O1+ASan) |\n\
          #         excluded (native rejection diagnostic) |\n\
+         #         undefined (compiles natively; the run is undefined at the pin, so not run) |\n\
          #         ineligible (no runnable `main` shape for this gate)\n\
          # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \\\n\
          #   cargo nextest run --features backend-pliron parity_exe_manifest\n",
@@ -508,8 +533,8 @@ fn parity_exe_manifest_and_differential() {
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(
-            errors == 35,
-            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 35"
+            errors == 34,
+            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 34"
         );
         assert!(
             excluded == 0,

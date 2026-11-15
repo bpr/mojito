@@ -956,28 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2236 The parity sweep demands a trap category of
-  `simd_element_list_too_few`, whose read is undefined**
-
-  `parity_exe_manifest_and_differential` requires the native run of
-  `assets/runtime_error/simd_element_list_too_few.mojo` to exit 72 (a
-  dangling-`Pointer` trap), but the executable reads past the element
-  pack's storage into whatever the stack holds.
-  - Since 2026-11-15 the bytes past the pack are no sentinel, so the run
-    dies by SIGSEGV and the assertion panics. That panic ends the sweep
-    before its manifest comparison.
-  - The read is undefined at the pin too: upstream skips the arity assert
-    in its default `ASSERT` mode, and the pinned `mojo` times out on the
-    fixture (`conformance/assets-mojo-errors.tsv`).
-  - `tests/corpus_test.rs` already lists the fixture among those whose
-    run the pipeline decides (`PIPELINE_DECIDES`).
-  - Lever: the sweep's error half stops classifying an undefined run.
-    Give the fixture its own manifest status in `tests/heavy/main.rs` and
-    `conformance/pliron-parity.tsv`, and lower the error ratchet to match.
-  - Its `tests/focused/list.txt` line is commented out behind this ID.
-  - Found by the heavy lane run of 2026-11-15 (R2234).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 

@@ -4,6 +4,7 @@
 # status: exe-differential (VM/native stdout-byte oracle, O0+O1, ASan/LSan-clean) |
 #         error-differential (VM/native runtime-error category oracle, O0+O1+ASan) |
 #         excluded (native rejection diagnostic) |
+#         undefined (compiles natively; the run is undefined at the pin, so not run) |
 #         ineligible (no runnable `main` shape for this gate)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron parity_exe_manifest
@@ -1878,7 +1879,7 @@ assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-diffe
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
-assets/runtime_error/simd_element_list_too_few.mojo	main,__toplevel__	error-differential	category=PointerDangling
+assets/runtime_error/simd_element_list_too_few.mojo	main,__toplevel__	undefined	vm-category=PointerDangling
 assets/runtime_error/span_index_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/span_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort

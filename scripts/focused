@@ -7,7 +7,7 @@ by `MOJITO_CORPUS_FOCUS`, so the harness keeps owning trial names), then the
 native differential its `conformance/pliron-parity.tsv` row allows: an
 `exe-differential` fixture must print the same on the VM and natively, an
 `error-differential` one must fail on both, and one with no row (or an
-`ineligible` row) is checked on the VM alone. A `test` line runs one named
+`ineligible` or `undefined` row) is checked on the VM alone. A `test` line runs one named
 test of a root test target. The tier sits between `scripts/smoke` (under a
 minute) and the overnight gate (about nine hours): it takes about four
 minutes, within a ten-minute budget.
