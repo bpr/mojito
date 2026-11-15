@@ -1,7 +1,8 @@
 # A requirement default reading the method's value parameters runs with the
 # call's binding of them through a bound: a caller's own binder, arithmetic
 # over two of them with a module constant, and an enclosing struct's
-# parameter.
+# parameter. A nominal call of a method reading its own parameter binds it
+# from the caller's binder too.
 comptime TWO = 2
 
 
@@ -23,6 +24,13 @@ struct Doubler(Scaler):
     def mix[n: Int, m: Int](self, value: Int, factor: Int = 7) -> Int:
         return value * factor
 
+    def times[n: Int](self, value: Int) -> Int:
+        return value * n
+
+
+def run_at[k: Int](s: Doubler):
+    print(s.times[k](5))
+
 
 def run[T: Scaler, k: Int, j: Int](s: T):
     print(s.scale[k](5))
@@ -40,4 +48,5 @@ struct Holder[w: Int]:
 def main():
     run[Doubler, 3, 4](Doubler())
     Holder[4]().go(Doubler())
+    run_at[6](Doubler())
     print(Doubler().scale[3](5))

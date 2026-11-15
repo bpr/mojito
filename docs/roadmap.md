@@ -6306,23 +6306,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R99 A method call whose compile-time argument names the caller's
-  value parameter fails MIR verification**
-
-  Problem: `s.scale[k](5)` inside `def run_at[k: Int](s: Doubler)`, beside
-  `def scale[n: Int](self, value: Int)`, stops with "register r6 has no
-  checked type", where the pin runs it.
-  - A free function called the same way (`twice[k](5)`) runs, and so does
-    the method call with a literal argument (`s.scale[2](5)`).
-  - The same failure meets a call through a bound (`T: Scaler`), so a
-    requirement default reading the method's parameter
-    (`checker/bound_defaults.rs`) cannot yet be shown spelled from a
-    caller's parameter.
-  - Found while accepting requirement defaults over a method's parameters
-    (2026-10-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R106 A variadic struct's pack bound is not enforced at an explicit
   application**
 

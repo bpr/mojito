@@ -651,6 +651,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method call whose bracket argument names the caller's own value parameter
+  (`s.scale[k](5)` in `def run_at[k: Int](s: Doubler)`), nominal or through a
+  bound, is now pinned to run as at the pin; it used to fail MIR verification
+  (R99; `assets/ok/trait_requirement_default_from_caller_parameter.mojo`).
+
 - A method keyed on its own `DType` that forwards it to a sibling keyed method
   (`return self.twice[dt](a)`) is now pinned to run as at the pin, in plain
   and parametric structs, through a keyword bracket and a static `Self.`
