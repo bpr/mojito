@@ -15,6 +15,22 @@
 # nothing. Such an entry stays here commented out, prefixed with the roadmap
 # entry that owns it; restore it when that entry lands.
 
+# Gate failures (2026-11-15 heavy lane run)
+fixture assets/ok/capturing_lambda_display_inlined.mojo
+fixture assets/ok/comptime_for_index_typed_local.mojo
+fixture assets/ok/comptime_for_nested_sibling_call_instances.mojo
+fixture assets/ok/memory_only_read_temporary_address.mojo
+fixture assets/ok/struct_construction_parameter_application.mojo
+fixture assets/ok/struct_generator_struct_value.mojo
+fixture assets/ok/struct_generator_vector_value.mojo
+fixture assets/ok/struct_value_param_application.mojo
+fixture assets/ok/struct_value_param_frozen.mojo
+fixture assets/ok/template_method_vector_key.mojo
+fixture assets/ok/template_type_member_loop_bound.mojo
+# R2235: fixture assets/ok/pliron_finally_overrides.mojo
+# R2235: fixture assets/ok/tempfile_mkdtemp.mojo
+# R2236: fixture assets/runtime_error/simd_element_list_too_few.mojo
+
 # Gate failures (2026-11-15 second overnight run)
 fixture assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo
 

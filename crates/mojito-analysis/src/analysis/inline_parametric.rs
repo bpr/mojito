@@ -4156,13 +4156,15 @@ impl ContinueWalk {
     }
 }
 
-/// What the callee returns through: nothing when it returns `None`, else
-/// the wrapper loop's result.
+/// What the callee returns through: nothing when it returns `None` by
+/// value, else the wrapper loop's result, a reference to a `None` among
+/// them.
 fn result_of(callee: &MirFunction) -> Returned {
-    if callee
-        .ret_ty
-        .as_ref()
-        .is_none_or(|ty| matches!(ty.kind(), TyKind::None))
+    if !callee.returns_reference
+        && callee
+            .ret_ty
+            .as_ref()
+            .is_none_or(|ty| matches!(ty.kind(), TyKind::None))
     {
         Returned::None
     } else {

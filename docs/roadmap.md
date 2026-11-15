@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2235**.
+Next free ID: **R2237**.
 
 ## Ordered Work
 
@@ -956,27 +956,47 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2234 The heavy lane's later checks have not run since
-  2026-11-01**
+- [ ] **R2235 A pending error that a `finally` or `__exit__` swallows is
+  freed natively through a value its raise edge never defined**
 
-  The parity sweep's panic (R2232) ends
-  `parity_exe_manifest_and_differential` before the `assets/runtime_error`
-  half, the manifest comparison, and the coverage ratchets. So
-  `scripts/check-pliron-heavy` has not shown whether they pass.
-  - All 35 runtime-error fixtures exit 1 on both backends through the CLI
-    (checked 2026-11-15), but the exact stderr and the sanitized run are
-    unchecked.
-  - Run `scripts/check-pliron-heavy` and `scripts/check-pliron` once. The
-    owner allows both for this entry.
-  - A manifest diff that only regeneration explains (a moved row, a
-    detail's wording) is repinned with `scripts/run-parity-regen.sh`,
-    after reviewing the diff.
-  - A real failure (a new `excluded` row, a stderr or category divergence,
-    a sanitizer report) is filed as its own `native` entry, its fixture
-    commented into `tests/focused/list.txt` behind the new ID, and named
-    in a new batch in `docs/notes/next-batches.md`.
-  - Done when both scripts exit 0 or every remaining failure has an entry.
-  - Depends on R2231, R2232, R2233.
+  Pliron rejects a function whose pending raise dies uncaught, where the VM
+  runs it: "IR verification failed … Function call has incorrect type:
+  argument 0 type mismatch: expected llvm.ptr (0), got builtin.integer i8".
+  - Smallest shape: `def g() raises -> Int:` with `try: raise
+    Error("pending")` and `finally: return 3`, called from `main` under a
+    `try`. The VM prints `3`.
+  - The dying error's inlined `String` destructor calls `mjrt_free` on an
+    `i8` poison. `close_edge` (`crates/mojito-pliron/src/lower/instr.rs`)
+    passes that poison for a raising instruction's results on the raise
+    path, so the freed pointer is read from a register the raise path
+    never wrote.
+  - Probes: `assets/ok/pliron_finally_overrides.mojo` and
+    `assets/ok/tempfile_mkdtemp.mojo` (whose `TemporaryDirectory.__exit__`
+    swallows the raise), both commented out in `tests/focused/list.txt`.
+  - Found by the heavy lane run of 2026-11-15 (R2234).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R2236 The parity sweep demands a trap category of
+  `simd_element_list_too_few`, whose read is undefined**
+
+  `parity_exe_manifest_and_differential` requires the native run of
+  `assets/runtime_error/simd_element_list_too_few.mojo` to exit 72 (a
+  dangling-`Pointer` trap), but the executable reads past the element
+  pack's storage into whatever the stack holds.
+  - Since 2026-11-15 the bytes past the pack are no sentinel, so the run
+    dies by SIGSEGV and the assertion panics. That panic ends the sweep
+    before its manifest comparison.
+  - The read is undefined at the pin too: upstream skips the arity assert
+    in its default `ASSERT` mode, and the pinned `mojo` times out on the
+    fixture (`conformance/assets-mojo-errors.tsv`).
+  - `tests/corpus_test.rs` already lists the fixture among those whose
+    run the pipeline decides (`PIPELINE_DECIDES`).
+  - Lever: the sweep's error half stops classifying an undefined run.
+    Give the fixture its own manifest status in `tests/heavy/main.rs` and
+    `conformance/pliron-parity.tsv`, and lower the error ratchet to match.
+  - Its `tests/focused/list.txt` line is commented out behind this ID.
+  - Found by the heavy lane run of 2026-11-15 (R2234).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**

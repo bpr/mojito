@@ -144,7 +144,10 @@ fn scalar_capability_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
+        let concrete = compiled
+            .concrete_mir()
+            .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"));
+        let mut module = native::compile(concrete, &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
@@ -277,35 +280,33 @@ fn parity_exe_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        match native::compile_mir(compiled.drop_elaborated_mir(), &options) {
+        // The driver's concrete graph, its source locations resolved, as
+        // `mojito compile` hands it to the backend.
+        let concrete = compiled
+            .concrete_mir()
+            .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"));
+        match native::compile(concrete, &options) {
             Err(error) => {
                 let detail = error.display_with_sources(&options.sources);
                 (rel, "main".into(), "excluded".to_string(), detail)
             }
             Ok(mut module) => {
                 let stdin = fixture_stdin(&rel);
-                let (vm_output, vm_stderr) = match stdin {
-                    // `input()` fixtures run on a VM with the same bytes the
-                    // executables get piped, prompts captured in the output.
-                    Some(bytes) => {
-                        let mut vm = mojito::backend::VmBackend::new();
-                        vm.set_input_override(bytes.to_vec());
-                        let concrete = compiled
-                            .concrete_mir()
-                            .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"))
-                            .program
-                            .clone();
-                        vm.run_concrete(concrete).unwrap_or_else(|error| {
+                // `input()` fixtures run on a VM with the same bytes the
+                // executables get piped, prompts captured in the output.
+                let (vm_output, vm_stderr) = if let Some(bytes) = stdin {
+                    let mut vm = mojito::backend::VmBackend::new();
+                    vm.set_input_override(bytes.to_vec());
+                    vm.run_concrete(concrete.program.clone())
+                        .unwrap_or_else(|error| {
                             panic!("{rel}: fixture must run on the VM: {error}")
                         });
-                        (vm.output(), vm.stderr())
-                    }
-                    None => {
-                        let execution = compiler.execute(&compiled).unwrap_or_else(|error| {
-                            panic!("{rel}: fixture must run on the VM: {error}")
-                        });
-                        (execution.output, execution.stderr)
-                    }
+                    (vm.output(), vm.stderr())
+                } else {
+                    let execution = compiler.execute(&compiled).unwrap_or_else(|error| {
+                        panic!("{rel}: fixture must run on the VM: {error}")
+                    });
+                    (execution.output, execution.stderr)
                 };
                 let dir = tempfile::tempdir().expect("tempdir");
                 let asan_exe = dir.path().join("parity-asan");
@@ -409,7 +410,10 @@ fn parity_exe_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
+        let concrete = compiled
+            .concrete_mir()
+            .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"));
+        let mut module = native::compile(concrete, &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {

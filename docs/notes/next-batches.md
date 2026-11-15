@@ -79,3 +79,26 @@ minutes together, and `run-batches` does not run them.
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
   --task R2231 --task R2232 --task R2233 --task R2234
 ```
+
+## 2. Gate repair: what the 2026-11-15 heavy lane run left red (2 entries)
+
+R2234 ran both lanes. `check-pliron` failed only on a Clippy lint in
+`tests/heavy/main.rs`, now fixed. The heavy lane's parity sweep showed:
+- 11 `assets/ok` rows that no longer compiled natively. R2234 fixed both
+  causes (native layout refused an instance keyed by a closed application,
+  and `inline-parametric` wrote `None` into a reference to `None`).
+- R2235: a pending error that a `finally` or `__exit__` swallows is freed
+  natively through a poison value. `pliron_finally_overrides` and
+  `tempfile_mkdtemp` stop in Pliron's verifier.
+- R2236: the sweep requires a trap category from
+  `simd_element_list_too_few`, whose read past the element pack is
+  undefined. Its SIGSEGV panics the sweep before the manifest comparison.
+
+Focused lines to restore: `pliron_finally_overrides` and
+`tempfile_mkdtemp` (R2235), and `simd_element_list_too_few` (R2236).
+After the batch, run `scripts/check-pliron-heavy` to confirm the goal.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R2235 --task R2236
+```

@@ -651,6 +651,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct instance keyed by an unevaluated closed application
+  (`Tagged[Extent(2, 3)]`, a vector or `comptime for` value parameter)
+  lays out natively again: native layout asks whether an elaborated type is
+  symbolic, as the concrete verifier does, instead of refusing every
+  application. Nine `assets/ok` fixtures compile natively again (R2234;
+  `assets/ok/struct_value_param_frozen.mojo`).
+
+- `inline-parametric` no longer writes `None` into the result of an
+  inlined callee that returns a reference to `None`, so a tuple holding a
+  `None` call result (`(s.__iadd__("!"), s.byte_length())[1]`) compiles
+  natively again (R2234; `assets/ok/memory_only_read_temporary_address.mojo`).
+
+- The heavy lane's parity sweep compiles each fixture from the driver's
+  concrete graph, its `kgen.source_loc` sites resolved, as `mojito
+  compile` does, and `tests/heavy/main.rs` passes Clippy again (R2234).
+
 - `MaybeUninit` storage lays out natively whether or not the program names
   `Bool`: its presence flag is a raw `i1`, so destroying never-written
   storage traps natively as in the VM instead of failing to compile

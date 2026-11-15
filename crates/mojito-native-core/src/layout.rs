@@ -84,9 +84,11 @@ pub struct LayoutCx<'a> {
 impl LayoutCx<'_> {
     /// The layout of one checked type.
     pub fn layout_of(&self, ty: &Ty) -> Result<Layout, LayoutError> {
-        // Layout is asked only of a concrete type: a symbolic one has no
-        // runtime identity until an instantiation substitutes it.
-        if mojito_types::types::is_symbolic(ty) {
+        // Layout is asked only of an elaborated type: a symbolic one has no
+        // runtime identity until an instantiation substitutes it, while an
+        // instance keyed by a closed application is concrete, as the pin's
+        // `#kgen.apply` parameter attribute is.
+        if mojito_types::types::is_elaborated_symbolic(ty) {
             return Err(LayoutError::Symbolic(ty.to_string()));
         }
         if let Some(element) = mojito_types::types::uninit_storage_element(ty) {
