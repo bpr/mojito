@@ -651,6 +651,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait default with a `where` clause that its conformer inherits is now
+  rejected with the pin's "'where' clauses on trait methods are not
+  supported", the same message as every other trait method's clause, rather
+  than a wrapper-synthesis diagnostic. Arithmetic `where` operands on generic
+  and predicate aliases, `comptime` members, static methods, struct headers,
+  and nested `def`s are pinned by fixtures (R73;
+  `assets/ok/where_arithmetic_operand_declarations.mojo`,
+  `assets/type_error/where_arithmetic_alias_violated.mojo`,
+  `assets/type_error/where_on_inherited_trait_default.mojo`).
+
 - A call through a capturing closure's `__call__` witness hands an owned
   (`var`) argument on to the closure's body without running its move
   initializer, as at the pin, where it ran one extra move

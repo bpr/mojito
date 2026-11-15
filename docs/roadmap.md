@@ -6226,23 +6226,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R73 An arithmetic `where` operand compiles for `def`s and struct methods
-  only**
-
-  Problem: `where n + 1 == m` needs its declaration's value parameters in
-  scope when the clause compiles, and only a free `def` and a struct method
-  open that scope first.
-  - A trait method, a comptime alias, and a Bool-bodied predicate alias
-    report `unsupported generic constraint operand`, as every declaration did
-    before.
-  - The lever is `push_param_scope` around each remaining
-    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
-    `conformance.rs`).
-  - The sites are known; the predicate alias also needs its substitution
-    (`substitute_predicate`) to carry an expression.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R76 `reflect[T]` of a non-struct type is rejected**
 
   Problem: the pinned Mojo answers `reflect[Int].field_count()` with 1, and
@@ -7029,6 +7012,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `assets/type_error/where_dtype_predicate_lacks_evidence.mojo` spells
     the same folded form, where the pin's note says "needs evidence for
     'dtype.is_floating_point()'".
+  - Probe: `assets/type_error/where_arithmetic_alias_violated.mojo`
+    reports "expected 'n + 1 == m'", and a predicate alias's clause
+    `IsNext[n, m]` reports "expected 'm == n + 1 == true'", where the pin
+    prints the emitted expression "expected '((n + Int(1)) == m)'".
   - Found while landing R1661 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.

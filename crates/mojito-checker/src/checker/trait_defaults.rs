@@ -1161,16 +1161,10 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
             .type_params
             .iter()
             .any(|param| param.is_erased_origin_param(&method.type_params));
-    if names_origin {
-        return Some(format!(
+    names_origin.then(|| {
+        format!(
             "inheriting trait default '{name}', whose signature names an origin: a \
              conformer's wrapper over such a signature is not supported yet"
-        ));
-    }
-    (!method.where_clauses.is_empty()).then(|| {
-        format!(
-            "inheriting trait default '{name}', which declares a 'where' clause: a \
-             conformer's wrapper over a constrained signature is not supported yet"
         )
     })
 }
