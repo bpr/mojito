@@ -1358,6 +1358,42 @@ fn retains_conditional_struct_conformance_predicates() {
 }
 
 #[test]
+fn reads_not_conformance_as_never_condition() {
+    let statements =
+        parse("struct S(Other, not Movable, not Deinitable else \"call close()\"):\n    pass\n");
+    let StmtKind::Struct {
+        conforms,
+        conformance_conditions,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected struct");
+    };
+    assert_eq!(conforms, &["Other", "Movable", "Deinitable"]);
+    assert_eq!(conformance_conditions.len(), 2);
+    assert_eq!(conformance_conditions[0].0, "Movable");
+    assert!(conformance_conditions[0].1.is_never_condition());
+    assert_eq!(conformance_conditions[0].1.never_condition_reason(), None);
+    assert_eq!(conformance_conditions[1].0, "Deinitable");
+    assert_eq!(
+        conformance_conditions[1].1.never_condition_reason(),
+        Some("call close()")
+    );
+}
+
+#[test]
+fn rejects_not_conformance_without_trait_name() {
+    for source in [
+        "struct S(not):\n    pass\n",
+        "struct S(not (A & B)):\n    pass\n",
+        "struct S(not Movable else 1):\n    pass\n",
+    ] {
+        let mut parser = Parser::new(Lexer::new(source));
+        assert!(parser.parse_program().is_err(), "{source:?} parsed");
+    }
+}
+
+#[test]
 fn parses_bare_self_type_in_trait_method() {
     // `other: Self` — the `Self` type in a trait requirement.
     let stmts = parse("trait Eq2:\n    def same(self, other: Self) -> Bool:\n        ...\n");

@@ -2197,6 +2197,27 @@ impl Expr {
         mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
     }
 
+    /// Whether this conformance condition opts its trait out: the literal
+    /// `False`, or `(False, "reason")`, which is how `not NAME [else
+    /// "reason"]` in a conformance list reads.
+    pub fn is_never_condition(&self) -> bool {
+        matches!(self.kind, ExprKind::Bool(false)) || self.never_condition_reason().is_some()
+    }
+
+    /// The reason of an opting-out conformance condition `(False, "reason")`.
+    pub fn never_condition_reason(&self) -> Option<&str> {
+        let ExprKind::TupleLit(items) = &self.kind else {
+            return None;
+        };
+        match items.as_slice() {
+            [never, reason] if matches!(never.kind, ExprKind::Bool(false)) => match &reason.kind {
+                ExprKind::Str(reason) => Some(reason),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The condition and message of upstream's compile-time assertion op,
     /// ``__mlir_op.`kgen.param.assert`[cond=c.__mlir_bool__(), message=m]()``,
     /// the form a `comptime assert c, m` denotes: the `Bool` whose `i1`

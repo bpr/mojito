@@ -4946,9 +4946,10 @@ pub struct StructConformance {
 /// carries for each struct that has one.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExplicitDestroyInfo {
-    /// The `@explicit_destroy` message, or [`Self::default_message`].
+    /// The `@explicit_destroy` message, or the reason a `not Deinitable
+    /// else "reason"` opt-out gives, or [`Self::default_message`].
     pub message: String,
-    /// Whether `@explicit_destroy` declared `message`.
+    /// Whether `@explicit_destroy` or the opt-out declared `message`.
     pub declared: bool,
     #[serde(serialize_with = "sorted")]
     pub destructors: HashMap<String, bool>,

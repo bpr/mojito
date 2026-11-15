@@ -689,7 +689,8 @@ impl Checker {
                 },
                 declaration.decorators,
             )?
-            .explicit_destroy;
+            .explicit_destroy
+            .or_else(|| opt_out_reason(declaration.conformance_conditions, "Deinitable"));
         let explicit_destructors = declaration
             .methods
             .iter()
@@ -1658,15 +1659,28 @@ impl Checker {
         let name = declaration.name;
         let methods = declaration.methods;
         // Verify each declared conformance now that the method signatures
-        // exist, recording each one's witness table.
+        // exist, recording each one's witness table. A conformance opted
+        // out with `not` (its condition `False`) has no requirements to
+        // meet, as upstream's never-satisfied conformance.
+        let conforms = declaration
+            .conforms
+            .iter()
+            .filter(|tr| {
+                !declaration
+                    .conformance_conditions
+                    .iter()
+                    .any(|(opted, condition)| opted == *tr && condition.is_never_condition())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         if let Some(cases) = declaration.enum_cases {
-            self.check_enum_payload_conformances(name, cases, declaration.conforms)?;
+            self.check_enum_payload_conformances(name, cases, &conforms)?;
         }
         let mut witness_tables = Vec::new();
-        for tr in declaration.conforms {
+        for tr in &conforms {
             witness_tables.extend(self.verify_conformance(name, tr, self_ty)?);
         }
-        witness_tables.extend(self.copyable_witness_table(name, declaration.conforms));
+        witness_tables.extend(self.copyable_witness_table(name, &conforms));
         witness_tables.sort_by(|left: &WitnessTable, right| left.trait_name.cmp(&right.trait_name));
         witness_tables.dedup_by(|left, right| left.trait_name == right.trait_name);
         if let Some(info) = self.structs.get_mut(name) {
@@ -4792,4 +4806,17 @@ fn requirement_owner(trait_name: &str, member: &str) -> String {
 /// The owner of the binders [`requirement_owner`]'s declaration classifies.
 fn requirement_binder_owner(trait_name: &str, member: &str) -> String {
     binder_owner(&requirement_owner(trait_name, member))
+}
+
+/// The reason `not trait_name else "reason"` gives, read back from its
+/// `trait_name where (False, "reason")` condition, as upstream attaches it
+/// to the conformance it synthesizes.
+fn opt_out_reason(
+    conditions: &[(String, mojito_ast::ast::Expr)],
+    trait_name: &str,
+) -> Option<String> {
+    conditions
+        .iter()
+        .filter(|(name, _)| name == trait_name)
+        .find_map(|(_, condition)| condition.never_condition_reason().map(str::to_string))
 }

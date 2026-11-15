@@ -17,7 +17,8 @@
 //! `__EnumStorage` over the case payload types), and the members
 //! upstream's `__Enum` supplies as defaults (`docs/notes/enums.md`). An
 //! enum case is a `comptime` value of the enum, and the enum is
-//! `ImplicitlyCopyable`, with `Equatable`, `Comparable`, and `Hashable`
+//! `ImplicitlyCopyable` unless its conformance list opts out with `not`
+//! ([`implicit_value_conformance`]), with `Equatable`, `Comparable`, and `Hashable`
 //! over its cases when it asks for them. A union case is a static
 //! constructor taking the payload, and a union also gets `UnionLike`'s
 //! case types and payload getter. The members are written as Mojo and
@@ -49,6 +50,7 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
         let StmtKind::Struct {
             name,
             conforms,
+            conformance_conditions,
             fields,
             associated,
             methods,
@@ -59,13 +61,20 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
             continue;
         };
         let kind = cases.kind;
+        let opted_out = |conformance: &str| {
+            conformance_conditions
+                .iter()
+                .any(|(opted, condition)| opted == conformance && condition.is_never_condition())
+        };
+        let declares = |conformance: &str| {
+            conforms.iter().any(|written| written == conformance) && !opted_out(conformance)
+        };
         check_member_names(kind, cases, associated, methods)?;
-        check_case_payloads(kind, name, conforms, cases, span)?;
+        check_case_payloads(kind, declares("TrivialRegisterPassable"), cases, name, span)?;
         let payloads = cases
             .iter()
             .map(|case| payload_spellings(case, source))
             .collect::<Result<Vec<_>, _>>()?;
-        let declares = |conformance: &str| conforms.iter().any(|written| written == conformance);
         let written = |member: &str| methods.iter().any(|method| method.name == member);
         let mut text = generated_members(kind, name, cases, &payloads);
         for (member, payload) in [("write_to", "{}"), ("write_repr_to", "repr({})")] {
@@ -119,8 +128,11 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
                 .map_or(span, |case| case.span);
             walk_block_mut(&mut Relocate(at), &mut method.body);
         }
-        if kind == SumKind::Enum && !declares("ImplicitlyCopyable") {
-            conforms.push("ImplicitlyCopyable".to_string());
+        if kind == SumKind::Enum
+            && let Some(implicit) = implicit_value_conformance(opted_out)
+            && !declares(implicit)
+        {
+            conforms.push(implicit.to_string());
         }
         conforms.push(
             match kind {
@@ -134,6 +146,24 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
         methods.extend(generated_methods);
     }
     Ok(())
+}
+
+/// The value conformance an enum gets without listing it, given the traits
+/// its list opts out of: upstream's proposal makes every enum
+/// `ImplicitlyCopyable`, `Copyable`, `Movable`, and `Deinitable`, and lets
+/// it decline any of them with `not`. Declining a trait on the
+/// `ImplicitlyCopyable` → `Copyable` → `Movable` chain declines what
+/// refines it, so `not ImplicitlyCopyable` leaves `Copyable` and a deeper
+/// opt-out leaves nothing to add (every struct is `Movable` and
+/// `Deinitable` unless it opts out).
+fn implicit_value_conformance(opted_out: impl Fn(&str) -> bool) -> Option<&'static str> {
+    if opted_out("Movable") || opted_out("Copyable") {
+        None
+    } else if opted_out("ImplicitlyCopyable") {
+        Some("Copyable")
+    } else {
+        Some("ImplicitlyCopyable")
+    }
 }
 
 /// `std.builtin._enum.__Enum` by its linked name, which linking leaves as it
@@ -222,15 +252,12 @@ fn check_member_names(
 /// register-passable.
 fn check_case_payloads(
     kind: SumKind,
-    name: &str,
-    conforms: &[String],
+    trivial_register_passable: bool,
     cases: &[EnumCase],
+    name: &str,
     span: Span,
 ) -> Result<(), ParseError> {
-    if conforms
-        .iter()
-        .any(|conformance| conformance == "TrivialRegisterPassable")
-    {
+    if trivial_register_passable {
         return Err(ParseError::Message(format!(
             "{}s cannot conform to 'TrivialRegisterPassable'",
             kind.keyword()

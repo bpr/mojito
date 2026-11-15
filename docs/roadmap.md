@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2240**.
+Next free ID: **R2243**.
 
 ## Ordered Work
 
@@ -2896,7 +2896,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     pin rejects at the list since `Iterator` refines `Deinitable` (R669),
     and Mojito rejects only at the owned loop; its `expect` line should
     move to the pin's words.
+  - Probe: `struct S(ImplicitlyCopyable, not Copyable)` is accepted, where
+    the pin says "trait 'ImplicitlyCopyable' requires ancestor trait
+    'Copyable', which is opted out with 'not'; remove one of the entries";
+    `enum E(ImplicitlyCopyable, not Copyable)` is the same list.
   - Found while landing R669 (2026-11-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2242 A trait listed twice with different constraints is accepted**
+
+  `struct S(Movable, Movable where False)` compiles, where the pin rejects
+  it with "trait 'Movable' appears multiple times in the conformance list
+  with different constraints".
+  - Cause: `Parser::parse_struct_conformance` pushes each entry, and the
+    checker reads one condition per trait (`struct_conformance_conditions`,
+    `checker/traits.rs`) without comparing repeats.
+  - The `not` spelling is already checked at parse: a trait listed and
+    opted out, or opted out twice, is rejected in the pin's words.
+  - Found while landing R2238 (2026-11-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3149,25 +3167,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1114 `not <Trait>` opts a struct out of a trait in its conformance
-  list**
+- [ ] **R2240 A conformance list entry cannot be a trait composition**
 
-  Problem: `struct Handle(not Movable)` and
-  `struct Example(not Deinitable else "call 'cleanup()'")` fail to parse
-  ("Unexpected token Not: Expected a trait name in the conformance list"),
-  where the pin reads them as the preferred spelling of `Movable where
-  False` and `Deinitable where (False, "call 'cleanup()'")`, which keep
-  working.
-  - The manual's explicit-destruction page now spells every opt-out this
-    way.
-  - Lever: `parse_struct`'s conformance list reads `not NAME [else STRING]`
-    into the conditional-conformance-false fact it already builds for
-    `where False`, message included.
-  - `docs/grammar.md` first, then parser tests and an `assets/ok` fixture
-    beside the `where False` ones.
-  - Probe: the bundled `Allocation` and `ThinAllocation` spell
-    `Deinitable where False`, where upstream's declare `not Deinitable`.
-  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  `struct S(A & B)` and `struct S(not (A & B))` fail to parse ("Unexpected
+  token Amp: Expected ')' after the conformance list", and "a trait
+  composition in a conformance list is not supported"), where the pin
+  accepts both: a composition entry conforms to, or opts out of, each of
+  its traits.
+  - Cause: `Parser::parse_struct_conformance` reads each entry as one
+    trait name, and `StmtKind::Struct::conforms` holds names only.
+  - Probe: `struct S(A & B)` over two empty traits, then `print(S(1).x)`,
+    prints `1` at the pin.
+  - Probe: upstream's `Mojo/test/mojo-parser/decls/not_conformance.mojo`,
+    `NotComposition(not (Base & Other))` and
+    `NotCompositionWithReason(not (Base & Other) else "…")`.
+  - Found while landing R2238 (2026-11-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4704,18 +4718,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R2097 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2238 An `enum` cannot opt out of its implicit value conformances**
-
-  The proposal lets an enum decline one of its automatic conformances with
-  `not Movable` (or `not` another of `Deinitable`, `Copyable`, and
-  `ImplicitlyCopyable`) in its conformance list.
-  - Mojito's conformance-list parser (`Parser::parse_struct_conformance`)
-    takes trait names only, so `enum E(not Copyable):` is a parse error.
-  - `mojito_parser::enums` adds `ImplicitlyCopyable` to every enum that
-    does not list it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
@@ -7250,6 +7252,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `def main(): comptime T = S.H; print(T.lowers)` prints `True`.
   - Probe: `def main(): print(S.H.lowers)` prints `True`.
   - Found while landing R2164 (2026-11-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2241 Reading a non-`ImplicitlyCopyable` compile-time member at
+  run time reports a copy error, not the pin's materialize error**
+
+  `var s = S.k`, for `comptime k = S(1)` in a `struct S(Movable)`, is
+  rejected with "cannot copy non-Copyable type 'S'", where the pin says
+  "cannot materialize comptime value of type 'S' to runtime because it is
+  not 'ImplicitlyCopyable'".
+  - Cause: `reject_display_crossing` (`checker/comptime_validation.rs`)
+    reports `TypeError::ComptimeCrossing` for a bare identifier only, so a
+    member read crosses unchecked and the copy check reports first.
+  - Probe: `assets/extensions/type_error/enum_not_implicitly_copyable_copy.mojo`
+    (`var e = Explicit.one` over `enum Explicit(not ImplicitlyCopyable)`);
+    its `expect` line should move to the pin's words.
+  - Found while landing R2238 (2026-11-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

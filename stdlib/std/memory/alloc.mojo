@@ -3,7 +3,7 @@
 # `alloc(Layout[T](count=n))` returns an `Allocation[T]` that owns its heap
 # storage through a `ThinAllocation[T]` and retains the `Layout[T]` used to
 # allocate it; `dealloc(allocation^)` releases it. Both owners are linear
-# (`Deinitable where False`): implicit drop is a checker error, so every
+# (`not Deinitable`): implicit drop is a checker error, so every
 # allocation is explicitly deallocated or explicitly leaked. `unsafe_alloc`
 # is the raw-pointer migration spelling of the deprecated layout-less
 # `alloc[T](count)`.
@@ -33,7 +33,7 @@ struct Layout[T: AnyType](ImplicitlyCopyable, Movable):
 
 
 @explicit_destroy("a ThinAllocation owns heap storage; free it through dealloc/unsafe_free or leak it explicitly")
-struct ThinAllocation[T: AnyType](Movable, Deinitable where False):
+struct ThinAllocation[T: AnyType](Movable, not Deinitable):
     var _ptr: Pointer[Self.T, MutUntrackedOrigin]
 
     def __init__(out self, *, unsafe_owned_ptr: Pointer[Self.T, MutUntrackedOrigin]):
@@ -50,7 +50,7 @@ struct ThinAllocation[T: AnyType](Movable, Deinitable where False):
 
 
 @explicit_destroy("an Allocation owns heap storage; release it with dealloc(allocation^) or leak it explicitly")
-struct Allocation[T: AnyType](Movable, Sized, Deinitable where False):
+struct Allocation[T: AnyType](Movable, Sized, not Deinitable):
     var _alloc: ThinAllocation[Self.T]
     var _layout: Layout[Self.T]
 

@@ -621,7 +621,7 @@ required unsolved parameter is an error.
 ```
 struct_def: decorators 'struct' NAME [params_decl] [conformance] where_clause* ':' struct_block
 conformance: '(' ','.conditional_conformance+ ')'
-conditional_conformance: NAME ['where' expression]
+conditional_conformance: NAME ['where' expression] | 'not' NAME ['else' STRING]
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
@@ -647,6 +647,16 @@ built-in traits (`Copyable`, …) impose no checked requirements. Conformance is
 **explicit/nominal** (matches Mojo): a struct satisfies a `[T: Trait]` bound only if it
 declares that trait here.
 
+An entry `not NAME` **opts out** of the trait, upstream's spelling of
+`NAME where False`; `not NAME else "reason"` is `NAME where (False,
+"reason")`, and a `not Deinitable` reason is the diagnostic for abandoning a
+value. Any trait may be opted out, and an opted-out trait's requirements and
+defaults are not asked for. The parser rejects, in the pin's words, a trait
+both listed and opted out ("trait 'T' must not be listed and also opted out
+with 'not'; remove one of the entries") and a trait opted out twice. The
+`else` reason is one string literal (a parenthesized run of adjacent
+literals included); a trait composition after `not` is not accepted.
+
 Struct declarations, methods, and associated `comptime` members accept the same
 trailing `where` clauses as free functions. An associated `comptime` member
 may take parameters whether its body is a type (`comptime Buf[n: Int] =
@@ -671,7 +681,9 @@ enum_case: 'case' ','.NAME+ NEWLINE                                  # in an enu
 (`Mojo/proposals/enums.md`). The pinned Mojo implements one declaration for both
 under the experimental keyword `__enum`, which Mojito does not accept: both are kept
 extensions (`docs/non-goals.md`), and their fixtures live under `assets/extensions/`.
-The header is a `struct_def` header. The body holds `case` declarations, associated
+The header is a `struct_def` header, so its conformance list may opt an enum out of
+its implicit `ImplicitlyCopyable`, `Copyable`, `Movable`, or `Deinitable` conformance
+with `not` (`enum Token(not Copyable):`). The body holds `case` declarations, associated
 `comptime` members, and methods, in any order, and may be empty (`pass`).
 
 An enum case carries no payload: `case red` or a list, `case red, green, blue`. A
@@ -1659,7 +1671,7 @@ a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
   `alloc(Layout[T](count=n))` (with optional `alignment=`) returns an
   `Allocation[T]` owning its storage through a `ThinAllocation[T]`;
   `allocation.unsafe_ptr()` exposes the raw pointer and `dealloc(allocation^)`
-  releases it. Both owners are linear (`Deinitable where False`): implicit
+  releases it. Both owners are linear (`not Deinitable`): implicit
   drop is a checker error. `unsafe_alloc[T](n, alignment=…)` is the
   raw-pointer migration spelling; `alloc` is a prelude name, the rest import
   from `std.memory`. The legacy static `UnsafePointer[T].alloc[_aligned]`

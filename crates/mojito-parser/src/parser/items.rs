@@ -379,6 +379,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let mut traits = Vec::new();
         let mut conditions = Vec::new();
         let mut callable = None;
+        // The entries spelled plainly and with `not`, each at its span, for
+        // upstream's rejection of a trait both listed and opted out.
+        let mut listed: Vec<(String, Span)> = Vec::new();
+        let mut opted: Vec<(String, Span)> = Vec::new();
         loop {
             if matches!(self.peek_token()?, Some(Token::Def)) {
                 if callable.is_some() {
@@ -397,13 +401,36 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 break;
             }
-            let trait_name =
-                self.expect_identifier("Expected a trait name in the conformance list")?;
-            traits.push(trait_name.clone());
-            if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
-                self.next_token()?;
-                let condition = self.parse_expression(Precedence::Lowest)?;
+            let start = self.peek_start();
+            if matches!(self.peek_token()?, Some(Token::Not)) {
+                let (trait_name, condition) = self.parse_not_conformance()?;
+                let at = (start, self.last_span.1);
+                if opted.iter().any(|(opted, _)| opted == &trait_name) {
+                    return Err(ParseError::Message(format!(
+                        "trait '{trait_name}' must be opted out at most once; remove the duplicate 'not'"
+                    ))
+                    .at(at));
+                }
+                if let Some((_, listed)) = listed.iter().find(|(listed, _)| listed == &trait_name) {
+                    return Err(also_listed(&trait_name).at(*listed));
+                }
+                opted.push((trait_name.clone(), at));
+                traits.push(trait_name.clone());
                 conditions.push((trait_name, condition));
+            } else {
+                let trait_name =
+                    self.expect_identifier("Expected a trait name in the conformance list")?;
+                let at = (start, self.last_span.1);
+                if opted.iter().any(|(opted, _)| opted == &trait_name) {
+                    return Err(also_listed(&trait_name).at(at));
+                }
+                listed.push((trait_name.clone(), at));
+                traits.push(trait_name.clone());
+                if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
+                    self.next_token()?;
+                    let condition = self.parse_expression(Precedence::Lowest)?;
+                    conditions.push((trait_name, condition));
+                }
             }
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?;
@@ -416,6 +443,35 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.expect(&Token::RParen, "Expected ')' after the conformance list")?;
         Ok((traits, conditions, callable))
+    }
+
+    /// `not NAME ['else' STRING]`, a conformance-list opt-out: the entry
+    /// `NAME where False`, or `NAME where (False, STRING)` with a reason, as
+    /// upstream desugars it. The condition spans the whole entry.
+    fn parse_not_conformance(&mut self) -> Result<(String, Expr), ParseError> {
+        let start = self.peek_start();
+        self.expect(&Token::Not, "Expected 'not'")?;
+        if matches!(self.peek_token()?, Some(Token::LParen)) {
+            return Err(ParseError::Message(
+                "a trait composition in a conformance list is not supported".into(),
+            )
+            .at((start, self.last_span.1)));
+        }
+        let trait_name = self.expect_identifier("Expected a trait name after 'not'")?;
+        let never = self.node(ExprKind::Bool(false), start);
+        if !matches!(self.peek_token()?, Some(Token::Else)) {
+            return Ok((trait_name, never));
+        }
+        self.next_token()?;
+        let reason = self.parse_expression(Precedence::Lowest)?;
+        if !matches!(reason.kind, ExprKind::Str(_)) {
+            return Err(ParseError::Message(
+                "expected a string literal for the reason after 'else'".into(),
+            )
+            .at(reason.span));
+        }
+        let condition = self.node(ExprKind::TupleLit(vec![never, reason]), start);
+        Ok((trait_name, condition))
     }
 
     /// `trait Name[(Super, …)]: <members>` — a trait, optionally **refining**
@@ -1149,6 +1205,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         Ok(())
     }
+}
+
+/// Upstream's rejection of a trait both listed and opted out.
+fn also_listed(trait_name: &str) -> ParseError {
+    ParseError::Message(format!(
+        "trait '{trait_name}' must not be listed and also opted out with 'not'; remove one of the entries"
+    ))
 }
 
 /// A method's receiver: its convention, `ref` origin, annotation, and the

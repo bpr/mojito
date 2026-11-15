@@ -313,11 +313,16 @@ pub(super) fn inherited_defaults(
     // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
     let mut conditions: HashMap<(String, usize), Option<&String>> = HashMap::new();
+    // A conformance opted out with `not` (its condition `False`) brings no
+    // defaults: it never holds.
     for conformance in conforms {
-        let condition = conformance_conditions
+        let entry = conformance_conditions
             .iter()
-            .find(|(trait_name, _)| trait_name == conformance)
-            .map(|(trait_name, _)| trait_name);
+            .find(|(trait_name, _)| trait_name == conformance);
+        if entry.is_some_and(|(_, condition)| condition.is_never_condition()) {
+            continue;
+        }
+        let condition = entry.map(|(trait_name, _)| trait_name);
         let mut through = Vec::new();
         defaults_for(conformance, traits, &mut HashSet::new(), &mut through)?;
         for (trait_name, default) in through {

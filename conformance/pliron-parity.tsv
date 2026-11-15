@@ -1345,6 +1345,7 @@ assets/ok/struct_member_type_member_application.mojo	main	exe-differential	sanit
 assets/ok/struct_member_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_instance_clone_unreached.mojo	main	exe-differential	sanitized
+assets/ok/struct_not_conformance.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_method_call.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_operand_owner_drop.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_subscript_operand_in_place.mojo	main	exe-differential	sanitized
@@ -1771,6 +1772,7 @@ assets/extensions/ok/enum_caseless.mojo	main	exe-differential	sanitized
 assets/extensions/ok/enum_derived_conformances.mojo	main	exe-differential	sanitized
 assets/extensions/ok/enum_like_callable_binder_cases.mojo	main	exe-differential	sanitized
 assets/extensions/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_not_conformance.mojo	main	exe-differential	sanitized
 assets/extensions/ok/enum_nullary_constants.mojo	main	exe-differential	sanitized
 assets/extensions/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized

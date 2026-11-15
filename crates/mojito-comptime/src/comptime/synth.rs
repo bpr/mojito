@@ -155,14 +155,17 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             continue;
         };
         if !conforms.iter().any(|conformance| conformance == "Hashable")
-            || methods.iter().any(|method| {
-                method.name == "__hash__"
-                    && matches!(
-                        method.params.as_slice(),
-                        [parameter] if parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut)
-                    )
-            })
-        {
+            || conformance_conditions
+                .iter()
+                .any(|(trait_name, condition)| {
+                    trait_name == "Hashable" && condition.is_never_condition()
+                }) || methods.iter().any(|method| {
+            method.name == "__hash__"
+                && matches!(
+                    method.params.as_slice(),
+                    [parameter] if parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut)
+                )
+        }) {
             continue;
         }
         let hasher = Expr::new(ExprKind::Identifier("hasher".to_string()), span);

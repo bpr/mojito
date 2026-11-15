@@ -31,8 +31,16 @@ working, as at the pin.
 - **Enum cases are values.** `Color.red` and `.red` read the case;
   `Color.red()` is an error that names the fix.
 - **Enums are implicitly copyable.** Mojito adds `ImplicitlyCopyable` (which
-  brings `Copyable` and `Movable`) to every enum's conformances. The
-  proposal's opt-out spelling (`not Movable`) does not parse yet (R2238).
+  brings `Copyable` and `Movable`) to every enum's conformances, unless the
+  list opts out with `not`, the conformance-list entry any struct may use.
+  Opting out follows the refinement chain: `not ImplicitlyCopyable` adds
+  `Copyable` instead, `not Copyable` or `not Movable` adds nothing, and
+  `not Deinitable` keeps `ImplicitlyCopyable` and makes the enum linear. An
+  opted-out `Equatable`, `Comparable`, `Hashable`, or `Writable` derives
+  nothing. A case of an enum that is not `ImplicitlyCopyable` reaches run
+  time through `materialize[E.a]()`. There is no executable oracle for this:
+  the pin's `__enum` parses `not` but has no implicit conformances, so the
+  rule comes from the proposal's text and the pin's `not` rules for structs.
 - **Enums derive what they list.** An enum listing `Equatable` or
   `Comparable` gets an `__eq__` comparing its cases' discriminants,
   `Comparable` adds `__lt__` over declaration order, `Hashable` gets a

@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A conformance list accepts upstream's `not Trait [else "reason"]` entry,
+  read as `Trait where False` (or `where (False, "reason")`): an opted-out
+  trait's requirements and defaults are not asked for, the reason of
+  `not Deinitable else "reason"` is the abandonment diagnostic, and a
+  trait both listed and opted out, or opted out twice, is rejected in the
+  pin's words. An `enum` opts out of its implicit `ImplicitlyCopyable`
+  this way, keeping `Copyable` under `not ImplicitlyCopyable` and adding
+  nothing under `not Copyable` or `not Movable`, and an opted-out
+  `Hashable` or `Writable` derives nothing. The bundled `Allocation` and
+  `ThinAllocation` now spell `not Deinitable`, as upstream's do
+  (`assets/ok/struct_not_conformance.mojo`,
+  `assets/extensions/ok/enum_not_conformance.mojo`, R1114, R2238).
+
 - A `None` case pattern binds `Optional`'s and `OptionalReg`'s empty-tuple
   payload (`case .None(x):`), which their `_unsafe_get_union_payload[0]`
   now returns instead of failing its `comptime assert`, as every
