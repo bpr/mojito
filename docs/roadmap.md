@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2218**.
+Next free ID: **R2219**.
 
 ## Ordered Work
 
@@ -2794,15 +2794,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R2194 A `ref.make` of a call argument claims a permission its source lacks**
 
-  Four `assets/ok` fixtures stopped compiling between the batch-4 and
+  Three `assets/ok` fixtures stopped compiling between the batch-4 and
   batch-7 instantiation baselines with "MakeRef destination recovers
   permission unavailable through its source capability".
   - `for_destructuring_lifetimes.mojo`, `for_destructuring_targets.mojo`,
     and `match_enum_cases_optional.mojo` fail in `main` after the
     pre-elaboration `inline-parametric` pass, and every later pass repeats
     the finding.
-  - `view_temporaries.mojo` fails after the post-elaboration pipeline, in
-    the `Point.write_to` instance.
+  - A fourth, `view_temporaries.mojo`, which failed in the
+    `Point.write_to` instance after the post-elaboration pipeline, runs
+    again since R2168 types an overloaded call's nested arguments once.
   - Suspected cause: R1920 (98f73647c) or one of the receiver-by-address
     changes before it (R1918, R2180) lowers a `mut`/`ref` or by-address
     argument as a `ref.make` of a place reached only through a read-only
@@ -4658,25 +4659,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `def k() -> Int: return` is rejected by both ("cannot
     implicitly convert 'None' value to 'Int'" at the pin).
   - Found while landing R2097 (2026-11-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2168 Checking nested calls of an overloaded free function costs
-  time exponential in the nesting depth**
-
-  Each candidate of a free-function overload set is checked inside a
-  probe (`call_inference.rs`'s `probe_overload_candidates`), so every
-  candidate re-types the whole argument subtree. Upstream emits each
-  argument once and ranks the candidates over the typed values.
-  - The argument memo (`checker/argument_memo.rs`) covers constructions
-    only: a probe forgets the entries typed under it, since it undid
-    their facts, so a probed candidate gains nothing from it.
-  - Lever: type the arguments once outside the probes, keeping their
-    facts, then probe each candidate against the typed arguments.
-  - Probe: four `def f` overloads (`Int`, `Float64`, `String`, `Bool`)
-    and `print(f(f(f(f(f(f(1)))))))` checks in 12 s in a debug build;
-    three levels check in 0.06 s.
-  - Found while landing R2162 (2026-11-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6697,6 +6679,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     function's type parameter, as inference already does, so no literal
     type reaches a function instance's solution.
   - Found while landing R1968 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2218 Folding a run-time `SIMD` operator over nested calls of an
+  overloaded function costs time exponential in the nesting depth**
+
+  A run-time operator whose builtin dunder asserts (`x + 1`, `-x` over a
+  scalar) records its folded value through `record_folded_simd_operation`
+  (`checker/operators.rs`), which builds the operands' compile-time
+  expression. A call operand is a compile-time application, and
+  `selected_application` (`checker/comptime_validation.rs`) compiles its
+  arguments once per applicable overload (`applied_arguments` under a
+  `find_map`), so every overloaded call nested below multiplies the fold
+  by its candidate count.
+  - Upstream's emitter folds an operand once, from the value its call
+    already resolved, never per candidate.
+  - Lever: resolve the operand's application once (from the call's
+    checked overload, or a memo per expression), then compile its
+    arguments against that one callee.
+  - Probe: four `def f` overloads (`Int`, `Float64`, `String`, `Bool`)
+    and `var x = f(f(f(f(f(f(1) + 1) + 1) + 1) + 1) + 1)` checks in
+    20 s in a debug build; five levels check in 1.3 s.
+  - Probe: `f(-f(-f(-f(-f(-f(-f(-f(1))))))))` over the same `f` checks in
+    70 s; six levels check in 1.2 s.
+  - Found while landing R2168 (2026-11-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

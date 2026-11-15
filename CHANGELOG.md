@@ -713,6 +713,17 @@ to evolve under the `0.x` compatibility rules.
   emits each argument once, and the builtin-fold check types the
   construction once rather than once per overload. The std package checks
   in half the time (R2162).
+- Checking nested calls of an overloaded function or method no longer
+  costs time exponential in the nesting depth: with four `def f`
+  overloads, `print(f(f(f(f(f(f(1)))))))` checks in a fraction of a
+  second, where it took minutes, and a nest of overloaded method or
+  static-method calls likewise. A free-function call's nested calls and
+  operator expressions are typed once before its candidates are probed,
+  and a method call's arguments once while its overloads are ranked, as
+  upstream emits each argument once. A nest that passes through a scalar
+  operator (`f(f(1) + 1)`) is still exponential, in the operator's
+  compile-time fold (R2168; R2218). `assets/ok/view_temporaries.mojo`,
+  whose `Point.write_to` instance failed MIR verification, runs again.
 - A `comptime for` over a value pack (`total[1, 2, 3]()` summing
   `comptime for value in values`) and a `ref self` method called on a
   constructed value inside a lifted compile-time expression run with the

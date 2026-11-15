@@ -7,6 +7,10 @@ use mojito_types::types::TyKind;
 impl Checker {
     /// Infer a method call. An element of an unbound pack dispatches through
     /// its bounded view, and the result gets the dependent element back.
+    /// The arguments are typed once while the method's overloads are
+    /// ranked and the selected one is checked
+    /// ([`Self::with_argument_memo`]), as upstream emits each argument
+    /// once.
     pub(in crate::checker) fn infer_method_call(
         &self,
         span: &SourceSpan,
@@ -14,7 +18,7 @@ impl Checker {
         method: &str,
         call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
-        self.infer_method_call_viewed(span, object, method, call)
+        self.with_argument_memo(|| self.infer_method_call_viewed(span, object, method, call))
             .map(|result| self.restore_pack_elements(result))
     }
 

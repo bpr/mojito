@@ -3,7 +3,9 @@
 //! over the typed values: without it, every candidate of a construction
 //! re-types the whole argument subtree, and a nest of numeric
 //! constructions (`Int(Int(Int(1)))`) costs the candidates' count raised
-//! to its depth.
+//! to its depth. A free-function overload set probes each candidate,
+//! which forgets the entries typed under it, so its nested calls are typed
+//! before the probes open (`probe_overload_candidates`).
 
 use super::Checker;
 use mojito_common::error::TypeError;

@@ -388,13 +388,35 @@ impl Checker {
 
     /// Check every member of a free-function overload set against the
     /// call, each inside a probe: whatever a candidate records is undone,
-    /// and only the selected candidate's re-run leaves facts.
+    /// and only the selected candidate's re-run leaves facts. The call's
+    /// nested calls and operator expressions, which type alike under every
+    /// candidate, are typed once before the probes open, keeping their
+    /// facts, as upstream emits each argument once and ranks the
+    /// candidates over the typed values; the argument memo hands each
+    /// candidate their types.
     fn probe_overload_candidates(
         &self,
         call: &OverloadCall<'_>,
         candidates: &[Ty],
         origin_signatures: &[CallableOriginSignature],
     ) -> OverloadProbes {
+        for argument in call
+            .args
+            .iter()
+            .chain(call.kwargs.iter().map(|kwarg| &kwarg.value))
+            .filter(|argument| {
+                matches!(
+                    argument.kind,
+                    ExprKind::Call { .. }
+                        | ExprKind::Invoke { .. }
+                        | ExprKind::MethodCall { .. }
+                        | ExprKind::Infix(..)
+                        | ExprKind::Prefix(..)
+                )
+            })
+        {
+            let _ = self.infer(argument);
+        }
         let mut probes = OverloadProbes {
             matches: Vec::new(),
             availability_failures: Vec::new(),
@@ -1134,145 +1156,147 @@ impl Checker {
         }
         let origin_signatures = self.lookup_callable_origins(name).unwrap_or_default();
         if let TyKind::Overload(candidates) = ty.kind() {
-            let OverloadProbes {
-                matches,
-                availability_failures,
-                bound_failures,
-                argument_failure,
-            } = self.probe_overload_candidates(
-                &OverloadCall {
-                    span: &span,
-                    name,
-                    param_args,
-                    args,
-                    kwargs,
-                },
-                candidates,
-                &origin_signatures,
-            );
-            return match select_callable_overload(matches) {
-                Ok((ret, target, selected_index, error)) => {
-                    reject_unavailable(origin_signatures.get(selected_index))?;
-                    self.record_at(span.clone()).overload_target = Some(target);
-                    if let Some((index, selected)) = candidates
-                        .get(selected_index)
-                        .map(|selected| (selected_index, selected))
-                    {
-                        let (prepared, ordinary_param_args, forwarded) = self
-                            .prepare_callable_specialization(
+            return self.with_argument_memo(|| {
+                let OverloadProbes {
+                    matches,
+                    availability_failures,
+                    bound_failures,
+                    argument_failure,
+                } = self.probe_overload_candidates(
+                    &OverloadCall {
+                        span: &span,
+                        name,
+                        param_args,
+                        args,
+                        kwargs,
+                    },
+                    candidates,
+                    &origin_signatures,
+                );
+                match select_callable_overload(matches) {
+                    Ok((ret, target, selected_index, error)) => {
+                        reject_unavailable(origin_signatures.get(selected_index))?;
+                        self.record_at(span.clone()).overload_target = Some(target);
+                        if let Some((index, selected)) = candidates
+                            .get(selected_index)
+                            .map(|selected| (selected_index, selected))
+                        {
+                            let (prepared, ordinary_param_args, forwarded) = self
+                                .prepare_callable_specialization(
+                                    name,
+                                    param_args,
+                                    selected.clone(),
+                                    origin_signatures.get(index),
+                                )?;
+                            let (.., attributes) = self.infer_callable_ty(
+                                &span,
                                 name,
-                                param_args,
-                                selected.clone(),
-                                origin_signatures.get(index),
+                                prepared.clone(),
+                                &ordinary_param_args,
+                                args,
+                                kwargs,
                             )?;
-                        let (.., attributes) = self.infer_callable_ty(
-                            &span,
-                            name,
-                            prepared.clone(),
-                            &ordinary_param_args,
-                            args,
-                            kwargs,
-                        )?;
-                        self.record_declared_attributes(
-                            span.clone(),
-                            &forwarded.declared(attributes.clone()),
-                        );
-                        self.record_call_environment_effects(
-                            span.clone(),
-                            &prepared,
-                            &ordinary_param_args,
-                            &attributes.source_order(),
-                            args,
-                            kwargs,
-                        )?;
-                        // Overloads share the bare-name effect entry (a
-                        // conservative union); replay it and any call-through
-                        // residues exactly like the single-callable path.
-                        let bindings = self.call_bindings.borrow_mut().remove(&span);
-                        self.apply_transfer_effects(
-                            name,
-                            None,
-                            args,
-                            &span,
-                            &bindings.unwrap_or_default(),
-                        )?;
-                        self.record_call_through(name, &prepared, args);
-                        self.record_call_parameter_names(&span, &prepared);
-                        let callee_decls = match prepared.kind() {
-                            TyKind::GenericFunc(generic) => generic.decls.as_slice(),
-                            _ => &[],
-                        };
-                        self.apply_call_through_effects(
-                            name,
-                            callee_decls,
-                            None,
-                            param_args,
-                            args,
-                            &span,
-                        )?;
-                        self.record_free_call_result_origins(
-                            &span,
-                            &prepared,
-                            origin_signatures.get(index),
-                            args,
-                            kwargs,
-                        );
+                            self.record_declared_attributes(
+                                span.clone(),
+                                &forwarded.declared(attributes.clone()),
+                            );
+                            self.record_call_environment_effects(
+                                span.clone(),
+                                &prepared,
+                                &ordinary_param_args,
+                                &attributes.source_order(),
+                                args,
+                                kwargs,
+                            )?;
+                            // Overloads share the bare-name effect entry (a
+                            // conservative union); replay it and any call-through
+                            // residues exactly like the single-callable path.
+                            let bindings = self.call_bindings.borrow_mut().remove(&span);
+                            self.apply_transfer_effects(
+                                name,
+                                None,
+                                args,
+                                &span,
+                                &bindings.unwrap_or_default(),
+                            )?;
+                            self.record_call_through(name, &prepared, args);
+                            self.record_call_parameter_names(&span, &prepared);
+                            let callee_decls = match prepared.kind() {
+                                TyKind::GenericFunc(generic) => generic.decls.as_slice(),
+                                _ => &[],
+                            };
+                            self.apply_call_through_effects(
+                                name,
+                                callee_decls,
+                                None,
+                                param_args,
+                                args,
+                                &span,
+                            )?;
+                            self.record_free_call_result_origins(
+                                &span,
+                                &prepared,
+                                origin_signatures.get(index),
+                                args,
+                                kwargs,
+                            );
+                        }
+                        if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
+                            self.require_call_error(
+                                span.clone(),
+                                format!("call to raising function '{name}'"),
+                                error,
+                            )?;
+                        }
+                        self.record_view_result_borrow(&span, &ret);
+                        Ok(self.bind_call_result_tail(&span, ret))
                     }
-                    if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
-                        self.require_call_error(
-                            span.clone(),
-                            format!("call to raising function '{name}'"),
-                            error,
-                        )?;
-                    }
-                    self.record_view_result_borrow(&span, &ret);
-                    Ok(self.bind_call_result_tail(&span, ret))
-                }
-                Err(OverloadSelect::NoMatch) => {
-                    // The stdlib scalar `range` family: upstream's overloads
-                    // are dtype-inferred with no explicit spelling, so a
-                    // scalar argument can never match the Int defs. The
-                    // stdlib-set guard (a candidate returning a range-family
-                    // struct) keeps a user's shadowing `range` overloads on
-                    // the ordinary diagnostic path.
-                    if name == "range"
-                        && param_args.is_empty()
-                        && kwargs.is_empty()
-                        && candidates.iter().filter_map(Ty::as_func).any(|func| {
-                            func.ret
-                                .kind()
-                                .as_non_simd_struct()
-                                .is_some_and(|(target, _)| {
-                                    mojito_types::types::SCALAR_RANGE_FAMILY
-                                        .iter()
-                                        .any(|family| target.contains(family))
-                                })
+                    Err(OverloadSelect::NoMatch) => {
+                        // The stdlib scalar `range` family: upstream's overloads
+                        // are dtype-inferred with no explicit spelling, so a
+                        // scalar argument can never match the Int defs. The
+                        // stdlib-set guard (a candidate returning a range-family
+                        // struct) keeps a user's shadowing `range` overloads on
+                        // the ordinary diagnostic path.
+                        if name == "range"
+                            && param_args.is_empty()
+                            && kwargs.is_empty()
+                            && candidates.iter().filter_map(Ty::as_func).any(|func| {
+                                func.ret
+                                    .kind()
+                                    .as_non_simd_struct()
+                                    .is_some_and(|(target, _)| {
+                                        mojito_types::types::SCALAR_RANGE_FAMILY
+                                            .iter()
+                                            .any(|family| target.contains(family))
+                                    })
+                            })
+                            && let Some(ty) = self.infer_scalar_range(&span, args)?
+                        {
+                            return Ok(ty);
+                        }
+                        if let Some(failure) = argument_failure {
+                            return Err(failure);
+                        }
+                        if availability_failures.is_empty()
+                            && let [failure] = bound_failures.as_slice()
+                        {
+                            return Err(failure.clone());
+                        }
+                        Err(TypeError::BadCall {
+                            func: mojito_common::error::declared_spelling(name).to_string(),
+                            reason: match availability_failures.as_slice() {
+                                [Some(reason)] => reason.clone(),
+                                _ => "no overload matches the supplied arguments".to_string(),
+                            },
                         })
-                        && let Some(ty) = self.infer_scalar_range(&span, args)?
-                    {
-                        return Ok(ty);
                     }
-                    if let Some(failure) = argument_failure {
-                        return Err(failure);
-                    }
-                    if availability_failures.is_empty()
-                        && let [failure] = bound_failures.as_slice()
-                    {
-                        return Err(failure.clone());
-                    }
-                    Err(TypeError::BadCall {
+                    Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
                         func: mojito_common::error::declared_spelling(name).to_string(),
-                        reason: match availability_failures.as_slice() {
-                            [Some(reason)] => reason.clone(),
-                            _ => "no overload matches the supplied arguments".to_string(),
-                        },
-                    })
+                        reason: "ambiguous overloaded call".to_string(),
+                    }),
                 }
-                Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
-                    func: mojito_common::error::declared_spelling(name).to_string(),
-                    reason: "ambiguous overloaded call".to_string(),
-                }),
-            };
+            });
         }
         // `objs[0](3)` / `grid[i, j](x)`: value brackets over an indexable
         // runtime binding are a subscript, not compile-time parameter
