@@ -651,6 +651,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Checking a deep nest now takes time linear in its depth: a field chain
+  (`a.x.x…x`), a nest of generic calls (`wrap(wrap(…wrap(7)…))`), and nested
+  tuple and list displays used to retype their innermost operand a number of
+  times exponential in the depth, so twenty levels of a generic struct took
+  minutes in `mojito check`. A field projection, call, or display now types
+  its operands once, as a method call already did, and a member chain's
+  compile-time value compiles each link once (R137;
+  `assets/ok/nested_operands_type_once.mojo`).
+
 - A method call whose bracket argument names the caller's own value parameter
   (`s.scale[k](5)` in `def run_at[k: Int](s: Doubler)`), nominal or through a
   bound, is now pinned to run as at the pin; it used to fail MIR verification

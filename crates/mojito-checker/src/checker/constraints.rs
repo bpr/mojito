@@ -2295,18 +2295,12 @@ impl Checker {
                     .instance_field_without_instance(field)
                     .unwrap_or_else(|| TypeError::UnknownSelfParam(field.clone())))
             }
-            // A field of a struct-typed parameter value (`Self.e.rows`).
+            // A field of a struct-typed parameter value (`Self.e.rows`), or
+            // a struct parameter of one (`target._mlir_value`).
             ExprKind::Member { object, field }
-                if let Some(projection) = self.struct_value_field(object, field) =>
+                if let Some(projection) = self.parameter_value_member(object, field) =>
             {
                 projection
-            }
-            // A struct parameter of a struct-typed parameter value
-            // (`target._mlir_value`).
-            ExprKind::Member { object, field }
-                if let Some(argument) = self.value_type_argument(object, field) =>
-            {
-                Ok(argument)
             }
             // A type's value member (`T.K`, `A.K`, `B[4].K`): the member read
             // the elaborator answers per instance, recorded for a bracket
@@ -4196,18 +4190,28 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let base = self.compile_dependent_ct_expr(object).ok()?;
+        self.struct_value_field_of(&base, field)
+    }
+
+    /// [`Self::struct_value_field`] over the object already compiled to
+    /// `base`.
+    fn struct_value_field_of(
+        &self,
+        base: &ParamExpr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
         if let mojito_types::param_expr::ParamKind::StructValue { fields, .. } = base.kind() {
             // A name no stored field holds is a struct parameter, read off
             // the value's type ([`Self::value_type_argument`]): `self.value`
             // of a field-less `IntLiteral[value]`.
             if fields.iter().all(|(name, _)| name != field)
-                && self.value_type_argument(object, field).is_some()
+                && self.value_type_argument(base, field).is_some()
             {
                 return None;
             }
             return Some(
                 self.param_context
-                    .field(&base, field, base.meta().clone())
+                    .field(base, field, base.meta().clone())
                     .map_err(param_error),
             );
         }
@@ -4238,7 +4242,7 @@ impl Checker {
         Some(
             self.param_context
                 .field(
-                    &base,
+                    base,
                     field,
                     mojito_types::param_expr::MetaTy::value(field_ty),
                 )
@@ -4246,14 +4250,27 @@ impl Checker {
         )
     }
 
-    /// The struct parameter `field` read off the compile-time value `object`
+    /// `field` read off the compile-time struct value `object`, compiled
+    /// once: a stored field ([`Self::struct_value_field`]) or a struct
+    /// parameter ([`Self::value_type_argument`]). Compiling the object once
+    /// per link keeps a member chain `a.x.x…x` linear in its length.
+    fn parameter_value_member(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let base = self.compile_dependent_ct_expr(object).ok()?;
+        self.struct_value_field_of(&base, field)
+            .or_else(|| self.value_type_argument(&base, field).map(Ok))
+    }
+
+    /// The struct parameter `field` read off the compile-time value `base`
     /// of a struct type (`target._mlir_value` over `target:
     /// CompilationTarget`, `value.value` over an auto-parameterized `value:
     /// IntLiteral`): the argument the value's type binds it to, as
     /// upstream resolves the name against the type's parameters. `None`
-    /// when `object` is no such value or its struct has no such parameter.
-    fn value_type_argument(&self, object: &Expr, field: &str) -> Option<ParamExpr> {
-        let base = self.compile_dependent_ct_expr(object).ok()?;
+    /// when `base` is no such value or its struct has no such parameter.
+    fn value_type_argument(&self, base: &ParamExpr, field: &str) -> Option<ParamExpr> {
         let (owner, arguments) = mojito_types::types::nominal_parts(base.meta().as_value()?)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
         let decls = &self.structs.get(owner)?.decls();

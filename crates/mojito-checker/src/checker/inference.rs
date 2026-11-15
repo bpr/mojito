@@ -470,8 +470,27 @@ impl Checker {
         Ok(())
     }
 
+    /// `expr`'s type. A field projection types its object once, and a call
+    /// its arguments, as a method call types its receiver and arguments
+    /// ([`Self::with_argument_memo`]) and upstream's parser emits each
+    /// operand once: a projection's member read, place type, and reference
+    /// handle each ask for the object's type, and a generic call's solving
+    /// and binding each ask for an argument's, so a chain `a.x.x…x` or a
+    /// nest `wrap(wrap(…))` would otherwise retype its innermost operand a
+    /// number of times exponential in its depth.
     pub(super) fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
-        self.memoized_infer(expr, || self.infer_unmemoized(expr))
+        let infer = || self.memoized_infer(expr, || self.infer_unmemoized(expr));
+        if matches!(
+            expr.kind,
+            ExprKind::Member { .. }
+                | ExprKind::Call { .. }
+                | ExprKind::TupleLit(_)
+                | ExprKind::ListLit(_)
+        ) {
+            self.with_argument_memo(infer)
+        } else {
+            infer()
+        }
     }
 
     fn infer_unmemoized(&self, expr: &Expr) -> Result<Ty, TypeError> {

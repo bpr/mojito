@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2227**.
+Next free ID: **R2228**.
 
 ## Ordered Work
 
@@ -903,6 +903,26 @@ the `pmir` track, staged in
   - Lever: find the per-instruction scan in `analysis::drops` that walks
     the whole block, and make it incremental.
   - Found while landing R1575 (2026-11-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2227 `elaborate` self time over a nested tuple display varies
+  severalfold from run to run**
+
+  The same binary elaborates `var t = ((((9, 1), 1), …), 1)` in about 2 s on
+  most runs and 4 to 30 s on others, with identical counters.
+  - Probe: sixteen levels in `main` (then `print(1)`) took 1.9 to 9.2 s
+    over fourteen debug runs, on master and with R137's change alike.
+  - Probe: twenty-four levels took 2.4 to 16.8 s, and five of five runs
+    under lldb finished fast.
+  - The slow times come in near multiples of a fast run (3.7, 5.6, 9.2 s),
+    as if part of the elaboration repeated.
+  - Nested generic structs (`W[W[…]]`) and nested lists of the same depth
+    elaborate in steady time.
+  - Lever: add sub-spans under `elaborate` (as R2030 asks), then find the
+    hash-ordered worklist or lookup in `native::mono` whose order changes
+    the work.
+  - Found while landing R137 (2026-11-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4617,7 +4637,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`stdlib/std/utils/index.mojo`) dominates that module's share of the
     package build.
   - Probe: `Int(Scalar[DType.int64](a.get[0]()))` alone takes 0.3 s.
-  - R137's nested `wrap(wrap(…))` may share this cause.
   - Found while landing R1674 (2026-10-31).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6582,23 +6601,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `f(-f(-f(-f(-f(-f(-f(-f(1))))))))` over the same `f` checks in
     70 s; six levels check in 1.2 s.
   - Found while landing R2168 (2026-11-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R137 Checking a deeply nested generic struct type takes time
-  exponential in its depth**
-
-  Problem: `var a16 = W[W[…W[Int]…]](a15.copy())`, sixteen levels of
-  `struct W[T: Copyable & Deinitable]` built one per line, takes minutes in
-  `mojito check`, and every two more levels roughly triple the time.
-  - Twelve levels take about 1.7 s beyond the check's fixed cost.
-  - `wrap(wrap(…wrap(7)…))` over `def wrap[T](x: T) -> W[T]` grows the same
-    way, about doubling per level from twelve on.
-  - Declaring the same type without constructing it costs nothing, and
-    nested calls of a generic `def` returning `T` stay flat.
-  - A likely cause is a conformance of each level re-derived once per bound
-    of the level below, with no memo.
-  - Found while checking nested instance names (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

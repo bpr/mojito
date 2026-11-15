@@ -6,6 +6,9 @@
 //! to its depth. A free-function overload set probes each candidate,
 //! which forgets the entries typed under it, so its nested calls are typed
 //! before the probes open (`probe_overload_candidates`).
+//! A field projection, a call, and a tuple or list display open the memo
+//! too ([`Checker::infer`]), so the operand each of their consumers asks
+//! for is typed once.
 
 use super::Checker;
 use mojito_common::error::TypeError;
