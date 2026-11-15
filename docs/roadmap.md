@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2231**.
+Next free ID: **R2235**.
 
 ## Ordered Work
 
@@ -956,6 +956,98 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R2231 Pliron's capability tables have drifted from the MIR
+  vocabulary, failing two `mojito-pliron` unit tests**
+
+  `scripts/check-pliron` fails
+  `capability::tests::pliron_instr_capabilities_cover_the_instruction_vocabulary`
+  and `pliron_type_capabilities_cover_the_type_vocabulary`
+  (`crates/mojito-pliron/src/capability.rs`).
+  - `INSTRUCTION_MNEMONICS` gained 14 mnemonics with no capability row:
+    `pop`, `llvm.intrinsic`, `is_run_in_comptime_interpreter`,
+    `kgen.source_loc`, `lit.ref.pack.create`,
+    `kgen.struct.load_indirect`, `array.repeat`, `array.get`,
+    `array.replace`, `variant.tag`, `simd.select`, `simd.extract`,
+    `simd.insert`, and `simd.reduce`.
+  - `TYPE_SPELLINGS` lost `DType`, which caf21bcfe made upstream's library
+    struct, but `TYPE_CAPABILITIES` still has its row.
+  - Give each new mnemonic the status its lowering in
+    `crates/mojito-pliron/src/lower/` actually earns, in the inventory's
+    order, and drop the `DType` row.
+  - Re-bless `conformance/pliron-capability.tsv` with the root test
+    `capability_matrix_is_current` (`UPDATE_EXPECT=1`), then run both unit
+    tests with `cargo nextest run -p mojito-pliron capability`.
+  - The drift went unseen because `check-pliron` stopped at earlier
+    failures in every gate run since late October.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R2232 The parity gate demands empty stderr, but
+  `print_library_keywords` prints to stderr by design**
+
+  `parity_exe_manifest_and_differential` (`tests/heavy/main.rs`) fails on
+  `assets/ok/print_library_keywords.mojo`, whose
+  `print("err", 1, file=stderr)` writes `err 1` to fd 2, as at the pin.
+  - The sanitizer run and the O0 and release runs each assert that native
+    stderr is empty.
+  - The VM cannot serve as the oracle: it writes fd 2 straight to the
+    process's stderr (`crates/mojito-vm/src/backend/vm/libc.rs`) and
+    captures only stdout.
+  - Lever: buffer fd-2 bytes in `VmBackend` as stdout is, carry them on
+    `Compiler::execute`'s result beside `output`, and have the CLI's `run`
+    write them to stderr.
+  - Then the three native runs compare stderr bytes with the VM's
+    instead of requiring them to be empty.
+  - The panic kills one sweep worker and skips the manifest comparison,
+    the runtime-error half, and the coverage ratchets. It has failed in
+    every gate run since 2026-11-13.
+  - Verify with
+    `MOJITO_PARITY_ONLY=print_library_keywords cargo nextest run --features backend-pliron -E 'binary(heavy)'`,
+    which the owner allows for this entry.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R2233 `maybe_uninit_deinit_uninitialized` no longer compiles
+  natively: `Bool` has no declaration to lay out**
+
+  `mojito run --backend pliron
+  assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo` stops with
+  "unsupported type `__UninitStorage[SIMD[DType.int, 1]]` (struct 'Bool'
+  has no MIR declaration to lay out)", where the VM traps with "destroy
+  of uninitialized MaybeUninit storage".
+  - The fixture's row in `conformance/pliron-parity.tsv` is
+    `error-differential`, and the heavy sweep panics on the compile error
+    (hidden today behind R2232).
+  - `maybe_uninit_roundtrip` and `maybe_uninit_write` still compile, so
+    the gap is in the trap-only path: the reachability that collects
+    declarations for layout misses `Bool` when `main` only builds and
+    destroys the storage.
+  - The error comes from `crates/mojito-native-core/src/layout.rs`.
+    `reachability_follows_constructor_and_lifecycle_edges` in
+    `crates/mojito-pliron` pins the reachability walk.
+  - Restore its commented `tests/focused/list.txt` line when this lands.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R2234 The heavy lane's later checks have not run since
+  2026-11-01**
+
+  The parity sweep's panics (R2232, R2233) end
+  `parity_exe_manifest_and_differential` before the `assets/runtime_error`
+  half, the manifest comparison, and the coverage ratchets. So
+  `scripts/check-pliron-heavy` has not shown whether they pass.
+  - All 35 runtime-error fixtures exit 1 on both backends through the CLI
+    (checked 2026-11-15), but the exact stderr and the sanitized run are
+    unchecked.
+  - Run `scripts/check-pliron-heavy` and `scripts/check-pliron` once. The
+    owner allows both for this entry.
+  - A manifest diff that only regeneration explains (a moved row, a
+    detail's wording) is repinned with `scripts/run-parity-regen.sh`,
+    after reviewing the diff.
+  - A real failure (a new `excluded` row, a stderr or category divergence,
+    a sanitizer report) is filed as its own `native` entry, its fixture
+    commented into `tests/focused/list.txt` behind the new ID, and named
+    in a new batch in `docs/notes/next-batches.md`.
+  - Done when both scripts exit 0 or every remaining failure has an entry.
+  - Depends on R2231, R2232, R2233.
+  - Model: Opus, Not Planned.
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 
