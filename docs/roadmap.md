@@ -3153,24 +3153,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2240 A conformance list entry cannot be a trait composition**
-
-  `struct S(A & B)` and `struct S(not (A & B))` fail to parse ("Unexpected
-  token Amp: Expected ')' after the conformance list", and "a trait
-  composition in a conformance list is not supported"), where the pin
-  accepts both: a composition entry conforms to, or opts out of, each of
-  its traits.
-  - Cause: `Parser::parse_struct_conformance` reads each entry as one
-    trait name, and `StmtKind::Struct::conforms` holds names only.
-  - Probe: `struct S(A & B)` over two empty traits, then `print(S(1).x)`,
-    prints `1` at the pin.
-  - Probe: upstream's `Mojo/test/mojo-parser/decls/not_conformance.mojo`,
-    `NotComposition(not (Base & Other))` and
-    `NotCompositionWithReason(not (Base & Other) else "…")`.
-  - Found while landing R2238 (2026-11-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1502 `Pointer` and `StringLiteral` are not `TrivialRegisterPassable`**
 
   Upstream declares both `TrivialRegisterPassable`, but the modelled
@@ -5818,6 +5800,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Int` field, then `print(conforms_to(S, MyTr))` prints `True` at the pin.
   - Probe: `trait Show`, `comptime S = Show & Copyable`, `struct P(S)`
     implementing `show`, then `k(P(7))` over `k[T: S]` prints `7`.
+  - Probe: a trait's refinement list reads the same entries:
+    `comptime AB = A & B`, `trait C(AB)`, `struct S(C)`, then
+    `need_b(S(1))` over `need_b[T: B]` prints at the pin.
   - Found while landing R1171 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.

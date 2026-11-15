@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A conformance or refinement list entry may be a trait composition:
+  `struct S(A & B)` conforms to each trait, `A & B where C` conditions
+  each, and `not (A & B)` (or `not A & B`) opts out of each, as the pin
+  reads them (`assets/ok/struct_conformance_composition.mojo`, R2240).
+
 - A trait listed more than once in a conformance list must carry the same
   constraint each time, compared after folding and putting commutative
   operands in one order, as the pin compares them: `struct S(Movable,

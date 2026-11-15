@@ -1382,11 +1382,43 @@ fn reads_not_conformance_as_never_condition() {
 }
 
 #[test]
+fn reads_composition_conformance_entries_per_trait() {
+    let statements = parse(
+        "struct S[T: AnyType](A & (B & C) where conforms_to(T, A), not D & E else \"why\"):\n    pass\ntrait F(A & B):\n    pass\n",
+    );
+    let StmtKind::Struct {
+        conforms,
+        conformance_conditions,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected struct");
+    };
+    assert_eq!(conforms, &["A", "B", "C", "D", "E"]);
+    let conditioned: Vec<_> = conformance_conditions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(conditioned, ["A", "B", "C", "D", "E"]);
+    assert!(!conformance_conditions[2].1.is_never_condition());
+    assert_eq!(
+        conformance_conditions[4].1.never_condition_reason(),
+        Some("why")
+    );
+    let StmtKind::Trait { refines, .. } = &statements[1].kind else {
+        panic!("expected trait");
+    };
+    assert_eq!(refines, &["A", "B"]);
+}
+
+#[test]
 fn rejects_not_conformance_without_trait_name() {
     for source in [
         "struct S(not):\n    pass\n",
-        "struct S(not (A & B)):\n    pass\n",
         "struct S(not Movable else 1):\n    pass\n",
+        "struct S(not (A &)):\n    pass\n",
+        "struct S(A & B, not B):\n    pass\n",
+        "struct S(not (A & B), not A):\n    pass\n",
     ] {
         let mut parser = Parser::new(Lexer::new(source));
         assert!(parser.parse_program().is_err(), "{source:?} parsed");

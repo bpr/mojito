@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1206
+# swept-count	1207
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
 assets/type_error/none_literal_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
@@ -176,6 +176,7 @@ assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'rea
 assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/parse_error/struct_not_conformance_also_listed.mojo	compile-reject	agree	error: trait 'Movable' must not be listed and also opted out with 'not'; remove one of the entries
+assets/parse_error/struct_not_conformance_composition_also_listed.mojo	compile-reject	agree	error: trait 'Base' must not be listed and also opted out with 'not'; remove one of the entries
 assets/parse_error/struct_not_conformance_duplicate.mojo	compile-reject	agree	error: trait 'Copyable' must be opted out at most once; remove the duplicate 'not'
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/abort_arm_reads_live_values.mojo	trap	agree	error: execution crashed

@@ -621,7 +621,9 @@ required unsolved parameter is an error.
 ```
 struct_def: decorators 'struct' NAME [params_decl] [conformance] where_clause* ':' struct_block
 conformance: '(' ','.conditional_conformance+ ')'
-conditional_conformance: NAME ['where' expression] | 'not' NAME ['else' STRING]
+conditional_conformance: trait_composition ['where' expression] | 'not' trait_composition ['else' STRING]
+trait_composition: '&'.trait_term+
+trait_term: NAME | '(' trait_composition ')'
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
 field: 'var' NAME ':' type NEWLINE
@@ -655,7 +657,15 @@ defaults are not asked for. The parser rejects, in the pin's words, a trait
 both listed and opted out ("trait 'T' must not be listed and also opted out
 with 'not'; remove one of the entries") and a trait opted out twice. The
 `else` reason is one string literal (a parenthesized run of adjacent
-literals included); a trait composition after `not` is not accepted.
+literals included).
+
+An entry may be a trait composition (`A & B`, `(A & B)`), which the list
+flattens into its traits, as upstream folds a struct's conformances into one
+canonical trait: `A & B where C` conditions each trait on `C`, and `not`
+takes the whole composition, so `not (A & B)` and `not A & B` both opt out
+of each (with the `else` reason, if any, on each). A trait's refinement list
+(`trait C(A & B):`) accepts compositions the same way. A `comptime` constant
+bound to a composition is not yet a list entry (R2145).
 
 Struct declarations, methods, and associated `comptime` members accept the same
 trailing `where` clauses as free functions. An associated `comptime` member

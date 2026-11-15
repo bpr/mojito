@@ -1330,6 +1330,7 @@ assets/ok/struct_application_type_member_comparison.mojo	main	exe-differential	s
 assets/ok/struct_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_names_own_struct.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_read_order.mojo	main	exe-differential	sanitized
+assets/ok/struct_conformance_composition.mojo	main	exe-differential	sanitized
 assets/ok/struct_conformance_repeated_same_constraint.mojo	main	exe-differential	sanitized
 assets/ok/struct_construction_parameter_application.mojo	main	exe-differential	sanitized
 assets/ok/struct_del_is_trivial_hook.mojo	main	exe-differential	sanitized
