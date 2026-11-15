@@ -651,6 +651,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method keyed on its own `DType` that forwards it to a sibling keyed method
+  (`return self.twice[dt](a)`) is now pinned to run as at the pin, in plain
+  and parametric structs, through a keyword bracket and a static `Self.`
+  call (R85; `assets/ok/dtype_keyed_method_sibling_forward.mojo`).
+
 - A bare reference to a parametric `def`, top-level or nested, or an empty
   bracket over one, is now rejected as the pin rejects it: bound to a
   variable, made a display element, or passed to an implicit constructor

@@ -6287,20 +6287,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R85 A method forwarding its own `DType` parameter to a sibling
-  keyed method is rejected**
-
-  Problem: `def via[dt: DType](self, a: Scalar[dt]) -> Scalar[dt]: return
-  self.twice[dt](a)`, over a sibling `twice[dt: DType]`, reports "type
-  mismatch for return: expected Scalar[dt], found Scalar[dt]"; the pin prints
-  `14`.
-  - The checker binds the sibling's explicit `dt` to a binder other than the
-    caller's, so two same-spelled lanes compare unequal.
-  - The same forward to a free keyed `def` (`helper[dt](x)`) runs
-    (`assets/ok/dtype_keyed_method_forward.mojo`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R485 An `Int`-annotated local `comptime` accepts a `Bool` value**
 
   Problem: `comptime m: Int = 1 > 0` in a function prints `True`, where the
