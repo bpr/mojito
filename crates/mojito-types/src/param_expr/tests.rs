@@ -804,7 +804,7 @@ fn pointer_map_and_remove_undo_each_other() {
         matches!(pointers.kind(), ParamKind::ListTabulate { .. }),
         "{pointers}"
     );
-    assert_eq!(context.list_pointer_remove(&pointers), Ok(pack.clone()));
+    assert_eq!(context.list_pointer_remove(&pointers), Ok(pack));
 
     let types = CtValue::Tuple(vec![CtValue::Type(Ty::int()), CtValue::Type(Ty::bool())]);
     let mut bound = ParamBindings::new();
@@ -1595,21 +1595,22 @@ fn bind_params_keeps_a_generic_callable_binder_symbolic() {
 }
 
 #[test]
-fn bind_params_substitutes_a_filled_slot_into_a_bound_one_reading_it() {
+fn bind_params_reads_a_bound_argument_outside_the_generator() {
     let context = ParamContext::new();
     let add = add_generator(&context);
-    // `Add[_, b=a]`: the bound `b` reads the open `a`, so the binding
-    // stays a node until `a` is bound.
+    // `Add[_, b=a]`: a generator owns its binders by position, so the
+    // bound `b` reads an `a` of the enclosing scope, not the open slot, and
+    // the binding stays a node until that `a` is bound.
     let a = int_param(&context, "Add", 0, "a");
     let partial = context
-        .bind_params(&add, &[None, Some(a)])
+        .bind_params(&add, &[None, Some(a.clone())])
         .expect("a partial binding");
     assert!(matches!(partial.kind(), ParamKind::BindParams { .. }));
     let three = context.constant(CtValue::Int(3)).expect("a constant");
     let applied = context
-        .bind_params(&partial, &[Some(three)])
+        .bind_params(&partial, &[Some(three.clone())])
         .expect("the open slot binds");
-    assert_eq!(applied.as_i64(), Some(6));
+    assert_eq!(applied, infix(&context, InfixOp::Add, &three, &a));
 }
 
 #[test]

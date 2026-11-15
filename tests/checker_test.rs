@@ -2958,7 +2958,7 @@ fn reads_an_instance_method_through_its_type_as_a_function_taking_the_receiver()
     // the read binds none of.
     let ref_receiver = err_std(&format!("{declarations}def main():\n    var f = S.r\n"));
     assert!(
-        matches!(&ref_receiver, TypeError::BadCall { reason, .. } if reason.contains("self_is_mut")),
+        matches!(&ref_receiver, TypeError::ParametricRuntimeClosure { unbound: Some((parameter, _)) } if parameter == "self_is_mut"),
         "got {ref_receiver:?}"
     );
 }
@@ -5175,12 +5175,12 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
 #[test]
 fn rejects_contextual_generic_callable_specialization() {
     // Current Mojo does not infer a generic specialization from a local
-    // callable annotation; only explicit specialization materializes one.
+    // callable annotation: the unbound generator does not convert to it.
     assert!(matches!(
         err(
             "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n"
         ),
-        TypeError::Unsupported(_)
+        TypeError::GeneratorConversion { .. }
     ));
 }
 
@@ -8381,13 +8381,13 @@ fn comptime_for_over_a_struct_field_is_dynamic() {
 
 #[test]
 fn generic_lambda_is_a_closure() {
-    // A lambda-owned parameter list forces the capturing environment, so a
-    // thin `def(...)` contract rejects it.
+    // A lambda-owned parameter list makes it a capturing generator, which a
+    // thin `def(...)` contract cannot take.
     let error = err_std(
         "def main():\n    var f: def(x: Int) thin -> Int = lambda [N: Int](x: Int) {} -> Int: x + N\n    var r: Int = f(1)\n",
     );
     assert!(
-        matches!(&error, TypeError::TypeMismatch { found, .. } if found.contains("capturing")),
+        matches!(&error, TypeError::GeneratorConversion { found, .. } if found.contains("capturing")),
         "unexpected error: {error:?}"
     );
 }
@@ -8865,7 +8865,8 @@ fn a_reflection_body_is_validated_without_instantiation() {
 fn a_reflected_field_reference_selects_a_field_of_a_struct() {
     // `field_ref[idx](s)` checks over a struct at an index in range; a
     // closed index past the fields, where the pin crashes, and a subject
-    // that is not a struct are rejected explicitly.
+    // that is not a struct (a scalar's MLIR storage type) are rejected
+    // explicitly.
     let header = "@fieldwise_init\nstruct P(Copyable):\n    var x: Int\n    var y: Int\n\ndef main():\n    var p = P(3, 4)\n";
     check_once(
         &format!("{header}    print(reflect[P].field_ref[1](p))\n"),
@@ -8884,10 +8885,10 @@ fn a_reflected_field_reference_selects_a_field_of_a_struct() {
         "{error}"
     );
     let error = check_once(
-        "def main():\n    var n = reflect[Int].field_ref[0](3)\n",
-        "field_ref_scalar.mojo",
+        "def main():\n    comptime T = reflect[Int].field[\"_mlir_value\"].T\n    var x = 3\n    var n = reflect[T].field_ref[0](x)\n",
+        "field_ref_mlir_type.mojo",
     )
-    .expect_err("a builtin scalar subject is rejected");
+    .expect_err("an MLIR type subject is rejected");
     assert!(error.to_string().contains("not a struct"), "{error}");
 }
 
@@ -8977,7 +8978,7 @@ fn a_body_forwarding_its_pack_is_validated_from_its_template() {
 #[test]
 fn overloads_of_one_generic_method_own_distinct_binders() {
     // Two overloads of `pick` whose slots agree are two declarations: each
-    // owns its `U` under the symbol it lowers to.
+    // owns its `U` under its own declaration-relative owner.
     let source = "struct Box[T: Copyable & Deinitable](Copyable):\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def pick[U: Copyable & Deinitable](self, u: U, t: Self.T) -> Int:\n        return 1\n\n    def pick[U: Copyable & Deinitable](self, u: U, s: String) -> Int:\n        return 2\n\ndef main():\n    var b = Box[Int](3)\n    print(b.pick[Float64](1.5, 4))\n";
     let checked = checked_source_with_std(source, "overload_binders.mojo").expect("check");
     let (module, methods) = checked
@@ -9022,7 +9023,11 @@ fn overloads_of_one_generic_method_own_distinct_binders() {
     assert!(by_t.iter().all(|owner| *owner == by_t[0]), "{owners:?}");
     assert!(by_s.iter().all(|owner| *owner == by_s[0]), "{owners:?}");
     assert_ne!(by_t[0], by_s[0]);
-    assert!(by_s[0].starts_with("Box.pick$ov$"), "{owners:?}");
+    assert_eq!(
+        mojito::symbol::declaration_owner_name(by_s[0]),
+        Some("Box.pick"),
+        "{owners:?}"
+    );
 }
 
 /// A residual constraint is neither false nor a proof, and negating it proves

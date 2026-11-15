@@ -245,7 +245,8 @@ fn dying_copy_at_read_receiver_lends_its_source() {
     assert!(
         instrs.iter().any(|instr| matches!(
             instr,
-            MirInstr::LoadPlace { dest, place } if *dest == recv && place.root == a
+            MirInstr::LoadPlace { dest, place } | MirInstr::MakeRef { dest, place }
+                if *dest == recv && place.root == a
         )),
         "{main:#?}"
     );
@@ -1521,11 +1522,22 @@ fn augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation() {
         unreachable!()
     };
     // A value-returning `ref self` getter with no recorded parametric write
-    // classifies as a read of its receiver, so the setter reuses the loaded
-    // receiver register: no reload of the retained place sits between the
-    // two calls (a mutating getter's reload is pinned by
+    // classifies as a read of its receiver, so the setter addresses the same
+    // retained place the getter did: no reload of it sits between the two
+    // calls (a mutating getter's reload is pinned by
     // `augmented_mutating_index_reloads_typed_source_before_setter`).
-    assert_eq!(receiver, base);
+    let addresses_base = |register: Reg| {
+        instructions.iter().any(|instruction| {
+            matches!(instruction, MirInstr::MakeRef { dest, place }
+                if *dest == register
+                    && place.root == base_place.root
+                    && place.proj.len() == base_place.proj.len())
+        })
+    };
+    assert!(
+        *receiver == *base || (addresses_base(*receiver) && addresses_base(*base)),
+        "the setter addresses the getter's place: {instructions:#?}"
+    );
     assert!(
         !instructions[index_call + 1..setter_call]
             .iter()

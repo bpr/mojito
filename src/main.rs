@@ -624,6 +624,9 @@ fn compile_native_module(
             _ => error.to_string(),
         })
     })?;
+    for warning in compiled.warnings() {
+        eprintln!("{}", format_warning(warning, &label, &source));
+    }
     // Each phase computes once and caches; time the first call of each as
     // its own phase, then borrow the cached concrete graph.
     cli_timing("mir-elaborate", || {

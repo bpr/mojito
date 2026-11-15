@@ -5372,6 +5372,11 @@ binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
 result whose contributing arguments all carry one binder). A write through it
 is refused as through any function-own binder (`require_writable_reference`),
 and `automatic-inline`'s splice binds it to the call's mutability (R1339).
+MIR spells it the same way: the `ref.make` that
+`address_call_operands` forms for an operand rooted at the function's own bare
+`ref` parameter carries that parameter's binder, so `inline-parametric` and
+`always-inline` bind it to the argument's mutability where the body is spliced
+under an immutable receiver.
 
 ### Cross-call transfer effects
 

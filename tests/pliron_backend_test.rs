@@ -1218,11 +1218,11 @@ mod native_abi_cross_checks {
 
     use expect_test::expect;
     use llvm_sys::core::{
-        LLVMArrayType2, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage,
-        LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMHalfTypeInContext,
+        LLVMArrayType2, LLVMBFloatTypeInContext, LLVMContextCreate, LLVMContextDispose,
+        LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMHalfTypeInContext,
         LLVMInt1TypeInContext, LLVMInt8TypeInContext, LLVMInt16TypeInContext,
-        LLVMInt32TypeInContext, LLVMInt64TypeInContext, LLVMPointerTypeInContext,
-        LLVMStructTypeInContext,
+        LLVMInt32TypeInContext, LLVMInt64TypeInContext, LLVMInt128TypeInContext,
+        LLVMIntTypeInContext, LLVMPointerTypeInContext, LLVMStructTypeInContext,
     };
     use llvm_sys::prelude::{LLVMContextRef, LLVMTypeRef};
     use llvm_sys::target::{
@@ -1331,6 +1331,21 @@ mod native_abi_cross_checks {
                                 LLVMInt64TypeInContext(self.ctx)
                             }
                             Dtype::Float64 => LLVMDoubleTypeInContext(self.ctx),
+                            Dtype::BFloat16 => LLVMBFloatTypeInContext(self.ctx),
+                            Dtype::Int128 | Dtype::UInt128 => LLVMInt128TypeInContext(self.ctx),
+                            Dtype::Int256 | Dtype::UInt256 => LLVMIntTypeInContext(self.ctx, 256),
+                            Dtype::UInt1
+                            | Dtype::UInt2
+                            | Dtype::UInt4
+                            | Dtype::Float4E2M1Fn
+                            | Dtype::Float6E2M3Fn
+                            | Dtype::Float6E3M2Fn
+                            | Dtype::Float8E8M0Fnu
+                            | Dtype::Float8E3M4
+                            | Dtype::Float8E4M3Fn
+                            | Dtype::Float8E4M3Fnuz
+                            | Dtype::Float8E5M2
+                            | Dtype::Float8E5M2Fnuz => LLVMInt8TypeInContext(self.ctx),
                         };
                         if width == 1 {
                             lane

@@ -55,6 +55,7 @@
 //! of its own.
 
 use super::scan::{for_each_instr_deep, var_def, var_uses, vars_moved};
+use mojito_ast::ast::ArgConvention;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
@@ -419,7 +420,7 @@ fn lending_use(
         return None;
     }
     let consumer_at = first_reader(instrs, load_at + 1..end, load)?;
-    let retained = retained_operand_places(&instrs[consumer_at])
+    let retained = retained_operand_places(&instrs[consumer_at], elision.declarations)
         .filter(|place| place.root == slot)
         .count();
     if elision.mentions.get(&slot) != Some(&(2 + retained)) {
@@ -448,19 +449,37 @@ fn lending_use(
     })
 }
 
-/// The places a direct call retains for its by-address operands, which
-/// [`mojito_mir::mir::address_call_operands`] passes as `ref.make`s; a
-/// receiver's place, which a `ref self` binds, is not one.
-fn retained_operand_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
-    let places = match instruction {
+/// The places a call retains for its by-address operands, which
+/// [`mojito_mir::mir::address_call_operands`] passes as `ref.make`s: a
+/// direct call's, and the receiver's place of a method whose declared
+/// receiver is `read`; any other receiver's place, which a `ref self`
+/// binds, is not one.
+fn retained_operand_places<'i>(
+    instruction: &'i MirInstr,
+    declarations: &MirDeclarations,
+) -> impl Iterator<Item = &'i MirPlace> {
+    let (arguments, receiver) = match instruction {
         MirInstr::Call {
             arg_places,
             kwarg_places,
             ..
-        } => Some(arg_places.iter().chain(kwarg_places).flatten()),
-        _ => None,
+        } => (Some(arg_places.iter().chain(kwarg_places).flatten()), None),
+        MirInstr::MethodCall {
+            recv_place,
+            resolved: Some(resolved),
+            ..
+        } if declarations.function(resolved).is_some_and(|declaration| {
+            matches!(
+                declaration.receiver_convention,
+                None | Some(ArgConvention::Imm)
+            )
+        }) =>
+        {
+            (None, recv_place.as_deref())
+        }
+        _ => (None, None),
     };
-    places.into_iter().flatten()
+    arguments.into_iter().flatten().chain(receiver)
 }
 
 /// Lend the dying source to the read call that takes the call-result
@@ -473,17 +492,23 @@ fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lendi
     {
         place.root = source.var;
     }
-    if let MirInstr::Call {
-        arg_places,
-        kwarg_places,
-        ..
-    } = &mut instrs[lending.consumer_at]
-    {
-        for place in arg_places.iter_mut().chain(kwarg_places).flatten() {
-            if place.root == lending.slot {
-                place.root = source.var;
+    match &mut instrs[lending.consumer_at] {
+        MirInstr::Call {
+            arg_places,
+            kwarg_places,
+            ..
+        } => {
+            for place in arg_places.iter_mut().chain(kwarg_places).flatten() {
+                if place.root == lending.slot {
+                    place.root = source.var;
+                }
             }
         }
+        MirInstr::MethodCall {
+            recv_place: Some(place),
+            ..
+        } if place.root == lending.slot => place.root = source.var,
+        _ => {}
     }
     let mut removed = [lending.binding_at, source.drop_at, at, at - 1];
     removed.sort_unstable_by(|left, right| right.cmp(left));

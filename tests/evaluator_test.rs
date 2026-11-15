@@ -158,14 +158,14 @@ fn callable_parameter_invokes_a_function_value() {
 #[test]
 fn generic_function_value_rejects_contextual_specialization() {
     // Current Mojo does not infer a generic specialization from a local
-    // callable annotation; the materialization rejects at check time.
+    // callable annotation: the unbound generator does not convert to it.
     let program = parse(
         "def identity[T: Copyable & Movable](value: T) -> T:\n    return value.copy()\n\ndef main():\n    var callback: def(Int) thin -> Int = identity\n    print(callback(42))\n",
     )
     .expect("parse");
     assert!(matches!(
         check_program(&program),
-        Err(TypeError::Unsupported(_))
+        Err(TypeError::GeneratorConversion { .. })
     ));
 }
 

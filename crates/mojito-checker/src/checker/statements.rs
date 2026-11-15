@@ -2913,8 +2913,14 @@ impl Checker {
                 // indexed accessor exposes a function element while the Tuple
                 // owner remains live.
                 // A parametric function binds none of its parameters, so it
-                // converts to no return type.
-                if !returning_reference && super::is_unbound_parametric_function(&found) {
+                // converts to no return type but a generator type.
+                if !returning_reference
+                    && super::is_unbound_parametric_function(&found)
+                    && !matches!(
+                        expected.kind(),
+                        TyKind::GenericFunc(_) | TyKind::Generator(_)
+                    )
+                {
                     return Err(TypeError::GeneratorConversion {
                         found: found.to_string(),
                         expected: expected.to_string(),

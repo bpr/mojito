@@ -15,6 +15,51 @@
 # nothing. Such an entry stays here commented out, prefixed with the roadmap
 # entry that owns it; restore it when that entry lands.
 
+# Gate failures (2026-11-15 overnight run)
+fixture assets/ok/for_destructuring_lifetimes.mojo
+fixture assets/ok/for_destructuring_targets.mojo
+fixture assets/ok/match_enum_cases_optional.mojo
+fixture assets/ok/mut_pointer_parameter_reassign.mojo
+fixture assets/ok/parameter_default_application_removed_receiver.mojo
+fixture assets/type_error/struct_method_instance_clone_fails.mojo
+fixture assets/ok/tuple_reverse_concat.mojo
+fixture assets/ok/variadic_pack_pointer_maps.mojo
+test artifact_conformance_test artifact::kwargs-call-kinds
+test artifact_conformance_test artifact::mut-pointer-parameter-reassign
+test checker_test a_reflected_field_reference_selects_a_field_of_a_struct
+test checker_test generic_lambda_is_a_closure
+test checker_test overloads_of_one_generic_method_own_distinct_binders
+test checker_test reads_an_instance_method_through_its_type_as_a_function_taking_the_receiver
+test checker_test rejects_contextual_generic_callable_specialization
+test drops_test copy_construction_read_receiver_lends_its_source
+test evaluator_test generic_function_value_rejects_contextual_specialization
+test mir_assembler_test canonical_snapshots_parse_and_reprint
+test mir_disassembler_test control_flow_and_literals_have_a_stable_snapshot
+test mir_disassembler_test declaration_metadata_has_a_stable_snapshot
+test mir_disassembler_test minimal_program_has_a_stable_snapshot
+test mir_pass_test mir_pass::canonicalize::error_region_kept
+test mir_pass_test mir_pass::canonicalize::raise_in_erased_arm_inside_try
+test mir_pass_test mir_pass::inline-parametric::bound_iteration
+test mir_pass_test mir_pass::inline-parametric::bound_iteration_own_origin
+test mir_pass_test mir_pass::inline-parametric::for_protocol
+test mir_pass_test mir_pass::inline-parametric::homogeneous_collector
+test mir_pass_test mir_pass::inline-parametric::raising_call
+test mir_pass_test mir_pass::inline-parametric::region_in_try_region
+test mir_pass_test mir_pass::inline-parametric::region_raising_in_try
+test mir_pass_test mir_pass::mem-2-reg::region_try_in_loop
+test mir_pass_test mir_pass::mem-2-reg::region_try_nested_raise
+test mir_pass_test mir_pass::mem-2-reg::region_try_read
+test mir_pass_test mir_pass::mem-2-reg::region_try_store
+test mir_pass_test mir_pass::mem-2-reg::region_try_store_else
+test mir_pass_test mir_pass::mem-2-reg::try_region
+test mir_test augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation
+test mir_test dying_copy_at_read_receiver_lends_its_source
+test mir_text_schema_test schema_version_and_envelope_are_stable
+test self_host_test bounded_keyword_overloads_keep_the_checker_selected_signature
+test self_host_test generic_and_method_kwargs_execute_through_string_dict
+test symbol_test overloaded_struct_methods_own_distinct_binders_numbered_past_origins
+fixture assets/ok/copy_construction_read_receiver_lends.mojo
+
 # Gate failures (2026-11-13 second overnight run)
 fixture assets/ok/value_pack_parameter_list_members.mojo
 fixture assets/ok/simd_bool_lane_int_literal.mojo

@@ -1227,7 +1227,10 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
     let additions = |function: &MirFunction| {
         nested_instructions(&function.body)
             .into_iter()
-            .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
+            .filter(|instruction| {
+                matches!(instruction, MirInstr::BinOp { .. })
+                    || matches!(instruction, MirInstr::MethodCall { method, .. } if method == "__iadd__")
+            })
             .count()
     };
     let template = compiled
@@ -1299,7 +1302,10 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
     let additions = |function: &MirFunction| {
         nested_instructions(&function.body)
             .into_iter()
-            .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
+            .filter(|instruction| {
+                matches!(instruction, MirInstr::BinOp { .. })
+                    || matches!(instruction, MirInstr::MethodCall { method, .. } if method == "__iadd__")
+            })
             .count()
     };
     let template = compiled
@@ -3217,7 +3223,7 @@ fn a_subscript_names_the_accessor_without_its_unused_receiver() {
         Vec::<String>::new()
     );
     let name = "Arr.__getitem__$REMOVED$ARG$mono";
-    assert_eq!(functions_naming(&specialized, "__getitem__"), [name]);
+    assert_eq!(functions_naming(&specialized, "Arr.__getitem__"), [name]);
     let reads = instructions(&function(&specialized, "main").body)
         .into_iter()
         .filter_map(|instruction| match instruction {

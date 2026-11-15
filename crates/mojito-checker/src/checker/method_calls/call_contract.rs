@@ -274,6 +274,8 @@ fn checked_call_arguments(
             },
         ));
     }
+    // The keyword collector's dictionary takes each value it gathers, as its
+    // `_insert` takes an owned value.
     if let Some(element) = &resolved.keyword_element {
         arguments.extend(
             resolved
@@ -283,7 +285,7 @@ fn checked_call_arguments(
                     source: CheckedCallArgumentSource::Keyword(*position),
                     parameter_ty: element.clone(),
                     requires_place: false,
-                    convention: None,
+                    convention: Some(ArgConvention::Var),
                 }),
         );
     }

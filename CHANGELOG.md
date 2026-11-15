@@ -651,6 +651,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Repairs from the 2026-11-15 overnight gate. A `ref.make` an inlined
+  `ref self` body passes on (`List.__getitem__` over a slice calling
+  `self.unsafe_ptr()`) carries the parameter's inferred mutability, so
+  `for [x, *rest] in rows` and a `match` over an immutable element verify
+  again. A whole `Pointer` slot passed to a `mut` parameter is addressed
+  as the slot, not its pointee. A partial application returned at a
+  generator type converts, as at the pin. A copy construction a `read`
+  receiver takes at its source's last use lends the source again. A
+  method's `var **kwargs` collector takes its memory-only keyword values,
+  so `counter.size(left="a")` no longer frees them twice. A pack binder's
+  list reference prints one spelling, so MIR text round-trips. Stale
+  tests, snapshots, and MIR pass fixtures follow the changes they pinned.
+
 - Checking a deep nest now takes time linear in its depth: a field chain
   (`a.x.x…x`), a nest of generic calls (`wrap(wrap(…wrap(7)…))`), and nested
   tuple and list displays used to retype their innermost operand a number of

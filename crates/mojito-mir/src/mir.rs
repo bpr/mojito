@@ -1268,18 +1268,27 @@ pub fn mir_place_handle_ty(
     let root = place.root_ty.as_ref()?;
     let source_mutability = match root.kind() {
         TyKind::Ref(reference) => Some(reference.mutability),
-        pointer if let Some(origin) = pointer.pointer_origin() => match origin {
-            mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if mutable {
-                mojito_types::origin::Mutability::Mutable
-            } else {
-                mojito_types::origin::Mutability::Immutable
-            }),
-            mojito_types::origin::PointerOrigin::Param { mutability, .. }
-            | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => Some(mutability),
-            mojito_types::origin::PointerOrigin::Static
-            | mojito_types::origin::PointerOrigin::Untracked { .. }
-            | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
-        },
+        // The whole of a pointer slot is the pointer itself unless the place
+        // is reached through it.
+        pointer
+            if (!place.is_whole_root() || place.through == Some(place.root))
+                && let Some(origin) = pointer.pointer_origin() =>
+        {
+            match origin {
+                mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if mutable {
+                    mojito_types::origin::Mutability::Mutable
+                } else {
+                    mojito_types::origin::Mutability::Immutable
+                }),
+                mojito_types::origin::PointerOrigin::Param { mutability, .. }
+                | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => {
+                    Some(mutability)
+                }
+                mojito_types::origin::PointerOrigin::Static
+                | mojito_types::origin::PointerOrigin::Untracked { .. }
+                | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
+            }
+        }
         _ => None,
     };
     if source_mutability.is_some() && place.is_whole_root() {

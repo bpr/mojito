@@ -188,8 +188,14 @@ impl ParamContext {
         self.constant(value)
     }
 
-    /// A reference to a declared parameter of an enclosing declaration.
+    /// A reference to a declared parameter of an enclosing declaration. A
+    /// reference to a pack's list is spelled without the variadic star, so
+    /// every reference to one binder prints alike whichever spelling built it.
     pub fn decl_ref(&self, id: ParamId, name: &str, meta: MetaTy) -> ParamExpr {
+        let name = match meta {
+            MetaTy::ParamList(_) => name.strip_prefix('*').unwrap_or(name),
+            _ => name,
+        };
         self.make(
             meta,
             ParamKind::DeclRef(ParamRef {
@@ -199,11 +205,10 @@ impl ParamContext {
         )
     }
 
-    /// A reference to the type pack binder `pack` as a list operand: the
-    /// binder's declared name without its variadic star, of type-list meta.
+    /// A reference to the type pack binder `pack` as a list operand, of
+    /// type-list meta.
     pub fn type_pack(&self, pack: &ParamRef) -> ParamExpr {
-        let name = pack.name.strip_prefix('*').unwrap_or(&pack.name);
-        self.decl_ref(pack.id.clone(), name, MetaTy::type_list())
+        self.decl_ref(pack.id.clone(), &pack.name, MetaTy::type_list())
     }
 
     /// A reference to slot `index` of the signature binder `depth` levels out.

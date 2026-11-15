@@ -158,13 +158,16 @@ def from_gate(log: Path, listed: list[Entry], no_build: bool, vm_only: bool) -> 
 
 
 def test_env() -> dict[str, str]:
-    """`native_env` plus the `[env]` table of `.cargo/config.toml`.
+    """`native_env` plus the `[env]` table of `.cargo/config.toml` and the
+    root crate's `CARGO_MANIFEST_DIR`.
 
-    Cargo sets that table only for the processes it launches, and the
-    script runs the test executables itself, so their trial threads would
-    otherwise get Rust's default stack.
+    Cargo sets both only for the processes it launches, and the script runs
+    the test executables itself, so their trial threads would otherwise get
+    Rust's default stack, and an `expect_file!` snapshot test could not
+    resolve its path.
     """
     env = native_env()
+    env.setdefault("CARGO_MANIFEST_DIR", str(ROOT))
     config = tomllib.loads((ROOT / ".cargo" / "config.toml").read_text())
     for key, value in config.get("env", {}).items():
         env.setdefault(key, value if isinstance(value, str) else value["value"])

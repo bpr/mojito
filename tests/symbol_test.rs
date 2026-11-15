@@ -195,7 +195,7 @@ fn overloaded_trait_requirements_get_qualified_names() {
 #[test]
 fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
     // The check names each overloaded method from its typed signature and
-    // owns its binders under that symbol: two `pick[T]` overloads own
+    // owns its binders under its declaration: two `pick[T]` overloads own
     // distinct `T`s, and the origin parameter before `U` takes its own slot,
     // as upstream numbers a parameter list by declared position.
     use mojito::ast::StmtKind;
@@ -207,20 +207,25 @@ fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
          \x20   def view[o: Origin, U: Copyable](self, a: U) -> U:\n\
          \x20       return a.copy()\n";
     let mir = lower_program(&linked_program(src)).expect("type error");
-    for symbol in ["Box.pick$ov$T$Copyable", "Box.pick$ov$T$Copyable$Int"] {
-        let declaration = mir
-            .declarations
-            .function(symbol)
-            .unwrap_or_else(|| panic!("{symbol} declared"));
-        assert!(
-            declaration
-                .param_decls
-                .iter()
-                .all(|decl| &*decl.id().owner == symbol),
-            "{symbol}: {:?}",
-            declaration.param_decls
-        );
-    }
+    let owners: Vec<String> = ["Box.pick$ov$T$Copyable", "Box.pick$ov$T$Copyable$Int"]
+        .into_iter()
+        .map(|symbol| {
+            let declaration = mir
+                .declarations
+                .function(symbol)
+                .unwrap_or_else(|| panic!("{symbol} declared"));
+            let [decl] = declaration.param_decls.as_slice() else {
+                panic!("{symbol}: {:?}", declaration.param_decls);
+            };
+            let owner = &*decl.id().owner;
+            assert!(
+                mojito::symbol::owns_binder(symbol, owner),
+                "{symbol}: {owner}"
+            );
+            owner.to_string()
+        })
+        .collect();
+    assert_ne!(owners[0], owners[1]);
     let program = parse(src).expect("parse error");
     let view = program
         .iter()

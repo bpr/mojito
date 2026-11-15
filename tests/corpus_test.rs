@@ -488,6 +488,9 @@ const PIPELINE_DECIDES: &[&str] = &[
     // constraint is never elaborated.
     "parameter_default_none_application",
     "parameter_default_none_application_struct",
+    // `RemoveUnusedParams` removes `NoneType.write_to`'s unread receiver, so
+    // the default it reads, whose constraint fails, is never elaborated.
+    "parameter_default_application_removed_receiver",
     // The read past the element list is undefined: the dangling reference's
     // register and frame slot are what the pipeline left of the body.
     "simd_element_list_too_few",

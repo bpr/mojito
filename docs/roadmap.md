@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2228**.
+Next free ID: **R2231**.
 
 ## Ordered Work
 
@@ -865,6 +865,29 @@ the `pmir` track, staged in
     behind in the pass that should remove it. Keep the declared members,
     which follow upstream.
   - The growth is accepted in `benchmarks/instantiation.tsv` (2026-11-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2228 Concrete instructions grew 0.41% with the upstream `DType`
+  members**
+
+  The elaborated corpus grew from 4,866,660 to 4,886,656 concrete
+  instructions (+19,996) between the batch-8 baseline (295fc7a83) and
+  e0da69fc1, across 1,745 shared fixtures, 43 of which moved.
+  - Generator instructions grew by about as much (+20,644 in the gate's
+    run).
+  - Largest per-fixture growth, all under `assets/ok/`:
+    `dtype_runtime_surface` +1218, `dtype_library_struct` +1159,
+    `leading_dot_parameter_default` +1134, `float16_semantics` +577, and
+    a run of +574 over fixtures that print or compare a `DType`
+    (`index_list`, `simd_display_builtins`, `simd_write_members`).
+  - Suspected cause: 1043bc9fa made every upstream `DType` member a
+    `Dtype`, so `DType`'s name, comparison, and predicate members now
+    switch over 31 codes instead of 14.
+  - Lever: fold a `DType` member applied to a closed dtype at elaboration,
+    as upstream folds `DType`'s `@always_inline` members over a constant.
+    Keep the members, which follow upstream.
+  - The growth is accepted in `benchmarks/instantiation.tsv` (2026-11-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7247,6 +7270,44 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R2229 A compile-time evaluation inside a generic body prints
+  where the pin prints nothing**
+
+  `comptime x = f(k)` and `comptime if f(k) == 1:` in a `def g[k: Int]()`
+  body print `f`'s `side` line under `mojito run`, while `mojo run` at
+  the pin prints it nowhere, stdout or stderr.
+  - The pin does print from a module `comptime` and from a parameter
+    argument (`ctfe_module_comptime_prints`,
+    `ctfe_parameter_argument_prints` match).
+  - Fixtures: `assets/ok/ctfe_local_binding_reaches_print.mojo` and
+    `assets/ok/ctfe_method_reaches_print.mojo`, whose header comments
+    claim the pin prints; the assets sweep reports both as stdout diffs.
+  - Lever: find which evaluation site the pin silences (a body's
+    compile-time values are evaluated while the instance elaborates), then
+    route only that site's output, then correct the two headers.
+  - Ledger name: `ctfe-body-print`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2230 `reflect[T].name()` spells a struct-valued parameter as its
+  construction, where the pin prints the value**
+
+  `reflect[V[P(3, True)]].name()` prints
+  `conforms_to_struct_valued_argument.V[P(3, True)]`, and the pin prints
+  `conforms_to_struct_valued_argument.V[{3 : SIMD[DType.int, 1], True}]`.
+  - Cause: since 51cc4fcbb an instance is keyed by the unevaluated
+    application, and the `#kgen.get_type_name` printer
+    (`mojito_symbol::symbol::reflected_type_name`) prints a closed
+    application by its spelling.
+  - Fixture: `assets/ok/conforms_to_struct_valued_argument.mojo`, which
+    matched the pin before 51cc4fcbb and is now a stdout diff in the assets
+    sweep.
+  - Lever: evaluate a closed application argument before the name is
+    printed, keeping the instance keyed by the application.
+  - Ledger name: `reflect-name-struct-application`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2199 An `__mlir_op` whose result type is not `RegisterPassable`
   is accepted, where the pin rejects it**

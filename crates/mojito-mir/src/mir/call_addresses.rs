@@ -29,7 +29,7 @@ use crate::mir::{
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_symbol::symbol::{is_initializer_symbol, is_trait_dispatch_symbol};
-use mojito_types::origin::Mutability;
+use mojito_types::origin::{Mutability, OriginParamId};
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
 
@@ -122,9 +122,10 @@ pub fn address_call_operands(
     declarations: &MirDeclarations,
 ) {
     let callees = Callees::of(declarations);
-    for (_, function) in functions.iter_mut() {
-        address_function_operands(function, declarations, &callees);
-        address_remaining_operands(function, declarations, &callees);
+    for (name, function) in functions.iter_mut() {
+        let parameters = ParameterKinds::of(function, declarations.function(name));
+        address_function_operands(function, declarations, &callees, &parameters);
+        address_remaining_operands(function, declarations, &callees, &parameters);
     }
 }
 
@@ -143,8 +144,9 @@ pub fn upgrade_call_operands(
     declarations: &MirDeclarations,
 ) {
     address_call_operands(functions, declarations);
-    for (_, function) in functions.iter_mut() {
-        forward_read_addresses(function, declarations);
+    for (name, function) in functions.iter_mut() {
+        let parameters = ParameterKinds::of(function, declarations.function(name));
+        forward_read_addresses(function, declarations, &parameters);
     }
 }
 
@@ -857,6 +859,7 @@ fn address_function_operands(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
+    parameters: &ParameterKinds,
 ) {
     let mut definitions = HashMap::new();
     let mut operands = Vec::new();
@@ -881,7 +884,7 @@ fn address_function_operands(
         if !read_once(operand) || rewrites.contains_key(&operand.0) {
             continue;
         }
-        let mutability = place_mutability(function, &place, mutability);
+        let mutability = parameters.place_mutability(&place, mutability);
         let rewrite = match definitions.get(&operand.0) {
             Some(Definition::Load(loaded))
                 if same_storage(loaded, &place) && loaded.through == place.through =>
@@ -921,32 +924,55 @@ fn address_function_operands(
     rewrite_blocks(&mut function.body, &rewrites, &retired);
 }
 
-/// The mutability of a reference to `place` a callee wants with
-/// `wanted`: a `ref` parameter's reference is as mutable as the place it
-/// addresses, as upstream's `ref` binds its operand's own mutability, so a
-/// `read` parameter's storage, or a place reached through an immutable
-/// reference, lends an immutable one.
-fn place_mutability(function: &MirFunction, place: &MirPlace, wanted: Mutability) -> Mutability {
-    ParameterKinds::of(function).place_mutability(place, wanted)
-}
-
 /// Which of a function's slots are its parameters, and how each binds.
 struct ParameterKinds {
     count: usize,
     owned: Vec<bool>,
     reference: Vec<bool>,
+    /// Whether each slot is a `ref` parameter, the receiver counted, whose
+    /// mutability is its inferred binder
+    /// ([`OriginParamId::reference_binder`]).
+    inferred: Vec<bool>,
 }
 
 impl ParameterKinds {
-    fn of(function: &MirFunction) -> Self {
+    /// The parameters of `function`, whose `declaration` spells each
+    /// one's convention.
+    fn of(function: &MirFunction, declaration: Option<&MirFunctionDeclaration>) -> Self {
+        let inferred = (0..function.n_params)
+            .map(|slot| {
+                function.ref_params.get(slot).copied().unwrap_or(false)
+                    && declaration.is_some_and(|declaration| {
+                        let convention = match (declaration.has_receiver, slot) {
+                            (true, 0) => declaration.receiver_convention,
+                            (true, slot) => declaration
+                                .param_conventions
+                                .get(slot - 1)
+                                .copied()
+                                .flatten(),
+                            (false, slot) => {
+                                declaration.param_conventions.get(slot).copied().flatten()
+                            }
+                        };
+                        convention == Some(ArgConvention::Ref)
+                    })
+            })
+            .collect();
         Self {
             count: function.n_params,
             owned: function.owned_params.clone(),
             reference: function.ref_params.clone(),
+            inferred,
         }
     }
 
-    /// [`place_mutability`] over these parameters.
+    /// The mutability of a reference to `place` a callee wants with
+    /// `wanted`: a `ref` parameter's reference is as mutable as the place
+    /// it addresses, as upstream's `ref` binds its operand's own
+    /// mutability, so a `read` parameter's storage, or a place reached
+    /// through an immutable reference, lends an immutable one, and a place
+    /// rooted at this function's own `ref` parameter lends that
+    /// parameter's inferred mutability, which a call binds.
     fn place_mutability(&self, place: &MirPlace, wanted: Mutability) -> Mutability {
         let root = place.root as usize;
         let read_parameter = root < self.count
@@ -956,10 +982,14 @@ impl ParameterKinds {
             place.root_ty.as_ref().map(Ty::kind),
             Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
         );
-        if read_parameter || immutable_reference {
-            Mutability::Immutable
-        } else {
-            wanted
+        if read_parameter || immutable_reference || wanted == Mutability::Immutable {
+            return Mutability::Immutable;
+        }
+        match u32::try_from(root) {
+            Ok(slot) if self.inferred.get(root).copied().unwrap_or(false) => {
+                Mutability::Param(OriginParamId::reference_binder(slot))
+            }
+            _ => wanted,
         }
     }
 }
@@ -1063,8 +1093,8 @@ fn address_remaining_operands(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
+    parameters: &ParameterKinds,
 ) {
-    let parameters = ParameterKinds::of(function);
     let mut next = function.n_regs;
     let mut types = Vec::new();
     address_remaining_in(
@@ -1073,7 +1103,7 @@ fn address_remaining_operands(
         &RemainingContext {
             declarations,
             callees,
-            parameters: &parameters,
+            parameters,
         },
         &mut next,
         &mut types,
@@ -1154,7 +1184,11 @@ fn address_remaining_in(
 /// defined as a `ref.read` of a `ref.make` of the place the call retains
 /// for it, as that reference, the read going; and each one that is a
 /// `place.load` of a memory-only retained place as a `ref.make` of it.
-fn forward_read_addresses(function: &mut MirFunction, declarations: &MirDeclarations) {
+fn forward_read_addresses(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    parameters: &ParameterKinds,
+) {
     let mut definitions = HashMap::new();
     collect_definitions(&function.body, &mut definitions);
     let mut reads = vec![0; function.n_regs as usize];
@@ -1187,7 +1221,7 @@ fn forward_read_addresses(function: &mut MirFunction, declarations: &MirDeclarat
                         .as_ref()
                         .is_some_and(|ty| !declarations.register_passable(ty)) =>
             {
-                let mutability = place_mutability(function, &place, Mutability::Mutable);
+                let mutability = parameters.place_mutability(&place, Mutability::Mutable);
                 rewrites.insert(
                     operand.0,
                     Rewrite {
