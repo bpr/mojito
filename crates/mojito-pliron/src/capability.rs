@@ -164,6 +164,26 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Supported,
         "a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity",
     ),
+    (
+        "pop",
+        CapabilityStatus::Partial,
+        "upstream's `pop` lane ops over SIMD or `index` registers (VM-exact per lane), `!kgen.string` reads, and `!kgen.dtype` code conversions; a `pop` over another register type, or an op bool lanes do not define, rejects",
+    ),
+    (
+        "llvm.intrinsic",
+        CapabilityStatus::Partial,
+        "a call of the LLVM intrinsic itself for the `LlvmIntrinsic` subset, over SIMD or Bool registers or a register pack's literal struct; a name outside the subset rejects",
+    ),
+    (
+        "is_run_in_comptime_interpreter",
+        CapabilityStatus::Supported,
+        "the constant `false`: compiled code never runs in the comptime interpreter",
+    ),
+    (
+        "kgen.source_loc",
+        CapabilityStatus::Unsupported,
+        "`source_locations` folds every site to its constants after inlining; one that survives rejects",
+    ),
     ("var.use", CapabilityStatus::Supported, "copy/move/borrow"),
     (
         "var.declare",
@@ -281,6 +301,31 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "the `!pop.array` storage built from its element values",
     ),
     (
+        "lit.ref.pack.create",
+        CapabilityStatus::Supported,
+        "fresh storage of one address per element, the `!kgen.struct` of pointers upstream lowers a `!lit.ref.pack` to",
+    ),
+    (
+        "kgen.struct.load_indirect",
+        CapabilityStatus::Unsupported,
+        "the elaborator spreads every pack load; one that survives rejects",
+    ),
+    (
+        "array.repeat",
+        CapabilityStatus::Supported,
+        "fresh `!pop.array` storage holding the value at every element's stride",
+    ),
+    (
+        "array.get",
+        CapabilityStatus::Partial,
+        "a closed constant index (the elaborator closes a parametric one), the element read at its stride; an unclosed index rejects",
+    ),
+    (
+        "array.replace",
+        CapabilityStatus::Partial,
+        "a closed constant index, a fresh copy of the storage with the element stored at its stride; an unclosed index rejects",
+    ),
+    (
         "array.gep",
         CapabilityStatus::Supported,
         "the element's address at its stride from the array's `ptr`; no load, no bound check",
@@ -294,6 +339,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "variant.is",
         CapabilityStatus::Supported,
         "checked tag comparison",
+    ),
+    (
+        "variant.tag",
+        CapabilityStatus::Supported,
+        "the active alternative's discriminant widened to `Int`",
     ),
     (
         "variant.get",
@@ -334,6 +384,26 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "simd.shuffle",
         CapabilityStatus::Supported,
         "one shufflevector per compile-time mask (a one-lane mask extracts the scalar)",
+    ),
+    (
+        "simd.select",
+        CapabilityStatus::Supported,
+        "one `select` over the `<N x i1>` mask, or the `i1` of a width-one mask",
+    ),
+    (
+        "simd.extract",
+        CapabilityStatus::Supported,
+        "one `extractelement` behind the lane-index guard (a width-one vector is its lane)",
+    ),
+    (
+        "simd.insert",
+        CapabilityStatus::Supported,
+        "one `insertelement` behind the lane-index guard (a width-one vector is the new lane)",
+    ),
+    (
+        "simd.reduce",
+        CapabilityStatus::Supported,
+        "`llvm.vector.reduce.and`/`or` over integer or bool lanes (a width-one vector is its lane)",
     ),
     (
         "try",
@@ -458,11 +528,6 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "Infer",
         CapabilityStatus::Unsupported,
         "checker-internal; must not reach verified MIR",
-    ),
-    (
-        "DType",
-        CapabilityStatus::Supported,
-        "i8 holding upstream's dtype code; ==/!= and the is_* queries",
     ),
     (
         "func",

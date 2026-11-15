@@ -651,6 +651,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The Pliron capability matrix matches the MIR vocabulary again: the 14
+  mnemonics added since late October (`pop`, `llvm.intrinsic`, the
+  `array.get`/`array.replace` family, `variant.tag`, the SIMD lane ops,
+  and others) each get the status their native lowering earns, and the
+  stale `DType` type row is gone, now that `DType` is upstream's library
+  struct. `conformance/pliron-capability.tsv` is re-blessed (R2231).
+
 - Repairs from the 2026-11-15 overnight gate. A `ref.make` an inlined
   `ref self` body passes on (`List.__getitem__` over a slice calling
   `self.unsafe_ptr()`) carries the parameter's inferred mutability, so

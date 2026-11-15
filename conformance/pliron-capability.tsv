@@ -25,6 +25,10 @@ instruction	type.construct_expr	unsupported	monomorphization leaves no type expr
 instruction	literal.materialize	partial	`!kgen.simd` storage targets of any width (wrapping, VM-exact; a vector splats the converted lane); a run-time literal value converts from its i64/f64 storage; a constant exceeding that storage rejects
 instruction	scalar.cast	partial	numeric, Bool, width-1 SIMD, and literal operands, VM-exact; Int of a pointer is its address; a pointer to any other target rejects
 instruction	pointer.convert	supported	a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity
+instruction	pop	partial	upstream's `pop` lane ops over SIMD or `index` registers (VM-exact per lane), `!kgen.string` reads, and `!kgen.dtype` code conversions; a `pop` over another register type, or an op bool lanes do not define, rejects
+instruction	llvm.intrinsic	partial	a call of the LLVM intrinsic itself for the `LlvmIntrinsic` subset, over SIMD or Bool registers or a register pack's literal struct; a name outside the subset rejects
+instruction	is_run_in_comptime_interpreter	supported	the constant `false`: compiled code never runs in the comptime interpreter
+instruction	kgen.source_loc	unsupported	`source_locations` folds every site to its constants after inlining; one that survives rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	var.declare	supported	a declaration marker; the slot is allocated at entry and it lowers to nothing
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
@@ -49,9 +53,15 @@ instruction	place.load	partial	layoutable, typed places
 instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
 instruction	struct.create	supported	the struct's storage built from its field values
 instruction	array.create	supported	the `!pop.array` storage built from its element values
+instruction	lit.ref.pack.create	supported	fresh storage of one address per element, the `!kgen.struct` of pointers upstream lowers a `!lit.ref.pack` to
+instruction	kgen.struct.load_indirect	unsupported	the elaborator spreads every pack load; one that survives rejects
+instruction	array.repeat	supported	fresh `!pop.array` storage holding the value at every element's stride
+instruction	array.get	partial	a closed constant index (the elaborator closes a parametric one), the element read at its stride; an unclosed index rejects
+instruction	array.replace	partial	a closed constant index, a fresh copy of the storage with the element stored at its stride; an unclosed index rejects
 instruction	array.gep	supported	the element's address at its stride from the array's `ptr`; no load, no bound check
 instruction	variant.make	supported	tagged aggregate construction over the normative Variant layout
 instruction	variant.is	supported	checked tag comparison
+instruction	variant.tag	supported	the active alternative's discriminant widened to `Int`
 instruction	variant.get	supported	checked payload projection
 instruction	variant.set	supported	drop-active-payload then replace through a checked place
 instruction	variant.take	supported	checked and unchecked consuming payload extraction
@@ -60,6 +70,10 @@ instruction	simd.make	supported	width-1 scalar aliases; multi-lane values assemb
 instruction	simd.cast	partial	vector int rewrap and f64-mediated float conversion; float-to-int converts the whole vector inside the exactly-convertible range and saturates at i128 lane by lane outside it; bool casts reject in the checker
 instruction	simd.bitcast	supported	the operand's bits reinterpreted as the target type of the same total width, one LLVM `bitcast` over the compute types (a `bool` lane is an `i1`), so it matches the VM's `simd_bitcast` bit for bit
 instruction	simd.shuffle	supported	one shufflevector per compile-time mask (a one-lane mask extracts the scalar)
+instruction	simd.select	supported	one `select` over the `<N x i1>` mask, or the `i1` of a width-one mask
+instruction	simd.extract	supported	one `extractelement` behind the lane-index guard (a width-one vector is its lane)
+instruction	simd.insert	supported	one `insertelement` behind the lane-index guard (a width-one vector is the new lane)
+instruction	simd.reduce	supported	`llvm.vector.reduce.and`/`or` over integer or bool lanes (a width-one vector is its lane)
 instruction	try	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `lit.try`, with cleanup drops and finally dispatch
 instruction	if	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.if`: a conditional branch into its regions, its results arguments of the block after it
 instruction	loop	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.loop`: its arguments and results block arguments, a break or continue crossing `finally` regions through the pending-outcome dispatch
@@ -87,7 +101,6 @@ type	Never	unsupported	uninhabited; no lowering
 type	IntLiteral	supported	zero-sized; its readers convert the number its type carries
 type	FloatLiteral	supported	zero-sized; its readers convert the number its type carries
 type	Infer	unsupported	checker-internal; must not reach verified MIR
-type	DType	supported	i8 holding upstream's dtype code; ==/!= and the is_* queries
 type	func	partial	two-word `{invoke, env}` value; the environment record is frame-local
 type	generic_func	unsupported	semantic-only; Stage 5 monomorphization target
 type	overload	unsupported	semantic-only

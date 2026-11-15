@@ -956,31 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2231 Pliron's capability tables have drifted from the MIR
-  vocabulary, failing two `mojito-pliron` unit tests**
-
-  `scripts/check-pliron` fails
-  `capability::tests::pliron_instr_capabilities_cover_the_instruction_vocabulary`
-  and `pliron_type_capabilities_cover_the_type_vocabulary`
-  (`crates/mojito-pliron/src/capability.rs`).
-  - `INSTRUCTION_MNEMONICS` gained 14 mnemonics with no capability row:
-    `pop`, `llvm.intrinsic`, `is_run_in_comptime_interpreter`,
-    `kgen.source_loc`, `lit.ref.pack.create`,
-    `kgen.struct.load_indirect`, `array.repeat`, `array.get`,
-    `array.replace`, `variant.tag`, `simd.select`, `simd.extract`,
-    `simd.insert`, and `simd.reduce`.
-  - `TYPE_SPELLINGS` lost `DType`, which caf21bcfe made upstream's library
-    struct, but `TYPE_CAPABILITIES` still has its row.
-  - Give each new mnemonic the status its lowering in
-    `crates/mojito-pliron/src/lower/` actually earns, in the inventory's
-    order, and drop the `DType` row.
-  - Re-bless `conformance/pliron-capability.tsv` with the root test
-    `capability_matrix_is_current` (`UPDATE_EXPECT=1`), then run both unit
-    tests with `cargo nextest run -p mojito-pliron capability`.
-  - The drift went unseen because `check-pliron` stopped at earlier
-    failures in every gate run since late October.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2232 The parity gate demands empty stderr, but
   `print_library_keywords` prints to stderr by design**
 
