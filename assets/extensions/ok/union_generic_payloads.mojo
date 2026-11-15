@@ -1,12 +1,12 @@
-# A generic `enum` with conditional `ImplicitlyCopyable`, matched over its
-# own parameters with their bounds; a register-passable enum built by its
-# own `@implicit` initializer; and a compile-time enum value under
+# A generic `union` with conditional `ImplicitlyCopyable`, matched over its
+# own parameters with their bounds; a register-passable union built by its
+# own `@implicit` initializer; and a compile-time union value under
 # `comptime match`, as the pin's integration test runs them.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# `union` is the declaration upstream's enum proposal gives cases with
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
-enum Result[T: Copyable & Deinitable, E: Copyable & Deinitable](
+union Result[T: Copyable & Deinitable, E: Copyable & Deinitable](
     Copyable,
     ImplicitlyCopyable where conforms_to(T, ImplicitlyCopyable) and conforms_to(
         E, ImplicitlyCopyable
@@ -27,8 +27,8 @@ def implicit_copy[T: ImplicitlyCopyable](value: T) -> T:
     return value
 
 
-enum Shape(ImplicitlyCopyable, RegisterPassable):
-    case empty
+union Shape(ImplicitlyCopyable, RegisterPassable):
+    case empty()
     case square(Int)
     case rect(Int, Int)
 
@@ -38,11 +38,11 @@ enum Shape(ImplicitlyCopyable, RegisterPassable):
 
     def area(self) -> Int:
         match self:
-            case .empty:
+            case .empty():
                 return 0
             case .square(side):
                 return side * side
-            case .rect((width, height)):
+            case .rect(width, height):
                 return width * height
 
 
@@ -58,12 +58,12 @@ def main():
         implicit_copy(Result[Int, String].failure("bad")).value_or(8),
     )
 
-    var shapes: List[Shape] = [Shape.empty, Shape.rect(2, 3), 4]
+    var shapes: List[Shape] = [Shape.empty(), Shape.rect(2, 3), 4]
     print(shapes[0].area(), shapes[1].area(), shapes[2].area())
 
     comptime shape: Shape = .rect(2, 5)
     comptime match shape:
-        case .rect((width, height)):
+        case .rect(width, height):
             print("rect", width, height)
         case _:
             print("other")

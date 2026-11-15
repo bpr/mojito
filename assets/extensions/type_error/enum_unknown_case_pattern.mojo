@@ -1,7 +1,7 @@
 # expect: 'blinking' is not a case of 'Light'
 # A case pattern names one of the enum's cases.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# `enum` is the declaration upstream's enum proposal gives cases without
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
 enum Light:

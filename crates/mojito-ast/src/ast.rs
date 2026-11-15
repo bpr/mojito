@@ -1235,9 +1235,69 @@ pub struct TraitComptime {
     pub default: Option<Expr>,
 }
 
-/// One `case` of an `enum`: `case name` carries no payload, `case
-/// name(T, U)` a payload of the written types (a `Tuple` of them when there
-/// are several).
+/// Whether a declaration of cases is an `enum`, whose cases carry no
+/// payload, or a `union`, whose every case carries exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SumKind {
+    Enum,
+    Union,
+}
+
+impl SumKind {
+    /// The declaration keyword, as diagnostics spell it.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Enum => "enum",
+            Self::Union => "union",
+        }
+    }
+}
+
+/// The cases of an `enum` or `union` declaration, in order, with the kind
+/// of declaration they belong to. They read as the slice of cases.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SumCases {
+    pub kind: SumKind,
+    pub cases: Vec<EnumCase>,
+}
+
+impl std::ops::Deref for SumCases {
+    type Target = [EnumCase];
+
+    fn deref(&self) -> &[EnumCase] {
+        &self.cases
+    }
+}
+
+impl std::ops::DerefMut for SumCases {
+    fn deref_mut(&mut self) -> &mut [EnumCase] {
+        &mut self.cases
+    }
+}
+
+impl<'a> IntoIterator for &'a SumCases {
+    type Item = &'a EnumCase;
+    type IntoIter = std::slice::Iter<'a, EnumCase>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.cases.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut SumCases {
+    type Item = &'a mut EnumCase;
+    type IntoIter = std::slice::IterMut<'a, EnumCase>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.cases.iter_mut()
+    }
+}
+
+/// One `case` of an `enum` or `union`.
+///
+/// An enum case (`case red`) carries no payload. A union case (`case
+/// name(T, U)`) carries one payload: `Tuple[]` for `()`, the written type
+/// for one, and a `Tuple` of them for several.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnumCase {
     pub name: String,
@@ -1923,11 +1983,11 @@ pub enum StmtKind {
         methods: Vec<Method>,
         /// Whether `@fieldwise_init` was present (so `Name(...)` constructs).
         fieldwise_init: bool,
-        /// The cases of an `enum` declaration, in order; `None` for a
-        /// `struct`. An enum is a struct whose members the compiler generates
-        /// from these (`comptime::synthesize_enum_members`), as upstream's
-        /// `StructDeclOp` carries `isEnum` and its case ops.
-        enum_cases: Option<Vec<EnumCase>>,
+        /// The cases of an `enum` or `union` declaration; `None` for a
+        /// `struct`. Either is a struct whose members the compiler generates
+        /// from these (`mojito_parser::enums`), as upstream's `StructDeclOp`
+        /// carries `isEnum` and its case ops.
+        enum_cases: Option<SumCases>,
     },
     /// `trait Name[(Super, …)]: <members>` — declares method (and `comptime`
     /// member) requirements that a conforming struct must implement. `refines` is

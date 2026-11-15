@@ -1,7 +1,8 @@
-# expect: enums do not support 'var' fields; store state in a case payload
-# An enum's only state is its active case's payload.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# expect: enums may not have additional stored state
+# An enum's only state is its active case, as upstream's enum proposal
+# rules: shared state belongs in a struct holding the enum.
+# `enum` is the declaration upstream's enum proposal gives cases without
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
 enum E:

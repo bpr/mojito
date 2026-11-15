@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2237**.
+Next free ID: **R2239**.
 
 ## Ordered Work
 
@@ -4703,6 +4703,41 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R2097 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2237 `enum` and `union` still match through the pin's `EnumLike` protocol, not the proposal's `SumType` traits**
+
+  Upstream's enum proposal (`Mojo/proposals/enums.md`, 2026-11-07) bases
+  case patterns and reflection on three traits that Mojito does not declare
+  yet.
+  - The proposal: `SumType` (`_sum_case_names`, `_get_sum_discriminant`),
+    `EnumLike(SumType)` for enums, and `UnionLike(SumType)` adding
+    `_union_case_types`, `_union_elt_type_for_case`, and
+    `_unsafe_get_union_payload`.
+  - Today every declaration synthesizes the pin's `EnumLike`
+    (`_enum_case_names`, `_enum_case_types` with `NoneType` for no payload,
+    `_get_enum_discriminant`, `_unsafe_get_enum_payload`), and the bundled
+    `__Union` marker stands in for `UnionLike` in `checker/patterns.rs`.
+  - The switch rewrites `Bool` and `FastMathFlag` as `EnumLike`, `Optional`
+    and `OptionalReg` as `UnionLike` (so `.None` becomes `.None()`), and
+    `std.format`'s reflective writer.
+  - About 25 pin fixtures in `assets/ok` and `assets/type_error` hand-conform
+    to the pin's `EnumLike` or match `.None`. They move to
+    `assets/extensions/` or are rewritten.
+  - Deferred by the owner when `enum` and `union` landed (2026-11-15).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2238 An `enum` cannot opt out of its implicit value conformances**
+
+  The proposal lets an enum decline one of its automatic conformances with
+  `not Movable` (or `not` another of `Deinitable`, `Copyable`, and
+  `ImplicitlyCopyable`) in its conformance list.
+  - Mojito's conformance-list parser (`Parser::parse_struct_conformance`)
+    takes trait names only, so `enum E(not Copyable):` is a parse error.
+  - `mojito_parser::enums` adds `ImplicitlyCopyable` to every enum that
+    does not list it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 

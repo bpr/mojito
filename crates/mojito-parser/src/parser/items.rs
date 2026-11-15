@@ -113,9 +113,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// `[@fieldwise_init] struct Name: <fields and methods>`, or `enum
-    /// Name: <cases and methods>`, an ordinary struct whose members the
-    /// compiler generates from its cases (upstream's `parseStructStmt`
-    /// parses both, telling them apart by `isEnum`).
+    /// Name: <cases and methods>` or `union Name: <cases and methods>`, an
+    /// ordinary struct whose members the compiler generates from its cases
+    /// (upstream's `parseStructStmt` parses all three, telling them apart by
+    /// `isEnum`).
     pub(super) fn parse_struct(
         &mut self,
         decorators: Vec<Decorator>,
@@ -125,19 +126,30 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let fieldwise_init = decorators
             .iter()
             .any(|d| d.path.len() == 1 && d.path[0] == "fieldwise_init");
-        let is_enum = matches!(self.peek_token()?, Some(Token::Enum));
+        let kind = match self.peek_token()? {
+            Some(Token::Enum) => Some(SumKind::Enum),
+            Some(Token::Union) => Some(SumKind::Union),
+            _ => None,
+        };
+        let is_enum = kind.is_some();
+        let keyword = kind.map_or("struct", SumKind::keyword);
         let start = self.peek_start();
         if is_enum && fieldwise_init {
-            return Err(ParseError::Message(
-                "'@fieldwise_init' cannot be applied to an enum".to_string(),
-            )
+            let article = if kind == Some(SumKind::Enum) {
+                "an"
+            } else {
+                "a"
+            };
+            return Err(ParseError::Message(format!(
+                "'@fieldwise_init' cannot be applied to {article} {keyword}"
+            ))
             .at((start, start)));
         }
 
-        // The lexer emits `enum` only before a name.
+        // The lexer emits `enum` and `union` only before a name.
         let name = if is_enum {
             self.next_token()?;
-            self.expect_identifier("expected enum name")?
+            self.expect_identifier(&format!("expected {keyword} name"))?
         } else {
             self.expect(&Token::Struct, "Expected 'struct'")?;
             self.expect_identifier("Expected a struct name after 'struct'")?
@@ -149,7 +161,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if is_enum {
             if !matches!(self.peek_token()?, Some(Token::Colon)) {
                 return Err(
-                    ParseError::Message("expected ':' in enum definition".to_string())
+                    ParseError::Message(format!("expected ':' in {keyword} definition"))
                         .at((start, self.last_span.1)),
                 );
             }
@@ -160,8 +172,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect_stmt_end()?;
 
         // Body: an indented block of `var` fields (a struct) or `case`
-        // declarations (an enum), `comptime` associated facts, and `def`
-        // methods.
+        // declarations (an enum or union), `comptime` associated facts, and
+        // `def` methods.
         self.expect(&Token::Indent, "Expected an indented struct body")?;
         let mut fields = Vec::new();
         let mut associated = Vec::new();
@@ -182,10 +194,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 Token::Var if is_enum => {
                     let at = self.peek_start();
-                    return Err(ParseError::Message(
-                        "enums do not support 'var' fields; store state in a case payload"
-                            .to_string(),
-                    )
+                    return Err(ParseError::Message(format!(
+                        "{keyword}s may not have additional stored state"
+                    ))
                     .at((at, at)));
                 }
                 Token::Var => {
@@ -201,11 +212,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect_stmt_end()?;
                     fields.push(Param { name: fname, ty });
                 }
-                Token::Case if is_enum => cases.push(self.parse_enum_case()?),
-                Token::Enum => {
+                Token::Case if kind == Some(SumKind::Enum) => {
+                    cases.extend(self.parse_enum_cases()?);
+                }
+                Token::Case if is_enum => cases.push(self.parse_union_case()?),
+                Token::Enum | Token::Union => {
+                    let nested = if matches!(token, Token::Enum) {
+                        "enum"
+                    } else {
+                        "union"
+                    };
                     let at = self.peek_start();
                     return Err(
-                        ParseError::Message("nested enum not supported here".to_string())
+                        ParseError::Message(format!("nested {nested} not supported here"))
                             .at((at, at)),
                     );
                 }
@@ -258,11 +277,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     return Err(ParseError::UnexpectedToken(
                         other.clone(),
                         if is_enum {
-                            "enum body may only contain 'case' declarations, 'comptime' associated facts, and 'def' methods"
+                            format!(
+                                "{keyword} body may only contain 'case' declarations, 'comptime' associated facts, and 'def' methods"
+                            )
                         } else {
                             "struct body may only contain 'var' fields, 'comptime' associated facts, and 'def' methods"
-                        }
-                        .into(),
+                                .to_string()
+                        },
                     ));
                 }
             }
@@ -280,7 +301,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             associated,
             methods,
             fieldwise_init,
-            enum_cases: is_enum.then_some(cases),
+            enum_cases: kind.map(|kind| SumCases { kind, cases }),
         })
     }
 
@@ -442,11 +463,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     return Err(assert_outside_function().at((at, at)));
                 }
                 Token::Comptime => comptime_members.push(self.parse_trait_comptime()?),
-                Token::Enum => {
+                Token::Enum | Token::Union => {
+                    let nested = if matches!(token, Token::Enum) {
+                        "enum"
+                    } else {
+                        "union"
+                    };
                     let at = self.peek_start();
-                    return Err(ParseError::Message(
-                        "nested enum in a trait not supported here".to_string(),
-                    )
+                    return Err(ParseError::Message(format!(
+                        "nested {nested} in a trait not supported here"
+                    ))
                     .at((at, at)));
                 }
                 other => {
@@ -1016,69 +1042,112 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             })
     }
 
-    /// `case name` or `case name(T, ...)`, the only two forms upstream's
-    /// `parseEnumCaseStmt` accepts. A labeled payload has its own
-    /// diagnostic; every other spelling after `case` is one malformed case.
-    fn parse_enum_case(&mut self) -> Result<EnumCase, ParseError> {
+    /// An enum's `case red` or `case red, green, blue`: names only, since
+    /// an enum case never carries a payload.
+    fn parse_enum_cases(&mut self) -> Result<Vec<EnumCase>, ParseError> {
         let start = self.peek_start();
         self.expect(&Token::Case, "Expected 'case'")?;
-        let malformed = |end: usize| {
-            ParseError::Message(
-                "enum case must have the form 'case name' or 'case name(T, ...)'".to_string(),
-            )
-            .at((start, end))
-        };
-        let labeled = |end: usize| {
-            ParseError::Message(
-                "labeled payloads in enum cases are not supported; use positional types, e.g. 'case C(T, U)'"
-                    .to_string(),
-            )
-            .at((start, end))
-        };
+        let mut cases = Vec::new();
+        loop {
+            let name = match self.peek_token()? {
+                Some(Token::Identifier(name)) => name.clone(),
+                _ => {
+                    return Err(ParseError::Message(
+                        "enum case must have the form 'case name' or 'case a, b, c'".to_string(),
+                    )
+                    .at((start, self.last_span.1)));
+                }
+            };
+            self.next_token()?;
+            let span = self.last_span;
+            if matches!(self.peek_token()?, Some(Token::LParen)) {
+                return Err(ParseError::Message(format!(
+                    "enum case '{name}' cannot carry a payload; declare a 'union' for cases with payloads"
+                ))
+                .at((start, self.last_span.1)));
+            }
+            cases.push(EnumCase {
+                name,
+                payload: Vec::new(),
+                span,
+            });
+            if !matches!(self.peek_token()?, Some(Token::Comma)) {
+                break;
+            }
+            self.next_token()?;
+        }
+        self.end_case_statement(
+            start,
+            "enum case must have the form 'case name' or 'case a, b, c'",
+        )?;
+        Ok(cases)
+    }
+
+    /// A union's `case name(T, ...)`, the one form a union case takes: an
+    /// empty list is the empty-tuple payload. A labeled payload has its own
+    /// diagnostic; every other spelling after `case` is one malformed case.
+    fn parse_union_case(&mut self) -> Result<EnumCase, ParseError> {
+        const MALFORMED: &str = "union case must have the form 'case name(T, ...)'";
+        let start = self.peek_start();
+        self.expect(&Token::Case, "Expected 'case'")?;
+        let malformed = |end: usize| ParseError::Message(MALFORMED.to_string()).at((start, end));
         let name = match self.peek_token()? {
             Some(Token::Identifier(name)) => name.clone(),
             _ => return Err(malformed(self.last_span.1)),
         };
         self.next_token()?;
+        if !matches!(self.peek_token()?, Some(Token::LParen)) {
+            return Err(ParseError::Message(format!(
+                "union case '{name}' must declare its payload in parentheses; write 'case {name}()' for an empty payload"
+            ))
+            .at((start, self.last_span.1)));
+        }
+        self.next_token()?;
         let mut payload = Vec::new();
-        if matches!(self.peek_token()?, Some(Token::LParen)) {
-            self.next_token()?;
-            if matches!(self.peek_token()?, Some(Token::RParen)) {
-                return Err(malformed(self.last_span.1));
-            }
-            loop {
-                payload.push(self.parse_type()?);
-                match self.peek_token()? {
-                    Some(Token::Colon | Token::Assign) => return Err(labeled(self.last_span.1)),
-                    Some(Token::Comma) => {
-                        self.next_token()?;
-                        if matches!(self.peek_token()?, Some(Token::RParen)) {
-                            self.next_token()?;
-                            break;
-                        }
-                    }
-                    Some(Token::RParen) => {
-                        self.next_token()?;
-                        break;
-                    }
-                    _ => return Err(malformed(self.last_span.1)),
+        while !matches!(self.peek_token()?, Some(Token::RParen)) {
+            payload.push(self.parse_type()?);
+            match self.peek_token()? {
+                Some(Token::Colon | Token::Assign) => {
+                    return Err(ParseError::Message(
+                        "labeled payloads in union cases are not supported; use positional types, e.g. 'case C(T, U)'"
+                            .to_string(),
+                    )
+                    .at((start, self.last_span.1)));
                 }
+                Some(Token::Comma) => {
+                    self.next_token()?;
+                }
+                Some(Token::RParen) => {}
+                _ => return Err(malformed(self.last_span.1)),
             }
         }
-        if !matches!(
-            self.peek_token()?,
-            Some(Token::Newline | Token::Semicolon | Token::Eof | Token::Dedent) | None
-        ) {
-            return Err(malformed(self.last_span.1));
+        self.next_token()?;
+        if matches!(self.peek_token()?, Some(Token::Comma)) {
+            return Err(ParseError::Message(
+                "union cases must be declared separately, one per 'case'".to_string(),
+            )
+            .at((start, self.last_span.1)));
         }
-        if !matches!(self.peek_token()?, Some(Token::Dedent) | None) {
-            self.expect_stmt_end()?;
-        }
+        self.end_case_statement(start, MALFORMED)?;
         Ok(EnumCase {
             name,
             payload,
             span: (start, self.last_significant_end),
         })
+    }
+
+    /// The end of a `case` declaration: a newline, `;`, or the body's end.
+    fn end_case_statement(&mut self, start: usize, malformed: &str) -> Result<(), ParseError> {
+        if !matches!(
+            self.peek_token()?,
+            Some(Token::Newline | Token::Semicolon | Token::Eof | Token::Dedent) | None
+        ) {
+            return Err(ParseError::Message(malformed.to_string()).at((start, self.last_span.1)));
+        }
+        if !matches!(self.peek_token()?, Some(Token::Dedent) | None) {
+            self.expect_stmt_end()?;
+        }
+        Ok(())
     }
 }
 

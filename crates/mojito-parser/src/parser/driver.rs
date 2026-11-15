@@ -227,25 +227,24 @@ fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), Pa
     }
 }
 
-/// Upstream declares an `enum` only at module scope. A struct or trait body
+/// Upstream declares an `enum` or `union` only at module scope. A struct or trait body
 /// rejects one as its member parser meets it, so an `enum` below a
 /// module-level statement sits in a function body.
 fn reject_enum_inside_function(statement: &Stmt) -> Result<(), ParseError> {
     struct NestedEnum<'a> {
         root: &'a Stmt,
-        found: Option<Span>,
+        found: Option<(SumKind, Span)>,
     }
     impl Visitor for NestedEnum<'_> {
         fn visit_stmt(&mut self, statement: &Stmt) {
-            let is_enum = matches!(
-                &statement.kind,
-                StmtKind::Struct {
-                    enum_cases: Some(_),
-                    ..
-                }
-            );
-            if is_enum && !std::ptr::eq(statement, self.root) && self.found.is_none() {
-                self.found = Some(statement.span);
+            if let StmtKind::Struct {
+                enum_cases: Some(cases),
+                ..
+            } = &statement.kind
+                && !std::ptr::eq(statement, self.root)
+                && self.found.is_none()
+            {
+                self.found = Some((cases.kind, statement.span));
             }
         }
     }
@@ -254,7 +253,11 @@ fn reject_enum_inside_function(statement: &Stmt) -> Result<(), ParseError> {
         found: None,
     };
     walk_stmt(&mut walk, statement);
-    walk.found.map_or(Ok(()), |span| {
-        Err(ParseError::Message("enum inside a function not supported here".to_string()).at(span))
+    walk.found.map_or(Ok(()), |(kind, span)| {
+        Err(ParseError::Message(format!(
+            "{} inside a function not supported here",
+            kind.keyword()
+        ))
+        .at(span))
     })
 }

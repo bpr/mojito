@@ -1,42 +1,43 @@
-# Upstream's `std/builtin/_enum.mojo`: the runtime half of `enum` (the pin's
-# `__enum`). The compiler declares an enum's members against this module, and
+# Upstream's `std/builtin/_enum.mojo`: the runtime half of `enum` and
+# `union` (upstream's enum proposal, `Mojo/proposals/enums.md`; the pin's
+# `__enum`). The compiler declares their members against this module, and
 # nothing in it is user-facing.
 #
 # For
 #
-#     enum Token:
-#         case eof
+#     union Token:
+#         case eof()
 #         case ident(String)
 #         case span(Int, Int)
 #
 # the compiler generates, written as Mojo:
 #
-#     struct Token(__Enum):
+#     struct Token(__Union):
 #         comptime _enum_case_names = ParameterList.of[
 #             "eof".value, "ident".value, "span".value
 #         ].values
 #         comptime _enum_case_types = TypeList.of[
-#             Trait=AnyType, NoneType, String, Tuple[Int, Int]
+#             Trait=AnyType, Tuple[], String, Tuple[Int, Int]
 #         ].values
-#         var __enum_storage: __EnumStorage[NoneType, String, Tuple[Int, Int]]
-#
-#         comptime eof: Token = Token.__enum_init(
-#             __EnumStorage[NoneType, String, Tuple[Int, Int]](None, index=0)
-#         )
+#         var __enum_storage: __EnumStorage[Tuple[], String, Tuple[Int, Int]]
 #
 #         @staticmethod
-#         def ident(var payload: String) -> Token: ...
+#         def eof() -> Token: ...
+#         @staticmethod
+#         def ident(var payload0: String) -> Token: ...
 #         @staticmethod
 #         def span(var payload0: Int, var payload1: Int) -> Token: ...
 #
-# with `__enum_init`, `__get_enum_storage`, `_get_enum_discriminant`, and
-# `_unsafe_get_enum_payload` generated on the enum itself
-# (`comptime::synthesize_enum_members`). Upstream declares those four as
-# `__Enum`'s defaults and `__EnumStorage` as a struct over `!kgen.variant`;
-# here `__EnumStorage[*Ts]` is the compiler's case-indexed storage, the same
-# intrinsic `Variant`'s `__VariantStorage` is, and `__Enum` is the
-# conformance every enum declares (`docs/notes/enums.md`).
-"""The runtime half of `enum`."""
+# and an `enum`'s cases, which carry no payload, are `comptime` values of
+# `NoneType` storage instead (`comptime red: Color = Color.__enum_init(
+# __EnumStorage[NoneType, ...](None, index=0))`), declaring `__Enum`.
+# Both get `__enum_init`, `__get_enum_storage`, `_get_enum_discriminant`,
+# and `_unsafe_get_enum_payload` generated on the declaration itself
+# (`mojito_parser::enums`). Upstream declares those four as `__Enum`'s
+# defaults and `__EnumStorage` as a struct over `!kgen.variant`; here
+# `__EnumStorage[*Ts]` is the compiler's case-indexed storage, the same
+# intrinsic `Variant`'s `__VariantStorage` is (`docs/notes/enums.md`).
+"""The runtime half of `enum` and `union`."""
 
 from std.builtin.enum_like import EnumLike
 
@@ -52,7 +53,14 @@ def __enum_discriminant_dtype(num_cases: Int) -> DType:
 
 
 trait __Enum(EnumLike):
-    """An `__enum`: a struct whose only field, `__enum_storage`, is an
+    """An `enum` or `union`: a struct whose only field, `__enum_storage`, is an
     `__EnumStorage` over its case types."""
+
+    pass
+
+
+trait __Union(__Enum):
+    """A `union`: an `__Enum` whose every case carries one payload, so its
+    case patterns take their payload subpatterns as a tuple pattern."""
 
     pass

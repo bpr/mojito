@@ -1040,7 +1040,7 @@ impl Checker {
             .flatten()
             .flat_map(|case| &case.payload)
         {
-            self.reject_trait_typed_storage(payload, "enum case payloads")?;
+            self.reject_trait_typed_storage(payload, "union case payloads")?;
         }
         // Associated members resolve BEFORE fields, each installed into the
         // registered shell as it resolves: a later member reads an earlier

@@ -1,8 +1,8 @@
-# An enum case is a `thin` function value: `map` applies it to each element,
-# as the pin's enum integration test does (spelled `__enum` there).
-enum Token(Copyable):
+# A union case is a `thin` function value: `map` applies it to each element,
+# as the pin's enum integration test does (an `__enum` there).
+union Token(Copyable):
     case integer(Int)
-    case eof
+    case eof()
 
 
 def describe(token: Token) -> String:

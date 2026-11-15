@@ -410,8 +410,9 @@ impl<'a> Lexer<'a> {
             .push_back((token, (self.token_start, self.pos)));
     }
 
-    /// Whether the word `enum` just scanned declares an enum: it starts a
-    /// statement and a name, not a keyword, follows it (`enum Color:`).
+    /// Whether the word `enum` or `union` just scanned declares one: it
+    /// starts a statement and a name, not a keyword, follows it (`enum
+    /// Color:`).
     fn declares_enum(&self) -> bool {
         let rest = self.remainder();
         let name = rest.trim_start_matches([' ', '\t']);
@@ -955,6 +956,8 @@ impl Iterator for Lexer<'_> {
                     }
                     let token = if text == "enum" && self.declares_enum() {
                         Token::Enum
+                    } else if text == "union" && self.declares_enum() {
+                        Token::Union
                     } else {
                         Token::keyword(&text).unwrap_or(Token::Identifier(text))
                     };

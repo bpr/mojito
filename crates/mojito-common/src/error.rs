@@ -480,8 +480,14 @@ pub enum TypeError {
         trait_name: String,
         ty: String,
     },
+    /// An `enum` case called as a constructor (`Color.red()`): an enum case
+    /// is a value, never constructed.
+    EnumCaseCalled {
+        enum_name: String,
+        case: String,
+    },
     /// A trait spelled where a stored type goes: `storage` is "struct
-    /// fields" or "enum case payloads".
+    /// fields" or "union case payloads".
     TraitTypedStorage {
         storage: &'static str,
         trait_name: String,
@@ -1131,6 +1137,10 @@ impl fmt::Display for TypeError {
             Self::FieldNotDeinitable { field, ty } => {
                 write!(f, "field '{field}' has non-'Deinitable' type '{ty}'")
             }
+            Self::EnumCaseCalled { enum_name, case } => write!(
+                f,
+                "enum case '{case}' is a value, not a constructor; write '{enum_name}.{case}' without parentheses"
+            ),
             Self::EnumPayloadNotConforming {
                 case,
                 trait_name,

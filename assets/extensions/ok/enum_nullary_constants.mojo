@@ -1,20 +1,19 @@
-# An `enum` case without a payload is a `comptime` member of the enum,
-# read by name and by leading dot, as upstream generates it; the enum is
-# `ImplicitlyCopyable` so the member materializes at run time, as the pin
-# requires. Two such cases stay distinct, and an open enum keeps a fallback.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# An `enum` case is a `comptime` value of the enum, read by name and by
+# leading dot, never called. The enum is `ImplicitlyCopyable` without
+# declaring it, so a case materializes at run time and a value copies
+# implicitly. Cases listed on one line keep their order, two cases stay
+# distinct, and an open enum keeps a fallback.
+# `enum` is the declaration upstream's enum proposal gives cases without
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
-enum Light(ImplicitlyCopyable):
+enum Light:
     case off
-    case on
-    case dimmed(Int)
+    case on, dimmed
 
 
-enum Level(ImplicitlyCopyable):
-    case low
-    case high
+enum Level:
+    case low, high
 
     comptime _enum_is_exhaustive = False
 
@@ -25,8 +24,8 @@ def describe(light: Light) -> String:
             return "off"
         case .on:
             return "on"
-        case .dimmed(level):
-            return "dimmed " + String(level)
+        case .dimmed:
+            return "dimmed"
 
 
 def describe_level(level: Level) -> String:
@@ -48,5 +47,7 @@ def pick(bright: Bool) -> Light:
 def main():
     print(describe(Light.off), Light.off._get_enum_discriminant())
     print(describe(pick(True)), pick(True)._get_enum_discriminant())
-    print(describe(.dimmed(3)))
+    var dimmed: Light = .dimmed
+    var copy = dimmed
+    print(describe(copy), copy._get_enum_discriminant())
     print(describe_level(Level.low), describe_level(.high))

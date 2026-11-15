@@ -10,8 +10,8 @@ use std::iter::Peekable;
 use mojito_ast::ast::{
     ArgConvention, BindingMode, Capture, CaptureKind, CaptureList, Condition, Decorator,
     DestructureTarget, DestructureTargetKind, EnumCase, Expr, ExprKind, FnParam, FunctionTypeParam,
-    InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, TStringPart,
-    Type, WithItem,
+    InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, SumCases,
+    SumKind, TStringPart, Type, WithItem,
 };
 use mojito_common::error::{LexError, ParseError};
 use mojito_common::token::{Span, TStringChunk, Token};

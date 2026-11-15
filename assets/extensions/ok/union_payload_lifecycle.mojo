@@ -1,8 +1,8 @@
-# An `enum` payload's lifecycle: construction moves the payload into the
+# A `union` payload's lifecycle: construction moves the payload into the
 # storage once, a copy copies it, reassigning another case destroys it, and
 # a payload bound without `var` is borrowed, as the pin traces them.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# `union` is the declaration upstream's enum proposal gives cases with
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
 struct Tracked(ImplicitlyCopyable, Movable):
@@ -24,14 +24,14 @@ struct Tracked(ImplicitlyCopyable, Movable):
         print("destroy", self.id)
 
 
-enum Token(ImplicitlyCopyable):
-    case eof
+union Token(ImplicitlyCopyable):
+    case eof()
     case tracked(Tracked)
 
 
 def describe(token: Token) -> String:
     match token:
-        case .eof:
+        case .eof():
             return "eof"
         case .tracked(t):
             return "tracked:" + String(t.id)
@@ -43,6 +43,6 @@ def main():
     print(describe(copy))
     var reassigned: Token = .tracked(Tracked(2))
     print(describe(reassigned))
-    reassigned = .eof
+    reassigned = .eof()
     print(describe(reassigned))
     print(describe(token))

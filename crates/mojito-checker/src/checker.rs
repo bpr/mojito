@@ -424,6 +424,17 @@ pub(crate) fn enum_like_trait() -> String {
     mojito_module::module::linked_item_name("std.builtin.enum_like", "EnumLike")
 }
 
+/// The linked name of the bundled `__Enum` trait every `enum` declares.
+pub(crate) fn enum_trait() -> String {
+    mojito_module::module::linked_item_name("std.builtin._enum", "__Enum")
+}
+
+/// The linked name of the bundled `__Union` trait every `union` declares,
+/// whose case patterns take tuple-formed payload subpatterns.
+pub(crate) fn union_trait() -> String {
+    mojito_module::module::linked_item_name("std.builtin._enum", "__Union")
+}
+
 /// The linked name of the bundled `Hasher` trait, which the prelude does
 /// not export: the compiler names it by module path, never by its spelling.
 pub fn hasher_trait() -> String {

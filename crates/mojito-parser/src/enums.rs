@@ -1,27 +1,32 @@
-//! The members of an `enum`, generated from its cases as upstream's
-//! `StructEmitter::synthesizeEnumMembers` declares them.
+//! The members of an `enum` or `union`, generated from its cases as
+//! upstream's `StructEmitter::synthesizeEnumMembers` declares them.
 //!
-//! An enum is an ordinary struct. For
+//! Either is an ordinary struct. For
 //!
 //! ```mojo
-//! enum Token:
-//!     case eof
+//! enum Color:
+//!     case red, green
+//!
+//! union Token:
+//!     case eof()
 //!     case ident(String)
 //!     case span(Int, Int)
 //! ```
 //!
-//! it gets the `EnumLike` case lists, its one field (the case-indexed
-//! `__EnumStorage` over the case payload types), a `comptime` member per
-//! case without a payload, and a static constructor per case with one, plus
-//! the four members upstream's `__Enum` supplies as defaults
-//! (`docs/notes/enums.md`). The members are written as Mojo and parsed, so
-//! they link, check, and lower as written source does; each is located at
-//! the case it is generated for, or at the declaration.
+//! each gets the `EnumLike` case lists, its one field (the case-indexed
+//! `__EnumStorage` over the case payload types), and the four members
+//! upstream's `__Enum` supplies as defaults (`docs/notes/enums.md`). An
+//! enum case is a `comptime` value of the enum, and the enum is
+//! `ImplicitlyCopyable`, with `Equatable`, `Comparable`, and `Hashable`
+//! over its cases when it asks for them. A union case is a static
+//! constructor taking the payload. The members are written as Mojo and
+//! parsed, so they link, check, and lower as written source does; each is
+//! located at the case it is generated for, or at the declaration.
 
 use std::fmt::Write;
 
-use mojito_ast::ast::{EnumCase, Expr, Stmt, StmtKind, Type};
-use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_ast::ast::{EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind, Type};
+use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_type_mut};
 use mojito_common::error::ParseError;
 use mojito_common::token::Span;
 use mojito_lexer::lexer::Lexer;
@@ -35,8 +40,8 @@ pub fn parse_module(source: &str) -> Result<Vec<Stmt>, ParseError> {
     Ok(program)
 }
 
-/// Generate the members of every `enum` in `program`, whose cases' payload
-/// types are spelled in `source`.
+/// Generate the members of every `enum` and `union` in `program`, whose
+/// cases' payload types are spelled in `source`.
 pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(), ParseError> {
     for statement in program {
         let span = statement.span;
@@ -52,18 +57,31 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
         else {
             continue;
         };
-        check_member_names(cases, associated, methods)?;
-        check_case_payloads(name, conforms, cases, span)?;
+        let kind = cases.kind;
+        check_member_names(kind, cases, associated, methods)?;
+        check_case_payloads(kind, name, conforms, cases, span)?;
         let payloads = cases
             .iter()
             .map(|case| payload_spellings(case, source))
             .collect::<Result<Vec<_>, _>>()?;
-        let writes = conforms.iter().any(|conformance| conformance == "Writable");
+        let declares = |conformance: &str| conforms.iter().any(|written| written == conformance);
         let written = |member: &str| methods.iter().any(|method| method.name == member);
-        let mut text = generated_members(name, cases, &payloads);
+        let mut text = generated_members(kind, name, cases, &payloads);
         for (member, payload) in [("write_to", "{}"), ("write_repr_to", "repr({})")] {
-            if writes && !written(member) {
-                text.push_str(&generated_write(member, payload, name, cases));
+            if declares("Writable") && !written(member) {
+                text.push_str(&generated_write(member, payload, name, cases, &payloads));
+            }
+        }
+        if kind == SumKind::Enum {
+            let compares = declares("Comparable");
+            for (member, requested) in [
+                ("__eq__", compares || declares("Equatable")),
+                ("__lt__", compares),
+                ("__hash__", declares("Hashable")),
+            ] {
+                if requested && !written(member) {
+                    text.push_str(&derived_enum_member(member));
+                }
             }
         }
         let members = parse_members(&text)?;
@@ -89,13 +107,27 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
             }
         }
         for method in &mut generated_methods {
+            if method.name == "__hash__" {
+                for parameter in &mut method.params {
+                    walk_type_mut(&mut LinkHasher, &mut parameter.ty);
+                }
+            }
             let at = cases
                 .iter()
                 .find(|case| case.name == method.name)
                 .map_or(span, |case| case.span);
             walk_block_mut(&mut Relocate(at), &mut method.body);
         }
-        conforms.push(ENUM_TRAIT.to_string());
+        if kind == SumKind::Enum && !declares("ImplicitlyCopyable") {
+            conforms.push("ImplicitlyCopyable".to_string());
+        }
+        conforms.push(
+            match kind {
+                SumKind::Enum => ENUM_TRAIT,
+                SumKind::Union => UNION_TRAIT,
+            }
+            .to_string(),
+        );
         fields.extend(generated_fields);
         associated.extend(generated_associated);
         methods.extend(generated_methods);
@@ -106,6 +138,15 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
 /// `std.builtin._enum.__Enum` by its linked name, which linking leaves as it
 /// is, as upstream's compiler finds the module implementing enums by path.
 const ENUM_TRAIT: &str = "__module$std$builtin$$enum$__Enum";
+
+/// `std.builtin._enum.__Union`, which every `union` declares: it marks the
+/// subjects whose case patterns take the proposal's tuple-formed payload
+/// subpatterns.
+const UNION_TRAIT: &str = "__module$std$builtin$$enum$__Union";
+
+/// `std.hash.hasher.Hasher` by its linked name, which a derived `__hash__`
+/// names because the prelude does not export it.
+const HASHER_TRAIT: &str = "__module$std$hash$hasher$Hasher";
 
 /// The names `__Enum` and the generated members declare, which no member
 /// written in an enum may declare. `_enum_is_exhaustive` is not among them:
@@ -131,9 +172,10 @@ const STRUCT_MEMBER_NAMES: [&str; 6] = [
     "__del__is_trivial",
 ];
 
-/// Every clash between the members an enum gets and the members written in
-/// it, with upstream's `checkEnumMemberNames` words.
+/// Every clash between the members an enum or union gets and the members
+/// written in it, with upstream's `checkEnumMemberNames` words.
 fn check_member_names(
+    kind: SumKind,
     cases: &[EnumCase],
     associated: &[mojito_ast::ast::StructComptime],
     methods: &[mojito_ast::ast::Method],
@@ -166,7 +208,8 @@ fn check_member_names(
         }
         if written.clone().any(|member| member == name) {
             return error(format!(
-                "enum case '{name}' conflicts with a member of the same name"
+                "{} case '{name}' conflicts with a member of the same name",
+                kind.keyword()
             ));
         }
     }
@@ -174,10 +217,12 @@ fn check_member_names(
 }
 
 /// The payload and conformance rules upstream's declaration resolution
-/// applies to an enum: `NoneType` marks a case without a payload, so it is no
-/// payload type; a payload holding the enum itself by value has no size; and
-/// an enum's storage is never trivially register-passable.
+/// applies to a union's cases: `NoneType` marks an `EnumLike` case without a
+/// payload, so it is no payload type, and a payload holding the union itself
+/// by value has no size. Neither declaration's storage is trivially
+/// register-passable.
 fn check_case_payloads(
+    kind: SumKind,
     name: &str,
     conforms: &[String],
     cases: &[EnumCase],
@@ -187,9 +232,10 @@ fn check_case_payloads(
         .iter()
         .any(|conformance| conformance == "TrivialRegisterPassable")
     {
-        return Err(ParseError::Message(
-            "enums cannot conform to 'TrivialRegisterPassable'".to_string(),
-        )
+        return Err(ParseError::Message(format!(
+            "{}s cannot conform to 'TrivialRegisterPassable'",
+            kind.keyword()
+        ))
         .at(span));
     }
     for case in cases {
@@ -197,7 +243,7 @@ fn check_case_payloads(
         if matches!(case.payload.as_slice(), [Type::Named(payload, args)] if payload == "NoneType" && args.is_empty())
         {
             return error(format!(
-                "enum case payload must not be 'NoneType'; a case without a payload is written 'case {}'",
+                "union case payload must not be 'NoneType'; an empty payload is written 'case {}()'",
                 case.name
             ));
         }
@@ -265,23 +311,28 @@ fn payload_spellings(case: &EnumCase, source: &str) -> Result<Vec<String>, Parse
     }
 }
 
-/// The generated members, as the body of a struct named for the enum.
-fn generated_members(name: &str, cases: &[EnumCase], payloads: &[Vec<String>]) -> String {
-    let case_type = |payload: &[String]| match payload {
-        [] => "NoneType".to_string(),
-        [single] => single.clone(),
-        several => format!("Tuple[{}]", several.join(", ")),
-    };
+/// The generated members, as the body of a struct named for the enum or
+/// union.
+fn generated_members(
+    kind: SumKind,
+    name: &str,
+    cases: &[EnumCase],
+    payloads: &[Vec<String>],
+) -> String {
     let case_types = payloads
         .iter()
-        .map(|payload| case_type(payload))
+        .map(|payload| match (kind, payload.as_slice()) {
+            (SumKind::Enum, _) => "NoneType".to_string(),
+            (SumKind::Union, [single]) => single.clone(),
+            (SumKind::Union, elements) => format!("Tuple[{}]", elements.join(", ")),
+        })
         .collect::<Vec<_>>();
     let storage = if case_types.is_empty() {
         "__EnumStorage".to_string()
     } else {
         format!("__EnumStorage[{}]", case_types.join(", "))
     };
-    // An enum without cases lists none, spelled with its element type.
+    // A declaration without cases lists none, spelled with its element type.
     let names = if cases.is_empty() {
         "type=__mlir_type.`!kgen.string`".to_string()
     } else {
@@ -303,38 +354,34 @@ fn generated_members(name: &str, cases: &[EnumCase], payloads: &[Vec<String>]) -
     );
     for (index, (case, payload)) in cases.iter().zip(payloads).enumerate() {
         let case_name = &case.name;
-        let _ = match payload.as_slice() {
-            [] => writeln!(
+        if kind == SumKind::Enum {
+            let _ = writeln!(
                 text,
                 "    comptime {case_name}: Self = Self.__enum_init({storage}(None, index={index}))"
-            ),
-            [single] => writeln!(
-                text,
-                "    @staticmethod\n\
-                 \x20   def {case_name}(var payload: {single}, out result: Self):\n\
-                 \x20       __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))\n\
-                 \x20       Pointer(to=result.__enum_storage).unsafe_write({storage}(payload^, index={index}))"
-            ),
-            several => {
-                let parameters = several
-                    .iter()
-                    .enumerate()
-                    .map(|(position, ty)| format!("var payload{position}: {ty}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let elements = (0..several.len())
+            );
+            continue;
+        }
+        let mut parameters = String::new();
+        for (position, ty) in payload.iter().enumerate() {
+            let _ = write!(parameters, "var payload{position}: {ty}, ");
+        }
+        let value = match payload.len() {
+            1 => "payload0^".to_string(),
+            count => format!(
+                "Tuple({})",
+                (0..count)
                     .map(|position| format!("payload{position}^"))
                     .collect::<Vec<_>>()
-                    .join(", ");
-                writeln!(
-                    text,
-                    "    @staticmethod\n\
-                     \x20   def {case_name}({parameters}, out result: Self):\n\
-                     \x20       __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))\n\
-                     \x20       Pointer(to=result.__enum_storage).unsafe_write({storage}(Tuple({elements}), index={index}))"
-                )
-            }
+                    .join(", ")
+            ),
         };
+        let _ = writeln!(
+            text,
+            "    @staticmethod\n\
+             \x20   def {case_name}({parameters}out result: Self):\n\
+             \x20       __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))\n\
+             \x20       Pointer(to=result.__enum_storage).unsafe_write({storage}({value}, index={index}))"
+        );
     }
     let _ = writeln!(
         text,
@@ -352,16 +399,40 @@ fn generated_members(name: &str, cases: &[EnumCase], payloads: &[Vec<String>]) -
     text
 }
 
-/// `Writable`'s default for an enum, `Name.case` or `Name.case(payload)`
-/// with the payload written as `payload` spells it (its text, or its
-/// `repr`), as upstream's `_enum_reflection_write_to` writes any `EnumLike`.
-fn generated_write(member: &str, payload: &str, name: &str, cases: &[EnumCase]) -> String {
+/// The member an enum derives for a conformance it asks for, over its
+/// cases' identity: equality and ordering compare the cases' discriminants,
+/// and hashing hashes the discriminant.
+fn derived_enum_member(member: &str) -> String {
+    match member {
+        "__eq__" => "    def __eq__(self, other: Self) -> Bool:\n\
+                     \x20       return self._get_enum_discriminant() == other._get_enum_discriminant()\n"
+            .to_string(),
+        "__lt__" => "    def __lt__(self, rhs: Self) -> Bool:\n\
+                     \x20       return self._get_enum_discriminant() < rhs._get_enum_discriminant()\n"
+            .to_string(),
+        _ => "    def __hash__(self, mut hasher: Some[Hasher]):\n\
+              \x20       self._get_enum_discriminant().__hash__(hasher)\n"
+            .to_string(),
+    }
+}
+
+/// `Writable`'s default for an enum or union, `Name.case` for an enum case
+/// and `Name.case(payload)` for a union case, with each payload element
+/// written as `payload` spells it (its text, or its `repr`), as upstream's
+/// `_enum_reflection_write_to` writes any `EnumLike`.
+fn generated_write(
+    member: &str,
+    payload: &str,
+    name: &str,
+    cases: &SumCases,
+    payloads: &[Vec<String>],
+) -> String {
     let mut text = format!(
         "    def {member}(self, mut writer: Some[Writer]):\n\
          \x20       writer.write(\"{name}.\")\n\
          \x20       var discriminant = self._get_enum_discriminant()\n"
     );
-    for (index, case) in cases.iter().enumerate() {
+    for (index, (case, elements)) in cases.iter().zip(payloads).enumerate() {
         let keyword = if index == 0 { "if" } else { "elif" };
         let case_name = &case.name;
         let _ = writeln!(
@@ -369,10 +440,25 @@ fn generated_write(member: &str, payload: &str, name: &str, cases: &[EnumCase]) 
             "        {keyword} discriminant == {index}:\n\
              \x20           writer.write(\"{case_name}\")"
         );
-        if !case.payload.is_empty() {
-            let value = payload.replace("{}", &format!("self._unsafe_get_enum_payload[{index}]()"));
-            let _ = writeln!(text, "            writer.write(\"(\", {value}, \")\")");
+        if cases.kind == SumKind::Enum {
+            continue;
         }
+        let projection = format!("self._unsafe_get_enum_payload[{index}]()");
+        let written = match elements.len() {
+            1 => vec![payload.replace("{}", &projection)],
+            count => (0..count)
+                .map(|position| payload.replace("{}", &format!("{projection}[{position}]")))
+                .collect(),
+        };
+        let _ = writeln!(
+            text,
+            "            writer.write(\"(\", {}\")\")",
+            written
+                .iter()
+                .map(|element| format!("{element}, "))
+                .collect::<Vec<_>>()
+                .join("\", \", ")
+        );
     }
     text
 }
@@ -407,5 +493,27 @@ impl MutVisitor for Relocate {
 
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         expr.span = self.0;
+    }
+}
+
+/// Names `Hasher` in a derived `__hash__`'s signature by its linked name,
+/// which the generated text cannot spell.
+struct LinkHasher;
+
+impl MutVisitor for LinkHasher {
+    fn visit_type_mut(&mut self, ty: &mut Type) {
+        if let Type::Named(name, _) = ty
+            && name == "Hasher"
+        {
+            *name = HASHER_TRAIT.to_string();
+        }
+    }
+
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let ExprKind::Identifier(name) = &mut expr.kind
+            && name == "Hasher"
+        {
+            *name = HASHER_TRAIT.to_string();
+        }
     }
 }

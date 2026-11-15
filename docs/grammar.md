@@ -63,8 +63,8 @@ continue raise assert try except finally import from as`, plus the `True`/`False
 the **Mojo-only** ones (`var struct trait comptime raises`, and upstream's
 `__generator_type` and `__is_run_in_comptime_interpreter`). `Token::keyword` is the single
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
-lex as identifiers, so they stay usable as ordinary names, matching Mojo. `enum` is one too:
-the lexer emits the `enum` keyword only where a statement starts with `enum` followed by a
+lex as identifiers, so they stay usable as ordinary names, matching Mojo. `enum` and `union`
+are too: the lexer emits either keyword only where a statement starts with it followed by a
 name that is not a keyword (`enum Color:`), and lexes it as an identifier everywhere else.
 
 The words of syntax Mojito does not implement — `match` and `case` (pattern
@@ -660,25 +660,29 @@ diagnostic tuple form retains its message through those checks.
 ### enum_def
 
 ```
-enum_def: decorators 'enum' NAME [params_decl] [conformance] where_clause* ':' enum_block
+enum_def: decorators ('enum' | 'union') NAME [params_decl] [conformance] where_clause* ':' enum_block
 enum_block: NEWLINE INDENT enum_member+ DEDENT
 enum_member: enum_case | struct_comptime | method | 'pass' NEWLINE
-enum_case: 'case' NAME ['(' ','.type+ [','] ')'] NEWLINE
+enum_case: 'case' ','.NAME+ NEWLINE                                  # in an enum
+         | 'case' NAME '(' [','.type+ [',']] ')' NEWLINE             # in a union
 ```
 
-`enum` is the spelling of upstream's enum proposal (`Mojo/proposals/enums.md`). The
-pinned Mojo implements the same declaration under the experimental keyword `__enum`,
-which Mojito does not accept: `enum` is a kept extension (`docs/non-goals.md`), and its
-fixtures live under `assets/extensions/`. The header is a `struct_def` header. The body holds
-`case` declarations, associated `comptime` members, and methods, in any order,
-and may be empty (`pass`). A case without parentheses carries no payload;
-`case span(Int, Int)` carries one payload of type `Tuple[Int, Int]`, and
-`case ident(String)` one of type `String`. The parser rejects, with the pin's
-words, a labeled payload (`case c(a: Int)`), an empty `case x()`, several names
-in one `case`, a decorated `case`, a `var` field, a method whose body is `...`,
-`@fieldwise_init`, and an `enum` declared inside a function, a struct, or a
-trait. The declaration is an ordinary struct whose
-members the compiler generates from its cases (see `docs/notes/enums.md`).
+`enum` and `union` are the declarations of upstream's enum proposal
+(`Mojo/proposals/enums.md`). The pinned Mojo implements one declaration for both
+under the experimental keyword `__enum`, which Mojito does not accept: both are kept
+extensions (`docs/non-goals.md`), and their fixtures live under `assets/extensions/`.
+The header is a `struct_def` header. The body holds `case` declarations, associated
+`comptime` members, and methods, in any order, and may be empty (`pass`).
+
+An enum case carries no payload: `case red` or a list, `case red, green, blue`. A
+union case always carries one payload in parentheses: `case eof()` carries `Tuple[]`,
+`case ident(String)` a `String`, and `case span(Int, Int)` a `Tuple[Int, Int]`; each
+union case is declared on its own. The parser rejects an enum case with parentheses, a
+union case without them or listed with another, a labeled payload (`case c(a: Int)`), a
+decorated `case`, a `var` field ("enums may not have additional stored state"), a method
+whose body is `...`, `@fieldwise_init`, and an `enum` or `union` declared inside a
+function, a struct, or a trait. The declaration is an ordinary struct whose members the
+compiler generates from its cases (see `docs/notes/enums.md`).
 
 ### trait_def
 
@@ -872,7 +876,7 @@ closed_pattern:
     | head '(' [pattern_arg (',' pattern_arg)* ','?] ')'               # `Point(x=0)`, `.Some(x)`
 seq_pattern: pattern | '*' closed_pattern
 head: '.' NAME | NAME ('.' NAME)* | NAME '[' param_args ']' ('.' NAME)*
-pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or one payload (enum)
+pattern_arg: pattern | NAME '=' pattern                 # keyword fields (struct) or a payload (enum-like)
 ```
 
 `match` evaluates its subject once (a comma list forms a tuple) and tries
@@ -888,8 +892,9 @@ unary precedence (`== a | b` is `(== a) | b`).
 `var`/`ref` take one name (`var ref x` is rejected as redundant). The
 checker decides whether a call-shaped head is a struct pattern (keyword
 fields, `Point(x=0, y=yv)`) or an enum case with one positional payload
-(`.Some(x)`, `Optional.Some(0)`); a `*`/`**` argument there is a syntax
-error. A sequence pattern's star takes a closed pattern (`*_`, `*rest`,
+(`.Some(x)`, `Optional.Some(0)`); over a `union`, positional subpatterns
+other than exactly one form a tuple pattern over the payload (`.eof()`,
+`.span(a, b)`). A `*`/`**` argument there is a syntax error. A sequence pattern's star takes a closed pattern (`*_`, `*rest`,
 `*var rest`, `*[a, b]`), never an `as` pattern or a `|`, and a second star
 is an error. A mapping pattern (`{"k": v}`, `{k: v}`) is upstream's
 dictionary literal in pattern position, which upstream has not implemented:

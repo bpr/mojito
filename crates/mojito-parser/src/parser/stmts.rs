@@ -51,13 +51,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Var) => self.parse_var_decl()?,
                 Some(Token::Identifier(word)) if word == "ref" => self.parse_ref_decl()?,
                 Some(Token::Def) => self.parse_def(Vec::new())?,
-                Some(Token::Struct | Token::Enum) => self.parse_struct(Vec::new())?,
+                Some(Token::Struct | Token::Enum | Token::Union) => self.parse_struct(Vec::new())?,
                 // A decorator list precedes a `def`, `struct`, or `enum`.
                 Some(Token::At) => {
                     let decorators = self.parse_decorators()?;
                     match self.peek_token()? {
                         Some(Token::Def) => self.parse_def(decorators)?,
-                        Some(Token::Struct | Token::Enum) => self.parse_struct(decorators)?,
+                        Some(Token::Struct | Token::Enum | Token::Union) => {
+                            self.parse_struct(decorators)?
+                        }
                         other => {
                             return Err(ParseError::UnexpectedToken(
                                 other.cloned().unwrap_or(Token::Eof),

@@ -3,8 +3,8 @@ use mojito::ast::{
     Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam,
     FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, MatchPattern, MatchPatternKind,
     Method, Param, ParamArg, ParamKind, PrefixOp, SequencePattern, SequenceTarget, Stmt, StmtKind,
-    StructComptime, SubscriptArg, TStringPart, TraitComptime, TraitMethod, Type, TypeParam,
-    WithItem,
+    StructComptime, SubscriptArg, SumKind, TStringPart, TraitComptime, TraitMethod, Type,
+    TypeParam, WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -5173,32 +5173,49 @@ fn rejects_assert_outside_a_function_and_as_a_name() {
 }
 
 #[test]
-fn parses_enum_cases_as_a_struct_declaration() {
+fn parses_enum_and_union_cases_as_struct_declarations() {
     let statements = parse(
-        "enum Token[T: AnyType](Copyable):\n    \"\"\"Doc.\"\"\"\n    case eof\n    case ident(String)\n    case span(Int, Self.T,)\n\n    def m(self) -> Int:\n        return 1\n\nenum Empty:\n    pass\n",
+        "enum Color(Writable):\n    \"\"\"Doc.\"\"\"\n    case red, green\n    case blue\n\n    def m(self) -> Int:\n        return 1\n\nunion Token[T: AnyType](Copyable):\n    case eof()\n    case ident(String)\n    case span(Int, Self.T,)\n\nenum Empty:\n    pass\n",
     );
-    let StmtKind::Struct {
-        name,
-        enum_cases: Some(cases),
-        methods,
-        fields,
-        ..
-    } = &statements[0].kind
-    else {
-        panic!("expected an enum");
+    let shapes = |statement: &Stmt| {
+        let StmtKind::Struct {
+            enum_cases: Some(cases),
+            fields,
+            ..
+        } = &statement.kind
+        else {
+            panic!("expected an enum or union");
+        };
+        assert!(fields.is_empty());
+        (
+            cases.kind,
+            cases
+                .iter()
+                .map(|case| (case.name.clone(), case.payload.len()))
+                .collect::<Vec<_>>(),
+        )
     };
-    assert_eq!(name, "Token");
-    assert!(fields.is_empty());
-    assert_eq!(methods.len(), 1);
-    let shapes = cases
-        .iter()
-        .map(|case| (case.name.as_str(), case.payload.len()))
-        .collect::<Vec<_>>();
-    assert_eq!(shapes, [("eof", 0), ("ident", 1), ("span", 2)]);
-    assert!(matches!(
-        &statements[1].kind,
-        StmtKind::Struct { enum_cases: Some(cases), .. } if cases.is_empty()
-    ));
+    let owned = |pairs: &[(&str, usize)]| {
+        pairs
+            .iter()
+            .map(|(name, len)| (name.to_string(), *len))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        shapes(&statements[0]),
+        (
+            SumKind::Enum,
+            owned(&[("red", 0), ("green", 0), ("blue", 0)])
+        )
+    );
+    assert_eq!(
+        shapes(&statements[1]),
+        (
+            SumKind::Union,
+            owned(&[("eof", 0), ("ident", 1), ("span", 2)])
+        )
+    );
+    assert_eq!(shapes(&statements[2]), (SumKind::Enum, Vec::new()));
     assert!(matches!(
         &parse("struct S:\n    pass\n")[0].kind,
         StmtKind::Struct {
@@ -5209,37 +5226,26 @@ fn parses_enum_cases_as_a_struct_declaration() {
 }
 
 #[test]
-fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
+fn rejects_malformed_enum_and_union_declarations() {
     let main = "\ndef main():\n    pass\n";
     for (body, expected) in [
         (
-            "case labeled(x: Int)",
-            "labeled payloads in enum cases are not supported",
+            "case payload(Int)",
+            "enum case 'payload' cannot carry a payload; declare a 'union' for cases with payloads",
         ),
-        (
-            "case keyword(Int, y=Int)",
-            "labeled payloads in enum cases are not supported",
-        ),
+        ("case empty()", "enum case 'empty' cannot carry a payload"),
         (
             "case typed: Int",
-            "enum case must have the form 'case name' or 'case name(T, ...)'",
+            "enum case must have the form 'case name' or 'case a, b, c'",
         ),
-        ("case several, names", "enum case must have the form"),
-        ("case empty()", "enum case must have the form"),
-        ("case trailing(Int) junk", "enum case must have the form"),
-        (
-            "case missing_comma(Int Int)",
-            "enum case must have the form",
-        ),
+        ("case trailing junk", "enum case must have the form"),
+        ("case listed,", "enum case must have the form"),
         ("case 1", "enum case must have the form"),
         (
             "@always_inline\n    case decorated",
             "'case' statement does not support decorators",
         ),
-        (
-            "var x: Int",
-            "enums do not support 'var' fields; store state in a case payload",
-        ),
+        ("var x: Int", "enums may not have additional stored state"),
         (
             "def f(self): ...",
             "enum methods must have a body; '...' is reserved",
@@ -5253,10 +5259,50 @@ fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
         let error = mojito::parse(&source).unwrap_err().to_string();
         assert!(error.contains(expected), "{body:?}: {error}");
     }
+    for (body, expected) in [
+        (
+            "case labeled(x: Int)",
+            "labeled payloads in union cases are not supported",
+        ),
+        (
+            "case keyword(Int, y=Int)",
+            "labeled payloads in union cases are not supported",
+        ),
+        (
+            "case bare",
+            "union case 'bare' must declare its payload in parentheses; write 'case bare()' for an empty payload",
+        ),
+        (
+            "case b(), c()",
+            "union cases must be declared separately, one per 'case'",
+        ),
+        (
+            "case typed: Int",
+            "union case 'typed' must declare its payload in parentheses",
+        ),
+        (
+            "case trailing(Int) junk",
+            "union case must have the form 'case name(T, ...)'",
+        ),
+        (
+            "case missing_comma(Int Int)",
+            "union case must have the form",
+        ),
+        ("case 1", "union case must have the form"),
+        ("var x: Int", "unions may not have additional stored state"),
+    ] {
+        let source = format!("union U:\n    case a()\n    {body}\n{main}");
+        let error = mojito::parse(&source).unwrap_err().to_string();
+        assert!(error.contains(expected), "{body:?}: {error}");
+    }
     for (source, expected) in [
         (
             "struct S:\n    enum I:\n        case a\n",
             "nested enum not supported here",
+        ),
+        (
+            "struct S:\n    union I:\n        case a()\n",
+            "nested union not supported here",
         ),
         (
             "trait T:\n    enum I:\n        case a\n",
@@ -5267,12 +5313,24 @@ fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
             "enum inside a function not supported here",
         ),
         (
+            "def f():\n    union I:\n        case a()\n",
+            "union inside a function not supported here",
+        ),
+        (
             "enum NoColon\n    case a\n",
             "expected ':' in enum definition",
         ),
         (
+            "union NoColon\n    case a()\n",
+            "expected ':' in union definition",
+        ),
+        (
             "@fieldwise_init\nenum E:\n    case a\n",
             "'@fieldwise_init' cannot be applied to an enum",
+        ),
+        (
+            "@fieldwise_init\nunion U:\n    case a()\n",
+            "'@fieldwise_init' cannot be applied to a union",
         ),
     ] {
         let error = mojito::parse(&format!("{source}{main}"))
@@ -5280,8 +5338,11 @@ fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
             .to_string();
         assert!(error.contains(expected), "{source:?}: {error}");
     }
-    // `enum` names a binding wherever it does not start a declaration.
-    parse("def f(enum: Int) -> Int:\n    var x = enum\n    enum = x + 1\n    return enum\n");
+    // `enum` and `union` name a binding wherever they do not start a
+    // declaration.
+    parse(
+        "def f(enum: Int, union: Int) -> Int:\n    var x = enum + union\n    union = x + 1\n    return union\n",
+    );
     // `...` beside a real statement, and an `@unavailable` placeholder, are
     // bodies.
     parse(

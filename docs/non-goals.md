@@ -95,24 +95,35 @@ casts to a subtree origin is accepted here and rejected there — the
 fifteen fixtures to `assets/extensions/<folder>/`, because the ordinary folders
 hold only programs the pinned Mojo compiles.
 
-### `enum` is spelled as upstream's proposal spells it
+### `enum` and `union` follow upstream's enum proposal
 
-Not to be removed: Mojito declares enums with `enum`, the spelling of
-upstream's enum proposal (`Mojo/proposals/enums.md`), where the pinned Mojo
-implements the same declaration under its experimental keyword `__enum`
-(owner's decision, 2026-10-25). The declaration, its generated members, and
-its semantics follow the pin's `__enum` (`docs/notes/enums.md`); only the
-spelling differs, so every `enum` program is rejected at the pin, and
-Mojito does not accept `__enum`.
+Not to be removed: Mojito declares payload-free cases with `enum` and
+payload-carrying cases with `union`, as upstream's enum proposal
+(`Mojo/proposals/enums.md`, 2026-11-07) splits the declaration, where the
+pinned Mojo implements one declaration for both under its experimental
+keyword `__enum` (owner's decisions, 2026-10-25 and 2026-11-15). Upstream's
+newer sources spell the proposal's declarations `__enum` and `__union`;
+Mojito spells them without the leading underscores, and will spell the
+proposal's guards `guard` the same way. Every `enum` and `union` program
+is rejected at the pin, and Mojito does not accept `__enum` or `__union`.
 
-- `enum` is a contextual keyword: only `enum Name` starting a statement
-  declares one, so `enum` stays an ordinary name elsewhere, as it is at the
-  pin.
-- The fixtures live under `assets/extensions/<folder>/enum_*.mojo`; each was
-  checked against the pin's output under the `__enum` spelling.
-- Reopen when upstream settles the keyword: if it keeps `__enum`, accept
-  that spelling beside or instead of `enum`; if it adopts `enum`, promote
-  the fixtures to the ordinary folders.
+- The generated members and the storage follow the pin's `__enum`
+  (`docs/notes/enums.md`): an enum case is the pin's case without a payload,
+  and a union case one with a payload, an empty `()` being `Tuple[]`.
+- What the proposal adds beyond the pin: an enum's cases listed on one
+  line, its implicit `ImplicitlyCopyable`, and its derived `Equatable`,
+  `Comparable`, and `Hashable`; a union's always-parenthesized cases; and
+  union case patterns whose several subpatterns form one tuple pattern.
+- `enum` and `union` are contextual keywords: only `enum Name` or
+  `union Name` starting a statement declares one, so each stays an
+  ordinary name elsewhere, as at the pin.
+- The fixtures live under `assets/extensions/<folder>/{enum,union}_*.mojo`.
+  Those carried over from the pin's `__enum` were checked against the pin's
+  output under that spelling.
+- Reopen when upstream settles the keywords: if it keeps the
+  double-underscore spellings, accept them beside or instead of these; if
+  it adopts `enum` and `union`, promote the fixtures to the ordinary
+  folders.
 
 These are the three admitted extensions under the match-or-subset rule
 (`AGENTS.md` invariant 1).

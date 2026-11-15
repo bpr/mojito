@@ -320,6 +320,10 @@ pub enum Token {
     /// the lexer emits it only where a statement starts with `enum Name`, so
     /// `enum` elsewhere stays an ordinary name.
     Enum,
+    /// `union`, the declaration of a sum type whose cases carry payloads,
+    /// as upstream's enum proposal spells it (`Mojo/proposals/enums.md`). A
+    /// contextual keyword, as `enum` is.
+    Union,
     /// `__generator_type`, upstream's spelling of the type of a
     /// parameterized compile-time declaration (`__generator_type[Idx: Int]
     /// Int`).

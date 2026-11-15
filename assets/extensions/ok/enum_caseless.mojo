@@ -1,8 +1,8 @@
 # An `enum` without cases has no values, but its type works like any
 # other: a `List` of it copies and prints, and a `match` over it needs only
 # a fallback.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# `enum` is the declaration upstream's enum proposal gives cases without
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
 enum Uninhabited(Copyable, Writable):

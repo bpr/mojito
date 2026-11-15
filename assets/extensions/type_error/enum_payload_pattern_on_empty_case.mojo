@@ -1,12 +1,11 @@
 # expect: enum case 'off' has no associated value
-# A case without a payload has nothing for a payload pattern to match.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# An enum case has no payload for a payload pattern to match.
+# `enum` is the declaration upstream's enum proposal gives cases without
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
 enum Light:
-    case on
-    case off
+    case on, off
 
 
 def code(light: Light) -> Int:

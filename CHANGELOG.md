@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `enum` and `union` follow upstream's enum proposal
+  (`Mojo/proposals/enums.md`), which splits the pin's `__enum` in two. An
+  `enum` declares payload-free cases, listed on one line or one per
+  `case`; each case is a value, the enum is `ImplicitlyCopyable`, and it
+  derives the `Equatable`, `Comparable`, `Hashable`, and `Writable` it
+  lists. A `union` declares cases that each carry one parenthesized
+  payload (`()` is `Tuple[]`, several types a `Tuple`), and its case
+  patterns always take parentheses, several subpatterns forming one tuple
+  pattern (`.span(a, b)`). An `enum` case with a payload is now an error
+  that points at `union` (`assets/extensions/*/{enum,union}_*.mojo`; the
+  proposal's `SumType` traits are R2237).
+
 - Every member of upstream's `struct DType` is now a value: `_uint1`,
   `_uint2`, `_uint4`, `uint128`, `int128`, `uint256`, `int256`, the
   `float4`/`float6`/`float8` formats, and `bfloat16` print, compare, hash,

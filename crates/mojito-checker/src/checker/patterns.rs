@@ -641,7 +641,12 @@ impl Checker {
                 self.compile_or_pattern(alternatives, subject, join, commands)
             }
             MatchPatternKind::Head(head) if self.is_enum_like(subject) => {
-                let case = self.enum_case(head, subject)?.0;
+                let (case, name) = self.enum_case(head, subject)?;
+                if self.is_union(subject) {
+                    return Err(TypeError::MatchPattern(format!(
+                        "union case '{name}' requires a payload pattern in parentheses; use '.{name}(_)' to ignore the payload"
+                    )));
+                }
                 let (tested, reads) = self.materialize(subject, commands)?;
                 self.enum_tag_test(case, &tested, reads, commands)?;
                 commands.cover.push(CoverCommand::EnumTag {
@@ -1114,6 +1119,9 @@ impl Checker {
     /// upstream's order: the head's shape and owner, the case, its payload
     /// type, then the one positional payload pattern. The tag test, then
     /// `p` over the payload `subject._unsafe_get_enum_payload[case]()`.
+    /// Over a `union`, the subpatterns other than exactly one form one tuple
+    /// pattern over the payload: `.eof()` matches the empty tuple, and
+    /// `.span(a, b)` the elements of a `Tuple[Int, Int]` payload.
     fn compile_enum_case(
         &mut self,
         head: &Expr,
@@ -1135,7 +1143,19 @@ impl Checker {
                 "enum case '{name}' has no associated value"
             )));
         }
+        let union = self.is_union(subject);
+        let formed;
         let pattern = match (args, kwargs) {
+            (_, [_, ..]) if union => {
+                return Err(TypeError::MatchPattern(
+                    "union case patterns do not support keyword arguments; match a struct payload by its fields".into(),
+                ));
+            }
+            ([pattern], []) => pattern,
+            (_, []) if union => {
+                formed = MatchPattern::new(MatchPatternKind::Tuple(args.to_vec()), head.span);
+                &formed
+            }
             ([], []) => {
                 return Err(TypeError::MatchPattern(format!(
                     "enum case '{name}' requires a payload pattern inside the parentheses"
@@ -1146,7 +1166,6 @@ impl Checker {
                     "enum case patterns do not support keyword arguments".into(),
                 ));
             }
-            ([pattern], []) => pattern,
             _ => {
                 return Err(TypeError::MatchPattern(
                     "enum case patterns currently support at most one payload subpattern".into(),
@@ -1222,6 +1241,12 @@ impl Checker {
     /// `EnumLike`, which makes its patterns enum cases.
     fn is_enum_like(&self, subject: &MatchSubject) -> bool {
         !subject.untyped() && self.conforms_to(&subject.ty, &enum_like_trait())
+    }
+
+    /// Whether `subject` is a `union`'s value, whose case patterns always
+    /// take a parenthesized payload pattern.
+    fn is_union(&self, subject: &MatchSubject) -> bool {
+        !subject.untyped() && self.conforms_to(&subject.ty, &union_trait())
     }
 
     /// The index of the case `name` in `ty`'s `_enum_case_names`, the first

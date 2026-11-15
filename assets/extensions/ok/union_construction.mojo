@@ -1,13 +1,13 @@
-# The pin's enums (`Mojo/test/mojo-integration/enum.mojo`):
+# The pin's enums (`Mojo/test/mojo-integration/enum.mojo`) as a union:
 # construction by qualified and contextual name, two cases sharing a payload
-# type, a several-type payload matched as one tuple, the discriminant, and
-# `ref` and `var` payload bindings.
-# Mojito spells the pin's `__enum` as `enum`, the spelling of upstream's
-# enum proposal (`docs/non-goals.md`).
+# type, a several-type payload matched element by element and as one tuple,
+# the discriminant, and `ref` and `var` payload bindings.
+# `union` is the declaration upstream's enum proposal gives cases with
+# payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
 
 
-enum Token:
-    case eof
+union Token:
+    case eof()
     case identifier(String)
     case integer(Int)
     case span(Int, Int)
@@ -16,7 +16,7 @@ enum Token:
 
 def describe(token: Token) -> String:
     match token:
-        case .eof:
+        case .eof():
             return "eof"
         case .identifier(name):
             return "word:" + name
@@ -24,7 +24,7 @@ def describe(token: Token) -> String:
             return "word:" + name
         case .integer(value):
             return "int:" + String(value)
-        case .span((start, end)):
+        case .span(start, end):
             return "span:" + String(start) + ".." + String(end)
 
 
@@ -39,7 +39,17 @@ def main():
     print(describe(Token.span(3, 7)), Token.span(3, 7)._get_enum_discriminant())
     var kw: Token = .keyword("def")
     print(describe(kw), kw._get_enum_discriminant())
-    print(take(.integer(1)), take(.span(1, 2)))
+    print(take(.integer(1)), take(.span(1, 2)), take(.eof()))
+    match Token.span(4, 6):
+        case .span(pair):
+            print("pair", pair[0], pair[1])
+        case _:
+            pass
+    match Token.span(5, 9):
+        case .span((start, end)):
+            print("nested", start, end)
+        case _:
+            pass
 
     var token: Token = .identifier("count")
     match token:

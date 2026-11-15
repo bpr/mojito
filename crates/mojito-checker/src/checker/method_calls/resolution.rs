@@ -103,6 +103,16 @@ impl Checker {
             }
         }
         if let TyKind::AnyStruct(ty) = obj_ty.kind() {
+            if let Some((name, _)) = ty.kind().as_non_simd_struct()
+                && let Some(info) = self.structs.get(name)
+                && info.conforms.contains(&super::super::enum_trait())
+                && info.associated_value_types.contains_key(method)
+            {
+                return Err(TypeError::EnumCaseCalled {
+                    enum_name: ty.to_string(),
+                    case: method.to_string(),
+                });
+            }
             return Err(TypeError::NoTypeAttribute {
                 type_name: ty.to_string(),
                 attribute: method.to_string(),
