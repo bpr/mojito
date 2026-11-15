@@ -163,7 +163,7 @@ impl FnLowering<'_> {
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
         let fields = self
             .layout
-            .struct_layout(&[Ty::bool(), element.clone()])
+            .uninit_storage_layout(&element)
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let initialized = self.bool_constant(ctx, init.is_some());
         let flag_store = StoreOp::new(ctx, initialized, storage);
@@ -189,7 +189,7 @@ impl FnLowering<'_> {
         self.guard_uninit_present(ctx, ptr, TrapCategory::UninitTake, dest)?;
         let fields = self
             .layout
-            .struct_layout(&[Ty::bool(), element.clone()])
+            .uninit_storage_layout(element)
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
         self.load_moved_from(ctx, payload, element, dest)?;
@@ -213,7 +213,7 @@ impl FnLowering<'_> {
         self.guard_uninit_present(ctx, ptr, TrapCategory::UninitDestroy, dest)?;
         let fields = self
             .layout
-            .struct_layout(&[Ty::bool(), element.clone()])
+            .uninit_storage_layout(element)
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
         self.emit_drop(ctx, payload, element, destructor)?;

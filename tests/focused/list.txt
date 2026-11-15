@@ -16,7 +16,7 @@
 # entry that owns it; restore it when that entry lands.
 
 # Gate failures (2026-11-15 second overnight run)
-# R2233 fixture assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo
+fixture assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo
 
 # Gate failures (2026-11-15 overnight run)
 fixture assets/ok/for_destructuring_lifetimes.mojo

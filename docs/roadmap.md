@@ -956,31 +956,10 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2233 `maybe_uninit_deinit_uninitialized` no longer compiles
-  natively: `Bool` has no declaration to lay out**
-
-  `mojito run --backend pliron
-  assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo` stops with
-  "unsupported type `__UninitStorage[SIMD[DType.int, 1]]` (struct 'Bool'
-  has no MIR declaration to lay out)", where the VM traps with "destroy
-  of uninitialized MaybeUninit storage".
-  - The fixture's row in `conformance/pliron-parity.tsv` is
-    `error-differential`, and the heavy sweep panics on the compile error
-    (hidden today behind R2232).
-  - `maybe_uninit_roundtrip` and `maybe_uninit_write` still compile, so
-    the gap is in the trap-only path: the reachability that collects
-    declarations for layout misses `Bool` when `main` only builds and
-    destroys the storage.
-  - The error comes from `crates/mojito-native-core/src/layout.rs`.
-    `reachability_follows_constructor_and_lifecycle_edges` in
-    `crates/mojito-pliron` pins the reachability walk.
-  - Restore its commented `tests/focused/list.txt` line when this lands.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2234 The heavy lane's later checks have not run since
   2026-11-01**
 
-  The parity sweep's panics (R2232, R2233) end
+  The parity sweep's panic (R2232) ends
   `parity_exe_manifest_and_differential` before the `assets/runtime_error`
   half, the manifest comparison, and the coverage ratchets. So
   `scripts/check-pliron-heavy` has not shown whether they pass.

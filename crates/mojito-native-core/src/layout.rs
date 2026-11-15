@@ -89,14 +89,8 @@ impl LayoutCx<'_> {
         if mojito_types::types::is_symbolic(ty) {
             return Err(LayoutError::Symbolic(ty.to_string()));
         }
-        // Compiler-private inline uninit storage carries a native-only
-        // presence bit followed by the payload. This preserves the VM's
-        // deterministic runtime backstop for unsafe read/take/destroy while
-        // ordinary struct destruction still treats the wrapper as inert.
         if let Some(element) = mojito_types::types::uninit_storage_element(ty) {
-            return self
-                .struct_layout(&[Ty::bool(), element.clone()])
-                .map(|s| s.layout);
+            return self.uninit_storage_layout(element).map(|s| s.layout);
         }
         // A vector lays out as its `!kgen.simd` storage, the field
         // upstream's `LowerKGENToLLVM` lowers the `SIMD` struct to.
@@ -173,6 +167,16 @@ impl LayoutCx<'_> {
                 "type has no native layout yet: {unsupported}"
             ))),
         }
+    }
+
+    /// Compiler-private inline uninit storage: a native-only `i1` presence
+    /// flag followed by the `element` payload, at offsets `[flag, payload]`.
+    /// The flag preserves the VM's deterministic runtime backstop for unsafe
+    /// read/take/destroy while ordinary struct destruction still treats the
+    /// wrapper as inert. It is a raw machine bit, not the `Bool` struct, so
+    /// the layout needs no declaration the program may never mention.
+    pub fn uninit_storage_layout(&self, element: &Ty) -> Result<StructLayout, LayoutError> {
+        self.struct_layout(&[Ty::new(TyKind::I1), element.clone()])
     }
 
     /// C-style aggregate layout of `fields` in declaration order.
@@ -417,6 +421,18 @@ mod tests {
         // the payload stays recoverable through the mangled spelling.
         assert_eq!(
             layout_of(&storage("__UninitStorage$mono$TInt", Ty::int())),
+            Ok(Layout::new(16, 8))
+        );
+        // The presence flag is a raw `i1`: a program that never mentions
+        // `Bool` still lays its storage out.
+        let empty = StructFieldIndex::default();
+        let (target, structs) = cx(&empty);
+        assert_eq!(
+            LayoutCx {
+                target: &target,
+                structs,
+            }
+            .layout_of(&storage("__UninitStorage", Ty::int())),
             Ok(Layout::new(16, 8))
         );
         // The wrapper's presence bit remains part of enclosing storage.

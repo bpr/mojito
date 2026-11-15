@@ -651,6 +651,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `MaybeUninit` storage lays out natively whether or not the program names
+  `Bool`: its presence flag is a raw `i1`, so destroying never-written
+  storage traps natively as in the VM instead of failing to compile
+  (R2233; `assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo`).
+
 - The VM captures what a program writes to fd 2 (`print(..., file=stderr)`,
   `write(2, ..)`) beside its stdout, carried as `Execution::stderr` and
   written to stderr by `mojito run` and `exec`, so the native parity gate

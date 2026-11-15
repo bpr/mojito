@@ -296,7 +296,7 @@ impl FnLowering<'_> {
                     };
                     let fields = self
                         .layout
-                        .struct_layout(&[Ty::bool(), element.clone()])
+                        .uninit_storage_layout(&element)
                         .map_err(|error| {
                             self.unsupported_reg(format!("uninit storage ({error})"), dest)
                         })?;
