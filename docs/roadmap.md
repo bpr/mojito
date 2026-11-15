@@ -956,26 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2235 A pending error that a `finally` or `__exit__` swallows is
-  freed natively through a value its raise edge never defined**
-
-  Pliron rejects a function whose pending raise dies uncaught, where the VM
-  runs it: "IR verification failed … Function call has incorrect type:
-  argument 0 type mismatch: expected llvm.ptr (0), got builtin.integer i8".
-  - Smallest shape: `def g() raises -> Int:` with `try: raise
-    Error("pending")` and `finally: return 3`, called from `main` under a
-    `try`. The VM prints `3`.
-  - The dying error's inlined `String` destructor calls `mjrt_free` on an
-    `i8` poison. `close_edge` (`crates/mojito-pliron/src/lower/instr.rs`)
-    passes that poison for a raising instruction's results on the raise
-    path, so the freed pointer is read from a register the raise path
-    never wrote.
-  - Probes: `assets/ok/pliron_finally_overrides.mojo` and
-    `assets/ok/tempfile_mkdtemp.mojo` (whose `TemporaryDirectory.__exit__`
-    swallows the raise), both commented out in `tests/focused/list.txt`.
-  - Found by the heavy lane run of 2026-11-15 (R2234).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2236 The parity sweep demands a trap category of
   `simd_element_list_too_few`, whose read is undefined**
 

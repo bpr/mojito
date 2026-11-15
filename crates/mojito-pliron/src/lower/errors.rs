@@ -38,12 +38,19 @@ impl FnLowering<'_> {
 
     /// The entry-block `MjError` staging slot of the error a raise out of
     /// the function hands out: the storage of its error slot
-    /// ([`mojito_mir::mir::MirFunction::error_slot`]).
+    /// ([`mojito_mir::mir::MirFunction::error_slot`]). A slot holding an
+    /// `Error` (or a String) is that variable's own storage, as a `try`'s
+    /// slot is, so a place read of it — a `finally` that swallows the
+    /// pending error destroys it field by field — sees what the raise
+    /// staged; only a typed error's slot, of no fields, stages apart.
     pub(super) fn ensure_err_slot(&mut self, ctx: &mut Context) -> Value {
         if let Some(slot) = self.err_slot {
             return slot;
         }
-        let slot = self.entry_alloca(ctx, 24, 8);
+        let slot = match self.func.error_slot {
+            Some(var) if self.holds_message(var) => self.var_slots[var as usize],
+            _ => self.entry_alloca(ctx, 24, 8),
+        };
         self.err_slot = Some(slot);
         slot
     }

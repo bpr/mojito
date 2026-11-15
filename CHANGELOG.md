@@ -651,6 +651,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pending error that a `finally` or `__exit__` swallows compiles natively
+  again: the function's error slot stages its `MjError` in the variable's own
+  storage, so the swallowed error's inlined destructor frees the pointer the
+  raise stored instead of reading an unwritten slot (R2235;
+  `assets/ok/pliron_finally_overrides.mojo`, `assets/ok/tempfile_mkdtemp.mojo`).
+
 - A struct instance keyed by an unevaluated closed application
   (`Tagged[Extent(2, 3)]`, a vector or `comptime for` value parameter)
   lays out natively again: native layout asks whether an elaborated type is

@@ -27,8 +27,8 @@ fixture assets/ok/struct_value_param_application.mojo
 fixture assets/ok/struct_value_param_frozen.mojo
 fixture assets/ok/template_method_vector_key.mojo
 fixture assets/ok/template_type_member_loop_bound.mojo
-# R2235: fixture assets/ok/pliron_finally_overrides.mojo
-# R2235: fixture assets/ok/tempfile_mkdtemp.mojo
+fixture assets/ok/pliron_finally_overrides.mojo
+fixture assets/ok/tempfile_mkdtemp.mojo
 # R2236: fixture assets/runtime_error/simd_element_list_too_few.mojo
 
 # Gate failures (2026-11-15 second overnight run)
