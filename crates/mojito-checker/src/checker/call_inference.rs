@@ -1909,6 +1909,7 @@ impl Checker {
             span,
             &slots,
             &effective_conventions,
+            &self.declared_by_address_slots(&conventions, &declared, &params),
             self.gathered_arguments(name, &overflow),
         );
         self.record_argument_borrows(
@@ -2200,20 +2201,10 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.record_call_conventions(
-            span,
-            &slots,
-            &effective_conventions,
-            self.gathered_arguments(name, &overflow),
-        );
-        self.record_argument_borrows(
-            &slots,
-            &effective_conventions,
-            self.gathered_arguments(name, &overflow),
-            args,
-            kwargs,
-            None,
-        );
+        let by_address = self.declared_by_address_slots(conventions, params, &bound);
+        let gathered = self.gathered_arguments(name, &overflow);
+        self.record_call_conventions(span, &slots, &effective_conventions, &by_address, gathered);
+        self.record_argument_borrows(&slots, &effective_conventions, gathered, args, kwargs, None);
         let mut referent = resolve(ret)?;
         if forwarded_pack.is_some() {
             // A result naming the callee's pack elements (`Us[i]`) closes

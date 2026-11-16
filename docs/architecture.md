@@ -2409,7 +2409,22 @@ pin does.
 A call argument the checker bound to a `mut` or `ref` parameter
 (`RetainCallPlace`) is lowered as its place's address, a `ref.make`, as
 upstream emits the `!lit.ref` while lowering the operand
-(`Flatten::address_operand`, `mir/calls.rs`): the read that lowered it
+(`Flatten::address_operand`, `mir/calls.rs`), and so is one bound to a
+`read` parameter the check judged by address
+(`CheckedCallArgument::by_address`, `CheckedArgumentConvention::by_address`:
+the parameter's *declared* type, before the call's substitution, is not
+proven register-passable), immutably, which `lower_call_operand` reads
+from the operand's `OperandBinding::Read`: a borrowed place, a memory-only
+temporary's call-result slot, and a slice literal's slot
+(`Flatten::address_subscript_argument`) alike. An implicit conversion's
+source is addressed where `Flatten::apply_conversion` emits the
+constructor call (mutably for a view constructor's `ref [origin]`
+parameter, `BorrowConversionSource`, immutably for a memory-only `read`
+one, `ConversionReadsSource`), and a closure storage's reference capture
+where `Flatten::build_closure_storage` emits its `__init__`. A builtin
+intrinsic (`input`, `_mojito_abort`) takes its operand by value, and a
+concrete `S(copy=x)` source stays a value until `name_constructors`
+decides whether it calls a declared copy initializer. The read that lowered it
 becomes the `ref.make`, or a fresh one follows it, as mutable as a `read`
 parameter's storage or an immutable reference the place is reached
 through allows, and, rooted at the function's own bare `ref` parameter,
@@ -2424,7 +2439,9 @@ the checked `IterationProtocol::prepare_receiver` says. A destructured tuple pla
 extraction (`Flatten::destructured_base`, `mir/lower_stmt.rs`). Once the
 omitted arguments are written, `mir::address_call_operands`
 (`mir/call_addresses.rs`, R1425) addresses every other by-address operand
-of a direct `call` or resolved `call.method`, as upstream's `lit.call` takes a `!lit.ref`
+of a direct `call` or resolved `call.method` (receivers outside
+`lower_receiver_value`, a subscript store's value, `call.indirect`, a
+`copy=` source, and filled defaults), as upstream's `lit.call` takes a `!lit.ref`
 operand and loads nothing: a `mut`/`ref` parameter, or a `read` one of a
 memory-only declared type (`mir::by_address_parameter`), whose operand is
 a whole load of the place the call's `arg_places` entry retains (or a
@@ -6212,7 +6229,8 @@ current Mojo:
   passes a memory-only `read` argument: `lower_call_operand`
   (`mir/calls.rs`) retains its place in the call's `arg_places`, so the
   ownership analysis classifies a shared read and the VM binds the
-  parameter to the caller's storage. The checker marks a read argument
+  parameter to the caller's storage, and passes it as the place's
+  immutable `ref.make` when the check judged the parameter by address. The checker marks a read argument
   whose type is proven register-passable `RegisterPassableRead`
   (`Checker::record_result_conventions`), which is passed by value and
   retains its place only when the call's result borrows it

@@ -252,9 +252,16 @@ impl Checker {
                 )?;
                 // `copy=` binds upstream's `init_pointee_copy(value: T)` read
                 // slot: a place is lent where it lies, so the write's copy
-                // is the one copy.
+                // is the one copy. Its declared `T` is bound by no
+                // register-passable trait, so the slot is by address.
                 if copy {
-                    self.record_call_conventions(span, &[slot], &[convention], Gathered::NONE);
+                    self.record_call_conventions(
+                        span,
+                        &[slot],
+                        &[convention],
+                        &[true],
+                        Gathered::NONE,
+                    );
                     self.record_argument_borrows(
                         &[slot],
                         &[convention],

@@ -106,16 +106,22 @@ impl Checker {
     /// Record the conventions `site`, a call that records no contract,
     /// binds its arguments by: each bound slot's effective convention, and
     /// a gathering collector's for each element it gathers
-    /// ([`SemanticAdjustment::CallConventions`]).
+    /// ([`SemanticAdjustment::CallConventions`]), with whether each bound
+    /// slot is `by_address`.
     pub(super) fn record_call_conventions(
         &self,
         site: &SourceSpan,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
+        by_address: &[bool],
         gathered: Gathered<'_>,
     ) {
-        self.record_at(site.clone()).call_conventions =
-            Some(argument_conventions(slots, conventions, gathered));
+        self.record_at(site.clone()).call_conventions = Some(argument_conventions(
+            slots,
+            conventions,
+            by_address,
+            gathered,
+        ));
     }
 
     /// Bind each nominal subscript passed to a `mut` parameter of `func` as
@@ -221,11 +227,13 @@ impl Checker {
         site: &SourceSpan,
         source: mojito_checked::checked::CheckedCallArgumentSource,
         convention: Option<ArgConvention>,
+        by_address: bool,
     ) {
         self.record_at(site.clone()).call_conventions =
             Some(vec![mojito_checked::checked::CheckedArgumentConvention {
                 source,
                 convention,
+                by_address,
             }]);
     }
 
@@ -669,6 +677,7 @@ pub(super) fn read_temporary_arguments(
 pub(super) fn argument_conventions(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
+    by_address: &[bool],
     gathered: Gathered<'_>,
 ) -> Vec<mojito_checked::checked::CheckedArgumentConvention> {
     use mojito_checked::checked::{CheckedArgumentConvention, CheckedCallArgumentSource};
@@ -685,6 +694,7 @@ pub(super) fn argument_conventions(
             Some(CheckedArgumentConvention {
                 source,
                 convention: conventions.get(index).copied().flatten(),
+                by_address: by_address.get(index).copied().unwrap_or(false),
             })
         })
         .chain(
@@ -694,6 +704,7 @@ pub(super) fn argument_conventions(
                 .map(|position| CheckedArgumentConvention {
                     source: CheckedCallArgumentSource::Positional(*position),
                     convention: collector,
+                    by_address: false,
                 }),
         )
         .collect()

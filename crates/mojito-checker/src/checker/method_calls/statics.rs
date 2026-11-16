@@ -720,6 +720,11 @@ impl Checker {
             &span,
             &selected.slots,
             &effective_conventions,
+            &self.declared_by_address_slots(
+                &selected.conventions,
+                &selected.declared_params,
+                &selected.param_types,
+            ),
             selected.gathered_arguments(),
         );
         self.record_argument_borrows(

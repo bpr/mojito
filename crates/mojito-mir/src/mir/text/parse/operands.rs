@@ -414,15 +414,23 @@ impl Decoder {
         let convention = self.req(value, fields, "convention", |d, v| {
             Some(d.option_value(Some(v)).and_then(|v| d.convention(v)))
         })?;
+        let by_address = self.by_address(fields);
         self.unknown(
             fields,
-            &["source", "parameter_type", "requires_place", "convention"],
+            &[
+                "source",
+                "parameter_type",
+                "requires_place",
+                "convention",
+                "by_address",
+            ],
         );
         Some(CheckedCallArgument {
             source,
             parameter_ty,
             requires_place,
             convention,
+            by_address,
         })
     }
 
@@ -435,8 +443,13 @@ impl Decoder {
         let convention = self.req(value, fields, "convention", |d, v| {
             Some(d.option_value(Some(v)).and_then(|v| d.convention(v)))
         })?;
-        self.unknown(fields, &["source", "convention"]);
-        Some(mojito_checked::checked::CheckedArgumentConvention { source, convention })
+        let by_address = self.by_address(fields);
+        self.unknown(fields, &["source", "convention", "by_address"]);
+        Some(mojito_checked::checked::CheckedArgumentConvention {
+            source,
+            convention,
+            by_address,
+        })
     }
 
     pub(super) fn call_argument_source(
@@ -611,6 +624,15 @@ impl Decoder {
             id: self.upgraded_id(&owner, slot),
             name: name.into(),
         })
+    }
+
+    /// A bound argument's `by_address` (schema 1.197), absent for `false`
+    /// as every older artifact reads.
+    fn by_address(&mut self, fields: &[Field]) -> bool {
+        self.field(fields, "by_address")
+            .ok()
+            .and_then(|value| self.boolean(value))
+            .unwrap_or(false)
     }
 
     /// A schema 1.156 capture's mode, of which only `reference` remains.

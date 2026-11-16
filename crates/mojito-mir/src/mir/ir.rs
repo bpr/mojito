@@ -1912,6 +1912,7 @@ impl MirArgConventions {
             mojito_checked::checked::CheckedArgumentConvention {
                 source: argument.source,
                 convention: argument.convention,
+                by_address: argument.by_address,
             }
         }))
     }

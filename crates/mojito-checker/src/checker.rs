@@ -1107,6 +1107,45 @@ impl Checker {
             && self.register_passability(ty) != traits::RegisterPassability::Proven
     }
 
+    /// Whether a parameter declared with `convention` and type `declared`
+    /// receives its argument by address
+    /// ([`mojito_checked::checked::CheckedArgumentConvention::by_address`]):
+    /// a `mut` or `ref` one, and a `read` one of a type not proven
+    /// register-passable as declared, as upstream's signature makes it a
+    /// `!lit.ref` before any substitution.
+    pub(crate) fn declared_by_address(
+        &self,
+        convention: Option<ArgConvention>,
+        declared: &Ty,
+    ) -> bool {
+        match convention {
+            Some(ArgConvention::Mut | ArgConvention::Ref) => true,
+            None | Some(ArgConvention::Imm) => self.memory_only(declared),
+            Some(ArgConvention::Var | ArgConvention::Deinit | ArgConvention::Out) => false,
+        }
+    }
+
+    /// [`Self::declared_by_address`] for each parameter of a signature
+    /// whose declared `conventions` and parameter types are `declared`,
+    /// else, where it records none, its `bound` ones.
+    pub(crate) fn declared_by_address_slots(
+        &self,
+        conventions: &[Option<ArgConvention>],
+        declared: &[Ty],
+        bound: &[Ty],
+    ) -> Vec<bool> {
+        conventions
+            .iter()
+            .enumerate()
+            .map(|(index, convention)| {
+                declared
+                    .get(index)
+                    .or_else(|| bound.get(index))
+                    .is_some_and(|ty| self.declared_by_address(*convention, ty))
+            })
+            .collect()
+    }
+
     fn new_seeded(
         transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>>,
         call_through_seed: HashMap<String, Vec<mojito_checked::checked::CallThroughEffect>>,

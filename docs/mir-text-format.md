@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.196
+# Mojito Textual MIR Format, Version 1.197
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.196 is implemented end to end for inspection and loading: canonical
+Version 1.197 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.196
+mojito-mir 1.197
 ```
 
-The writer emits 1.196. The reader accepts 1.0 through 1.196; *Schema 1.0*
+The writer emits 1.197. The reader accepts 1.0 through 1.197; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1197,6 +1197,16 @@ it loads: a `rebind` of the pack to its pointers, which the load then
 takes. The package format moves to `mojito-package 218` with it, when a
 checked `kgen.struct.load_indirect` records
 `SemanticAdjustment::KgenStructLoadIndirect` (R1922).
+
+Schema 1.197 adds an optional `by_address: true` to the
+`argument_convention` and `call_argument` records: the callee receives that
+argument's storage, not a value, because its parameter is declared `mut` or
+`ref`, or is a `read` whose declared type (before the call's substitution)
+the check did not prove register-passable, upstream's `!lit.ref` argument.
+Lowering forms the argument's `ref.make` from it. The writer emits the field
+only when it is set; an absent field, as in every artifact before 1.197,
+reads as `false`. The package format moves to `mojito-package 221` with it
+(R2245).
 
 Schema 1.196 adds an optional `conventions: [argument_convention
 { source, convention }, ...]` to `call` and `call.method`: the effective

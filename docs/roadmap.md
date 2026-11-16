@@ -9526,31 +9526,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2245 A memory-only `read` argument gets its address from
-  `mir::address_call_operands`, not from `lower_call_operand`**
-
-  Upstream emits a by-address argument's `!lit.ref` while lowering it.
-  `Flatten::lower_call_operand` addresses only an argument the check bound
-  to `mut`/`ref` (`RetainCallPlace`), so every memory-only `read` argument
-  and some `mut`/`ref` ones still wait for the post-lowering pass.
-  - The check records no by-address verdict per argument. Add one to
-    `CheckedCallArgument`/`CheckedArgumentConvention`, judged on the
-    callee's *declared* parameter type (a template's `read x: T` stays by
-    address), since `RegisterPassableRead` judges the actual's type.
-  - Then address in `lower_call_operand` from that verdict, the
-    borrowed-read and temporary arms included.
-  - Probe: a throwaway audit in `address_call_operands` printing each
-    operand `by_address_operands` lists whose register is not yet a `Ref`
-    (run once with a fresh `MOJITO_CACHE_DIR`, so all of std lowers) shows
-    about 2100 such `read` arguments of `call`, `call.method`, and
-    `index.multi`.
-  - Probe: a view conversion's borrowed source
-    (`Flatten::borrowed_conversion_source`, `StringSpan.__init__$ov$String`)
-    reaches the pass as a `mut` argument.
-  - Probe: a closure storage's by-reference capture passed to
-    `…$__storage.__init__` (std's `_write_int$process_digits`).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R2246 Receivers lowered outside `lower_receiver_value` get their
   address from `mir::address_call_operands`**
@@ -9583,9 +9558,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `def(...)` bound `__call__`'s operands (conventions from the function
     type), `T(copy=x)`'s source, and the operands `fill_omitted_arguments`
     writes (memory-only defaults, `**kwargs` `_insert` receivers).
+  - A concrete `S(copy=x)` source is lowered as a value
+    (`expr_call.rs` rebinds it unaddressed), because `name_constructors`
+    decides after lowering whether it calls a declared copy initializer or
+    folds to a `value.copy` (`struct_named_copy`), which needs a value.
+    Fold it with a `ref.read` of an addressed source, as
+    `construct_type_parameters` does through its `RegisterTable`, then
+    address it in lowering.
+  - Probe: `List(copy=…)`, `Dict.copy`, `Set.copy`, `String.copy`, and the
+    other library `Self(copy=self)` constructions (36 operands over std).
   - Then remove the two calls and repoint every doc comment naming
     `address_call_operands` as the producer.
-  - Probe: R2245's audit lists no unaddressed operand over std; `--backend pliron` on `subscript_write_back.mojo`.
+  - Probe: a throwaway audit in `address_call_operands`'s `collect`,
+    printing each operand `by_address_operands` lists whose register is
+    not yet a `Ref` (run with a fresh `MOJITO_CACHE_DIR`, so all of std
+    lowers), lists none; `--backend pliron` on `subscript_write_back.mojo`.
   - Depends on R2245, R2246.
   - Model: Fable, Planned.
 

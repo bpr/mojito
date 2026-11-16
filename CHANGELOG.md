@@ -1008,6 +1008,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering now forms a memory-only `read` argument's `ref.make` itself,
+  as upstream emits the `!lit.ref` while lowering the operand: the check
+  records, per bound argument, whether its callee's declared parameter
+  takes it by address (`by_address` on `CheckedCallArgument` and
+  `CheckedArgumentConvention`, MIR text 1.197, `mojito-package 221`), and
+  lowering addresses the argument's retained place, a temporary's or slice
+  literal's slot included, from it. An implicit conversion's source and a
+  closure storage's reference captures are addressed where their
+  constructor call is emitted. The check now proves an MLIR-builtin type
+  (`!kgen.string`, the literal types) register-passable, as MIR does.
+  Output is unchanged (R2245).
 - MIR lowering now forms a by-address receiver's `ref.make` itself, as
   upstream emits the `!lit.ref` while lowering the operand: a method
   call's or subscript accessor's declared `mut`/`ref` receiver, or its

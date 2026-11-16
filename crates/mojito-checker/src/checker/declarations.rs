@@ -2521,7 +2521,17 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.record_call_conventions(span, binding.slots, &effective, binding.collected);
+        self.record_call_conventions(
+            span,
+            binding.slots,
+            &effective,
+            &self.declared_by_address_slots(
+                binding.conventions,
+                &exclusivity.declared,
+                &exclusivity.bound,
+            ),
+            binding.collected,
+        );
         self.record_argument_borrows(
             binding.slots,
             &effective,
@@ -5108,6 +5118,7 @@ impl Checker {
                     span,
                     mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
                     None,
+                    self.memory_only(&instance),
                 );
                 // A source already of the instance keeps its origin tail.
                 return Ok(
@@ -5127,6 +5138,7 @@ impl Checker {
                 span,
                 mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
                 None,
+                self.memory_only(&arg_ty),
             );
             return match nominal_parts(&arg_ty) {
                 Some((actual, _)) if actual == name => Ok(arg_ty),
@@ -5146,6 +5158,7 @@ impl Checker {
             span,
             mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
             None,
+            self.memory_only(&arg_ty),
         );
         let BoundParameters {
             subst,

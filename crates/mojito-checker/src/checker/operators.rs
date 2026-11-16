@@ -78,7 +78,8 @@ impl Checker {
         }
         // `not x` over a type parameter bounded by `Boolable` is
         // `not Bool(x)`, its `__bool__` requirement's conversion, which
-        // reads a place where it lies.
+        // reads a place where it lies: the initializer's declared
+        // `read value: T` (`T: Boolable`) takes it by address.
         if op == PrefixOp::Not && self.param_has_bound(&t, "Boolable") {
             self.borrow_operator_operand(operand, &t);
             self.record_read_temporary_argument(operand);
@@ -86,6 +87,7 @@ impl Checker {
                 &span,
                 mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
                 None,
+                true,
             );
             return Ok(Ty::bool());
         }
@@ -117,6 +119,7 @@ impl Checker {
                     &span,
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
                     convention,
+                    self.declared_by_address(convention, &t),
                 );
             }
             if let Some(error) = signature.and_then(dunder_error) {

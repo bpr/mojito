@@ -2211,24 +2211,26 @@ fn subscript_call(value: &MirSubscriptCall) -> String {
     )
 }
 fn call_argument(value: &CheckedCallArgument) -> String {
-    record(
-        "call_argument",
-        &[
-            ("source", call_argument_source(value.source)),
-            ("parameter_type", ty_value(&value.parameter_ty)),
-            ("requires_place", value.requires_place.to_string()),
-            ("convention", option(value.convention.map(convention))),
-        ],
-    )
+    let mut fields = vec![
+        ("source", call_argument_source(value.source)),
+        ("parameter_type", ty_value(&value.parameter_ty)),
+        ("requires_place", value.requires_place.to_string()),
+        ("convention", option(value.convention.map(convention))),
+    ];
+    if value.by_address {
+        fields.push(("by_address", "true".into()));
+    }
+    record("call_argument", &fields)
 }
 fn argument_convention(value: &mojito_checked::checked::CheckedArgumentConvention) -> String {
-    record(
-        "argument_convention",
-        &[
-            ("source", call_argument_source(value.source)),
-            ("convention", option(value.convention.map(convention))),
-        ],
-    )
+    let mut fields = vec![
+        ("source", call_argument_source(value.source)),
+        ("convention", option(value.convention.map(convention))),
+    ];
+    if value.by_address {
+        fields.push(("by_address", "true".into()));
+    }
+    record("argument_convention", &fields)
 }
 fn call_argument_source(source: CheckedCallArgumentSource) -> String {
     match source {

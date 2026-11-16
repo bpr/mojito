@@ -876,18 +876,21 @@ fn sample_subscript_call() -> MirSubscriptCall {
                 parameter_ty: Ty::int(),
                 requires_place: false,
                 convention: None,
+                by_address: false,
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Keyword(1),
                 parameter_ty: Ty::bool(),
                 requires_place: true,
                 convention: Some(ArgConvention::Ref),
+                by_address: true,
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Default,
                 parameter_ty: Ty::int(),
                 requires_place: false,
                 convention: Some(ArgConvention::Imm),
+                by_address: false,
             },
         ],
         capture_accesses: vec![MirCaptureAccess {

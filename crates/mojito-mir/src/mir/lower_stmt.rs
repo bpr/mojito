@@ -2329,7 +2329,8 @@ impl<'a> Flatten<'a> {
     /// `__init__` with the captures: a `var` capture's place is read, a
     /// moved capture's storage is handed to its `var` parameter, as an
     /// owned argument's is, and a reference capture's place, a captured
-    /// sibling's storage slot included, is lent.
+    /// sibling's storage slot included, is lent: passed as its address, as
+    /// upstream passes the `!lit.ref` its storage field holds.
     pub(in crate::mir) fn build_closure_storage(
         &mut self,
         info: &NestedInfo,
@@ -2340,6 +2341,13 @@ impl<'a> Flatten<'a> {
         let mut arg_places = Vec::new();
         for (capture, (_, field)) in info.captures.iter().zip(&storage.fields) {
             let place = self.capture_place(capture);
+            if capture.kind != mojito_ast::ast::CaptureKind::Move
+                && let TyKind::Ref(reference) = field.kind()
+            {
+                args.push(self.place_address(at.clone(), &place, reference.mutability));
+                arg_places.push(Some(place));
+                continue;
+            }
             let ty = match field.kind() {
                 TyKind::Ref(reference) => reference.referent.clone(),
                 _ => field.clone(),

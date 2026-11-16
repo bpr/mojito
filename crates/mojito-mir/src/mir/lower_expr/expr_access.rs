@@ -2,9 +2,10 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::call_results::CValue;
+use crate::mir::call_results::{CValue, OperandBinding};
 use mojito_checked::checked::{
-    CheckedExpr, CheckedNodeId, CheckedSliceLiteral, CheckedSubscriptArg, SemanticAdjustment,
+    CheckedCallArgumentSource, CheckedExpr, CheckedNodeId, CheckedSliceLiteral,
+    CheckedSubscriptArg, SemanticAdjustment,
 };
 use mojito_types::types::TyKind;
 
@@ -429,8 +430,9 @@ impl<'a> Flatten<'a> {
         let descriptor = slice_descriptors(e.checked)
             .and_then(|descriptors| descriptors.first().cloned().flatten())
             .expect("checked slice has a selected descriptor");
+        let sliced = self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
         let (argument, argument_place) =
-            self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
+            self.address_subscript_argument(e, CheckedCallArgumentSource::Positional(0), sliced);
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
@@ -477,6 +479,28 @@ impl<'a> Flatten<'a> {
         let slot = self.call_result_slot(value, construction.target.clone(), true);
         let (read, place) = self.read_c(node, CValue::Slot(slot));
         (MirSubscriptArg::Index(read), place)
+    }
+
+    /// Slice literal argument `argument` of subscript `subscript`, its
+    /// accessor's argument `source`, as the accessor binds it: the address
+    /// of the slot it is read from when the check judged the parameter by
+    /// address, as upstream passes the temporary's `!lit.ref`.
+    fn address_subscript_argument(
+        &mut self,
+        subscript: Node<'a>,
+        source: CheckedCallArgumentSource,
+        (argument, place): (MirSubscriptArg, Option<MirPlace>),
+    ) -> (MirSubscriptArg, Option<MirPlace>) {
+        let MirSubscriptArg::Index(register) = argument;
+        if subscript.argument_binding(source) != Some(OperandBinding::Read { by_address: true }) {
+            return (argument, place);
+        }
+        let (register, place) = self.address_operand(
+            subscript,
+            (register, place),
+            mojito_types::origin::Mutability::Immutable,
+        );
+        (MirSubscriptArg::Index(register), place)
     }
 
     /// A synthesized `None` argument, built into its parameter's type by
@@ -577,9 +601,11 @@ impl<'a> Flatten<'a> {
                     let descriptor =
                         descriptor.expect("keyword slice argument has a bound literal");
                     let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
-                    let (argument, place) = self.outside_call_setup(|this| {
+                    let sliced = self.outside_call_setup(|this| {
                         this.slice_literal_argument(e, &descriptor, operands)
                     });
+                    let source = CheckedCallArgumentSource::Keyword(kwargs.len());
+                    let (argument, place) = self.address_subscript_argument(e, source, sliced);
                     kwarg_places.push(place);
                     kwargs.push((name.clone(), argument));
                     None
@@ -599,9 +625,11 @@ impl<'a> Flatten<'a> {
                 } => {
                     let descriptor = descriptor.expect("slice argument has a bound literal");
                     let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
-                    let (argument, place) = self.outside_call_setup(|this| {
+                    let sliced = self.outside_call_setup(|this| {
                         this.slice_literal_argument(e, &descriptor, operands)
                     });
+                    let source = CheckedCallArgumentSource::Positional(arg_places.len());
+                    let (argument, place) = self.address_subscript_argument(e, source, sliced);
                     arg_places.push(place);
                     Some(argument)
                 }

@@ -198,6 +198,7 @@ impl RewriteTypes for CheckedCallArgument {
             parameter_ty,
             requires_place: _,
             convention: _,
+            by_address: _,
         } = self;
         parameter_ty.rewrite_types(rewrite);
     }

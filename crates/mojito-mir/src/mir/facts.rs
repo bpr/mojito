@@ -573,7 +573,7 @@ impl<'a> Node<'a> {
             })?
             .iter()
             .find(|argument| argument.source == source)
-            .and_then(|argument| OperandBinding::of(argument.convention))
+            .and_then(|argument| OperandBinding::of(argument.convention, argument.by_address))
     }
 
     /// Whether this operand is a temporary its consumer binds rather than

@@ -493,29 +493,33 @@ impl<'a> Flatten<'a> {
     /// so a copied-value read of a simple place defers to setup.
     ///
     /// An argument the checker bound to a `mut` or `ref` parameter
-    /// (`RetainCallPlace`) is the address of its place, a `ref.make`, as
-    /// upstream emits the `!lit.ref` while lowering the operand
-    /// ([`Self::address_operand`]).
+    /// (`RetainCallPlace`) is the mutable address of its place, a
+    /// `ref.make`, and one bound to a `read` parameter the check judged by
+    /// address ([`OperandBinding::Read`]) the immutable address of the
+    /// place it retains, as upstream emits the `!lit.ref` while lowering
+    /// the operand ([`Self::address_operand`]).
     fn lower_call_operand(
         &mut self,
         expression: Node<'a>,
         lends_reads: bool,
         setup: Option<CheckedCallArgumentSource>,
     ) -> (Reg, Option<MirPlace>) {
+        use mojito_types::origin::Mutability;
         let lowered = self.lower_call_operand_value(expression, lends_reads, setup);
-        let by_reference = expression.spread_operand().is_none()
-            && expression.adjustments().iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::RetainCallPlace
-                )
-            });
+        if expression.spread_operand().is_some() {
+            return lowered;
+        }
+        let by_reference = expression.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::RetainCallPlace
+            )
+        });
         if by_reference {
-            return self.address_operand(
-                expression,
-                lowered,
-                mojito_types::origin::Mutability::Mutable,
-            );
+            return self.address_operand(expression, lowered, Mutability::Mutable);
+        }
+        if self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true }) {
+            return self.address_operand(expression, lowered, Mutability::Immutable);
         }
         lowered
     }
@@ -1769,7 +1773,8 @@ impl<'a> Flatten<'a> {
         if place.is_some() {
             return (value, place);
         }
-        let read = binding == Some(OperandBinding::Read) && receiver.binds_temporary();
+        let read =
+            matches!(binding, Some(OperandBinding::Read { .. })) && receiver.binds_temporary();
         match self.call_result(receiver, value) {
             CValue::Value(value) if owned || read || !receiver.is_fresh_temporary() => {
                 (value, None)
@@ -2643,8 +2648,8 @@ impl<'a> Flatten<'a> {
     /// `read` temporary ([`read_by_address`]) is passed by the address of
     /// that storage, its call-result, argument-anchor, or lambda storage
     /// slot, as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
-    /// materialized: the slot is returned as the operand's place for
-    /// [`crate::mir::address_call_operands`].
+    /// materialized: the slot is returned as the operand's place, which
+    /// [`Self::lower_call_operand`] addresses.
     fn temporary_operand(
         &mut self,
         expression: Node<'a>,

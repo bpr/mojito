@@ -158,7 +158,9 @@ impl Checker {
     /// library function a builtin stands for (`print`, `input`, `abort`,
     /// `Error`) binds it: a named place or a reference result is read where
     /// it lies, and an owned temporary is read in its call-result slot,
-    /// which the caller destroys once the call returns.
+    /// which the caller destroys once the call returns. The builtin is a
+    /// runtime intrinsic, which takes its operand by value as an
+    /// `external_call` does, so the argument is never by address.
     pub(super) fn bind_read_builtin_argument(&self, site: &SourceSpan, argument: &Expr, ty: &Ty) {
         self.borrow_reference_result_argument(argument);
         self.borrow_nominal_place_argument(argument, ty);
@@ -168,6 +170,7 @@ impl Checker {
             site,
             mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
             None,
+            false,
         );
     }
 

@@ -73,6 +73,9 @@ pub struct CheckedCallArgument {
     pub requires_place: bool,
     /// Effective access after parametric reference mutability is solved.
     pub convention: Option<mojito_ast::ast::ArgConvention>,
+    /// See [`CheckedArgumentConvention::by_address`].
+    #[serde(default)]
+    pub by_address: bool,
 }
 
 /// One run-time argument of a call and the effective convention of the
@@ -82,6 +85,15 @@ pub struct CheckedCallArgument {
 pub struct CheckedArgumentConvention {
     pub source: CheckedCallArgumentSource,
     pub convention: Option<mojito_ast::ast::ArgConvention>,
+    /// The callee receives the argument's storage, not a value: its
+    /// parameter is declared `mut` or `ref`, or is a `read` whose declared
+    /// type (before the call's substitution; a trait requirement's with
+    /// `Self` bound to the receiver's type) the check did not prove
+    /// register-passable. It is upstream's `!lit.ref` argument, which
+    /// `LowerArgConventions` reads through once an instance proves the
+    /// type register-passable. A collector's element is never by address.
+    #[serde(default)]
+    pub by_address: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -959,7 +971,9 @@ pub enum SemanticAdjustment {
     /// register-passable, which upstream passes to a `read` parameter by
     /// value. Any other read argument is memory-only and passed by address:
     /// lowering retains its place, or a temporary's storage, so the callee
-    /// binds that storage.
+    /// binds that storage. This judges the actual's type; whether the
+    /// callee's declared parameter takes the argument by address is
+    /// [`CheckedArgumentConvention::by_address`].
     RegisterPassableRead,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's

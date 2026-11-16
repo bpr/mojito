@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::origin::Mutability;
 use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
@@ -311,7 +312,10 @@ impl<'a> Flatten<'a> {
     /// its source's value: the source literal's or nonmaterializable
     /// source's materialization, then the constructor call. `source_place`
     /// is the place a view constructor borrows and `read_place` the one a
-    /// conversion reads its source in.
+    /// conversion reads its source in. Either is passed as its address where
+    /// the check bound it to the constructor's `ref [origin]` parameter
+    /// (`BorrowConversionSource`) or memory-only `read` one
+    /// (`ConversionReadsSource`), as upstream's `!lit.ref` of it.
     pub(in crate::mir) fn apply_conversion(
         &mut self,
         e: Node<'a>,
@@ -374,6 +378,25 @@ impl<'a> Flatten<'a> {
                 _ => None,
             })
             .unwrap_or_default();
+        // A view constructor's `ref [origin]` parameter binds a mutable
+        // address, narrowed to the place's own mutability, and a memory-only
+        // `read` one an immutable address.
+        let borrows_source = e.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BorrowConversionSource { .. }
+            )
+        });
+        let wanted = if borrows_source {
+            Some(Mutability::Mutable)
+        } else {
+            e.conversion_reads_source().then_some(Mutability::Immutable)
+        };
+        let place = source_place.clone().or(read_place);
+        let (argument, argument_place) = match wanted {
+            Some(wanted) => self.address_operand(e, (argument, place), wanted),
+            None => (argument, place),
+        };
         self.emit(MirInstr::Call {
             conventions: crate::mir::MirArgConventions::default(),
             dest,
@@ -381,7 +404,7 @@ impl<'a> Flatten<'a> {
             raises,
             args: vec![argument],
             kwargs: Vec::new(),
-            arg_places: vec![source_place.clone().or(read_place)],
+            arg_places: vec![argument_place],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),

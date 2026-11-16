@@ -31,8 +31,11 @@ pub(super) enum CValue {
 pub(super) enum OperandBinding {
     /// A `read` parameter or receiver borrows the operand: a temporary is
     /// read in its storage, which the caller destroys once the call
-    /// returns.
-    Read,
+    /// returns. `by_address` when the callee's declared parameter takes
+    /// the operand's storage
+    /// ([`mojito_checked::checked::CheckedArgumentConvention::by_address`]),
+    /// so a retained place is passed as its address.
+    Read { by_address: bool },
     /// A `var`/`deinit` parameter or receiver, or an owning collector, takes
     /// the operand's storage: a `^` transfer of a whole local hands its slot
     /// over without the move initializer.
@@ -40,10 +43,11 @@ pub(super) enum OperandBinding {
 }
 
 impl OperandBinding {
-    /// The binding of a parameter of effective convention `convention`.
-    pub(super) const fn of(convention: Option<ArgConvention>) -> Option<Self> {
+    /// The binding of a parameter of effective convention `convention`,
+    /// `by_address` as the check judged its declared parameter.
+    pub(super) const fn of(convention: Option<ArgConvention>, by_address: bool) -> Option<Self> {
         match convention {
-            None | Some(ArgConvention::Imm) => Some(Self::Read),
+            None | Some(ArgConvention::Imm) => Some(Self::Read { by_address }),
             Some(ArgConvention::Var | ArgConvention::Deinit) => Some(Self::Owned),
             Some(ArgConvention::Mut | ArgConvention::Ref | ArgConvention::Out) => None,
         }
@@ -59,17 +63,18 @@ impl OperandBinding {
             .arguments
             .iter()
             .find(|argument| argument.source == source)
-            .and_then(|argument| Self::of(argument.convention))
+            .and_then(|argument| Self::of(argument.convention, argument.by_address))
     }
 
     /// The binding of method call `contract`'s receiver: its declared
     /// convention's, a `ref self` taking none whatever its effective
-    /// access.
+    /// access. A receiver's address is formed where the receiver is
+    /// lowered, never from this binding.
     pub(super) const fn of_receiver(contract: &CheckedCallContract) -> Option<Self> {
         if contract.receiver_requires_place {
             return None;
         }
-        Self::of(contract.receiver_convention)
+        Self::of(contract.receiver_convention, false)
     }
 }
 
@@ -285,7 +290,7 @@ impl<'a> Flatten<'a> {
     /// operator operand), used by the binding its call recorded for it
     /// ([`Self::operand_reads`]): a read one is read, with the storage it
     /// was read from, the slot whose address a by-address `read` parameter
-    /// binds ([`crate::mir::address_call_operands`]); any other is taken,
+    /// binds ([`Self::address_operand`]); any other is taken,
     /// and has no place.
     pub(super) fn operand_c(
         &mut self,
@@ -380,7 +385,7 @@ impl<'a> Flatten<'a> {
     pub(super) fn operand_reads(&self, expression: Node<'a>, reads: bool) -> bool {
         match self.operand_binding(expression) {
             Some(OperandBinding::Owned) => false,
-            Some(OperandBinding::Read) => reads || expression.binds_temporary(),
+            Some(OperandBinding::Read { .. }) => reads || expression.binds_temporary(),
             None => reads,
         }
     }

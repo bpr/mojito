@@ -525,6 +525,7 @@ fn collect_contract_arguments(
             parameter_ty: ty.clone(),
             requires_place: false,
             convention: callee.variadic_convention,
+            by_address: false,
         },
     );
 }

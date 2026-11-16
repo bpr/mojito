@@ -3463,6 +3463,13 @@ impl Checker {
         match ty.kind() {
             kind if kind.is_string_literal() => Proven,
             TyKind::None => Proven,
+            // An MLIR type upstream holds as a register value.
+            TyKind::KgenString
+            | TyKind::KgenDeferred
+            | TyKind::KgenTarget
+            | TyKind::Generator(_)
+            | TyKind::PopIntLiteral
+            | TyKind::PopFloatLiteral => Proven,
             TyKind::Tuple(elements) => elements.iter().fold(Proven, |joined, element| {
                 match (joined, self.register_passability(element)) {
                     (Excluded, _) | (_, Excluded) => Excluded,

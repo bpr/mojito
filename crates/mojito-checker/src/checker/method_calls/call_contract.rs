@@ -48,7 +48,12 @@ impl Checker {
             boundary,
         } = selected;
         let receiver_elided = self.receiver_is_elided(obj_ty, method, &target);
-        let arguments = checked_call_arguments(resolved, &conventions);
+        let by_address = self.declared_by_address_slots(
+            &resolved.conventions,
+            &resolved.declared_params,
+            &resolved.param_types,
+        );
+        let arguments = checked_call_arguments(resolved, &conventions, &by_address);
         // A capturing closure bound to a compile-time callable parameter
         // runs while the call is active, as a runtime callable argument does,
         // and a closure's own `__call__` runs it, as a call through it does.
@@ -227,10 +232,11 @@ impl Checker {
 }
 
 /// The selected signature's arguments in slot order, then the variadic and
-/// keyword overflow.
+/// keyword overflow; `by_address` is each slot's verdict.
 fn checked_call_arguments(
     resolved: &MethodCallResolution,
     effective_conventions: &[Option<ArgConvention>],
+    by_address: &[bool],
 ) -> Vec<mojito_checked::checked::CheckedCallArgument> {
     use mojito_checked::checked::{CheckedCallArgument, CheckedCallArgumentSource};
     let mut arguments = resolved
@@ -253,6 +259,7 @@ fn checked_call_arguments(
                 Some(ArgConvention::Mut | ArgConvention::Ref)
             ),
             convention: effective_conventions.get(index).copied().flatten(),
+            by_address: by_address.get(index).copied().unwrap_or(false),
         })
         .collect::<Vec<_>>();
     // An owning (`var`/`deinit`) collector takes each element it gathers.
@@ -271,6 +278,7 @@ fn checked_call_arguments(
                 },
                 requires_place: false,
                 convention: collector,
+                by_address: false,
             },
         ));
     }
@@ -286,6 +294,7 @@ fn checked_call_arguments(
                     parameter_ty: element.clone(),
                     requires_place: false,
                     convention: Some(ArgConvention::Var),
+                    by_address: false,
                 }),
         );
     }
