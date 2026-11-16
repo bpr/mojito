@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2243**.
+Next free ID: **R2244**.
 
 ## Ordered Work
 
@@ -7223,6 +7223,24 @@ Track: `divergences`.
   `elif` call. Its unimplemented changes are R1817–R1830, and its one
   upstream regression is a probe
   (`var_case_rvalue_tuple_literal_sibling.mojo`), not an entry here.
+
+- [ ] **R2243 The `e6e596ce2c` re-pin (Mojo `1.3.0.dev2026111316`) is not
+  audited**
+
+  The differential environment moved to the new nightly on 2026-11-15
+  without the window's review.
+  - Window: upstream `a431ffa8af…e6e596ce2c`, recorded under **Pinned
+    Build** in [`docs/mojo-nightly.md`](mojo-nightly.md).
+  - Follow the **Review Policy** there: read the changelog and the stdlib
+    diff of every bundled module, then update `conformance/parity.tsv`.
+  - Run differential conformance, the three `scripts/sweep-assets-mojo`
+    sweeps, and every probe against
+    `~/src/mojo/envs/mojo-2026111316/pixi.toml`.
+  - Regenerate the native CPU table (`scripts/gen-x86-cpu-table`).
+  - Rewrite **Current Audit** for the new window and file its changes as
+    entries here.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 Behavioral divergences from the pinned Mojo, to burn to zero. Every new
 divergence lands here with a probe or a `cases.tsv` `mojito-only` /

@@ -254,7 +254,8 @@ boundary.
 
 The current language target is recorded in
 [`docs/mojo-nightly.md`](mojo-nightly.md). Mojito presently tracks
-**Mojo 1.3.0.dev2026110105 (2026-11-01)**; the audit records nightly language
+**Mojo 1.3.0.dev2026111316 (2026-11-13)**, whose window since the last audit
+(`1.3.0.dev2026110105`) is not yet audited; the audit records nightly language
 drift separately from claims of implemented parity.
 
 Shared cases in `conformance/cases.tsv` run under both implementations. They can

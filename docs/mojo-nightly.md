@@ -8,6 +8,19 @@ differential runner must likewise report its actual `mojo --version`. Advancing
 the audit boundary records work to do—it does not claim that Mojito already
 implements every change at that boundary.
 
+## Pinned Build — `e6e596ce2c` (2026-11-15)
+
+The differential environment moved ahead of the audit. The pinned build is
+`Mojo 1.3.0.dev2026111316 (82498b3d)`, in the Pixi environment
+`~/src/mojo/envs/mojo-2026111316`, and its sources are the worktree
+`~/src/mojo/repos/modular-e6e596ce` at upstream
+[`e6e596ce2cdd94ae36b68ec604cba2e2927370a3`](https://github.com/modular/modular/commit/e6e596ce2cdd94ae36b68ec604cba2e2927370a3),
+whose lockfiles pin that build. The window
+[`a431ffa8af…e6e596ce2c`](https://github.com/modular/modular/compare/a431ffa8af8ef7cb5bb4a11ec6409fed203107bb...e6e596ce2cdd94ae36b68ec604cba2e2927370a3)
+is not yet audited (roadmap R2243). The environments and worktrees of the
+audits below were removed at this re-pin; recreate one from its recorded
+build and commit when an old result needs reproducing.
+
 ## Current Audit — `a431ffa8af` (2026-11-01)
 
 | Role | Immutable revision |
