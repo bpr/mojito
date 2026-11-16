@@ -2497,8 +2497,7 @@ holds, as upstream passes the `!lit.ref` the field or binding is
 the read through it becomes a forwarding `ref.make` of the `ref` field's
 place, typed as the stored reference, or a `ref.make` of the binding's
 slot through itself, and a subscript store's setter takes the same
-reference of its base. The place stays beside it, and the elaborator's
-`read_addressed_operands` counts such an operand as addressing it; the
+reference of its base. The place stays beside it until R2191 deletes the tables; the
 inliner binds a parameter passed a `ref` field to the handle it stores
 (`place_binding`). Backends read the operand, not the place: the VM binds
 the reference, and Pliron passes its pointer as upstream's LLVM lowering
@@ -2510,10 +2509,18 @@ inliner: `mir::operand_addresses` maps each `ref.make` of a function
 forming a `ref` handle to the place it addresses (one typed a `!lit.ref`
 is a value the program spells, passed by value), `mir::call_operands`
 lists a call-shaped instruction's operands, and
-`OperandAddresses::address` gives the storage an operand addresses,
-falling back to the place table only for an operand that is no such
-`ref.make` (a register-passable `read` a result borrows, a consumed
-receiver, a closure call's callee). The loan check (`loans.rs` `loan_accesses`), the drop
+`OperandAddresses::address` gives the storage an operand addresses. Its
+place-table fallback (`table_fallback`) is reached by no operand of
+verified MIR, and R2191 deletes it with the tables. A pass or verifier
+rule takes an operand's type from its register (`mir::operand_value_ty`
+peels a reference: `receiver_ty`, `member_receiver_ty`, `call_defaults`'
+`Site::of`), its owner and escape from its `ref.make`
+(`call_defaults`' `element_owners`, `callable_values`'
+`rebound_variables`), and its by-address requirement from its type being
+a reference (`verify_callable_contract_call`, `verify_subscript_call`, a
+`def(...)` bound's `__call__` receiver); `verify::instruction_places`
+lists no call's tables, since each operand's `ref.make` lists its place
+(R2270). The loan check (`loans.rs` `loan_accesses`), the drop
 facts' by-value loads and reference-result owners (`register_loans.rs`
 `ArgumentPassing::by_value`, `RegisterLoanStep::new`'s receiver seeds),
 `RegisterEnds`' consumed operands (`CallArguments`,
@@ -2583,8 +2590,10 @@ requirement reads the requirement's signature, and a memory-only
 temporary a `read` receiver takes retains its call-result slot as its
 place (`Flatten::lower_method_receiver`). Where an instance's receiver is
 a compiler-modelled type the elaborator answers itself, the elaborator
-reads each addressed operand through its reference ahead of the call
-(`mir::read_addressed_operands`), since the builtin takes values (R2177).
+reads each reference operand through ahead of the call
+(`mir::read_addressed_operands`), deciding on the operand's type alone, as
+upstream's `LowerArgConventions` loads a `!lit.ref` at a by-value slot,
+since the builtin takes values (R2177).
 An operand over a type parameter a pointer may instantiate is addressed
 too: a `ref.make` of the whole of a slot holding a pointer designates the
 slot, the pointer, as upstream's `!lit.ref` of a pointer local does

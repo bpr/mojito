@@ -452,7 +452,7 @@ fn collect_subscript_store(
 ) {
     let MirInstr::MultiSet {
         receiver,
-        receiver_place,
+        receiver_place: _,
         args,
         arg_places,
         value,
@@ -479,11 +479,7 @@ fn collect_subscript_store(
     else {
         return;
     };
-    let receiver_ty = function
-        .reg_types
-        .get(&receiver.0)
-        .or_else(|| receiver_place.as_ref()?.ty.as_ref())
-        .cloned();
+    let receiver_ty = function.reg_types.get(&receiver.0).cloned();
     let mut site = Site {
         dest: *value,
         callee: call.target.clone(),
@@ -1190,15 +1186,6 @@ fn element_owners(
             reference: value, ..
         }
         | MirInstr::GetField { base: value, .. } => element_owners(prelude, *value, var_tys),
-        MirInstr::Index {
-            base_place: Some(place),
-            ..
-        }
-        | MirInstr::MethodCall {
-            recv_place: Some(place),
-            reference_result: Some(_),
-            ..
-        } => owned(place),
         MirInstr::Index { base, .. } => element_owners(prelude, *base, var_tys),
         MirInstr::MethodCall {
             recv,
@@ -1679,7 +1666,6 @@ impl Site {
                 ),
                 MirInstr::MethodCall {
                     recv,
-                    recv_place,
                     resolved,
                     args,
                     kwargs,
@@ -1706,10 +1692,7 @@ impl Site {
                         // value whose type binds the callee's parameters.
                         Some(
                             crate::mir::call_addresses::operand_value_ty(
-                                function
-                                    .reg_types
-                                    .get(&recv.0)
-                                    .or_else(|| recv_place.as_ref()?.ty.as_ref())?,
+                                function.reg_types.get(&recv.0)?,
                             )
                             .clone(),
                         ),
@@ -1768,11 +1751,7 @@ impl Site {
                         let place = (!arg_places.is_empty())
                             .then(|| arg_places.remove(0))
                             .flatten();
-                        receiver_type = function
-                            .reg_types
-                            .get(&register.0)
-                            .or_else(|| place.as_ref()?.ty.as_ref())
-                            .cloned();
+                        receiver_type = function.reg_types.get(&register.0).cloned();
                         spread = spread.map(|position| position - 1);
                         passed_receiver = Some((register, place));
                     }
@@ -1790,7 +1769,7 @@ impl Site {
                 MirInstr::MultiIndex {
                     dest,
                     object,
-                    object_place,
+                    object_place: _,
                     args,
                     arg_places,
                     kwargs,
@@ -1802,11 +1781,7 @@ impl Site {
                     let register = |argument: &MirSubscriptArg| match argument {
                         MirSubscriptArg::Index(register) => Some(*register),
                     };
-                    let receiver = function
-                        .reg_types
-                        .get(&object.0)
-                        .or_else(|| object_place.as_ref()?.ty.as_ref())?
-                        .clone();
+                    let receiver = function.reg_types.get(&object.0)?.clone();
                     let callee = record.callee.clone().unwrap_or_else(|| call.target.clone());
                     let declaration = declarations.function(&callee)?;
                     let bound = bindings_of(&callee, declaration, &[], Some(&receiver), caller);

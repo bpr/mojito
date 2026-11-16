@@ -8,7 +8,10 @@
 //! call's omitted arguments. A call of a nested `def` by name is a direct
 //! call and needs none of this.
 
-use crate::mir::{Const, MirBlock, MirFunction, MirInstr, MirPlace, instruction_regions};
+use crate::mir::{
+    Const, MirBlock, MirFunction, MirInstr, MirPlace, OperandSlot, call_operands,
+    instruction_regions, operand_addresses,
+};
 use std::collections::{HashMap, HashSet};
 
 /// The function each register of `function` statically holds, beside
@@ -141,10 +144,12 @@ fn visit_callables(
 }
 
 /// The variables whose value is not fixed by their definitions: written
-/// whole through a store, a reference, a `mut`/`ref` argument place, or a
-/// callable environment.
+/// whole through a store, a reference, a call operand's address, or a
+/// callable environment, as upstream treats a `!lit.ref` a call takes as
+/// an escape whichever operand it is.
 fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
     let instructions = nested_instructions(&function.body);
+    let addresses = operand_addresses(&function.body, &function.reg_types);
     let written_references: HashSet<u32> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
@@ -161,28 +166,19 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
                 rebound.extend(whole(place));
             }
             MirInstr::Call {
-                arg_places,
-                kwarg_places,
-                capture_accesses,
-                ..
+                capture_accesses, ..
             }
             | MirInstr::CallIndirect {
-                arg_places,
-                kwarg_places,
-                capture_accesses,
-                ..
+                capture_accesses, ..
             }
             | MirInstr::MethodCall {
-                arg_places,
-                kwarg_places,
-                capture_accesses,
-                ..
+                capture_accesses, ..
             } => {
                 rebound.extend(
-                    arg_places
+                    call_operands(instruction)
                         .iter()
-                        .chain(kwarg_places)
-                        .flatten()
+                        .filter(|operand| operand.slot != OperandSlot::Callee)
+                        .filter_map(|operand| addresses.made(operand.reg))
                         .filter_map(whole),
                 );
                 rebound.extend(

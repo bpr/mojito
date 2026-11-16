@@ -190,7 +190,7 @@ impl<'a> ArgumentPassing<'a> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(operands.receiver, *recv, register_types),
+                        receiver_ty(*recv, register_types),
                         refined_bound
                             .as_deref()
                             .map(|bound| bound.traits.as_slice()),
@@ -227,7 +227,7 @@ impl<'a> ArgumentPassing<'a> {
             } => Callee::resolve(
                 self.declarations,
                 name,
-                receiver_ty(None, *a, register_types),
+                receiver_ty(*a, register_types),
                 refined_bound
                     .as_deref()
                     .map(|bound| bound.traits.as_slice()),
@@ -301,7 +301,7 @@ impl<'a> ArgumentPassing<'a> {
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(operands.receiver, *base, register_types),
+                receiver_ty(*base, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {
@@ -331,7 +331,7 @@ impl<'a> ArgumentPassing<'a> {
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(operands.receiver, *object, register_types),
+                receiver_ty(*object, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {
@@ -366,7 +366,7 @@ impl<'a> ArgumentPassing<'a> {
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(operands.receiver, *receiver, register_types),
+                receiver_ty(*receiver, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {

@@ -255,7 +255,6 @@ pub(super) fn verify_callable_contract_call(
     dest: Reg,
     args: &[Reg],
     kwargs: &[(String, Reg)],
-    arg_places: &[Option<MirPlace>],
     errors: &mut Vec<String>,
 ) {
     let Some(FuncTy {
@@ -323,13 +322,16 @@ pub(super) fn verify_callable_contract_call(
                         "{prefix}: argument {index} of indirect callable has type {found}, contract declares {expected}"
                     ));
                 }
+                // A `mut` or `ref` parameter takes the caller's storage
+                // as a reference, which the operand is.
                 if matches!(
                     conventions.get(index).copied().flatten(),
                     Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
-                ) && arg_places.get(index).and_then(Option::as_ref).is_none()
+                ) && let Some(found) = function.reg_types.get(&argument.0)
+                    && !matches!(found.kind(), TyKind::Ref(_))
                 {
                     errors.push(format!(
-                        "{prefix}: mutable/reference parameter {index} of indirect callable has no caller place"
+                        "{prefix}: argument {index} of indirect callable is a `mut` or `ref` parameter but passes a {found} value"
                     ));
                 }
             }

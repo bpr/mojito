@@ -1030,6 +1030,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Passes and the MIR verifier read a call's operands, not its place
+  tables, as upstream's passes read a `lit.call` operand's type and
+  defining op: receiver and member types come from the operand's register,
+  operand owners and rebound callables from its `ref.make`, the
+  elaborator's builtin loads from the operand being a reference, and the
+  verifier's `mut`/`ref` rules for indirect calls, subscripts, and a
+  `def(...)` bound's receiver from the operand's type. The elaborator's
+  devirtualized call of a capturing closure passes each captured place as
+  a `ref.make` (R2270).
+
 - A `call.indirect` takes its callee as the operand alone, as upstream's
   indirect call takes the closure or function value, rather than also
   naming the slot it read the callee from in `callee_place`. The inliner,

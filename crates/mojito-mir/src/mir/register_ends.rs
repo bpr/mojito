@@ -16,7 +16,7 @@
 use super::{
     AddressedOperands, Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, OperandAddresses, Reg,
-    TraitRequirement, instruction_regions,
+    TraitRequirement, instruction_regions, operand_value_ty,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_symbol::symbol::is_trait_dispatch_symbol;
@@ -188,7 +188,7 @@ impl<'f> RegisterEnds<'f> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(None, *callee, &self.function.reg_types),
+                        receiver_ty(*callee, &self.function.reg_types),
                         None,
                     )
                 }) {
@@ -216,7 +216,7 @@ impl<'f> RegisterEnds<'f> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(recv_place, *recv, &self.function.reg_types),
+                        receiver_ty(*recv, &self.function.reg_types),
                         refined_bound
                             .as_deref()
                             .map(|bound| bound.traits.as_slice()),
@@ -239,7 +239,7 @@ impl<'f> RegisterEnds<'f> {
                 if let Some(callee) = Callee::resolve(
                     self.declarations,
                     resolved,
-                    receiver_ty(None, *a, &self.function.reg_types),
+                    receiver_ty(*a, &self.function.reg_types),
                     refined_bound
                         .as_deref()
                         .map(|bound| bound.traits.as_slice()),
@@ -293,7 +293,7 @@ impl<'f> RegisterEnds<'f> {
                 call,
                 ..
             } => {
-                let Some(callee) = self.subscript_callee(call, *receiver, operands.receiver) else {
+                let Some(callee) = self.subscript_callee(call, *receiver) else {
                     return;
                 };
                 let contract = callee.contract();
@@ -362,12 +362,11 @@ impl<'f> RegisterEnds<'f> {
         &'p self,
         call: &MirSubscriptCall,
         receiver: Reg,
-        place: Option<&'p MirPlace>,
     ) -> Option<Callee<'p>> {
         Callee::resolve(
             self.declarations,
             &call.target,
-            receiver_ty(place, receiver, &self.function.reg_types),
+            receiver_ty(receiver, &self.function.reg_types),
             call.refined_bound.as_deref(),
         )
     }
@@ -387,7 +386,7 @@ impl<'f> RegisterEnds<'f> {
         if place.is_none() && owned_convention(call.receiver_convention) {
             out.push(receiver);
         }
-        if let Some(callee) = self.subscript_callee(call, receiver, place) {
+        if let Some(callee) = self.subscript_callee(call, receiver) {
             arguments.consumed(&callee.contract(), collectors, out);
         }
     }
@@ -456,15 +455,13 @@ impl<'a> Callee<'a> {
     }
 }
 
-/// A call receiver's type: its retained place's, else its register's.
-pub fn receiver_ty<'t, S: BuildHasher>(
-    place: Option<&'t MirPlace>,
+/// A call receiver's type: the value its operand passes, the referent of
+/// a reference, as upstream's call reads its receiver operand's SSA type.
+pub fn receiver_ty<S: BuildHasher>(
     receiver: Reg,
-    register_types: &'t HashMap<u32, Ty, S>,
-) -> Option<&'t Ty> {
-    place
-        .and_then(|place| place.ty.as_ref())
-        .or_else(|| register_types.get(&receiver.0))
+    register_types: &HashMap<u32, Ty, S>,
+) -> Option<&Ty> {
+    register_types.get(&receiver.0).map(operand_value_ty)
 }
 
 /// The parameters a call binds its arguments to, as a declaration, a

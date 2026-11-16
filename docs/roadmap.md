@@ -9729,31 +9729,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2270 Passes and the verifier take a type, owner, or requirement
-  from a place table rather than the operand**
-
-  Upstream's passes read a `lit.call` operand's SSA type and defining op
-  only. Several Mojito readers bypass `OperandAddresses` and read the
-  table directly.
-  - Type sources: `call_defaults.rs` (`collect_subscript_store`,
-    `Site::of`), `call_addresses.rs` `bound_call` (its `call.method`
-    arm's `recv_place`), `param_uses.rs` `member_receiver_ty`,
-    `register_ends.rs` `receiver_ty`.
-  - Owners: `call_defaults.rs` `element_owners`, `callable_values.rs`
-    `rebound_variables`.
-  - The elaborator's `read_addressed_operands` call in
-    `native/mono/specializer.rs` decides loads from the tables.
-  - Verifier rules needing an entry: `verify/intrinsics.rs` (a `mut`/`ref`
-    parameter), `verify/subscripts.rs` (`requires_place`), `verify/calls.rs`
-    (a bound `__call__`'s `recv_place`), `verify/drops.rs`
-    `collect_refills`.
-  - Producers: `nested.rs` `lower_storage_call_witness`, and the
-    capture splices in `canonicalize.rs` and `specializer.rs`.
-  - Fix: read the operand's type and `OperandAddresses::made`; restate
-    each verifier rule on the operand, keeping its negative test.
-  - Depends on R2267, R2268, R2269.
-  - Model: Fable, Planned.
-
 - [ ] **R2271 The legacy MIR text upgrades read place tables off the
   instructions they rewrite**
 
@@ -9777,8 +9752,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `index.get`, `index.multi`, and `index.multi_set` carry `arg_places`,
   `kwarg_places`, `recv_place`, `callee_place`, `base_place`,
   `index_place`, `object_place`, `receiver_place`, and `value_place`.
-  - The tables still have readers outside `table_fallback` and
-    `verify_operand_tables`: R2267 through R2271 remove them.
+  - No pass decides anything from a table any more. What still touches
+    them goes with the fields: R2271's legacy upgrades, the producers that
+    write an entry beside a `ref.make` (`canonicalize.rs` `direct_call`,
+    `nested.rs` `lower_storage_call_witness`, the elaborator's capture
+    splice) or beside a pack's loaded overflow operand
+    (`Flatten::lower_call_operand`), the pass-through shuffles and
+    `instruction_places_mut`, `verify_subscript_receiver_place`, the
+    `verify/drops.rs` rule rejecting a `deinit` receiver's `recv_place`,
+    and `table_fallback`, which no verified operand reaches.
   - Fix: delete the fields, constructors, and text fields, with a MIR
     text bump; older text parses the fields into R2271's legacy tables
     for the upgrades only.

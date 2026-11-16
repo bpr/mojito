@@ -3532,7 +3532,7 @@ impl<'a> Specializer<'a> {
                             );
                             let loads = captured
                                 .into_iter()
-                                .map(|(dest, place)| MirInstr::LoadPlace { dest, place })
+                                .map(|(dest, place)| MirInstr::MakeRef { dest, place })
                                 .collect();
                             preludes.push((index, loads));
                         }
@@ -4461,8 +4461,10 @@ impl<'a> Specializer<'a> {
     }
 
     /// The captured places a direct call to the lifted body `target` passes
-    /// ahead of its source arguments, each paired with a fresh register the
-    /// call loads it into.
+    /// ahead of its source arguments, each paired with a fresh register
+    /// holding its address, as upstream's `lit.call` takes a `!lit.ref` of
+    /// each captured place the lifted body's leading reference parameter
+    /// binds.
     fn capture_arguments(
         &self,
         owner: &str,
@@ -4482,7 +4484,11 @@ impl<'a> Specializer<'a> {
         captures
             .iter()
             .map(|capture| {
-                let ty = capture.place.ty.clone().ok_or_else(|| {
+                let ty = mojito_mir::mir::mir_place_handle_ty(
+                    &capture.place,
+                    Some(mojito_types::origin::Mutability::Mutable),
+                )
+                .ok_or_else(|| {
                     self.error(
                         Some(owner),
                         format!("capture of retained callable `{target}` is untyped"),

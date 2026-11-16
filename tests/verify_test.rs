@@ -837,6 +837,122 @@ fn verifier_requires_a_reference_at_a_mut_argument() {
     );
 }
 
+/// Turn the `ref.make` defining `function`'s `argument` into a load of
+/// its place, as if the operand were passed by value.
+fn load_in_place_of_address(function: &mut MirFunction, argument: Reg) {
+    let address = leaf_instructions_mut(&mut function.body)
+        .into_iter()
+        .find(|instruction| {
+            matches!(instruction, MirInstr::MakeRef { dest, .. } if *dest == argument)
+        })
+        .expect("the argument is a ref.make of its place");
+    if let MirInstr::MakeRef { dest, place } = &*address {
+        let referent = place.ty.clone().expect("a typed place");
+        *address = MirInstr::LoadPlace {
+            dest: *dest,
+            place: place.clone(),
+        };
+        function.reg_types.insert(argument.0, referent);
+    }
+}
+
+fn function_named<'p>(program: &'p mut MirProgram, name: &str) -> &'p mut MirFunction {
+    program
+        .functions
+        .iter_mut()
+        .find_map(|(function, body)| (function == name).then_some(body))
+        .expect("the function is lowered")
+}
+
+#[test]
+fn verifier_requires_a_reference_at_an_indirect_mut_argument() {
+    let source = "def bump(mut v: Int):\n    v += 1\n\ndef apply(f: def(mut Int) thin -> None, mut x: Int):\n    f(x)\n\ndef main():\n    var i = 3\n    apply(bump, i)\n    print(i)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(errors.is_empty(), "the lowered call verifies: {errors:?}");
+    let apply = function_named(&mut mir, "apply");
+    let argument = leaf_instructions_mut(&mut apply.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::CallIndirect { args, .. } => Some(args[0]),
+            _ => None,
+        })
+        .expect("apply calls through its function value");
+    load_in_place_of_address(apply, argument);
+    expect_finding(
+        &mir,
+        "argument 0 of indirect callable is a `mut` or `ref` parameter but passes a Int value",
+    );
+}
+
+#[test]
+fn verifier_requires_references_at_a_subscript_s_by_address_operands() {
+    const SOURCE: &str = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    print(box[index])\n";
+    let operands = |program: &mut MirProgram| {
+        leaf_instructions_mut(&mut function_named(program, "main").body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Index {
+                    base,
+                    index,
+                    call: Some(_),
+                    ..
+                } => Some((*base, *index)),
+                _ => None,
+            })
+            .expect("main subscripts the box")
+    };
+    let valid = lower_linked_source(SOURCE);
+    let errors = verify(&valid);
+    assert!(
+        errors.is_empty(),
+        "the lowered subscript verifies: {errors:?}"
+    );
+
+    let mut loaded_index = valid.clone();
+    let (_, index) = operands(&mut loaded_index);
+    load_in_place_of_address(function_named(&mut loaded_index, "main"), index);
+    expect_finding(
+        &loaded_index,
+        "selected subscript mut/ref argument Positional(0) passes no reference",
+    );
+
+    let mut loaded_base = valid;
+    let (base, _) = operands(&mut loaded_base);
+    load_in_place_of_address(function_named(&mut loaded_base, "main"), base);
+    expect_finding(
+        &loaded_base,
+        "selected subscript reference receiver passes no reference",
+    );
+}
+
+#[test]
+fn verifier_requires_an_immutable_def_bound_receiver() {
+    let mut program = lower_linked_source(DEF_BOUND_APPLY);
+    assert_eq!(apply_findings(&program), Vec::<String>::new());
+    let recv = match bound_call(&mut program) {
+        MirInstr::MethodCall { recv, .. } => Some(*recv),
+        _ => None,
+    }
+    .expect("the bound call is a method call");
+    let apply = function_named(&mut program, "apply");
+    let found = apply.reg_types[&recv.0].clone();
+    let referent = match found.kind() {
+        TyKind::Ref(reference) => reference.referent.clone(),
+        _ => found,
+    };
+    apply
+        .reg_types
+        .insert(recv.0, reference_ty(referent, mojito::Mutability::Mutable));
+    assert!(
+        apply_findings(&program)
+            .iter()
+            .any(|error| error.contains("`__call__` receiver is a mutable reference")),
+        "{:?}",
+        apply_findings(&program)
+    );
+}
+
 #[test]
 fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
     let f = function(

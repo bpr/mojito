@@ -124,29 +124,28 @@ pub(super) fn verify_call_instruction(
             instantiated_args,
             spread,
             recv_writes,
-            recv_place,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
             // A `def(...)` bound's `__call__` requirement call binds the
             // bound's signature on a read receiver, as a declared trait's
-            // requirement call binds its requirement, and a receiver that
-            // kept its place passes an immutable reference to it, as
-            // upstream's `lit.call` takes a `!lit.ref` of a `read self`.
+            // requirement call binds its requirement, and a receiver passed
+            // by address is an immutable reference, as upstream's
+            // `lit.call` takes a `!lit.ref` of a `read self`; a
+            // register-passable one is passed by value.
             if super::super::bound_call_contract(instruction, &cx.function.reg_types).is_some()
                 && let Some(contract) = cx
                     .reg_ty(*recv)
                     .map(super::super::operand_value_ty)
                     .and_then(mojito_types::types::callable_contract_ty)
             {
-                let immutable_reference = matches!(
+                if matches!(
                     cx.reg_ty(*recv).map(Ty::kind),
                     Some(TyKind::Ref(reference))
-                        if reference.mutability == mojito_types::origin::Mutability::Immutable
-                );
-                if recv_place.as_deref().is_some_and(MirPlace::is_typed) && !immutable_reference {
+                        if reference.mutability != mojito_types::origin::Mutability::Immutable
+                ) {
                     errors.push(format!(
-                        "{prefix}: a `def(...)` bound's `__call__` receiver with a place is not an immutable reference to it"
+                        "{prefix}: a `def(...)` bound's `__call__` receiver is a mutable reference"
                     ));
                 }
                 verify_bound_call(
@@ -962,7 +961,6 @@ fn verify_bound_call(
         raises,
         args,
         kwargs,
-        arg_places,
         param_arg_regs,
         param_decls,
         instantiated_args,
@@ -1036,7 +1034,6 @@ fn verify_bound_call(
         *dest,
         args,
         kwargs,
-        arg_places,
         errors,
     );
 }
@@ -1158,7 +1155,6 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             *dest,
             args,
             kwargs,
-            arg_places,
             errors,
         );
     }

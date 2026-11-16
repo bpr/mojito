@@ -307,9 +307,6 @@ impl<'a> InstrCx<'a> {
 struct SubscriptSources<'a> {
     receiver_ty: Option<&'a Ty>,
     method: &'static str,
-    receiver_place: Option<&'a MirPlace>,
-    positional_places: &'a [Option<MirPlace>],
-    keyword_places: &'a [Option<MirPlace>],
     positional_types: &'a [Option<Ty>],
     keyword_types: &'a [Option<Ty>],
     dest: Option<Reg>,

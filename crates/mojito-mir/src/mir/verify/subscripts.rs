@@ -17,7 +17,6 @@ pub(super) fn verify_subscript_instruction(
             base,
             index,
             base_place,
-            index_place,
             call,
             intrinsic,
             ..
@@ -38,12 +37,6 @@ pub(super) fn verify_subscript_instruction(
                 // compile-time value argument; it has no ordinary runtime
                 // positional argument. The empty checked argument list is the
                 // explicit ABI discriminator used by lowering and execution.
-                let index_places = [index_place.as_deref().cloned()];
-                let positional_places = if call.arguments.is_empty() {
-                    &[][..]
-                } else {
-                    &index_places[..]
-                };
                 let positional_types = if call.arguments.is_empty() {
                     Vec::new()
                 } else {
@@ -57,9 +50,6 @@ pub(super) fn verify_subscript_instruction(
                     SubscriptSources {
                         receiver_ty: cx.reg_ty(*base),
                         method: "__getitem__",
-                        receiver_place: base_place.as_deref(),
-                        positional_places,
-                        keyword_places: &[],
                         positional_types: &positional_types,
                         keyword_types: &[],
                         dest: Some(*dest),
@@ -115,9 +105,6 @@ pub(super) fn verify_subscript_instruction(
                     SubscriptSources {
                         receiver_ty: cx.reg_ty(*object),
                         method: "__getitem__",
-                        receiver_place: object_place.as_deref(),
-                        positional_places: arg_places,
-                        keyword_places: kwarg_places,
                         positional_types: &positional_types,
                         keyword_types: &keyword_types,
                         dest: Some(*dest),
@@ -136,7 +123,6 @@ pub(super) fn verify_subscript_instruction(
             args,
             arg_places,
             value,
-            value_place,
             call,
             ..
         } => {
@@ -151,12 +137,10 @@ pub(super) fn verify_subscript_instruction(
                     "{prefix}: subscript-set place metadata is not aligned with its index arguments"
                 ));
             }
-            let positional = arg_places.clone();
             let positional_types = args
                 .iter()
                 .map(|argument| subscript_argument_ty(cx.function, argument))
                 .collect::<Vec<_>>();
-            let keyword = vec![value_place.as_deref().cloned()];
             let keyword_types = vec![cx.reg_ty(*value).cloned()];
             verify_subscript_call(
                 prefix,
@@ -166,9 +150,6 @@ pub(super) fn verify_subscript_instruction(
                 SubscriptSources {
                     receiver_ty: cx.reg_ty(*receiver),
                     method: "__setitem__",
-                    receiver_place: receiver_place.as_deref(),
-                    positional_places: &positional,
-                    keyword_places: &keyword,
                     positional_types: &positional_types,
                     keyword_types: &keyword_types,
                     dest: None,
@@ -273,9 +254,6 @@ pub(super) fn verify_subscript_call(
     let SubscriptSources {
         receiver_ty,
         method,
-        receiver_place,
-        positional_places,
-        keyword_places,
         positional_types,
         keyword_types,
         dest,
@@ -325,22 +303,18 @@ pub(super) fn verify_subscript_call(
             call.target
         ));
     }
-    if call.receiver_requires_place && receiver_place.is_none() {
+    // A receiver or argument the accessor takes by address is a reference
+    // to the caller's storage, which its operand is.
+    let is_reference = |ty: Option<&Ty>| ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
+    if call.receiver_requires_place && !is_reference(receiver_ty) {
         errors.push(format!(
-            "{prefix}: selected subscript reference receiver has no retained caller place"
+            "{prefix}: selected subscript reference receiver passes no reference"
         ));
     }
-    if positional_places.len() != positional_types.len()
-        || keyword_places.len() != keyword_types.len()
-    {
-        errors.push(format!(
-            "{prefix}: subscript argument place/type metadata is not aligned"
-        ));
-    }
-    let mut positional_uses = vec![0usize; positional_places.len()];
-    let mut keyword_uses = vec![0usize; keyword_places.len()];
+    let mut positional_uses = vec![0usize; positional_types.len()];
+    let mut keyword_uses = vec![0usize; keyword_types.len()];
     for argument in &call.arguments {
-        let (retained, actual_ty) = match argument.source {
+        let actual_ty = match argument.source {
             mojito_checked::checked::CheckedCallArgumentSource::Positional(index) => {
                 if let Some(uses) = positional_uses.get_mut(index) {
                     *uses += 1;
@@ -349,10 +323,7 @@ pub(super) fn verify_subscript_call(
                         "{prefix}: selected subscript positional source {index} is out of range"
                     ));
                 }
-                (
-                    positional_places.get(index).and_then(Option::as_ref),
-                    positional_types.get(index).and_then(Option::as_ref),
-                )
+                positional_types.get(index).and_then(Option::as_ref)
             }
             mojito_checked::checked::CheckedCallArgumentSource::Keyword(index) => {
                 if let Some(uses) = keyword_uses.get_mut(index) {
@@ -362,16 +333,14 @@ pub(super) fn verify_subscript_call(
                         "{prefix}: selected subscript keyword source {index} is out of range"
                     ));
                 }
-                (
-                    keyword_places.get(index).and_then(Option::as_ref),
-                    keyword_types.get(index).and_then(Option::as_ref),
-                )
+                keyword_types.get(index).and_then(Option::as_ref)
             }
-            mojito_checked::checked::CheckedCallArgumentSource::Default => (None, None),
+            mojito_checked::checked::CheckedCallArgumentSource::Default => None,
         };
-        if argument.requires_place && retained.is_none() {
+        if argument.requires_place && !is_reference(actual_ty) {
             errors.push(format!(
-                "{prefix}: selected subscript mut/ref argument has no retained caller place"
+                "{prefix}: selected subscript mut/ref argument {:?} passes no reference",
+                argument.source
             ));
         }
         // A parameter received by address takes a reference to the caller's

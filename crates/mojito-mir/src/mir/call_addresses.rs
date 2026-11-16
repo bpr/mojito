@@ -182,12 +182,12 @@ pub fn load_register_passable_operands(
 /// receiver is a compiler-modelled type with no witness (`len` of a
 /// `Tuple` through `Sized`), and the template passed the receiver and
 /// each memory-only `read` operand as a `ref.make` of its place, as
-/// lowering forms it. Each `(register, place)` whose register addresses
-/// its place (`addresses_referent`) becomes a `ref.read` of it, returned
-/// for the caller to splice ahead of the call, as upstream's
-/// `LowerArgConventions` loads a by-value argument at the call, and its
-/// place-table entry is cleared where the table is [`OperandTable::Owned`]:
-/// the loaded argument names no storage.
+/// lowering forms it. Each operand whose register is a reference becomes
+/// a `ref.read` of it, returned for the caller to splice ahead of the
+/// call, as upstream's `LowerArgConventions` loads a `!lit.ref` at a
+/// by-value slot: the decision is the operand's type alone. Its
+/// place-table entry is cleared, since the loaded argument names no
+/// storage.
 pub fn read_addressed_operands<'r>(
     function: &mut MirFunction,
     operands: impl IntoIterator<Item = (&'r mut Reg, OperandTable<'r>)>,
@@ -197,12 +197,6 @@ pub fn read_addressed_operands<'r>(
         let Some(TyKind::Ref(reference)) = function.reg_types.get(&register.0).map(Ty::kind) else {
             continue;
         };
-        if !table
-            .place()
-            .is_some_and(|place| addresses_referent(&reference.referent, place))
-        {
-            continue;
-        }
         table.clear();
         let referent = reference.referent.clone();
         let loaded = Reg(function.n_regs);
@@ -221,7 +215,7 @@ pub fn read_addressed_operands<'r>(
 }
 
 /// The place-table entry of an operand [`read_addressed_operands`] may
-/// load.
+/// load, which the load clears.
 pub enum OperandTable<'r> {
     /// An entry the load clears: a positional or keyword operand's.
     Owned(&'r mut Option<MirPlace>),
@@ -230,13 +224,6 @@ pub enum OperandTable<'r> {
 }
 
 impl OperandTable<'_> {
-    fn place(&self) -> Option<&MirPlace> {
-        match self {
-            Self::Owned(place) => place.as_ref(),
-            Self::OwnedBoxed(place) => place.as_deref(),
-        }
-    }
-
     fn clear(self) {
         match self {
             Self::Owned(place) => *place = None,
@@ -633,10 +620,7 @@ fn bound_call<'i>(
             refined_bound,
             ..
         } => {
-            let receiver_ty = recv_place
-                .as_ref()
-                .and_then(|place| place.ty.as_ref())
-                .or_else(|| reg_types.get(&recv.0));
+            let receiver_ty = reg_types.get(&recv.0).map(operand_value_ty);
             let callable_bound = receiver_ty
                 .and_then(|receiver| callable_bound_requirement(receiver, callee))
                 .map(Contract::Signature);
@@ -1456,14 +1440,13 @@ fn load_in_blocks(
                 if matches!(bound.contract, Contract::Required { .. }) {
                     return None;
                 }
-                let receiver = bound.receiver.is_some_and(|(register, place)| {
+                let receiver = bound.receiver.is_some_and(|(register, _)| {
                     let Contract::Declared(declaration) = bound.contract else {
                         return false;
                     };
-                    place.is_some()
-                        && reg_types.get(&register.0).is_some_and(|ty| {
-                            by_value_receiver(declaration, ty, context.declarations)
-                        })
+                    reg_types
+                        .get(&register.0)
+                        .is_some_and(|ty| by_value_receiver(declaration, ty, context.declarations))
                 });
                 let operands: Vec<bool> = bound
                     .operands
@@ -1652,15 +1635,5 @@ fn clear_operand_table(instruction: &mut MirInstr, position: Option<usize>) {
             clear(kwarg_places, position);
         }
         _ => {}
-    }
-}
-
-/// Whether a reference to `referent` addresses `place`: its storage, or
-/// the referent of the reference it stores.
-fn addresses_referent(referent: &Ty, place: &MirPlace) -> bool {
-    match place.ty.as_ref().map(|ty| (ty, ty.kind())) {
-        Some((_, TyKind::Ref(stored))) => &stored.referent == referent,
-        Some((storage, _)) => storage == referent,
-        None => false,
     }
 }

@@ -52,7 +52,11 @@ pub(super) fn verify_terminator(
     }
 }
 
-/// Every place an instruction addresses (operand and receiver places alike).
+/// Every place an instruction addresses.
+///
+/// A call-shaped instruction addresses its by-address operands through the
+/// `ref.make` each one is, which lists the place, as upstream's `lit.call`
+/// reads a `!lit.ref` operand; its place tables are not read.
 pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
     match instruction {
         MirInstr::EstablishLoans { loans, .. } => loans.iter().map(|loan| &loan.place).collect(),
@@ -69,77 +73,15 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         MirInstr::MakeClosure { captures, .. } => {
             captures.iter().map(|capture| &capture.place).collect()
         }
-        MirInstr::ConstructTypeParam { kwarg_places, .. } => {
-            kwarg_places.iter().flatten().collect()
-        }
-        MirInstr::Call {
-            arg_places,
-            kwarg_places,
-            ..
-        } => arg_places
-            .iter()
-            .flatten()
-            .chain(kwarg_places.iter().flatten())
-            .collect(),
-        MirInstr::CallIndirect {
-            callee_place,
-            arg_places,
-            kwarg_places,
-            ..
-        } => callee_place
-            .as_deref()
-            .into_iter()
-            .chain(arg_places.iter().flatten())
-            .chain(kwarg_places.iter().flatten())
-            .collect(),
-        MirInstr::MethodCall {
-            recv_place,
-            arg_places,
-            kwarg_places,
-            ..
-        } => recv_place
-            .as_deref()
-            .into_iter()
-            .chain(arg_places.iter().flatten())
-            .chain(kwarg_places.iter().flatten())
-            .collect(),
-        MirInstr::Index {
-            base_place,
-            index_place,
-            ..
-        } => base_place
-            .as_deref()
-            .into_iter()
-            .chain(index_place.as_deref())
-            .collect(),
-        MirInstr::MultiIndex {
-            object_place,
-            arg_places,
-            kwarg_places,
-            ..
-        } => object_place
-            .as_deref()
-            .into_iter()
-            .chain(arg_places.iter().flatten())
-            .chain(kwarg_places.iter().flatten())
-            .collect(),
-        MirInstr::MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
-            ..
-        } => receiver_place
-            .as_deref()
-            .into_iter()
-            .chain(arg_places.iter().flatten())
-            .chain(value_place.as_deref())
-            .collect(),
         _ => Vec::new(),
     }
 }
 
-/// The same places as [`instruction_places`], for a pass that rewrites the
-/// slots they address.
+/// The places a pass rewriting slots rewrites.
+///
+/// That is what [`instruction_places`] lists and a call's place-table
+/// entries beside it, so each table keeps naming the storage its
+/// operand's `ref.make` does.
 pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> {
     match instruction {
         MirInstr::EstablishLoans { loans, .. } => {

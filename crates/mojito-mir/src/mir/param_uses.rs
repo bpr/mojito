@@ -56,7 +56,7 @@ use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirSubscriptArg, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
     instruction_regions, instruction_regions_mut, instruction_slots, instruction_subscript_call,
-    matched_parameter_arguments, supplied_parameter_arguments,
+    matched_parameter_arguments, operand_value_ty, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -630,37 +630,22 @@ pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
 
 /// The type of the receiver a call of a struct member runs on.
 ///
-/// That is a method call's receiver (its place's, when it names one), a
-/// resolved operator's left operand, or a subscript's object; `None` for
-/// any other instruction.
+/// That is the value a method call's receiver operand passes (the
+/// referent of a reference), a resolved operator's left operand, or a
+/// subscript's object; `None` for any other instruction.
 pub fn member_receiver_ty<'f>(
     function: &'f MirFunction,
     instruction: &'f MirInstr,
 ) -> Option<&'f Ty> {
-    let (register, place) = match instruction {
-        MirInstr::MethodCall {
-            recv, recv_place, ..
-        } => (recv, recv_place),
-        MirInstr::BinOp { a, .. } => (a, &None),
-        MirInstr::Index {
-            base, base_place, ..
-        } => (base, base_place),
-        MirInstr::MultiIndex {
-            object,
-            object_place,
-            ..
-        } => (object, object_place),
-        MirInstr::MultiSet {
-            receiver,
-            receiver_place,
-            ..
-        } => (receiver, receiver_place),
+    let register = match instruction {
+        MirInstr::MethodCall { recv, .. } => recv,
+        MirInstr::BinOp { a, .. } => a,
+        MirInstr::Index { base, .. } => base,
+        MirInstr::MultiIndex { object, .. } => object,
+        MirInstr::MultiSet { receiver, .. } => receiver,
         _ => return None,
     };
-    place
-        .as_deref()
-        .and_then(|place| place_ty(function, place))
-        .or_else(|| function.reg_types.get(&register.0))
+    function.reg_types.get(&register.0).map(operand_value_ty)
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own
