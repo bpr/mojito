@@ -884,18 +884,13 @@ fn simd_instance<'s>(
         .map(|(name, declaration)| (name.as_str(), declaration))
 }
 
-/// The slots of `function` whose own type is a pointer value: a `Pointer`,
-/// its `!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field
-/// ([`StructDef::register_field`]), but for a `mut`/`ref` parameter, whose
-/// slot holds the caller's handle to the pointer.
+/// The slots of `function` whose own type is a pointer value
+/// ([`pointer_valued`]), but for a `mut`/`ref` parameter, whose slot holds
+/// the caller's handle to the pointer.
 fn pointer_value_slots(
     structs: &HashMap<String, StructDef>,
     function: &MirFunction,
 ) -> HashSet<VarId> {
-    use mojito_types::types::TyKind;
-    let is_pointer = |ty: &Ty| {
-        ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer(_) | TyKind::LitRef { .. })
-    };
     function
         .var_tys
         .iter()
@@ -906,17 +901,27 @@ fn pointer_value_slots(
                 .copied()
                 .unwrap_or(false)
         })
-        .filter(|(_, ty)| {
-            is_pointer(ty)
-                || held_field(structs, ty).is_some_and(|(name, field)| {
-                    structs[name]
-                        .fields
-                        .iter()
-                        .any(|(declared, ty)| declared == field && is_pointer(ty))
-                })
-        })
+        .filter(|(_, ty)| pointer_valued(structs, ty))
         .map(|(slot, _)| *slot)
         .collect()
+}
+
+/// Whether a value of `ty` is a pointer value: a `Pointer`, its
+/// `!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field
+/// ([`StructDef::register_field`]). The VM holds a place pointer as the
+/// handle to its pointee, so such a value is no reference.
+fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
+    use mojito_types::types::TyKind;
+    let is_pointer = |ty: &Ty| {
+        ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer(_) | TyKind::LitRef { .. })
+    };
+    is_pointer(ty)
+        || held_field(structs, ty).is_some_and(|(name, field)| {
+            structs[name]
+                .fields
+                .iter()
+                .any(|(declared, ty)| declared == field && is_pointer(ty))
+        })
 }
 
 /// Lower every field step whose base is a held struct to [`Proj::Rebind`]:
@@ -1041,6 +1046,22 @@ impl Prog {
             }
             (_, value) => value,
         }
+    }
+
+    /// Whether the method `function_name`, selected for `owner.method`,
+    /// writes its `self` though its call passes the receiver by value: a
+    /// closure storage's call whose body writes a `var` capture, whose
+    /// receiver the VM writes back to the call's receiver place (R2254).
+    fn writes_by_value_receiver(&self, owner: &str, method: &str, function_name: &str) -> bool {
+        let source_name = format!("{owner}.{method}");
+        let key = if function_name == source_name {
+            method
+        } else {
+            function_name
+        };
+        self.structs
+            .get(owner)
+            .is_some_and(|declaration| declaration.mut_self_methods.contains(key))
     }
 
     fn index_of(&self, name: &str) -> Option<usize> {
@@ -1305,41 +1326,14 @@ struct FnSig {
     has_receiver: bool,
 }
 
-impl FnSig {
-    /// The regular parameter at a frame slot, where the collectors
-    /// `bind_args` inserts occupy slots of their own;
-    /// `None` at a collector's slot.
-    fn frame_param_name(&self, frame_slot: usize) -> Option<&str> {
-        let mut index = frame_slot;
-        if let Some(keyword) = self.kw_variadic_index {
-            if index == keyword {
-                return None;
-            }
-            index -= usize::from(index > keyword);
-        }
-        if self.variadic.is_some() {
-            let positional = self.variadic_index.unwrap_or(self.param_names.len());
-            if index == positional {
-                return None;
-            }
-            index -= usize::from(index > positional);
-        }
-        self.param_names.get(index).map(String::as_str)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct FrameId(u64);
 
-struct SynchronousCall<'a> {
-    function_index: usize,
-    arguments: Vec<Value>,
-    reference_inputs: &'a [(usize, Value)],
-}
-
 /// A struct type's runtime shape, gathered from the program AST (the MIR doesn't
 /// keep field layout): field names + types (for `struct.create` coercion), and which
-/// methods take `mut self` (so their receiver is written back).
+/// methods write their `self` where the call passes the receiver by value
+/// (a closure storage whose body writes a `var` capture), so their receiver is
+/// written back (R2254).
 struct StructDef {
     fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
@@ -1498,15 +1492,6 @@ struct FrameScope {
     id: FrameId,
 }
 
-struct WritebackCall<'a> {
-    function_name: &'a str,
-    function_index: usize,
-    positional_args: Vec<Value>,
-    keyword_args: Vec<(String, Value)>,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_argument_places: &'a [Option<MirPlace>],
-}
-
 struct MethodInvocation<'a> {
     receiver: Value,
     /// The receiver operand's static type, which names a held struct's
@@ -1517,57 +1502,38 @@ struct MethodInvocation<'a> {
     result_adapter: Option<ResultAdapter<'a>>,
     arguments: Vec<Value>,
     keyword_arguments: Vec<(String, Value)>,
+    /// The receiver operand as the call passes it: the reference a
+    /// by-address receiver is, which the method binds as its `self`.
+    /// `None` for a receiver passed by value.
+    receiver_operand: Option<Value>,
+    /// The receiver's place, which a `deinit` receiver's call consumes and
+    /// a by-value receiver of a `self`-writing closure storage call is
+    /// written back to (R2254).
     receiver_place: Option<&'a MirPlace>,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_argument_places: &'a [Option<MirPlace>],
 }
 
-/// Recover the retained caller place selected for one bound parameter. Keyword
-/// slots are deliberately matched by parameter name: `bind_for_call` expands
-/// `**kwargs^`, so its internal keyword index is not necessarily an index into
-/// the original MIR keyword vectors. A forwarded entry has no retained source
-/// place and therefore correctly returns `None` here.
-fn bound_argument_place<'a>(
-    slot: Option<&ArgSlot>,
-    parameter_name: Option<&str>,
-    positional_offset: usize,
-    argument_places: &'a [Option<MirPlace>],
-    keyword_names: &[String],
-    keyword_argument_places: &'a [Option<MirPlace>],
-) -> Option<&'a MirPlace> {
-    match slot? {
-        ArgSlot::Positional(argument) => argument
-            .checked_sub(positional_offset)
-            .and_then(|argument| argument_places.get(argument))
-            .and_then(Option::as_ref),
-        ArgSlot::Keyword(_) => parameter_name
-            .and_then(|name| keyword_names.iter().position(|candidate| candidate == name))
-            .and_then(|argument| keyword_argument_places.get(argument))
-            .and_then(Option::as_ref),
-        ArgSlot::Default => None,
-    }
-}
-
-/// The caller place one parameter slot binds as a handle. A `mut`/`ref`
-/// slot requires its retained place (`Err` when the argument retained none).
-/// A read-convention slot binds a retained place too — the call's result
-/// borrows that argument, so the callee must see the caller's storage rather
-/// than a frame copy the returned handle would outlive — while an owned or
-/// deinit slot keeps its value transfer.
-fn caller_handle_place<'a>(
+/// Check that each `mut`/`ref` parameter of `function` binds a reference,
+/// as upstream's callee binds the `!lit.ref` its call passes: `arguments`
+/// are the frame's parameter values, the receiver first for a method. The
+/// verifier holds checked MIR to this, so a failure is a broken call.
+fn check_reference_arguments(
     function: &MirFunction,
-    parameter: usize,
-    place: Option<&'a MirPlace>,
-) -> Result<Option<&'a MirPlace>, MissingCallerPlace> {
-    let flag = |flags: &[bool]| flags.get(parameter).copied().unwrap_or(false);
-    if flag(&function.ref_params) {
-        return place.map(Some).ok_or(MissingCallerPlace);
-    }
-    Ok(place.filter(|_| !flag(&function.owned_params) && !flag(&function.deinit_params)))
+    name: &str,
+    arguments: &[Value],
+) -> Result<(), RuntimeError> {
+    function
+        .ref_params
+        .iter()
+        .zip(arguments)
+        .position(|(&reference, value)| {
+            reference && !matches!(value, Value::Ref { .. } | Value::Pointer { .. })
+        })
+        .map_or(Ok(()), |parameter| {
+            Err(RuntimeError::Unsupported(format!(
+                "vm: the mut/ref argument {parameter} to '{name}' must be a reference"
+            )))
+        })
 }
-
-/// A `mut`/`ref` parameter whose argument retained no caller place.
-struct MissingCallerPlace;
 
 /// The trap of reading [`Value::Undef`], the value a take moved out of
 /// never-written raw storage.
@@ -1592,7 +1558,6 @@ struct HeapAllocation {
 
 struct ReturnContinuation {
     dest: Reg,
-    writebacks: Vec<(usize, MirPlace)>,
     /// The raise edge of the call: a `raise` leaving the child sets its
     /// flag and error in the caller, which goes on to its error region.
     raises: Option<Raises>,

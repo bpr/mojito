@@ -221,28 +221,12 @@ impl VmBackend {
                 .and_then(|(_, function)| function.reg_types.get(&continuation.dest.0))
         });
         let value = self.materialize_checked_result(prog, value, target_ty)?;
-        // A written-back aggregate may carry reference handles rooted at this
-        // frame (a `ref` field rebound inside the callee); re-root them at the
-        // borrowed storage they project through before the frame is disposed,
-        // exactly like the returned-value path above.
-        let writebacks: Vec<_> = continuation
-            .writebacks
-            .into_iter()
-            .map(|(parameter, place)| {
-                let mut written = frame.variables[parameter].clone();
-                self.canonicalize_value_references(frame.id, &frame.variables, &mut written);
-                (place, written)
-            })
-            .collect();
         let caller = self.frames.last_mut().ok_or_else(|| {
             RuntimeError::Unsupported("vm: returning child has no caller frame".to_string())
         })?;
         caller.registers[continuation.dest.0 as usize] = value;
         if let Some(raises) = &continuation.raises {
             caller.registers[raises.flag.0 as usize] = Value::Bool(false);
-        }
-        for (place, written) in writebacks {
-            *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
         }
         Ok(None)
     }
@@ -259,8 +243,6 @@ impl VmBackend {
             callee,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             ..
         } = instruction
         {
@@ -282,37 +264,21 @@ impl VmBackend {
             if Self::initializer_receiver(prog, index).is_some() {
                 return Ok(None);
             }
-            let capture_count = captured.len();
+            let mut operand = |register: &Reg| {
+                self.call_operand(
+                    prog,
+                    caller.function,
+                    (caller.id, &caller.registers, &caller.variables),
+                    *register,
+                )
+            };
             let mut positional = captured;
-            positional.extend(
-                args.iter()
-                    .map(|register| caller.registers[register.0 as usize].clone()),
-            );
-            let mut keywords: Vec<(String, Value)> = kwargs
+            positional.extend(args.iter().map(&mut operand));
+            let keywords: Vec<(String, Value)> = kwargs
                 .iter()
-                .map(|(name, register)| {
-                    (name.clone(), caller.registers[register.0 as usize].clone())
-                })
+                .map(|(name, register)| (name.clone(), operand(register)))
                 .collect();
-            let operands = args.iter().zip(arg_places).chain(
-                kwargs
-                    .iter()
-                    .map(|(_, register)| register)
-                    .zip(kwarg_places),
-            );
-            for (operand, value, _) in self.addressed_operand_values(
-                prog,
-                (caller.function, caller.id),
-                (&caller.registers, &mut caller.variables),
-                operands,
-            )? {
-                match operand.checked_sub(args.len()) {
-                    None => positional[capture_count + operand] = value,
-                    Some(keyword) => keywords[keyword].1 = value,
-                }
-            }
-            let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-            let (mut bound, slots) = match prog.sigs.get(&function_name) {
+            let (bound, _) = match prog.sigs.get(&function_name) {
                 Some(signature) => self.bind_for_closure_call(
                     prog,
                     &function_name,
@@ -320,59 +286,10 @@ impl VmBackend {
                     &positional,
                     &keywords,
                 )?,
-                None => (
-                    positional,
-                    (0..capture_count + args.len())
-                        .map(ArgSlot::Positional)
-                        .collect(),
-                ),
+                None => (positional, Vec::new()),
             };
             let definition = &prog.mir.functions[index].1;
-            for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                let captured_argument = match slots.get(parameter) {
-                    Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
-                        Some(*argument)
-                    }
-                    _ => None,
-                };
-                if let Some(argument) = captured_argument {
-                    if *is_ref && !matches!(bound[parameter], Value::Ref { .. }) {
-                        return Err(RuntimeError::TypeError(format!(
-                            "vm: reference capture {argument} for '{function_name}' lost its handle"
-                        )));
-                    }
-                    continue;
-                }
-                let place = bound_argument_place(
-                    slots.get(parameter),
-                    prog.sigs.get(&function_name).and_then(|signature| {
-                        // A method's receiver, which its signature does
-                        // not list, is the value's first argument.
-                        signature.frame_param_name(
-                            parameter.checked_sub(usize::from(signature.has_receiver))?,
-                        )
-                    }),
-                    capture_count,
-                    arg_places,
-                    &keyword_names,
-                    kwarg_places,
-                );
-                let Some(place) =
-                    caller_handle_place(definition, parameter, place).map_err(|_| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: a mut/ref argument to callable '{function_name}' must be a place"
-                        ))
-                    })?
-                else {
-                    continue;
-                };
-                bound[parameter] = self.reference_argument(
-                    caller.id,
-                    &caller.registers,
-                    &caller.variables,
-                    place,
-                )?;
-            }
+            check_reference_arguments(definition, &function_name, &bound)?;
             return self
                 .make_frame(
                     prog,
@@ -380,7 +297,6 @@ impl VmBackend {
                     bound,
                     Some(ReturnContinuation {
                         dest: *dest,
-                        writebacks: Vec::new(),
                         raises: instruction.raise_edge().cloned(),
                         result_adapter: None,
                     }),
@@ -395,8 +311,6 @@ impl VmBackend {
             func,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             ..
         } = instruction
         else {
@@ -422,55 +336,33 @@ impl VmBackend {
         ) {
             return Ok(None);
         }
-        let positional: Vec<Value> = args
-            .iter()
-            .map(|reg| caller.registers[reg.0 as usize].clone())
-            .collect();
+        let mut operand = |register: &Reg| {
+            self.call_operand(
+                prog,
+                caller.function,
+                (caller.id, &caller.registers, &caller.variables),
+                *register,
+            )
+        };
+        let positional: Vec<Value> = args.iter().map(&mut operand).collect();
         let keywords: Vec<(String, Value)> = kwargs
             .iter()
-            .map(|(name, reg)| (name.clone(), caller.registers[reg.0 as usize].clone()))
+            .map(|(name, register)| (name.clone(), operand(register)))
             .collect();
-        let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-        let (mut bound, slots) = match prog.sigs.get(&func.0) {
+        let bound = match prog.sigs.get(&func.0) {
             Some(signature) => {
                 self.bind_for_call(prog, &func.0, signature, &positional, &keywords)?
+                    .0
             }
-            None => (
-                positional,
-                (0..args.len()).map(ArgSlot::Positional).collect(),
-            ),
+            None => positional,
         };
-        let function = &prog.mir.functions[index].1;
-        for (parameter, _) in function.ref_params.iter().enumerate() {
-            let place = bound_argument_place(
-                slots.get(parameter),
-                prog.sigs
-                    .get(&func.0)
-                    .and_then(|signature| signature.frame_param_name(parameter)),
-                0,
-                arg_places,
-                &keyword_names,
-                kwarg_places,
-            );
-            let Some(place) = caller_handle_place(function, parameter, place).map_err(|_| {
-                RuntimeError::Unsupported(format!(
-                    "vm: a mut/ref argument to '{}' must be a place",
-                    func.0
-                ))
-            })?
-            else {
-                continue;
-            };
-            bound[parameter] =
-                self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?;
-        }
+        check_reference_arguments(&prog.mir.functions[index].1, &func.0, &bound)?;
         self.make_frame(
             prog,
             index,
             bound,
             Some(ReturnContinuation {
                 dest: *dest,
-                writebacks: Vec::new(),
                 raises: instruction.raise_edge().cloned(),
                 result_adapter: None,
             }),
@@ -484,7 +376,7 @@ impl VmBackend {
     /// [`Self::method_call`] applies, and the call's result adapter runs
     /// when the frame returns. `None` leaves the call to the synchronous
     /// path: an intrinsic receiver (a place pointer's `copy`, a pack, a
-    /// heap pointer) and a `mut self` receiver held by value.
+    /// heap pointer) and a by-value receiver its method writes back.
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn prepare_method_call(
         &mut self,
@@ -501,8 +393,6 @@ impl VmBackend {
             args,
             kwargs,
             recv_place,
-            arg_places,
-            kwarg_places,
             ..
         } = instruction
         else {
@@ -518,14 +408,12 @@ impl VmBackend {
         if pointer_copy {
             return Ok(None);
         }
-        let addressed = self.addressed_operand(
+        let (raw, receiver_ty, receiver_operand) = self.receiver_operand(
             prog,
-            (caller.function, caller.id),
-            (&caller.registers, &mut caller.variables),
-            (*recv, recv_place.as_deref()),
+            caller.function,
+            (caller.id, &caller.registers, &caller.variables),
+            *recv,
         )?;
-        let (raw, receiver_ty) =
-            addressed.unwrap_or_else(|| (caller.registers[recv.0 as usize].clone(), receiver_ty));
         let receiver = if prog.held_field(receiver_ty).is_some() {
             prog.boxed(raw, receiver_ty)
         } else if matches!(raw, Value::Ref { .. }) {
@@ -557,130 +445,68 @@ impl VmBackend {
         };
         let definition = &prog.mir.functions[index].1;
         let returns_reference = definition.returns_reference;
-        let reference_receiver = definition.ref_params.first().copied().unwrap_or(false);
-        let deinit_receiver = definition.deinit_params.first().copied().unwrap_or(false);
-        // A ref-returning method's result handle roots in its receiver's
-        // storage, so a receiver with a place passes as a reference to the
-        // caller's live slot — including a read receiver, whose frame value
-        // copy would otherwise root the handle in this dying frame. So does
-        // a borrowed receiver whose result carries reference fields; an
-        // owned or deinit receiver otherwise keeps its value transfer.
-        let receiver_as_reference = if returns_reference && result_adapter.is_none() {
-            recv_place.is_some()
-        } else {
-            reference_receiver
-                || (recv_place.is_some()
-                    && !definition.owned_params.first().copied().unwrap_or(false)
-                    && !deinit_receiver
-                    && Self::function_result_carries_reference(prog, index))
-        };
-        // A `mut self` the method does not take as a reference parameter
-        // is written back from its returned value by the synchronous path.
-        let source_name = format!("{owner}.{method}");
-        let mut_receiver = prog.structs.get(&owner).is_some_and(|declaration| {
-            let key = if function_name == source_name {
-                method.as_str()
-            } else {
-                function_name.as_str()
-            };
-            declaration.mut_self_methods.contains(key)
-        });
-        if mut_receiver && !receiver_as_reference {
-            return Ok(None);
-        }
-        let operand = |register: &Reg| {
+        let mut operand = |register: &Reg| {
             prog.boxed(
-                caller.registers[register.0 as usize].clone(),
+                self.call_operand(
+                    prog,
+                    caller.function,
+                    (caller.id, &caller.registers, &caller.variables),
+                    *register,
+                ),
                 reg_types.get(&register.0),
             )
         };
-        let mut positional: Vec<Value> = args.iter().map(operand).collect();
-        let mut keywords: Vec<(String, Value)> = kwargs
+        let positional: Vec<Value> = args.iter().map(&mut operand).collect();
+        let keywords: Vec<(String, Value)> = kwargs
             .iter()
             .map(|(key, register)| (key.clone(), operand(register)))
             .collect();
-        let operands = args.iter().zip(arg_places).chain(
-            kwargs
-                .iter()
-                .map(|(_, register)| register)
-                .zip(kwarg_places),
-        );
-        for (operand, value, ty) in self.addressed_operand_values(
-            prog,
-            (caller.function, caller.id),
-            (&caller.registers, &mut caller.variables),
-            operands,
-        )? {
-            let value = prog.boxed(value, ty);
-            match operand.checked_sub(positional.len()) {
-                None => positional[operand] = value,
-                Some(keyword) => keywords[keyword].1 = value,
-            }
-        }
-        let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-        let (mut bound, slots) = match prog.sigs.get(&function_name) {
+        let bound = match prog.sigs.get(&function_name) {
             Some(signature) => {
                 self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
+                    .0
             }
-            None => (
-                positional,
-                (0..args.len()).map(ArgSlot::Positional).collect(),
-            ),
+            None => positional,
         };
-        for parameter in 1..definition.ref_params.len() {
-            let place = bound_argument_place(
-                slots.get(parameter - 1),
-                prog.sigs
-                    .get(&function_name)
-                    .and_then(|signature| signature.frame_param_name(parameter - 1)),
-                0,
-                arg_places,
-                &keyword_names,
-                kwarg_places,
-            );
-            let Some(place) = caller_handle_place(definition, parameter, place).map_err(|_| {
-                RuntimeError::Unsupported(format!(
-                    "vm: a mut/ref argument to method '{function_name}' must be a place"
-                ))
-            })?
-            else {
-                continue;
-            };
-            bound[parameter - 1] =
-                self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?;
+        // The receiver enters by the rule [`Self::method_call`] applies: a
+        // by-address receiver as its reference, an owned one as its value,
+        // and the call consumes a `deinit` receiver's place, as upstream's
+        // call consumes a `DeinitMem` operand: the place holds the
+        // ended-place tombstone from the call on.
+        let deinit_receiver = definition.deinit_params.first().copied().unwrap_or(false);
+        let owned_receiver =
+            deinit_receiver || definition.owned_params.first().copied().unwrap_or(false);
+        let receiver = match receiver_operand {
+            Some(reference) if !owned_receiver => reference,
+            _ => receiver,
+        };
+        // A by-value receiver the method writes is written back by the
+        // synchronous path (R2254).
+        if !matches!(receiver, Value::Ref { .. } | Value::Pointer { .. })
+            && !owned_receiver
+            && prog.writes_by_value_receiver(&owner, method, &function_name)
+        {
+            return Ok(None);
         }
-        let receiver = if receiver_as_reference {
-            let place = recv_place.as_deref().ok_or_else(|| {
-                RuntimeError::Unsupported(format!(
-                    "vm: reference receiver for method '{function_name}' must be a place"
-                ))
-            })?;
-            self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
-        } else {
-            // The call consumes its `deinit` receiver's place, as upstream's
-            // call consumes a `DeinitMem` operand: the place holds the
-            // ended-place tombstone from the call on.
-            if deinit_receiver && let Some(place) = recv_place.as_deref() {
-                self.store_at_call_place(
-                    caller.id,
-                    place,
-                    Value::Moved,
-                    &caller.registers,
-                    &mut caller.variables,
-                )?;
-            }
-            receiver
-        };
+        if deinit_receiver && let Some(place) = recv_place.as_deref() {
+            self.store_at_call_place(
+                caller.id,
+                place,
+                Value::Moved,
+                &caller.registers,
+                &mut caller.variables,
+            )?;
+        }
         let mut call_args = Vec::with_capacity(bound.len() + 1);
         call_args.push(receiver);
         call_args.extend(bound);
+        check_reference_arguments(definition, &function_name, &call_args)?;
         self.make_frame(
             prog,
             index,
             call_args,
             Some(ReturnContinuation {
                 dest: *dest,
-                writebacks: Vec::new(),
                 raises: instruction.raise_edge().cloned(),
                 result_adapter: result_adapter
                     .as_deref()
@@ -735,8 +561,7 @@ impl VmBackend {
     /// Pop a child frame a `raise` leaves into its caller, whose call has
     /// a raise edge: set the edge's flag and write its error slot, as
     /// upstream's throwing call returns its error flag having written its
-    /// `ByRefError` argument, and apply the call's write-backs, so the
-    /// caller goes on to its error region.
+    /// `ByRefError` argument, so the caller goes on to its error region.
     fn raise_into_caller(
         &mut self,
         prog: &Prog,
@@ -746,15 +571,6 @@ impl VmBackend {
         let continuation = frame.continuation.ok_or_else(|| {
             RuntimeError::Unsupported("vm: child frame has no return continuation".to_string())
         })?;
-        let writebacks: Vec<_> = continuation
-            .writebacks
-            .into_iter()
-            .map(|(parameter, place)| {
-                let mut written = frame.variables[parameter].clone();
-                self.canonicalize_value_references(frame.id, &frame.variables, &mut written);
-                (place, written)
-            })
-            .collect();
         let mut caller = self.frames.pop().ok_or_else(|| {
             RuntimeError::Unsupported("vm: raising child has no caller frame".to_string())
         })?;
@@ -769,12 +585,6 @@ impl VmBackend {
             );
         }
         self.frames.push(caller);
-        let caller = self.frames.last_mut().ok_or_else(|| {
-            RuntimeError::Unsupported("vm: raising child has no caller frame".to_string())
-        })?;
-        for (place, written) in writebacks {
-            *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
-        }
         Ok(())
     }
 

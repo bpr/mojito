@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2253**.
+Next free ID: **R2255**.
 
 ## Ordered Work
 
@@ -9616,23 +9616,49 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2187, R2248, R2249, R2250.
   - Model: Fable, Planned.
 
-- [ ] **R2188 The VM binds a by-address parameter from the call's place
-  table, not from its reference operand**
+- [ ] **R2253 The VM represents a place pointer by the same handle as a
+  reference to its slot**
 
-  Upstream's callee binds the `!lit.ref` operand itself. The VM loads an
-  addressed operand's place back into a value (`addressed_operand_values`,
-  `addressed_operand`, `vm/exec.rs`, by `mir::addresses_place`) and rebinds a
-  `mut`/`ref` parameter from the place (`reference_argument`,
-  `bound_argument_place`, `caller_handle_place`).
-  - Sites: `prepare_direct_call`, `prepare_method_call` (`vm/frames.rs`),
-    `call_with_writeback` and the method arms (`vm/invoke.rs`), the
-    constructor arm (`vm/exec.rs`).
-  - Fix: bind a `Value::Ref` operand directly, read a memory-only `read`
-    through it, and keep `reference_argument` only for a consumed
-    receiver.
-  - Stop when `rg 'arg_places|recv_place|base_place' crates/mojito-vm`
-    finds only the consumed receiver.
-  - Depends on R2247, R2186, R2187.
+  Upstream's `Pointer(to=x)` is a pointer value, and a `!lit.ref` of the
+  slot holding it is a distinct reference. The VM holds a place pointer as
+  a `Value::Ref` to its pointee, and `canonical_reference_parts` adopts a
+  root slot's stored handle, so a reference to the pointer's slot cannot be
+  told from the pointer it holds.
+  - So `VmBackend::call_operand` (`vm/exec.rs`) passes the pointer a
+    whole place-pointer slot holds where a call's operand references that
+    slot, rather than the reference the call formed.
+  - Probe: `assets/ok/mut_pointer_parameter_reassign.mojo` (`def
+    write_back[o](mut p: Pointer[Int, o]): p = p`) overflows the stack
+    resolving the self-referential handle when the VM binds the slot's
+    reference as upstream does. A reseat the caller would observe has
+    no Mojito-accepted probe yet (origin and aliasing check errors).
+  - Fix: a distinct runtime value for a place pointer, so a reference to
+    its slot extends to the slot and reading through it yields the
+    pointer; then drop the `call_operand` special case.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2254 A call through a `def(...)` bound passes a self-writing
+  closure storage by value, so the VM writes it back**
+
+  Upstream's closure call receives its context by reference, so a body
+  that writes a `var` capture writes the caller's storage. Mojito lowers
+  the bound's `__call__` requirement call with the callee value as a
+  by-value receiver (`var.use` of the `F` slot, no `receiver_convention`),
+  and the storage's `__call__` and body methods are only listed in
+  `mut_self_methods` (`mir/nested.rs`).
+  - So the VM keeps one receiver write-back: a by-value receiver of a
+    method `Prog::writes_by_value_receiver` names is written back to the
+    call's `recv_place` after a synchronous call (`method_call`,
+    `vm/invoke.rs`; `prepare_method_call` defers to it).
+  - Probe: `assets/ok/memory_only_read_temporary_address.mojo`
+    (`twice(lambda {var s^} -> Int: (s.__iadd__("!"), ...)[1])` prints
+    `34`; without the write-back the second call double-frees the string).
+  - Probe: `assets/ok/closure_storage_method_binders.mojo`.
+  - Fix: lower such a receiver as a mutable `ref.make` of the callee's
+    place, then delete `mut_self_methods` from the VM's `StructDef` and the
+    write-back.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R2189 Pliron reads a by-address argument from its place, not from

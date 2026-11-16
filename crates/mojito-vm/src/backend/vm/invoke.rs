@@ -1,84 +1,10 @@
-//! Call machinery: writeback/synchronous calls, caller mirrors,
+//! Call machinery: synchronous calls, caller mirrors,
 //! argument binding, kwargs, and method dispatch.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
-    /// Call a free function that has `mut`/`ref` parameters, writing each one's
-    /// final value back to the caller's argument place (`arg_places`). This is the
-    /// runtime half of call-scoped reference parameters, performed over the
-    /// caller's frame (`regs`/`vars`).
-    pub(super) fn call_with_writeback(
-        &mut self,
-        prog: &Prog,
-        call: WritebackCall<'_>,
-        frame: CallerFrame<'_>,
-    ) -> Result<Value, RuntimeError> {
-        let WritebackCall {
-            function_name: name,
-            function_index: idx,
-            positional_args: argv,
-            keyword_args: kwargs,
-            argument_places: arg_places,
-            keyword_argument_places: kwarg_places,
-        } = call;
-        let CallerFrame {
-            id: frame_id,
-            function: caller_function,
-            registers: regs,
-            variables: vars,
-        } = frame;
-        // Order the arguments into parameter slots (filling defaults/keywords),
-        // keeping the slot map so each parameter's source argument is known.
-        let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-        let (bound, slots) = if let Some(sig) = prog.sigs.get(name) {
-            self.bind_for_call(prog, name, sig, &argv, &kwargs)?
-        } else {
-            let slots = (0..argv.len()).map(ArgSlot::Positional).collect();
-            (argv, slots)
-        };
-        let function = &prog.mir.functions[idx].1;
-        let mut reference_inputs = Vec::new();
-        for i in 0..function.ref_params.len() {
-            let place = bound_argument_place(
-                slots.get(i),
-                prog.sigs
-                    .get(name)
-                    .and_then(|signature| signature.frame_param_name(i)),
-                0,
-                arg_places,
-                &keyword_names,
-                kwarg_places,
-            );
-            let Some(place) = caller_handle_place(function, i, place).map_err(|_| {
-                RuntimeError::Unsupported(format!(
-                    "vm: a mut/ref argument to '{name}' must be a plain variable or field \
-                     (not a temporary, an indexed place, a default, or a forwarded keyword)"
-                ))
-            })?
-            else {
-                continue;
-            };
-            reference_inputs.push((i, self.reference_argument(frame_id, regs, vars, place)?));
-        }
-        let (result, _, _) = self.call_synchronously_with_references(
-            prog,
-            SynchronousCall {
-                function_index: idx,
-                arguments: bound,
-                reference_inputs: &reference_inputs,
-            },
-            CallerFrame {
-                id: frame_id,
-                function: caller_function,
-                registers: regs,
-                variables: vars,
-            },
-        )?;
-        Ok(result)
-    }
-
     /// Execute a child while its caller is held by a structured MIR region rather
     /// than the continuation-driven frame stack. A temporary mirror with the
     /// caller's real frame identity makes ordinary frame/slot handles work
@@ -86,31 +12,19 @@ impl VmBackend {
     /// nested anywhere in the return value already point at the caller. The
     /// completed child identity is retained for references into its own receiver.
     /// Every synchronous call kind uses this one boundary.
-    pub(super) fn call_synchronously_with_references(
+    pub(super) fn call_synchronously(
         &mut self,
         prog: &Prog,
-        call: SynchronousCall<'_>,
+        function_index: usize,
+        arguments: Vec<Value>,
         caller: CallerFrame<'_>,
     ) -> Result<(Value, Vec<Value>, FrameId), RuntimeError> {
-        let SynchronousCall {
-            function_index,
-            mut arguments,
-            reference_inputs,
-        } = call;
         let CallerFrame {
             id: caller_id,
             function: _,
             registers: caller_registers,
             variables: caller_variables,
         } = caller;
-        for (parameter, handle) in reference_inputs {
-            let slot = arguments.get_mut(*parameter).ok_or_else(|| {
-                RuntimeError::Unsupported(format!(
-                    "vm: reference parameter slot {parameter} is outside the call ABI"
-                ))
-            })?;
-            *slot = handle.clone();
-        }
         let stack_base = self.push_caller_mirror(caller_id, caller_registers, caller_variables);
         let outcome = self.call_frame_with_id(prog, function_index, arguments);
         self.restore_caller_mirror(stack_base, caller_variables)?;
@@ -237,8 +151,9 @@ impl VmBackend {
     }
 
     /// Dispatch a method call. Nominal values resolve to their mangled
-    /// `Type.method` function, with a `mut self` receiver written back; only
-    /// primitive and compiler-private storage kinds retain intrinsic branches.
+    /// `Type.method` function, which binds a by-address receiver as the
+    /// reference its operand is; only primitive and compiler-private storage
+    /// kinds retain intrinsic branches.
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn method_call(
         &mut self,
@@ -254,9 +169,8 @@ impl VmBackend {
             result_adapter,
             arguments: args,
             keyword_arguments: kwargs,
-            receiver_place: recv_place,
-            argument_places: arg_places,
-            keyword_argument_places: kwarg_places,
+            receiver_operand,
+            receiver_place,
         } = invocation;
         let CallerFrame {
             id: frame_id,
@@ -265,9 +179,7 @@ impl VmBackend {
             variables: vars,
         } = frame;
         // A receiver read out of a `ref`-typed field arrives as a reference
-        // handle: dispatch on its referent. A `mut self` write-back re-enters
-        // the storage through the receiver place, which chases the same
-        // handle.
+        // handle: dispatch on its referent.
         // A held struct receiver dispatches as its box, which the method's
         // frame entry unboxes.
         let recv = if prog.held_field(receiver_ty).is_some() {
@@ -278,7 +190,6 @@ impl VmBackend {
         } else {
             recv
         };
-        let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // The declared struct whose method the call runs: a struct value's
         // own, and for a value the VM holds as a builtin (a `SIMD` or a
         // `Bool`), the owner of the declared member the elaborator selected.
@@ -337,87 +248,48 @@ impl VmBackend {
                     })?;
                 // Bind ordinary arguments through the same signature metadata as
                 // free functions, then prepend `self` in frame slot zero.
-                let (bound, slots) = if let Some(signature) = prog.sigs.get(&fname) {
+                let bound = if let Some(signature) = prog.sigs.get(&fname) {
                     self.bind_for_call(prog, &fname, signature, &args, &kwargs)?
+                        .0
                 } else {
-                    let slots = (0..args.len()).map(ArgSlot::Positional).collect();
-                    (args, slots)
+                    args
                 };
-                let mut call_args = Vec::with_capacity(bound.len() + 1);
-                call_args.push(recv.clone());
-                call_args.extend(bound);
                 let function = &prog.mir.functions[fidx].1;
-                let ref_params = &function.ref_params;
-                // A borrowed receiver whose result carries reference fields
-                // must also enter as a caller-place handle: a value copy would
-                // root the result's `ref` fields in the callee frame, and
-                // return-time canonicalization has no caller storage to re-root
-                // them through. Owned/deinit receivers keep the value transfer.
-                let deinit_receiver = function.deinit_params.first().copied().unwrap_or(false);
-                let receiver_as_reference = ref_params.first().copied().unwrap_or(false)
-                    || (recv_place.is_some()
-                        && !function.owned_params.first().copied().unwrap_or(false)
-                        && !deinit_receiver
-                        && Self::function_result_carries_reference(prog, fidx));
-                // The call consumes its `deinit` receiver's place, as
+                // A by-address receiver enters as the reference its operand
+                // is, as upstream's method binds its `!lit.ref` `self`; an
+                // owned or `deinit` receiver is the value the call transfers,
+                // and the call consumes a `deinit` receiver's place, as
                 // upstream's call consumes a `DeinitMem` operand: the
-                // callee's elaborated drops destroy its fields, and the place
-                // holds the VM's ended-place tombstone from the call on, as a
-                // move leaves one.
-                if deinit_receiver
-                    && !receiver_as_reference
-                    && let Some(place) = recv_place
-                {
+                // callee's elaborated drops destroy its fields, and the
+                // place holds the VM's ended-place tombstone from the call on.
+                let deinit_receiver = function.deinit_params.first().copied().unwrap_or(false);
+                let owned_receiver =
+                    deinit_receiver || function.owned_params.first().copied().unwrap_or(false);
+                let receiver = match receiver_operand {
+                    Some(reference) if !owned_receiver => reference,
+                    _ => recv.clone(),
+                };
+                if deinit_receiver && let Some(place) = receiver_place {
                     self.store_at_call_place(frame_id, place, Value::Moved, regs, vars)?;
                 }
-                let mut reference_inputs = Vec::new();
-                if receiver_as_reference {
-                    let place = recv_place.as_ref().ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: reference receiver for method '{fname}' must be a place"
-                        ))
-                    })?;
-                    reference_inputs
-                        .push((0, self.reference_argument(frame_id, regs, vars, place)?));
-                }
-                for i in 1..ref_params.len() {
-                    let place = bound_argument_place(
-                        slots.get(i - 1),
-                        prog.sigs
-                            .get(&fname)
-                            .and_then(|signature| signature.frame_param_name(i - 1)),
-                        0,
-                        arg_places,
-                        &keyword_names,
-                        kwarg_places,
-                    );
-                    let Some(place) = caller_handle_place(function, i, place).map_err(|_| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: a mut/ref argument to method '{fname}' must be a plain \
-                             variable or field (not a temporary or indexed place)"
-                        ))
-                    })?
-                    else {
-                        continue;
-                    };
-                    reference_inputs
-                        .push((i, self.reference_argument(frame_id, regs, vars, place)?));
-                }
-                let (ret, mut frame_vars, returned_frame_id) = self
-                    .call_synchronously_with_references(
-                        prog,
-                        SynchronousCall {
-                            function_index: fidx,
-                            arguments: call_args,
-                            reference_inputs: &reference_inputs,
-                        },
-                        CallerFrame {
-                            id: frame_id,
-                            function: caller_function,
-                            registers: regs,
-                            variables: vars,
-                        },
-                    )?;
+                let write_back = !matches!(receiver, Value::Ref { .. } | Value::Pointer { .. })
+                    && !owned_receiver
+                    && prog.writes_by_value_receiver(name, method, &fname);
+                let mut call_args = Vec::with_capacity(bound.len() + 1);
+                call_args.push(receiver);
+                call_args.extend(bound);
+                check_reference_arguments(function, &fname, &call_args)?;
+                let (ret, mut frame_vars, returned_frame_id) = self.call_synchronously(
+                    prog,
+                    fidx,
+                    call_args,
+                    CallerFrame {
+                        id: frame_id,
+                        function: caller_function,
+                        registers: regs,
+                        variables: vars,
+                    },
+                )?;
                 let returns_reference = prog.mir.functions[fidx].1.returns_reference;
                 // A static-origin reference may arrive as its heap
                 // element's pointer (`returned_value`).
@@ -429,8 +301,8 @@ impl VmBackend {
                 // Adapt while the completed method frame is still available.
                 // A read-only or consuming receiver may return a reference into
                 // that temporary frame, and adapter-time lifecycle code may
-                // write through handles nested in the result. Receiver write-back
-                // therefore follows adaptation rather than preceding it.
+                // write through handles nested in the result. A receiver
+                // write-back therefore follows adaptation.
                 let ret = self.apply_checked_result_adapter(
                     prog,
                     ret,
@@ -442,19 +314,7 @@ impl VmBackend {
                         returned: Some((returned_frame_id, &mut frame_vars)),
                     },
                 )?;
-                // `mut self`: write the (possibly mutated) receiver back.
-                let is_mut = prog.structs.get(name).is_some_and(|d| {
-                    let key = if fname == source_fname {
-                        method
-                    } else {
-                        fname.as_str()
-                    };
-                    d.mut_self_methods.contains(key)
-                });
-                if is_mut
-                    && !receiver_as_reference
-                    && let Some(place) = recv_place
-                {
+                if write_back && let Some(place) = receiver_place {
                     self.store_at_call_place(frame_id, place, frame_vars[0].clone(), regs, vars)?;
                 }
                 Ok(ret)

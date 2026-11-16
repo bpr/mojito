@@ -16,55 +16,6 @@ pub(super) struct CallTypes<'a> {
 }
 
 impl VmBackend {
-    /// Whether a function's result can hold reference handles into its
-    /// receiver: it returns a reference directly, or its checked return type
-    /// structurally contains a `ref` field. Such a method's borrowed receiver
-    /// must enter as a caller-place handle rather than a value copy.
-    pub(super) fn function_result_carries_reference(prog: &Prog, index: usize) -> bool {
-        let function = &prog.mir.functions[index].1;
-        if function.returns_reference {
-            return true;
-        }
-        let Some(ret) = &function.ret_ty else {
-            return false;
-        };
-        let mut visited = std::collections::HashSet::new();
-        Self::type_carries_reference_handle(prog, ret, &mut visited)
-    }
-
-    /// Structural reference-content test over MIR struct declarations, with a
-    /// visited set for recursive aggregates. A stored `ref` handle and a
-    /// single-pointee origin-bearing pointer (`Pointer[T, o]` over one place)
-    /// are frame-rooted handles; multi-element pointer-backed views (`Span`)
-    /// copy by value safely, and generic parameters are conservatively
-    /// `false`.
-    pub(super) fn type_carries_reference_handle(
-        prog: &Prog,
-        ty: &Ty,
-        visited: &mut std::collections::HashSet<String>,
-    ) -> bool {
-        match ty.kind() {
-            TyKind::Ref(_) => true,
-            pointer
-                if pointer.is_pointer() && super::references::single_pointee_pointer(Some(ty)) =>
-            {
-                true
-            }
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                visited.insert(name.clone())
-                    && prog.structs.get(name).is_some_and(|declaration| {
-                        declaration.fields.iter().any(|(_, field_ty)| {
-                            Self::type_carries_reference_handle(prog, field_ty, visited)
-                        })
-                    })
-            }
-            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => items
-                .iter()
-                .any(|item| Self::type_carries_reference_handle(prog, item, visited)),
-            _ => false,
-        }
-    }
-
     /// Destroy `value`, which a `drop.var` or `drop.place` of the static
     /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
     /// names, on the whole value, else by dropping its fields at their

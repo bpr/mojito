@@ -1008,6 +1008,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM binds a by-address parameter or receiver to the reference its
+  call's operand is, as upstream's callee binds its `!lit.ref`, instead of
+  loading the operand's place and rebuilding a handle from the call's
+  place table; a builtin reads its operands through, and a `mut self`
+  method mutates the caller's storage directly. A reference to a slot
+  holding a place pointer still passes the pointer (R2253), and a
+  self-writing closure storage called through a `def(...)` bound, still
+  passed by value, keeps its receiver write-back (R2254). (R2188)
+
 - A `ref` field or `ref` binding passed where its callee takes the
   operand by address now passes the reference it holds, as upstream's
   `lit.call` takes the `!lit.ref`, instead of a load through it: at a

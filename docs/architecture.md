@@ -2524,9 +2524,12 @@ receiver register-passable (`read x: T` at `T = Int`), as upstream's pass
 loads such an argument at the call; the move check and the inliner's
 receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
-referent. The place stays in `arg_places`, which the VM and Pliron still
-bind a parameter from, and the VM loads an addressed operand's place for
-a callee taking the value (R2188, R2189). A memory-only `read` temporary (one
+referent. The place stays in `arg_places`, which Pliron still binds a
+parameter from (R2189); the VM binds each operand as the call passes it,
+a by-address one as its reference, as upstream's callee binds its
+`!lit.ref`, reads one through only for a builtin taking values, and
+passes the pointer a place-pointer slot holds for a reference to that
+slot (R2253). A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
@@ -4782,12 +4785,15 @@ overlapping.
 
 ### Calls
 
-MIR calls keep the information the VM needs for Mojo-style conventions:
+MIR calls keep the information their backends need for Mojo-style conventions:
 
-- positional argument registers
+- positional argument registers, a by-address one the reference the call
+  passes, which the VM binds as its callee's parameter
 - keyword argument registers
 - simple caller places aligned with both positional and keyword `mut`/`ref`
-  arguments
+  arguments, which the loan analysis, the inliner, and Pliron read (the VM
+  reads only a receiver's: a `deinit` one's, which its call consumes, and a
+  by-value self-writing closure storage's, R2254)
 - an optional callable-value place for a nominal `mut`/`ref __call__` receiver
 - source-ordered compile-time parameter arguments, retaining an optional name
   separately from the optional value register (type arguments have no register)
@@ -8482,7 +8488,7 @@ and a one-lane `bool` vector are one `Value::Bool`, as LLVM's one `i1`, so
 compile-time `CtValue::Bool`.
 
 Frames are owned by an explicit VM stack and have monotonic identities. Direct
-user-function calls push a frame plus a return/write-back continuation; returns
+user-function calls push a frame plus a return continuation; returns
 pop and resume the caller in the iterative dispatcher. This makes ordinary deep
 source recursion independent of the Rust call stack. The frame shape is:
 
@@ -8503,7 +8509,7 @@ The VM builds a `Prog` containing:
 
 - lowered MIR
 - struct definitions and field layouts
-- method mutability information
+- the closure-storage methods that write a by-value receiver (R2254)
 - function signatures
 - default arguments
 - value-parameter declarations
@@ -8538,19 +8544,18 @@ keyword operand, the shape a `callee(**kwargs^)` forward already has. A
 forward binds the collector alone: a keyword no named parameter claims
 beside it is rejected, as at the pin
 (`mojito_ast::call::bind_keyword_forward`). The VM and Pliron bind that
-operand to the collector's slot whole, an owned argument that never
-participates in caller write-back, and the verifier rejects a call of a
+operand to the collector's slot whole, an owned argument, and the verifier rejects a call of a
 keyword-collecting callee that passes none.
 6. binds value parameters into frame locals
 7. runs the callee's block loop
-8. returns the result and, where needed, final variable slots for write-back
+8. returns the result
 
-`mut` and explicitly mutable `ref[origin]` parameters receive handles to the
-simple caller places retained in MIR. Keyword places are resolved after argument
-binding by the selected parameter name, so reordering and ordinary defaults do
-not lose identity; a keyword collector the call passes has no writable source
-place. Inside a structured region, a temporary caller-frame mirror makes these
-the same frame/slot handles used by continuation-driven calls and is committed
+`mut`, `ref`, and memory-only `read` parameters bind the reference their
+operand is, as upstream's callee binds the `!lit.ref` its `lit.call` passes;
+the VM reads no caller place to bind them, and a `mut`/`ref` slot whose
+bound value is no reference is an error (`check_reference_arguments`).
+Inside a structured region, a temporary caller-frame mirror keeps the
+caller's frame/slot handles valid through the child call and is committed
 on both normal and raising outcomes. Bare `ref` remains parametrically mutable
 and may not write in an unspecialized body.
 
@@ -8570,18 +8575,20 @@ Method calls are normal function calls with a receiver convention:
 - `self` is parameter slot 0
 - ordinary arguments use the same positional/keyword/default/variadic slot
   matcher as free functions before `self` is prepended
-- `mut self` writes the final receiver back to the caller place
-- ordinary `mut` and explicitly mutable `ref[origin]` method parameters also
-  bind through retained positional or keyword caller places
-- nominal collection mutators commit through a reference-aware receiver place,
-  including pointer-backed self-hosted `List` fields
+- a by-address receiver (`mut`, `ref`, or memory-only `read self`) binds the
+  reference its operand is, as does a borrow of a slot holding a reference,
+  so a `mut self` mutation writes the caller's storage directly; an owned or
+  `deinit` receiver binds its value, and the call consumes a `deinit`
+  receiver's place; a self-writing closure storage passed by value through
+  a `def(...)` bound is written back to its place (R2254)
+- ordinary `mut` and `ref` method parameters bind their operands' references
 
 Method-dispatched nominal `Index`, `MultiIndex`, and `MultiSet` enter
 this same selected-method dispatcher and argument binder. They never choose a dunder by
 runtime name or arity: the retained `MirSubscriptCall` supplies the lowered
-target, value-parameter arguments, typed raising contract, caller places, and
-reference-result metadata. The VM only invokes that contract, performs
-selected write-back, and returns or propagates its result.
+target, value-parameter arguments, typed raising contract, and
+reference-result metadata. The VM only invokes that contract, binding the
+base's and operands' references, and returns or propagates its result.
 
 ### Moves At Runtime
 

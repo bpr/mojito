@@ -8,10 +8,6 @@ use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_simd;
 
-/// A call's by-address operand read from its place: its index among the
-/// positional then keyword operands, the value, and the place's type.
-pub(super) type AddressedOperand<'p> = (usize, Value, Option<&'p Ty>);
-
 impl VmBackend {
     /// The value a `place.load` of `place` reads in the frame `frame_id` of
     /// `function`.
@@ -94,50 +90,120 @@ impl VmBackend {
         })
     }
 
-    /// The value each by-address operand of a call holds, by its index
-    /// among the positional then keyword operands, with the type of its
-    /// place's referent (a place holding a reference passes the value
-    /// behind it): a by-address operand enters the call as the value its place
-    /// holds, and a parameter that binds the caller's storage takes the
-    /// place's handle, as every call's does.
-    pub(super) fn addressed_operand_values<'p>(
+    /// The value a call passes for its operand `register`, as upstream's
+    /// `lit.call` passes the operand itself: a by-address operand is the
+    /// reference the call formed, which the callee binds as its parameter.
+    /// A reference to a slot holding a place pointer passes the pointer it
+    /// holds, since the VM represents that pointer by the same handle a
+    /// reference to its slot would extend (R2253); a slot holding a heap
+    /// pointer is addressed as itself, and a heap element `ref.make` forwards
+    /// as its pointer passes as the interned pointer's element handle, which
+    /// a callee writes through as it writes any reference.
+    pub(super) fn call_operand(
         &mut self,
         prog: &Prog,
-        (function, frame_id): (usize, FrameId),
-        (regs, vars): (&[Value], &mut [Value]),
-        operands: impl Iterator<Item = (&'p Reg, &'p Option<MirPlace>)>,
-    ) -> Result<Vec<AddressedOperand<'p>>, RuntimeError> {
-        let reg_types = &prog.mir.functions[function].1.reg_types;
-        let mut values = Vec::new();
-        for (operand, (register, place)) in operands.enumerate() {
-            let Some(place) = place.as_ref().filter(|place| {
-                mojito_mir::mir::addresses_place(reg_types.get(&register.0), place)
-            }) else {
-                continue;
-            };
-            let value = self.load_place_value(prog, function, frame_id, regs, vars, place)?;
-            values.push((operand, value, place.ty.as_ref().map(peel_references)));
+        function: usize,
+        (frame_id, regs, vars): (FrameId, &[Value], &[Value]),
+        register: Reg,
+    ) -> Value {
+        let value = &regs[register.0 as usize];
+        match value {
+            Value::Ref {
+                frame,
+                slot,
+                projection,
+            } if *frame == frame_id.0
+                && projection.is_empty()
+                && matches!(vars[*slot], Value::Ref { .. })
+                && u32::try_from(*slot)
+                    .is_ok_and(|slot| prog.pointer_slots[function].contains(&slot))
+                && matches!(
+                    prog.mir.functions[function]
+                        .1
+                        .reg_types
+                        .get(&register.0)
+                        .map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ) =>
+            {
+                vars[*slot].clone()
+            }
+            Value::Pointer { allocation, offset }
+                if matches!(
+                    prog.mir.functions[function]
+                        .1
+                        .reg_types
+                        .get(&register.0)
+                        .map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ) =>
+            {
+                Value::Ref {
+                    frame: POINTER_ROOT_FRAME,
+                    slot: self.pointer_root(*allocation, *offset),
+                    projection: vec![RefProjection::Index(0)],
+                }
+            }
+            value => value.clone(),
         }
-        Ok(values)
     }
 
-    /// The receiver or lone operand a call passes by address, read from
-    /// its place, with the place's type; `None` for one passed as a value.
-    pub(super) fn addressed_operand<'p>(
+    /// A method call's receiver operand `register`: the value its dispatch
+    /// reads, with that value's type, and the reference a by-address
+    /// receiver binds as its `self` (`None` for a receiver passed by
+    /// value): a `ref.make`, or a borrow of a slot that holds a reference.
+    pub(super) fn receiver_operand<'p>(
         &mut self,
+        prog: &'p Prog,
+        function: usize,
+        (frame_id, regs, vars): (FrameId, &[Value], &[Value]),
+        register: Reg,
+    ) -> Result<(Value, Option<&'p Ty>, Option<Value>), RuntimeError> {
+        let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
+        let value = regs[register.0 as usize].clone();
+        Ok(match ty.map(Ty::kind) {
+            Some(TyKind::Ref(reference))
+                if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) =>
+            {
+                let referent = self.read_reference(&value, frame_id, vars)?;
+                let reference_operand =
+                    self.call_operand(prog, function, (frame_id, regs, vars), register);
+                (referent, Some(&reference.referent), Some(reference_operand))
+            }
+            // A borrow of a slot holding a reference (a by-address
+            // parameter or a `ref` binding, read at its referent's type)
+            // is that reference, as upstream's `!lit.ref` value is.
+            _ if matches!(value, Value::Ref { .. })
+                && ty.is_some_and(|ty| !pointer_valued(&prog.structs, ty)) =>
+            {
+                let referent = self.read_reference(&value, frame_id, vars)?;
+                (referent, ty, Some(value))
+            }
+            _ => (value, ty, None),
+        })
+    }
+
+    /// The value a builtin takes for the call operand `register`: a
+    /// by-address operand read through its reference, as upstream loads an
+    /// argument a callee takes by value, and a held struct as its box.
+    pub(super) fn value_operand(
+        &self,
         prog: &Prog,
-        (function, frame_id): (usize, FrameId),
-        (regs, vars): (&[Value], &mut [Value]),
-        (recv, place): (Reg, Option<&'p MirPlace>),
-    ) -> Result<Option<(Value, Option<&'p Ty>)>, RuntimeError> {
-        let reg_types = &prog.mir.functions[function].1.reg_types;
-        let Some(place) =
-            place.filter(|place| mojito_mir::mir::addresses_place(reg_types.get(&recv.0), place))
-        else {
-            return Ok(None);
-        };
-        let value = self.load_place_value(prog, function, frame_id, regs, vars, place)?;
-        Ok(Some((value, place.ty.as_ref().map(peel_references))))
+        function: usize,
+        (frame_id, regs, vars): (FrameId, &[Value], &[Value]),
+        register: Reg,
+    ) -> Result<Value, RuntimeError> {
+        let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
+        let value = regs[register.0 as usize].clone();
+        Ok(match ty.map(Ty::kind) {
+            Some(TyKind::Ref(reference))
+                if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) =>
+            {
+                let referent = self.read_reference(&value, frame_id, vars)?;
+                prog.boxed(referent, Some(&reference.referent))
+            }
+            _ => prog.boxed(value, ty),
+        })
     }
 
     /// Execute one straight-line MIR instruction against the current frame.
@@ -809,129 +875,48 @@ impl VmBackend {
                 func,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 instantiated_args,
                 ..
             } => {
-                let mut argv: Vec<Value> =
-                    args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                let mut kw: Vec<(String, Value)> = kwargs
-                    .iter()
-                    .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))
-                    .collect();
-                let operands = args.iter().zip(arg_places).chain(
-                    kwargs
-                        .iter()
-                        .map(|(_, register)| register)
-                        .zip(kwarg_places),
-                );
-                for (operand, value, _) in self.addressed_operand_values(
-                    prog,
-                    (function, frame_id),
-                    (regs, vars),
-                    operands,
-                )? {
-                    match operand.checked_sub(argv.len()) {
-                        None => argv[operand] = value,
-                        Some(keyword) => kw[keyword].1 = value,
-                    }
-                }
-                // A handwritten constructor receives reference arguments as
-                // caller-frame handles, just like an ordinary ref-parameter call.
-                // Its synthetic `self` occupies parameter slot zero.
-                let constructed =
-                    prog.declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0));
-                let constructor_index = prog
+                let reg_types = &prog.mir.functions[function].1.reg_types;
+                let constructed = prog.declared_struct(reg_types.get(&dest.0));
+                // A MIR function enters a frame binding its operands as the
+                // call passes them, as the continuation path's does; this
+                // instruction interpreter runs it synchronously (inside a
+                // structured `try` region). A lifecycle constructor, an
+                // initializer of a receiver the VM holds as a value, and a
+                // builtin go through `call_named`.
+                let frame_callee = prog
                     .lifecycle_constructor(&func.0, constructed)
-                    .and_then(|_| prog.index_of(&func.0));
-                if let Some(index) = constructor_index {
-                    let reference_parameters = &prog.mir.functions[index].1.ref_params;
-                    for (argument, value) in argv.iter_mut().enumerate() {
-                        if !reference_parameters
-                            .get(argument + 1)
-                            .copied()
-                            .unwrap_or(false)
-                        {
-                            continue;
-                        }
-                        let place = arg_places
-                            .get(argument)
-                            .and_then(Option::as_ref)
-                            .ok_or_else(|| {
-                                RuntimeError::Unsupported(format!(
-                                    "vm: reference constructor argument {} to '{}' must be a place",
-                                    argument + 1,
-                                    func.0
-                                ))
-                            })?;
-                        *value = self.reference_argument(frame_id, regs, vars, place)?;
-                    }
-                    if let Some(signature) = prog
-                        .sigs
-                        .get(&prog.mir.functions[index].0)
-                        .or_else(|| prog.sigs.get(&func.0))
-                    {
-                        for (argument, (name, value)) in kw.iter_mut().enumerate() {
-                            let Some(parameter) = signature
-                                .param_names
-                                .iter()
-                                .position(|candidate| candidate == name)
-                            else {
-                                continue;
-                            };
-                            if !reference_parameters
-                                .get(parameter + 1)
-                                .copied()
-                                .unwrap_or(false)
-                            {
-                                continue;
-                            }
-                            let place = kwarg_places
-                                .get(argument)
-                                .and_then(Option::as_ref)
-                                .ok_or_else(|| {
-                                    RuntimeError::Unsupported(format!(
-                                        "vm: reference constructor keyword '{name}' to '{}' must be a place",
-                                        func.0
-                                    ))
-                                })?;
-                            *value = self.reference_argument(frame_id, regs, vars, place)?;
-                        }
-                    }
-                }
-                // A free function with `mut`/`ref` parameters — or a retained
-                // shared-read place lent to a borrowing-view result — binds
-                // those parameters to caller-place handles. An initializer of
-                // a receiver the VM holds as a value enters with its storage
-                // through the plain call, which returns no view.
-                let retains_place = arg_places
-                    .iter()
-                    .chain(kwarg_places.iter())
-                    .any(Option::is_some);
-                let writeback = constructor_index
                     .is_none()
-                    .then(|| {
-                        prog.index_of(&func.0).filter(|&idx| {
-                            let function = &prog.mir.functions[idx].1;
-                            !matches!(
-                                prog.constructed(&func.0, &function.param_types),
-                                Some(Constructed::Value(_))
-                            ) && (retains_place || function.ref_params.iter().any(|&r| r))
-                        })
-                    })
-                    .flatten();
-                let result = if let Some(idx) = writeback {
-                    self.call_with_writeback(
+                    .then(|| prog.index_of(&func.0))
+                    .flatten()
+                    .filter(|&index| {
+                        !matches!(
+                            prog.constructed(&func.0, &prog.mir.functions[index].1.param_types),
+                            Some(Constructed::Value(_))
+                        )
+                    });
+                let result = if let Some(index) = frame_callee {
+                    let mut operand = |register: &Reg| {
+                        self.call_operand(prog, function, (frame_id, regs, vars), *register)
+                    };
+                    let argv: Vec<Value> = args.iter().map(&mut operand).collect();
+                    let kw: Vec<(String, Value)> = kwargs
+                        .iter()
+                        .map(|(name, register)| (name.clone(), operand(register)))
+                        .collect();
+                    let bound = match prog.sigs.get(&func.0) {
+                        Some(signature) => {
+                            self.bind_for_call(prog, &func.0, signature, &argv, &kw)?.0
+                        }
+                        None => argv,
+                    };
+                    check_reference_arguments(&prog.mir.functions[index].1, &func.0, &bound)?;
+                    self.call_synchronously(
                         prog,
-                        WritebackCall {
-                            function_name: &func.0,
-                            function_index: idx,
-                            positional_args: argv,
-                            keyword_args: kw,
-                            argument_places: arg_places,
-                            keyword_argument_places: kwarg_places,
-                        },
+                        index,
+                        bound,
                         CallerFrame {
                             id: frame_id,
                             function: caller_function,
@@ -939,40 +924,41 @@ impl VmBackend {
                             variables: vars,
                         },
                     )?
+                    .0
                 } else {
-                    // Reaching the instruction interpreter means this call
-                    // is executing synchronously (for example inside a
-                    // structured try region); the continuation path handles
-                    // ordinary direct calls earlier. Keep the caller's real
-                    // frame identity reachable even without direct ref
-                    // parameters because by-value arguments may contain
-                    // nested reference handles.
-                    // A builtin (`abs`, `input`) dispatches its operands by
-                    // runtime shape, so a held struct operand passes as its
-                    // box; a function's frame entry unboxes it.
-                    let reg_types = &prog.mir.functions[function].1.reg_types;
-                    let argv: Vec<Value> = argv
-                        .into_iter()
-                        .zip(args)
-                        .map(|(value, register)| prog.boxed(value, reg_types.get(&register.0)))
-                        .collect();
-                    let kw: Vec<(String, Value)> = kw
-                        .into_iter()
-                        .zip(kwargs)
-                        .map(|((name, value), (_, register))| {
-                            (name, prog.boxed(value, reg_types.get(&register.0)))
-                        })
-                        .collect();
+                    // A builtin (`abs`, `input`) takes values, dispatched by
+                    // runtime shape: a by-address operand is read through,
+                    // and a held struct operand passes as its box. A
+                    // constructor binds its operands as a function's frame
+                    // does, unboxing a held struct at entry.
+                    let builtin = prog.index_of(&func.0).is_none();
+                    let mut operand = |register: &Reg| {
+                        if builtin {
+                            self.value_operand(prog, function, (frame_id, regs, vars), *register)
+                        } else {
+                            Ok(prog.boxed(
+                                self.call_operand(
+                                    prog,
+                                    function,
+                                    (frame_id, regs, vars),
+                                    *register,
+                                ),
+                                reg_types.get(&register.0),
+                            ))
+                        }
+                    };
+                    let argv = args
+                        .iter()
+                        .map(&mut operand)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let kw = kwargs
+                        .iter()
+                        .map(|(name, register)| Ok((name.clone(), operand(register)?)))
+                        .collect::<Result<Vec<_>, RuntimeError>>()?;
                     let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                     let arg_types: Vec<Option<mojito_types::types::Ty>> = args
                         .iter()
-                        .map(|reg| {
-                            prog.mir.functions[function]
-                                .1
-                                .reg_types
-                                .get(&reg.0)
-                                .cloned()
-                        })
+                        .map(|reg| reg_types.get(&reg.0).cloned())
                         .collect();
                     let outcome = self.call_named(
                         prog,
@@ -996,8 +982,6 @@ impl VmBackend {
                 callee,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 ..
             } => {
                 let callable = regs[callee.0 as usize].clone();
@@ -1019,108 +1003,32 @@ impl VmBackend {
                 let initializes = receiver.is_some();
                 let mut positional = receiver.into_iter().collect::<Vec<_>>();
                 positional.extend(captures);
-                let capture_count = positional.len();
-                positional.extend(
-                    args.iter()
-                        .map(|register| regs[register.0 as usize].clone()),
-                );
-                let mut keywords: Vec<(String, Value)> = kwargs
-                    .iter()
-                    .map(|(name, register)| (name.clone(), regs[register.0 as usize].clone()))
-                    .collect();
-                let operands = args.iter().zip(arg_places).chain(
-                    kwargs
-                        .iter()
-                        .map(|(_, register)| register)
-                        .zip(kwarg_places),
-                );
-                for (operand, value, _) in self.addressed_operand_values(
-                    prog,
-                    (caller_function, frame_id),
-                    (regs, vars),
-                    operands,
-                )? {
-                    match operand.checked_sub(args.len()) {
-                        None => positional[capture_count + operand] = value,
-                        Some(keyword) => keywords[keyword].1 = value,
-                    }
-                }
-                let keyword_names: Vec<String> =
-                    kwargs.iter().map(|(name, _)| name.clone()).collect();
-                let (bound, slots) = match prog.sigs.get(&function) {
-                    Some(signature) => self.bind_for_closure_call(
-                        prog,
-                        &function,
-                        signature,
-                        &positional,
-                        &keywords,
-                    )?,
-                    None => (
-                        positional,
-                        (0..capture_count + args.len())
-                            .map(ArgSlot::Positional)
-                            .collect(),
-                    ),
+                let mut operand = |register: &Reg| {
+                    self.call_operand(prog, caller_function, (frame_id, regs, vars), *register)
                 };
-                // A `try` region executes synchronously instead of through the
-                // explicit frame driver. Retain each indirect reference input as
-                // its real caller handle; the shared caller mirror keeps those
-                // handles valid through the child call.
-                let definition = &prog.mir.functions[index].1;
-                let mut reference_inputs: Vec<(usize, Value)> = Vec::new();
-                for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                    let captured_argument = match slots.get(parameter) {
-                        Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
-                            Some(*argument)
-                        }
-                        _ => None,
-                    };
-                    let handle = if let Some(argument) = captured_argument {
-                        if !is_ref {
-                            continue;
-                        }
-                        let handle = bound[parameter].clone();
-                        if !matches!(handle, Value::Ref { .. }) {
-                            return Err(RuntimeError::TypeError(format!(
-                                "vm: reference capture {argument} for '{function}' lost its handle"
-                            )));
-                        }
-                        handle
-                    } else {
-                        let place = bound_argument_place(
-                            slots.get(parameter),
-                            prog.sigs.get(&function).and_then(|signature| {
-                                // A method's receiver, which its signature does
-                                // not list, is the value's first argument.
-                                signature.frame_param_name(
-                                    parameter.checked_sub(usize::from(signature.has_receiver))?,
-                                )
-                            }),
-                            capture_count,
-                            arg_places,
-                            &keyword_names,
-                            kwarg_places,
-                        );
-                        let Some(place) = caller_handle_place(definition, parameter, place)
-                            .map_err(|_| {
-                                RuntimeError::Unsupported(format!(
-                                    "vm: a mut/ref argument to callable '{function}' must be a place"
-                                ))
-                            })?
-                        else {
-                            continue;
-                        };
-                        self.reference_argument(frame_id, regs, vars, place)?
-                    };
-                    reference_inputs.push((parameter, handle));
-                }
-                let (result, frame_vars, _) = self.call_synchronously_with_references(
+                positional.extend(args.iter().map(&mut operand));
+                let keywords: Vec<(String, Value)> = kwargs
+                    .iter()
+                    .map(|(name, register)| (name.clone(), operand(register)))
+                    .collect();
+                let bound = match prog.sigs.get(&function) {
+                    Some(signature) => {
+                        self.bind_for_closure_call(
+                            prog,
+                            &function,
+                            signature,
+                            &positional,
+                            &keywords,
+                        )?
+                        .0
+                    }
+                    None => positional,
+                };
+                check_reference_arguments(&prog.mir.functions[index].1, &function, &bound)?;
+                let (result, frame_vars, _) = self.call_synchronously(
                     prog,
-                    SynchronousCall {
-                        function_index: index,
-                        arguments: bound,
-                        reference_inputs: &reference_inputs,
-                    },
+                    index,
+                    bound,
                     CallerFrame {
                         id: frame_id,
                         function: caller_function,
@@ -1143,62 +1051,34 @@ impl VmBackend {
                 args,
                 kwargs,
                 recv_place,
-                arg_places,
-                kwarg_places,
                 ..
             } => {
-                let addressed = self.addressed_operand(
-                    prog,
-                    (function, frame_id),
-                    (regs, vars),
-                    (*recv, recv_place.as_deref()),
-                )?;
                 let reg_types = &prog.mir.functions[function].1.reg_types;
-                let (recv_val, receiver_ty) = addressed
-                    .unwrap_or_else(|| (regs[recv.0 as usize].clone(), reg_types.get(&recv.0)));
+                let (recv_val, receiver_ty, receiver_operand) =
+                    self.receiver_operand(prog, function, (frame_id, regs, vars), *recv)?;
                 // A place pointer is a reference handle here, and its
                 // trait-dispatched `copy` is the handle, not its pointee's.
                 let pointer_copy = method == "copy"
                     && resolved.is_none()
                     && args.is_empty()
                     && kwargs.is_empty()
-                    && (prog.mir.functions[function].1.reg_types.get(&recv.0))
-                        .is_some_and(Ty::is_pointer);
+                    && reg_types.get(&recv.0).is_some_and(Ty::is_pointer);
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
                 } else {
-                    // A builtin method (`Writer.write` on the builtin
-                    // string writer) formats its operands by runtime shape,
-                    // so a held struct operand passes as its box.
-                    let operand = |register: &Reg| {
+                    // A builtin method formats its operands by runtime
+                    // shape, so a held struct operand passes as its box.
+                    let mut operand = |register: &Reg| {
                         prog.boxed(
-                            regs[register.0 as usize].clone(),
+                            self.call_operand(prog, function, (frame_id, regs, vars), *register),
                             reg_types.get(&register.0),
                         )
                     };
-                    let mut argv: Vec<Value> = args.iter().map(operand).collect();
-                    let mut kw: Vec<(String, Value)> = kwargs
+                    let argv: Vec<Value> = args.iter().map(&mut operand).collect();
+                    let kw: Vec<(String, Value)> = kwargs
                         .iter()
                         .map(|(name, reg)| (name.clone(), operand(reg)))
                         .collect();
-                    let operands = args.iter().zip(arg_places).chain(
-                        kwargs
-                            .iter()
-                            .map(|(_, register)| register)
-                            .zip(kwarg_places),
-                    );
-                    for (operand, value, ty) in self.addressed_operand_values(
-                        prog,
-                        (function, frame_id),
-                        (regs, vars),
-                        operands,
-                    )? {
-                        let value = prog.boxed(value, ty);
-                        match operand.checked_sub(argv.len()) {
-                            None => argv[operand] = value,
-                            Some(keyword) => kw[keyword].1 = value,
-                        }
-                    }
                     let result = self.method_call(
                         prog,
                         MethodInvocation {
@@ -1215,9 +1095,8 @@ impl VmBackend {
                             }),
                             arguments: argv,
                             keyword_arguments: kw,
+                            receiver_operand,
                             receiver_place: recv_place.as_deref(),
-                            argument_places: arg_places,
-                            keyword_argument_places: kwarg_places,
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1344,9 +1223,9 @@ impl VmBackend {
                 base,
                 index,
                 base_place,
-                index_place,
                 call,
                 intrinsic,
+                ..
             } => {
                 let base_value = regs[base.0 as usize].clone();
                 // A ref-typed subscript base register holds a handle; the
@@ -1386,20 +1265,22 @@ impl VmBackend {
                             )));
                         }
                     };
-                    let idx = self
-                        .addressed_operand(
-                            prog,
-                            (function, frame_id),
-                            (regs, vars),
-                            (*index, index_place.as_deref()),
-                        )?
-                        .map_or_else(|| regs[index.0 as usize].clone(), |(value, _)| value);
-                    let parameterless = call.arguments.is_empty();
-                    let arguments = if parameterless { Vec::new() } else { vec![idx] };
-                    let argument_places = if parameterless {
+                    let idx = self.call_operand(prog, function, (frame_id, regs, vars), *index);
+                    let arguments = if call.arguments.is_empty() {
                         Vec::new()
                     } else {
-                        vec![index_place.as_deref().cloned()]
+                        vec![idx]
+                    };
+                    let receiver_operand = match &regs[base.0 as usize] {
+                        _ if matches!(base_ty.map(Ty::kind), Some(TyKind::Ref(_))) => {
+                            Some(self.call_operand(prog, function, (frame_id, regs, vars), *base))
+                        }
+                        reference @ Value::Ref { .. }
+                            if base_ty.is_some_and(|ty| !pointer_valued(&prog.structs, ty)) =>
+                        {
+                            Some(reference.clone())
+                        }
+                        _ => None,
                     };
                     let result = self.method_call(
                         prog,
@@ -1411,9 +1292,8 @@ impl VmBackend {
                             result_adapter: None,
                             arguments,
                             keyword_arguments: Vec::new(),
+                            receiver_operand,
                             receiver_place: base_place.as_deref(),
-                            argument_places: &argument_places,
-                            keyword_argument_places: &[],
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1489,53 +1369,27 @@ impl VmBackend {
                 object,
                 args,
                 object_place,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 call,
+                ..
             } => {
-                let subscript_value = |argument: &MirSubscriptArg| match argument {
-                    MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
+                let mut subscript_value = |argument: &MirSubscriptArg| match argument {
+                    MirSubscriptArg::Index(register) => {
+                        self.call_operand(prog, function, (frame_id, regs, vars), *register)
+                    }
                 };
-                let mut arguments: Vec<Value> = args.iter().map(subscript_value).collect();
+                let arguments: Vec<Value> = args.iter().map(&mut subscript_value).collect();
                 let call = call.as_ref().ok_or_else(|| {
                     RuntimeError::TypeError(
                         "vm: nominal multi-index lacks a checked call contract".to_string(),
                     )
                 })?;
-                let mut keyword_arguments: Vec<(String, Value)> = kwargs
+                let keyword_arguments: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(name, argument)| (name.clone(), subscript_value(argument)))
                     .collect();
-                let operands = args
-                    .iter()
-                    .chain(kwargs.iter().map(|(_, argument)| argument))
-                    .map(|MirSubscriptArg::Index(register)| register)
-                    .zip(arg_places.iter().chain(kwarg_places.iter()));
-                for (operand, value, _) in self.addressed_operand_values(
-                    prog,
-                    (function, frame_id),
-                    (regs, vars),
-                    operands,
-                )? {
-                    match operand.checked_sub(arguments.len()) {
-                        None => arguments[operand] = value,
-                        Some(keyword) => keyword_arguments[keyword].1 = value,
-                    }
-                }
-                let (receiver, receiver_ty) = self
-                    .addressed_operand(
-                        prog,
-                        (function, frame_id),
-                        (regs, vars),
-                        (*object, object_place.as_deref()),
-                    )?
-                    .unwrap_or_else(|| {
-                        (
-                            regs[object.0 as usize].clone(),
-                            prog.mir.functions[function].1.reg_types.get(&object.0),
-                        )
-                    });
+                let (receiver, receiver_ty, receiver_operand) =
+                    self.receiver_operand(prog, function, (frame_id, regs, vars), *object)?;
                 let result = self.method_call(
                     prog,
                     MethodInvocation {
@@ -1546,9 +1400,8 @@ impl VmBackend {
                         result_adapter: None,
                         arguments,
                         keyword_arguments,
+                        receiver_operand,
                         receiver_place: object_place.as_deref(),
-                        argument_places: arg_places,
-                        keyword_argument_places: kwarg_places,
                     },
                     CallerFrame {
                         id: frame_id,
@@ -1564,51 +1417,21 @@ impl VmBackend {
                 receiver,
                 receiver_place,
                 args,
-                arg_places,
                 value,
-                value_place,
                 value_keyword,
                 call,
+                ..
             } => {
-                let mut arguments = args
+                let mut operand = |register: Reg| {
+                    self.call_operand(prog, function, (frame_id, regs, vars), register)
+                };
+                let arguments = args
                     .iter()
-                    .map(|argument| match argument {
-                        MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
-                    })
+                    .map(|MirSubscriptArg::Index(register)| operand(*register))
                     .collect::<Vec<_>>();
-                let mut keyword_arguments =
-                    vec![(value_keyword.clone(), regs[value.0 as usize].clone())];
-                let argument_places = arg_places.clone();
-                let keyword_argument_places = vec![value_place.as_deref().cloned()];
-                let operands = args
-                    .iter()
-                    .map(|MirSubscriptArg::Index(register)| register)
-                    .chain([value])
-                    .zip(argument_places.iter().chain(&keyword_argument_places));
-                for (operand, value, _) in self.addressed_operand_values(
-                    prog,
-                    (function, frame_id),
-                    (regs, vars),
-                    operands,
-                )? {
-                    match operand.checked_sub(arguments.len()) {
-                        None => arguments[operand] = value,
-                        Some(keyword) => keyword_arguments[keyword].1 = value,
-                    }
-                }
-                let (receiver, receiver_ty) = self
-                    .addressed_operand(
-                        prog,
-                        (function, frame_id),
-                        (regs, vars),
-                        (*receiver, receiver_place.as_deref()),
-                    )?
-                    .unwrap_or_else(|| {
-                        (
-                            regs[receiver.0 as usize].clone(),
-                            prog.mir.functions[function].1.reg_types.get(&receiver.0),
-                        )
-                    });
+                let keyword_arguments = vec![(value_keyword.clone(), operand(*value))];
+                let (receiver, receiver_ty, receiver_operand) =
+                    self.receiver_operand(prog, function, (frame_id, regs, vars), *receiver)?;
                 let _ = self.method_call(
                     prog,
                     MethodInvocation {
@@ -1619,9 +1442,8 @@ impl VmBackend {
                         result_adapter: None,
                         arguments,
                         keyword_arguments,
+                        receiver_operand,
                         receiver_place: receiver_place.as_deref(),
-                        argument_places: &argument_places,
-                        keyword_argument_places: &keyword_argument_places,
                     },
                     CallerFrame {
                         id: frame_id,
