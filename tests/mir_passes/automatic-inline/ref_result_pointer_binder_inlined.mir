@@ -1,4 +1,4 @@
-mojito-mir 1.192
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -6,7 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: Box, fields: [field { name: n, type: Int }], mut_self_methods: [get], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "ptr" }
+    struct { name: Box, fields: [field { name: n, type: Int }], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [], module: "ptr" }
   ],
   decls: [
     decl { lowered_name: "Box.get", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(ref), param_conventions: [], return_type: Int, returns_reference: true, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
@@ -69,7 +69,7 @@ artifact {
           bb0 {
             instructions: [
               ref.make { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
-              call.method { dest: %r1, recv: %r0, method: get, resolved: present("Box.get"), raises: absent, reference_result: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: present(imm), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r1, recv: %r0, method: get, resolved: present("Box.get"), raises: absent, reference_result: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: present(imm), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               var.store { var: $v2, src: %r1, binding_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), in_place: false },
               place.load { dest: %r3, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) }), projections: [], type: present(Int), through: present($v2) } },
               drop.var { var: $v2 }

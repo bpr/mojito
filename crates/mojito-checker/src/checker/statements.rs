@@ -1239,8 +1239,8 @@ impl Checker {
             })?;
         // The receiver is a place, not a computed call. Keep the selected
         // contract solely in the `AugmentedInPlace` record so lowering treats the
-        // receiver as a place (write-back through `recv_place`) rather than as a
-        // reference-returning call result keyed at this span.
+        // receiver as a place (a `ref.make` of the storage the call writes)
+        // rather than as a reference-returning call result keyed at this span.
         self.clear_fact(span, |facts| facts.selected_call.take().map(|fact| *fact));
         self.clear_fact(span, |facts| facts.overload_target.take());
         self.clear_fact(span, |facts| facts.generic_instantiation.take());

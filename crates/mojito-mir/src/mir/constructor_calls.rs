@@ -166,7 +166,6 @@ fn struct_named_copy(
         func,
         args,
         kwargs,
-        kwarg_places,
         ..
     } = instruction
     else {
@@ -183,12 +182,5 @@ fn struct_named_copy(
         && args.is_empty()
         && struct_template(name) == struct_template(&func.0)
         && declarations.structure(struct_template(name)).is_some())
-    .then(|| {
-        crate::mir::struct_copy(
-            *dest,
-            ty,
-            (*source, kwarg_places.first().cloned().flatten()),
-            declarations,
-        )
-    })
+    .then(|| crate::mir::struct_copy(*dest, ty, *source, declarations))
 }

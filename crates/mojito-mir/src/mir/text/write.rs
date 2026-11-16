@@ -151,6 +151,30 @@ pub(super) fn constraint(value: &GenericConstraint) -> String {
     }
 }
 
+/// `place` written as a `place` record.
+pub(super) fn place_value(place: &MirPlace) -> String {
+    let projections = place
+        .proj
+        .iter()
+        .zip(&place.projection_tys)
+        .map(|(projection, ty)| {
+            record(
+                "projection",
+                &[("op", projection_value(projection)), ("type", ty_value(ty))],
+            )
+        });
+    record(
+        "place",
+        &[
+            ("root", var_value(place.root)),
+            ("root_type", option(place.root_ty.as_ref().map(ty_value))),
+            ("projections", list(projections)),
+            ("type", option(place.ty.as_ref().map(ty_value))),
+            ("through", option(place.through.map(var_value))),
+        ],
+    )
+}
+
 /// The version header and an artifact's leading fields, through its
 /// function declarations.
 fn write_artifact_head(
@@ -941,7 +965,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             dest,
             param,
             kwargs,
-            kwarg_places,
             element,
         } => record(
             tag,
@@ -951,7 +974,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("slot", param.id.slot.to_string()),
                 ("param", symbol(&param.name)),
                 ("kwargs", kwargs_value(kwargs)),
-                ("kwarg_places", places_option(kwarg_places)),
                 ("element", option(element.as_ref().map(param_arg))),
             ],
         ),
@@ -1103,8 +1125,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             raises,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             conventions,
             capture_accesses,
             param_arg_regs,
@@ -1120,8 +1140,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     ("raises", option(raises.as_ref().map(raises_value))),
                     ("args", regs(args)),
                     ("kwargs", kwargs_value(kwargs)),
-                    ("arg_places", places_option(arg_places)),
-                    ("kwarg_places", places_option(kwarg_places)),
                     (
                         "capture_accesses",
                         list(capture_accesses.iter().map(capture_access)),
@@ -1147,9 +1165,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             raises,
             args,
             kwargs,
-            callee_place,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
@@ -1165,12 +1180,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("raises", option(raises.as_ref().map(raises_value))),
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
-                (
-                    "callee_place",
-                    option(callee_place.as_deref().map(place_value)),
-                ),
-                ("arg_places", places_option(arg_places)),
-                ("kwarg_places", places_option(kwarg_places)),
                 (
                     "capture_accesses",
                     list(capture_accesses.iter().map(capture_access)),
@@ -1201,11 +1210,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             result_adapter,
             args,
             kwargs,
-            recv_place,
             recv_writes,
             receiver_convention,
-            arg_places,
-            kwarg_places,
             conventions,
             capture_accesses,
             param_arg_regs,
@@ -1238,14 +1244,11 @@ fn instruction_value(instruction: &MirInstr) -> String {
                             ),
                             ("args", regs(args)),
                             ("kwargs", kwargs_value(kwargs)),
-                            ("recv_place", option(recv_place.as_deref().map(place_value))),
                             ("recv_writes", recv_writes.to_string()),
                             (
                                 "receiver_convention",
                                 option(receiver_convention.map(convention)),
                             ),
-                            ("arg_places", places_option(arg_places)),
-                            ("kwarg_places", places_option(kwarg_places)),
                             (
                                 "capture_accesses",
                                 list(capture_accesses.iter().map(capture_access)),
@@ -1354,8 +1357,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             dest,
             base,
             index,
-            base_place,
-            index_place,
             call,
             intrinsic,
         } => record(
@@ -1364,11 +1365,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("base", reg_value(*base)),
                 ("index", reg_value(*index)),
-                ("base_place", option(base_place.as_deref().map(place_value))),
-                (
-                    "index_place",
-                    option(index_place.as_deref().map(place_value)),
-                ),
                 ("call", option(call.as_deref().map(subscript_call))),
                 (
                     "intrinsic",
@@ -1380,10 +1376,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             dest,
             object,
             args,
-            object_place,
-            arg_places,
             kwargs,
-            kwarg_places,
             call,
         } => record(
             tag,
@@ -1391,11 +1384,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("object", reg_value(*object)),
                 ("args", list(args.iter().map(subscript_arg))),
-                (
-                    "object_place",
-                    option(object_place.as_deref().map(place_value)),
-                ),
-                ("arg_places", places_option(arg_places)),
                 (
                     "kwargs",
                     list(kwargs.iter().map(|(name, value)| {
@@ -1405,34 +1393,21 @@ fn instruction_value(instruction: &MirInstr) -> String {
                         )
                     })),
                 ),
-                ("kwarg_places", places_option(kwarg_places)),
                 ("call", option(call.as_deref().map(subscript_call))),
             ],
         ),
         MirInstr::MultiSet {
             receiver,
-            receiver_place,
             args,
-            arg_places,
             value,
-            value_place,
             value_keyword,
             call,
         } => record(
             tag,
             &[
                 ("receiver", reg_value(*receiver)),
-                (
-                    "receiver_place",
-                    option(receiver_place.as_deref().map(place_value)),
-                ),
                 ("args", list(args.iter().map(subscript_arg))),
-                ("arg_places", places_option(arg_places)),
                 ("value", reg_value(*value)),
-                (
-                    "value_place",
-                    option(value_place.as_deref().map(place_value)),
-                ),
                 ("value_keyword", quote(value_keyword)),
                 ("call", subscript_call(call)),
             ],
@@ -2034,29 +2009,6 @@ fn region_value(block: &MirBlock) -> String {
             ("terminator", term_value(&block.term)),
         ],
     )))
-}
-
-fn place_value(place: &MirPlace) -> String {
-    let projections = place
-        .proj
-        .iter()
-        .zip(&place.projection_tys)
-        .map(|(projection, ty)| {
-            record(
-                "projection",
-                &[("op", projection_value(projection)), ("type", ty_value(ty))],
-            )
-        });
-    record(
-        "place",
-        &[
-            ("root", var_value(place.root)),
-            ("root_type", option(place.root_ty.as_ref().map(ty_value))),
-            ("projections", list(projections)),
-            ("type", option(place.ty.as_ref().map(ty_value))),
-            ("through", option(place.through.map(var_value))),
-        ],
-    )
 }
 
 fn projection_value(projection: &Proj) -> String {
@@ -3363,9 +3315,6 @@ fn kwargs_value(values: &[(String, Reg)]) -> String {
             &[("name", symbol(name)), ("value", reg_value(*value))],
         )
     }))
-}
-fn places_option(values: &[Option<MirPlace>]) -> String {
-    list(values.iter().map(|v| option(v.as_ref().map(place_value))))
 }
 /// A call site of a `kgen.source_loc` chain, its file spelled as a path
 /// rather than an index of the file table, which only register locations

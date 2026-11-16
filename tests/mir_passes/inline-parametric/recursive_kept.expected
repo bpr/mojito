@@ -30,7 +30,7 @@
               struct.create { dest: %r8, fields: [%r13] },
               var.use { dest: %r6, var: $v0, mode: copy },
               binary { op: sub, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent },
-              call { dest: %r10, func: spin, raises: absent, args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r10, func: spin, raises: absent, args: [%r9], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r10) }
           }
@@ -57,7 +57,7 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: spin, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: spin, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

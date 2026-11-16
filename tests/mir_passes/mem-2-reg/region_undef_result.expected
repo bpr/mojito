@@ -26,7 +26,7 @@
               struct.create { dest: %r3, fields: [%r10] },
               drop.var { var: $v1 },
               binary { op: eq, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
-              if { results: [%r13], condition: %r4, then: [bb0 { instructions: [const { dest: %r5, value: int_literal(10) }, literal.materialize { dest: %r11, value: %r5, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r6, fields: [%r11] }, value.copy { dest: %r8, value: %r6 }, call { dest: %r9, func: print, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r6] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [const { dest: %r12, value: uninitmem }], terminator: yield { values: [%r12] } }] }
+              if { results: [%r13], condition: %r4, then: [bb0 { instructions: [const { dest: %r5, value: int_literal(10) }, literal.materialize { dest: %r11, value: %r5, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r6, fields: [%r11] }, value.copy { dest: %r8, value: %r6 }, call { dest: %r9, func: print, raises: absent, args: [%r8], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r6] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [const { dest: %r12, value: uninitmem }], terminator: yield { values: [%r12] } }] }
             ],
             terminator: return { value: absent }
           }

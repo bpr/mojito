@@ -186,12 +186,8 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
         }
         let call =
             spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
-        let count = registers.len();
         call.args
             .splice(position..=position, registers.iter().copied());
-        if let Some(arg_places) = call.arg_places {
-            arg_places.splice(position..=position, std::iter::repeat_n(None, count));
-        }
         *call.spread = None;
         tables.reg_types.remove(&pack.0);
         tables.spans.0.remove(&pack.0);
@@ -254,8 +250,6 @@ fn spread_register_elements(
             dest: value,
             base: pack,
             index: at,
-            base_place: None,
-            index_place: None,
             call: None,
             intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
         });
@@ -271,43 +265,18 @@ fn spread_register_elements(
 
 /// The operands a whole-pack spread rewrites on a direct call, a method
 /// call, an indirect call of a nested `def`, or an LLVM intrinsic call: its
-/// position, the positional arguments, and their places (an intrinsic's
-/// operands have none).
+/// position and the positional arguments.
 struct SpreadOperands<'a> {
     spread: &'a mut Option<usize>,
     args: &'a mut Vec<Reg>,
-    arg_places: Option<&'a mut Vec<Option<MirPlace>>>,
 }
 
 const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_>> {
     match instruction {
-        MirInstr::Call {
-            spread,
-            args,
-            arg_places,
-            ..
-        }
-        | MirInstr::MethodCall {
-            spread,
-            args,
-            arg_places,
-            ..
-        }
-        | MirInstr::CallIndirect {
-            spread,
-            args,
-            arg_places,
-            ..
-        } => Some(SpreadOperands {
-            spread,
-            args,
-            arg_places: Some(arg_places),
-        }),
-        MirInstr::CallLlvmIntrinsic { spread, args, .. } => Some(SpreadOperands {
-            spread,
-            args,
-            arg_places: None,
-        }),
+        MirInstr::Call { spread, args, .. }
+        | MirInstr::MethodCall { spread, args, .. }
+        | MirInstr::CallIndirect { spread, args, .. }
+        | MirInstr::CallLlvmIntrinsic { spread, args, .. } => Some(SpreadOperands { spread, args }),
         _ => None,
     }
 }
@@ -359,8 +328,6 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 dest: pointer,
                 base: pack,
                 index: at,
-                base_place: None,
-                index_place: None,
                 call: None,
                 intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
             });

@@ -22,7 +22,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r1, func: "S.get$bump", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: "S.get$bump", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -80,7 +80,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r1, func: "S.reads$bump", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: "S.reads$bump", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

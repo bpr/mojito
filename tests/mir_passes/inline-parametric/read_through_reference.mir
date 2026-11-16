@@ -1,4 +1,4 @@
-mojito-mir 1.73
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -6,7 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: Pt, fields: [field { name: v, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __copyinit__, symbol: "Pt.__copyinit__" }] }
+    struct { name: Pt, fields: [field { name: v, type: Int }], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __copyinit__, symbol: "Pt.__copyinit__" }] }
   ],
   decls: [
     decl { lowered_name: "Pt.__copyinit__", param_names: [copy], param_types: [struct_type { name: Pt, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [absent], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
@@ -62,7 +62,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
-              call.method { dest: %r1, recv: %r0, method: copy, resolved: present("Pt.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+              call.method { dest: %r1, recv: %r0, method: copy, resolved: present("Pt.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

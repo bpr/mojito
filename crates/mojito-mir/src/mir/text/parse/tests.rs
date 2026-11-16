@@ -89,6 +89,65 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
     }
 }
 
+/// `program` as MIR text at schema `1.{minor}` writes it: each
+/// call-shaped instruction, in decode order, carries the operand place
+/// fields of `places`, which that schema writes beside its operands (none
+/// for an empty entry).
+fn legacy_text(program: &MirProgram, minor: u16, places: &[String]) -> String {
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(program).replacen(&current, &format!("mojito-mir 1.{minor}"), 1);
+    let tags = [
+        "call.indirect { ",
+        "call.method { ",
+        "call { ",
+        "index.get { ",
+        "index.multi_set { ",
+        "index.multi { ",
+        "type.construct { ",
+    ];
+    let mut rewritten = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    let mut places = places.iter();
+    while let Some((at, tag)) = tags
+        .iter()
+        .filter_map(|tag| {
+            rest.match_indices(tag)
+                .find(|(at, _)| *at == 0 || matches!(rest.as_bytes()[at - 1], b' ' | b'['))
+                .map(|(at, _)| (at, *tag))
+        })
+        .min_by_key(|(at, _)| *at)
+    {
+        let end = at + tag.len();
+        rewritten.push_str(&rest[..end]);
+        let fields = places
+            .next()
+            .expect("a place list per call-shaped instruction");
+        if !fields.is_empty() {
+            rewritten.push_str(fields);
+            rewritten.push_str(", ");
+        }
+        rest = &rest[end..];
+    }
+    rewritten.push_str(rest);
+    assert!(places.next().is_none(), "more place lists than calls");
+    rewritten
+}
+
+/// The legacy place fields of a call passing `positional` operands, each
+/// placed in its `place` when it has one, and no keyword operand.
+fn positional_places(positional: &[Option<MirPlace>]) -> String {
+    let places: Vec<String> = positional
+        .iter()
+        .map(|place| {
+            place.as_ref().map_or_else(
+                || "absent".to_string(),
+                |place| format!("present({})", write::place_value(place)),
+            )
+        })
+        .collect();
+    format!("arg_places: [{}], kwarg_places: []", places.join(", "))
+}
+
 /// Print → parse → print must reproduce the canonical text byte-for-byte.
 fn assert_reprints(program: &MirProgram) {
     let text = write::program(program);
@@ -1058,8 +1117,6 @@ fn instruction_families_reprint_byte_identically() {
             }),
             args: vec![Reg(1), Reg(2)],
             kwargs: vec![("sep".into(), Reg(3))],
-            arg_places: vec![None, Some(place(1))],
-            kwarg_places: vec![Some(place(2))],
             capture_accesses: vec![MirCaptureAccess {
                 root: 0,
                 path: Vec::new(),
@@ -1081,9 +1138,6 @@ fn instruction_families_reprint_byte_identically() {
             raises: None,
             args: vec![Reg(1)],
             kwargs: Vec::new(),
-            callee_place: None,
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: vec![ParamDecl::Value {
@@ -1136,11 +1190,8 @@ fn instruction_families_reprint_byte_identically() {
             )),
             args: vec![Reg(4)],
             kwargs: vec![("count".into(), Reg(5))],
-            recv_place: Some(Box::new(place(0))),
             recv_writes: true,
             receiver_convention: Some(ArgConvention::Deinit),
-            arg_places: vec![Some(place(1))],
-            kwarg_places: vec![None],
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
@@ -1189,8 +1240,6 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(20),
             base: Reg(0),
             index: Reg(1),
-            base_place: Some(Box::new(place(0))),
-            index_place: None,
             call: Some(Box::new(sample_subscript_call())),
             intrinsic: None,
         },
@@ -1198,8 +1247,6 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(21),
             base: Reg(0),
             index: Reg(1),
-            base_place: None,
-            index_place: None,
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::Pointer),
         },
@@ -1207,19 +1254,13 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(23),
             object: Reg(0),
             args: vec![MirSubscriptArg::Index(Reg(1))],
-            object_place: Some(Box::new(place(0))),
-            arg_places: vec![None],
             kwargs: vec![("byte".into(), MirSubscriptArg::Index(Reg(4)))],
-            kwarg_places: vec![Some(place(1))],
             call: Some(Box::new(sample_subscript_call())),
         },
         MirInstr::MultiSet {
             receiver: Reg(0),
-            receiver_place: Some(Box::new(place(0))),
             args: vec![MirSubscriptArg::Index(Reg(1))],
-            arg_places: vec![None],
             value: Reg(2),
-            value_place: Some(Box::new(place(2))),
             value_keyword: "value".to_string(),
             call: Box::new(sample_subscript_call()),
         },
@@ -2429,7 +2470,6 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             dest: Reg(0),
             param: binder.clone(),
             kwargs: Vec::new(),
-            kwarg_places: Vec::new(),
             element: None,
         },
         MirInstr::Call {
@@ -2439,8 +2479,6 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             raises: None,
             args: Vec::new(),
             kwargs: Vec::new(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: vec![MirParamArg {
                 name: None,
@@ -2460,31 +2498,20 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     let text = write::program(&program);
     assert!(!text.contains("binder: "));
 
-    let forwarding = text
-        .replacen(
-            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
-            "mojito-mir 1.44",
-            1,
-        )
-        .replace(
-            "param_arg { name: absent, value: absent,",
-            "param_arg { name: absent, value: absent, \
+    let places = [String::new(), positional_places(&[])];
+    let forwarding = legacy_text(&program, 44, &places).replace(
+        "param_arg { name: absent, value: absent,",
+        "param_arg { name: absent, value: absent, \
              binder: present(binder { owner: \"$test:H\", slot: 0, name: H }),",
-        );
+    );
     assert!(forwarding.contains("mojito-mir 1.44") && forwarding.contains("binder: present"));
     let parsed = artifact(forwarding.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     assert_eq!(write::program(&parsed.program), text);
 
-    let older = text
-        .replacen(
-            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
-            "mojito-mir 1.2",
-            1,
-        )
-        .replace(
-            "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H,",
-            "type.construct { dest: %r0, param: H,",
-        );
+    let older = legacy_text(&program, 2, &places).replace(
+        "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H,",
+        "type.construct { dest: %r0, param: H,",
+    );
     assert!(older.contains("type.construct { dest: %r0, param: H,"));
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     assert!(matches!(
@@ -2509,7 +2536,6 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
                     dest: Reg(1),
                     param: pack.clone(),
                     kwargs: Vec::new(),
-                    kwarg_places: Vec::new(),
                     element,
                 }],
             ),
@@ -3094,11 +3120,8 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
                     result_adapter: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    recv_place: None,
                     recv_writes: false,
                     receiver_convention: None,
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
@@ -3185,8 +3208,6 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
                     raises: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: vec![MirParamArg {
                         name: None,
@@ -3235,8 +3256,6 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
                     raises: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     receiver,
@@ -4663,8 +4682,6 @@ fn older_raise_edge_writes_a_slot_of_its_own() {
                 }),
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
@@ -4695,9 +4712,7 @@ fn older_raise_edge_writes_a_slot_of_its_own() {
     raising.var_names = vec!["$error".into()];
     raising.var_tys.insert(0, Ty::error());
     let program = program_with(vec![("f".into(), raising)]);
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let text = write::program(&program)
-        .replacen(&current, "mojito-mir 1.192", 1)
+    let text = legacy_text(&program, 192, &[positional_places(&[])])
         .replacen("error: $v0 }", "error: %r2 }", 1)
         .replacen(
             "then: [bb0 { instructions: []",
@@ -4751,8 +4766,6 @@ fn older_mut_argument_loads_as_its_address() {
                 raises: None,
                 args: vec![Reg(0)],
                 kwargs: Vec::new(),
-                arg_places: vec![Some(place)],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
@@ -4766,8 +4779,7 @@ fn older_mut_argument_loads_as_its_address() {
     main.var_tys.insert(0, Ty::int());
     let mut program = program_with(vec![("main".into(), main)]);
     program.declarations.functions.push(inc_declaration());
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let text = legacy_text(&program, 191, &[positional_places(&[Some(place)])]);
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let (_, main) = &parsed.program.functions[0];
     assert!(
@@ -4804,11 +4816,8 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
                     result_adapter: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    recv_place: Some(Box::new(place)),
                     recv_writes: true,
                     receiver_convention: Some(mojito_ast::ast::ArgConvention::Deinit),
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
@@ -4821,10 +4830,14 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
         function.n_vars = 1;
         function.var_names = vec!["x".into()];
         function.var_tys = HashMap::from([(0, ty)]);
-        let text = write::program(&program_with(vec![("main".into(), function)])).replacen(
-            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
-            "mojito-mir 1.199",
-            1,
+        let text = legacy_text(
+            &program_with(vec![("main".into(), function)]),
+            199,
+            &[format!(
+                "recv_place: present({}), {}",
+                write::place_value(&place),
+                positional_places(&[])
+            )],
         );
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("the text reads");
         let (_, function) = parsed.program.functions.into_iter().next().expect("main");
@@ -4836,11 +4849,7 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
             &memory_only.body.instrs[..],
             [
                 MirInstr::MakeRef { dest: Reg(0), .. },
-                MirInstr::MethodCall {
-                    recv: Reg(0),
-                    recv_place: None,
-                    ..
-                },
+                MirInstr::MethodCall { recv: Reg(0), .. },
             ]
         ),
         "{memory_only:#?}"
@@ -4860,11 +4869,7 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
                     mode: crate::mir::UseMode::Forward,
                     ..
                 },
-                MirInstr::MethodCall {
-                    recv: Reg(0),
-                    recv_place: None,
-                    ..
-                },
+                MirInstr::MethodCall { recv: Reg(0), .. },
             ]
         ),
         "{register_passable:#?}"
@@ -4872,8 +4877,8 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
 }
 
 /// A `call.indirect` older than schema 1.201 names the slot it read its
-/// callee from; it loads naming none, as upstream's indirect call takes the
-/// callee as the operand alone.
+/// callee from; it loads as the call of the operand alone, as upstream's
+/// indirect call takes the callee.
 #[test]
 fn older_indirect_call_loads_with_no_callee_place() {
     let calling = function_with(
@@ -4885,9 +4890,6 @@ fn older_indirect_call_loads_with_no_callee_place() {
             raises: None,
             args: Vec::new(),
             kwargs: Vec::new(),
-            callee_place: Some(Box::new(MirPlace::root(0, Some(Ty::int())))),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
@@ -4897,20 +4899,63 @@ fn older_indirect_call_loads_with_no_callee_place() {
         }],
     );
     let program = program_with(vec![("f".into(), calling)]);
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let text = write::program(&program).replacen(&current, "mojito-mir 1.200", 1);
+    let text = legacy_text(
+        &program,
+        200,
+        &[format!(
+            "callee_place: present({}), {}",
+            write::place_value(&MirPlace::root(0, Some(Ty::int()))),
+            positional_places(&[])
+        )],
+    );
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let (_, f) = &parsed.program.functions[0];
     assert!(
         matches!(
             f.body.instrs.as_slice(),
-            [MirInstr::CallIndirect {
-                callee_place: None,
-                ..
-            }]
+            [MirInstr::CallIndirect { callee: Reg(0), .. }]
         ),
         "{:?}",
         f.body.instrs
+    );
+}
+
+/// MIR 1.202 writes no operand place beside a call's operands, as
+/// upstream's `lit.call` names none: an artifact of that schema naming one
+/// is rejected rather than read past.
+#[test]
+fn a_current_artifact_naming_an_operand_place_is_rejected() {
+    let calling = function_with(
+        vec![Ty::int(), Ty::none()],
+        vec![MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
+            dest: Reg(1),
+            func: FuncRef("g".into()),
+            raises: None,
+            args: vec![Reg(0)],
+            kwargs: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        }],
+    );
+    let program = program_with(vec![("f".into(), calling)]);
+    let text = legacy_text(
+        &program,
+        crate::mir::text::VERSION_MINOR,
+        &[positional_places(&[None])],
+    );
+    let Err(error) = artifact(text.as_bytes(), "unit.mir".to_string()) else {
+        panic!("a current artifact naming operand places reads");
+    };
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "unknown field `arg_places`"),
+        "{error:?}"
     );
 }
 
@@ -4948,7 +4993,7 @@ fn inc_declaration() -> MirFunctionDeclaration {
     }
 }
 
-/// Below MIR 1.201 the reader keeps each call's operand places beside the
+/// Below MIR 1.202 the reader keeps each call's operand places beside the
 /// IR and the upgrades pair them with the calls in decode order: a
 /// `mut` argument in every region kind is addressed at its own place.
 #[test]
@@ -4970,8 +5015,6 @@ fn older_call_places_pair_with_their_calls_in_every_region() {
                 raises: None,
                 args: vec![Reg(var)],
                 kwargs: Vec::new(),
-                arg_places: vec![Some(place)],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
@@ -5070,8 +5113,10 @@ fn older_call_places_pair_with_their_calls_in_every_region() {
     main.var_tys = (0..CALLS).map(|var| (var, Ty::int())).collect();
     let mut program = program_with(vec![("main".into(), main)]);
     program.declarations.functions.push(inc_declaration());
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let places: Vec<String> = (0..CALLS)
+        .map(|var| positional_places(&[Some(MirPlace::root(var, Some(Ty::int())))]))
+        .collect();
+    let text = legacy_text(&program, 191, &places);
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let (_, main) = &parsed.program.functions[0];
     assert_eq!(
@@ -5112,7 +5157,6 @@ fn older_call_places_pair_with_their_calls_in_every_region() {
 /// upgraded off-pair.
 #[test]
 fn unpaired_legacy_operand_places_are_rejected() {
-    let place = MirPlace::root(0, Some(Ty::int()));
     let mut main = function_with(
         vec![Ty::int(), Ty::none()],
         vec![MirInstr::Call {
@@ -5122,8 +5166,6 @@ fn unpaired_legacy_operand_places_are_rejected() {
             raises: None,
             args: vec![Reg(0)],
             kwargs: Vec::new(),
-            arg_places: vec![Some(place)],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
@@ -5135,8 +5177,14 @@ fn unpaired_legacy_operand_places_are_rejected() {
     main.var_names = vec!["i".into()];
     main.var_tys.insert(0, Ty::int());
     let program = program_with(vec![("main".into(), main)]);
-    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
-    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let text = legacy_text(
+        &program,
+        191,
+        &[positional_places(&[Some(MirPlace::root(
+            0,
+            Some(Ty::int()),
+        ))])],
+    );
     let mut parser = Parser::new(&text);
     parser.header();
     let artifact = parser.value().expect("artifact record");

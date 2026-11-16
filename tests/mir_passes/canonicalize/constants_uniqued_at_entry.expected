@@ -22,11 +22,11 @@
               const { dest: %r1, value: int(1) },
               const { dest: %r3, value: int(2) },
               var.use { dest: %r0, var: $v0, mode: copy },
-              if { results: [], condition: %r0, then: [bb0 { instructions: [call { dest: %r5, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [call { dest: %r6, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, call { dest: %r7, func: print, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] },
-              call { dest: %r8, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r10, func: print, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              if { results: [], condition: %r0, then: [bb0 { instructions: [call { dest: %r5, func: print, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [call { dest: %r6, func: print, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, call { dest: %r7, func: print, raises: absent, args: [%r3], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] },
+              call { dest: %r8, func: print, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r10, func: print, raises: absent, args: [%r3], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r11, value: bool(true) },
-              call { dest: %r12, func: print, raises: absent, args: [%r11], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r12, func: print, raises: absent, args: [%r11], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

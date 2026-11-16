@@ -455,17 +455,13 @@ impl Specializer<'_> {
                     func: mojito_mir::mir::FuncRef(target),
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                     spread,
                     ..
                 } => (
                     target,
                     Some(mojito_mir::mir::CallOperands {
                         args,
-                        arg_places,
                         kwargs,
-                        kwarg_places,
                         spread,
                     }),
                 ),

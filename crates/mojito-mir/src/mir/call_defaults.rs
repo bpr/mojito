@@ -195,8 +195,6 @@ struct Site {
     leading: usize,
     args: Vec<Reg>,
     kwargs: Vec<(String, Reg)>,
-    arg_places: Vec<Option<MirPlace>>,
-    kwarg_places: Vec<Option<MirPlace>>,
     /// The call's bindings of the callee's binders and those in scope
     /// around it.
     bound: Vec<(ParamDecl, TyArg)>,
@@ -204,9 +202,9 @@ struct Site {
     /// ([`build_collector`]).
     spread: Option<usize>,
     /// The receiver a call through an instance method's function value
-    /// passes ahead of `args`, and its place: the declaration lists no
-    /// slot for it, so it binds none of the callee's parameters.
-    receiver: Option<(Reg, Option<MirPlace>)>,
+    /// passes ahead of `args`: the declaration lists no slot for it, so it
+    /// binds none of the callee's parameters.
+    receiver: Option<Reg>,
 }
 
 /// One omitted argument, bound: the parameter it fills and the value its
@@ -361,8 +359,6 @@ fn fill_call(
         .keyword_only
         .unwrap_or(callee.param_names.len())
         .min(callee.param_names.len());
-    site.arg_places.resize(site.args.len(), None);
-    site.kwarg_places.resize(site.kwargs.len(), None);
     let passes_operands = !(site.args.is_empty() && site.kwargs.is_empty());
     let mut sources = Vec::new();
     let mut conventions = Vec::new();
@@ -373,12 +369,11 @@ fn fill_call(
                 .variadic_index
                 .is_none_or(|collector| default.slot < collector);
         let value = evaluate_default(function, &default, location.as_ref(), prelude);
-        let (argument, place) =
-            if declarations.register_passable(&default.ty) && !default.by_address {
-                (value, None)
-            } else {
-                bind_temporary(function, value, &default, location.as_ref(), prelude)
-            };
+        let argument = if declarations.register_passable(&default.ty) && !default.by_address {
+            value
+        } else {
+            bind_temporary(function, value, &default, location.as_ref(), prelude)
+        };
         let source = if positional {
             CheckedCallArgumentSource::Positional(site.args.len())
         } else {
@@ -392,10 +387,8 @@ fn fill_call(
         });
         if positional {
             site.args.push(argument);
-            site.arg_places.push(place);
         } else {
             site.kwargs.push((default.name, argument));
-            site.kwarg_places.push(place);
         }
     }
     record_filled_conventions(&mut instruction, conventions, passes_operands);
@@ -452,11 +445,8 @@ fn collect_subscript_store(
 ) {
     let MirInstr::MultiSet {
         receiver,
-        receiver_place: _,
         args,
-        arg_places,
         value,
-        value_place,
         value_keyword,
         call,
     } = instruction
@@ -486,8 +476,6 @@ fn collect_subscript_store(
         leading: 0,
         args: registers,
         kwargs: vec![(value_keyword.clone(), *value)],
-        arg_places: arg_places.clone(),
-        kwarg_places: vec![value_place.as_deref().cloned()],
         bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),
         spread: None,
         receiver: None,
@@ -506,7 +494,6 @@ fn collect_subscript_store(
     };
     let collector = site.args[position];
     *args = site.args.into_iter().map(MirSubscriptArg::Index).collect();
-    *arg_places = site.arg_places;
     collect_contract_arguments(call, position, callee, function, collector);
 }
 
@@ -586,8 +573,6 @@ fn collect_through_requirement(
         resolved: Some(dispatch),
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         param_decls,
         instantiated_args,
         spread: None,
@@ -623,8 +608,6 @@ fn collect_through_requirement(
         leading: 0,
         args: args.clone(),
         kwargs: kwargs.clone(),
-        arg_places: arg_places.clone(),
-        kwarg_places: kwarg_places.clone(),
         bound: param_decls
             .iter()
             .cloned()
@@ -671,8 +654,6 @@ fn collect_through_contract(
         callee,
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         spread: None,
         ..
     } = &*instruction
@@ -702,8 +683,6 @@ fn collect_through_contract(
         leading: 0,
         args: args.clone(),
         kwargs: kwargs.clone(),
-        arg_places: arg_places.clone(),
-        kwarg_places: kwarg_places.clone(),
         bound: Vec::new(),
         spread: None,
         receiver: None,
@@ -783,8 +762,6 @@ fn build_keyword_collector(
         raises: None,
         args: Vec::new(),
         kwargs: Vec::new(),
-        arg_places: Vec::new(),
-        kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,
@@ -843,11 +820,8 @@ fn build_keyword_collector(
             result_adapter: None,
             args: vec![key, value],
             kwargs: Vec::new(),
-            recv_place: Some(Box::new(place.clone())),
             recv_writes: true,
             receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
-            arg_places: vec![None, site.kwarg_places.get(index).cloned().flatten()],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: insert_decls.clone(),
@@ -863,20 +837,13 @@ fn build_keyword_collector(
         mode: UseMode::Forward,
         constructor: None,
     });
-    site.kwarg_places.resize(site.kwargs.len(), None);
     let mut index = 0;
     site.kwargs.retain(|_| {
         index += 1;
         !collected.contains(&(index - 1))
     });
-    let mut index = 0;
-    site.kwarg_places.retain(|_| {
-        index += 1;
-        !collected.contains(&(index - 1))
-    });
     site.kwargs
         .push((FORWARDED_KWARGS_NAME.to_string(), passed));
-    site.kwarg_places.push(None);
     Ok(true)
 }
 
@@ -971,17 +938,14 @@ fn build_collector(
         .unwrap_or(names.len())
         .min(names.len());
     let mut args = Vec::with_capacity(limit + 1);
-    let mut arg_places = Vec::with_capacity(limit + 1);
     let mut moved = HashSet::new();
     for slot in &matched.slots[..limit] {
         match *slot {
             ArgSlot::Positional(index) => {
                 args.push(site.args[index]);
-                arg_places.push(site.arg_places.get(index).cloned().flatten());
             }
             ArgSlot::Keyword(index) => {
                 args.push(site.kwargs[index].1);
-                arg_places.push(site.kwarg_places.get(index).cloned().flatten());
                 moved.insert(index);
             }
             ArgSlot::Default => return,
@@ -1100,16 +1064,9 @@ fn build_collector(
     };
     site.spread = Some(args.len());
     args.push(collector);
-    arg_places.push(None);
     site.args = args;
-    site.arg_places = arg_places;
     let mut index = 0;
     site.kwargs.retain(|_| {
-        index += 1;
-        !moved.contains(&(index - 1))
-    });
-    let mut index = 0;
-    site.kwarg_places.retain(|_| {
         index += 1;
         !moved.contains(&(index - 1))
     });
@@ -1612,8 +1569,6 @@ fn widen_index(instruction: MirInstr) -> MirInstr {
         dest,
         base,
         index,
-        base_place,
-        index_place,
         call,
         ..
     } = instruction
@@ -1624,10 +1579,7 @@ fn widen_index(instruction: MirInstr) -> MirInstr {
         dest,
         object: base,
         args: vec![MirSubscriptArg::Index(index)],
-        object_place: base_place,
-        arg_places: vec![index_place.map(|place| *place)],
         kwargs: Vec::new(),
-        kwarg_places: Vec::new(),
         call,
     }
 }
@@ -1642,167 +1594,145 @@ impl Site {
         let declarations = caller.declarations;
         let mut leading = record.leading;
         let mut passed_receiver = None;
-        let (callee, receiver, instantiated, args, kwargs, arg_places, kwarg_places, spread) =
-            match instruction {
-                MirInstr::Call {
-                    func,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    receiver,
-                    instantiated_args,
-                    spread,
-                    ..
-                } => (
-                    record.callee.clone().unwrap_or_else(|| func.0.clone()),
-                    receiver.clone(),
+        let (callee, receiver, instantiated, args, kwargs, spread) = match instruction {
+            MirInstr::Call {
+                func,
+                args,
+                kwargs,
+                receiver,
+                instantiated_args,
+                spread,
+                ..
+            } => (
+                record.callee.clone().unwrap_or_else(|| func.0.clone()),
+                receiver.clone(),
+                instantiated_args,
+                args.clone(),
+                kwargs.clone(),
+                *spread,
+            ),
+            MirInstr::MethodCall {
+                recv,
+                resolved,
+                args,
+                kwargs,
+                instantiated_args,
+                spread,
+                ..
+            } => {
+                let named = record.callee.clone().or_else(|| resolved.clone())?;
+                // A call through a trait bound names the requirement's
+                // dispatch symbol; its defaults are the requirement's,
+                // which the trait member's body declares, `self` first.
+                let callee = if declarations.function(&named).is_some() {
+                    named
+                } else {
+                    let member = requirement_member(&named, declarations)?;
+                    leading = 1;
+                    member
+                };
+                (
+                    callee,
+                    // An addressed receiver is a reference to the
+                    // value whose type binds the callee's parameters.
+                    Some(
+                        crate::mir::call_addresses::operand_value_ty(
+                            function.reg_types.get(&recv.0)?,
+                        )
+                        .clone(),
+                    ),
                     instantiated_args,
                     args.clone(),
                     kwargs.clone(),
-                    arg_places.clone(),
-                    kwarg_places.clone(),
                     *spread,
-                ),
-                MirInstr::MethodCall {
-                    recv,
-                    resolved,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    instantiated_args,
-                    spread,
-                    ..
-                } => {
-                    let named = record.callee.clone().or_else(|| resolved.clone())?;
-                    // A call through a trait bound names the requirement's
-                    // dispatch symbol; its defaults are the requirement's,
-                    // which the trait member's body declares, `self` first.
-                    let callee = if declarations.function(&named).is_some() {
-                        named
-                    } else {
-                        let member = requirement_member(&named, declarations)?;
-                        leading = 1;
-                        member
-                    };
-                    (
-                        callee,
-                        // An addressed receiver is a reference to the
-                        // value whose type binds the callee's parameters.
-                        Some(
-                            crate::mir::call_addresses::operand_value_ty(
-                                function.reg_types.get(&recv.0)?,
-                            )
-                            .clone(),
-                        ),
-                        instantiated_args,
-                        args.clone(),
-                        kwargs.clone(),
-                        arg_places.clone(),
-                        kwarg_places.clone(),
-                        *spread,
-                    )
-                }
-                MirInstr::CallIndirect {
-                    callee,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    instantiated_args,
-                    spread,
-                    ..
-                } => {
-                    // The check names a callable contract's dispatch symbol,
-                    // not a declaration, for a call through a function
-                    // value; the function the callee register statically
-                    // holds is the callee then.
-                    let named = record
-                        .callee
-                        .as_deref()
-                        .filter(|callee| declarations.function(callee).is_some());
-                    let target = if let Some(target) = named {
-                        target.to_string()
-                    } else {
-                        let (target, thin) = caller.targets.get(&callee.0)?;
-                        let declaration = declarations.function(target)?;
-                        // Only a thin free function's value passes no
-                        // capture before the arguments.
-                        if !*thin || declaration.enclosing.is_some() {
-                            return None;
-                        }
-                        leading = 0;
-                        target.clone()
-                    };
-                    // An instance method's value takes its receiver first.
-                    let declaration = declarations.function(&target)?;
-                    let mut args = args.clone();
-                    let mut arg_places = arg_places.clone();
-                    let mut spread = *spread;
-                    let mut receiver_type = None;
-                    if declaration.has_receiver
-                        && declaration.receiver_convention != Some(ArgConvention::Out)
-                    {
-                        if args.is_empty() || spread == Some(0) {
-                            return None;
-                        }
-                        let register = args.remove(0);
-                        let place = (!arg_places.is_empty())
-                            .then(|| arg_places.remove(0))
-                            .flatten();
-                        receiver_type = function.reg_types.get(&register.0).cloned();
-                        spread = spread.map(|position| position - 1);
-                        passed_receiver = Some((register, place));
+                )
+            }
+            MirInstr::CallIndirect {
+                callee,
+                args,
+                kwargs,
+                instantiated_args,
+                spread,
+                ..
+            } => {
+                // The check names a callable contract's dispatch symbol,
+                // not a declaration, for a call through a function
+                // value; the function the callee register statically
+                // holds is the callee then.
+                let named = record
+                    .callee
+                    .as_deref()
+                    .filter(|callee| declarations.function(callee).is_some());
+                let target = if let Some(target) = named {
+                    target.to_string()
+                } else {
+                    let (target, thin) = caller.targets.get(&callee.0)?;
+                    let declaration = declarations.function(target)?;
+                    // Only a thin free function's value passes no
+                    // capture before the arguments.
+                    if !*thin || declaration.enclosing.is_some() {
+                        return None;
                     }
-                    (
-                        target,
-                        receiver_type,
-                        instantiated_args,
-                        args,
-                        kwargs.clone(),
-                        arg_places,
-                        kwarg_places.clone(),
-                        spread,
-                    )
+                    leading = 0;
+                    target.clone()
+                };
+                // An instance method's value takes its receiver first.
+                let declaration = declarations.function(&target)?;
+                let mut args = args.clone();
+                let mut spread = *spread;
+                let mut receiver_type = None;
+                if declaration.has_receiver
+                    && declaration.receiver_convention != Some(ArgConvention::Out)
+                {
+                    if args.is_empty() || spread == Some(0) {
+                        return None;
+                    }
+                    let register = args.remove(0);
+                    receiver_type = function.reg_types.get(&register.0).cloned();
+                    spread = spread.map(|position| position - 1);
+                    passed_receiver = Some(register);
                 }
-                MirInstr::MultiIndex {
-                    dest,
-                    object,
-                    object_place: _,
+                (
+                    target,
+                    receiver_type,
+                    instantiated_args,
                     args,
-                    arg_places,
-                    kwargs,
-                    kwarg_places,
-                    call: Some(call),
-                } => {
-                    // Only `Index` operands bind the callee's slots; a slice
-                    // descriptor's call keeps its slots.
-                    let register = |argument: &MirSubscriptArg| match argument {
-                        MirSubscriptArg::Index(register) => Some(*register),
-                    };
-                    let receiver = function.reg_types.get(&object.0)?.clone();
-                    let callee = record.callee.clone().unwrap_or_else(|| call.target.clone());
-                    let declaration = declarations.function(&callee)?;
-                    let bound = bindings_of(&callee, declaration, &[], Some(&receiver), caller);
-                    return Some(Self {
-                        dest: *dest,
-                        callee,
-                        leading: 0,
-                        args: args.iter().map(register).collect::<Option<Vec<_>>>()?,
-                        kwargs: kwargs
-                            .iter()
-                            .map(|(name, argument)| Some((name.clone(), register(argument)?)))
-                            .collect::<Option<Vec<_>>>()?,
-                        arg_places: arg_places.clone(),
-                        kwarg_places: kwarg_places.clone(),
-                        bound,
-                        spread: None,
-                        receiver: None,
-                    });
-                }
-                _ => return None,
-            };
+                    kwargs.clone(),
+                    spread,
+                )
+            }
+            MirInstr::MultiIndex {
+                dest,
+                object,
+                args,
+                kwargs,
+                call: Some(call),
+            } => {
+                // Only `Index` operands bind the callee's slots; a slice
+                // descriptor's call keeps its slots.
+                let register = |argument: &MirSubscriptArg| match argument {
+                    MirSubscriptArg::Index(register) => Some(*register),
+                };
+                let receiver = function.reg_types.get(&object.0)?.clone();
+                let callee = record.callee.clone().unwrap_or_else(|| call.target.clone());
+                let declaration = declarations.function(&callee)?;
+                let bound = bindings_of(&callee, declaration, &[], Some(&receiver), caller);
+                return Some(Self {
+                    dest: *dest,
+                    callee,
+                    leading: 0,
+                    args: args.iter().map(register).collect::<Option<Vec<_>>>()?,
+                    kwargs: kwargs
+                        .iter()
+                        .map(|(name, argument)| Some((name.clone(), register(argument)?)))
+                        .collect::<Option<Vec<_>>>()?,
+                    bound,
+                    spread: None,
+                    receiver: None,
+                });
+            }
+            _ => return None,
+        };
         let declaration = declarations.function(&callee)?;
         let bound = bindings_of(
             &callee,
@@ -1817,8 +1747,6 @@ impl Site {
             leading,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             bound,
             spread,
             receiver: passed_receiver,
@@ -1833,45 +1761,28 @@ impl Site {
             MirInstr::Call {
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             }
             | MirInstr::MethodCall {
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             }
             | MirInstr::CallIndirect {
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } => {
                 let leading = usize::from(self.receiver.is_some());
-                let (receiver, receiver_place) = self.receiver.unzip();
-                *args = receiver.into_iter().chain(self.args).collect();
-                *arg_places = match receiver_place {
-                    Some(place) => std::iter::once(place).chain(self.arg_places).collect(),
-                    None => self.arg_places,
-                };
+                *args = self.receiver.into_iter().chain(self.args).collect();
                 *kwargs = self.kwargs;
-                *kwarg_places = self.kwarg_places;
                 *spread = self.spread.map(|position| position + leading);
             }
             MirInstr::MultiIndex {
-                args,
-                arg_places,
-                kwargs,
-                kwarg_places,
-                call,
-                ..
+                args, kwargs, call, ..
             } => {
                 *args = self.args.into_iter().map(MirSubscriptArg::Index).collect();
                 *kwargs = self
@@ -1879,8 +1790,6 @@ impl Site {
                     .into_iter()
                     .map(|(name, register)| (name, MirSubscriptArg::Index(register)))
                     .collect();
-                *arg_places = self.arg_places;
-                *kwarg_places = self.kwarg_places;
                 if let Some(call) = call {
                     for (slot, source) in sources {
                         if let Some(argument) = call.arguments.get_mut(*slot) {
@@ -2245,8 +2154,6 @@ fn evaluate_constant(
                 raises: None,
                 args: vec![argument],
                 kwargs: Vec::new(),
-                arg_places: vec![None],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
@@ -2362,15 +2269,14 @@ fn record_filled_conventions(
 /// Bind `value`, the default's result, to its call-result slot: a borrowed
 /// parameter reads the slot, which the caller destroys once the call
 /// returns, by its address when the parameter takes the argument's storage
-/// (`by_address`), and an owned one takes it. Returns the operand and the
-/// place an address names.
+/// (`by_address`), and an owned one takes it. Returns the operand.
 fn bind_temporary(
     function: &mut MirFunction,
     value: Reg,
     default: &Omitted,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
-) -> (Reg, Option<MirPlace>) {
+) -> Reg {
     let variable = u32::try_from(function.n_vars).expect("variable count fits a VarId");
     function.n_vars += 1;
     function
@@ -2394,7 +2300,7 @@ fn bind_temporary(
             mode: UseMode::Forward,
             constructor: None,
         });
-        return (read, None);
+        return read;
     }
     if default.by_address {
         let handle =
@@ -2402,13 +2308,13 @@ fn bind_temporary(
         let address = fresh_register(function, handle, location);
         prelude.push(MirInstr::MakeRef {
             dest: address,
-            place: place.clone(),
+            place,
         });
-        return (address, Some(place));
+        return address;
     }
     let read = fresh_register(function, default.ty.clone(), location);
     prelude.push(MirInstr::LoadPlace { dest: read, place });
-    (read, None)
+    read
 }
 
 /// The registers `instruction` reads, as [`crate::mir::count_register_reads`]

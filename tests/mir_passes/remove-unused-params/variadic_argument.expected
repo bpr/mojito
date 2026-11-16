@@ -77,7 +77,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v1, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent } },
-              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -131,7 +131,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(Int)), projections: [], type: present(variadic_pack(Int)), through: absent } },
-              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

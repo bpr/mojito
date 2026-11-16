@@ -665,8 +665,6 @@ mod tests {
             raises: None,
             args: Vec::new(),
             kwargs: Vec::new(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,

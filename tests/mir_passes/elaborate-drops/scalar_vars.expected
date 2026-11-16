@@ -56,8 +56,8 @@
               const { dest: %r0, value: int_literal(41) },
               literal.materialize { dest: %r4, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r4] },
-              call { dest: %r2, func: f, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r2, func: f, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

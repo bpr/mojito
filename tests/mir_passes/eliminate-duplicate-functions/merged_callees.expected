@@ -75,8 +75,8 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: one, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r1, func: one, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r0, func: one, raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: one, raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }
@@ -103,9 +103,9 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: twice, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r1, func: twice, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r2, func: one_other, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r0, func: twice, raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: twice, raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: one_other, raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r3, value: none }
             ],
             terminator: return { value: present(%r3) }

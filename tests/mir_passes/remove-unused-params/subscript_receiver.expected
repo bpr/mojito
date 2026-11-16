@@ -50,7 +50,7 @@
             instructions: [
               ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [], type: present(struct_type { name: Arr, arguments: [] }), through: absent } },
               var.use { dest: %r1, var: $v1, mode: copy },
-              index.get { dest: %r2, base: %r0, index: %r1, base_place: present(place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [], type: present(struct_type { name: Arr, arguments: [] }), through: absent }), index_place: absent, call: present(subscript_call { target: "Arr.__getitem__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] }), intrinsic: absent }
+              index.get { dest: %r2, base: %r0, index: %r1, call: present(subscript_call { target: "Arr.__getitem__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] }), intrinsic: absent }
             ],
             terminator: return { value: present(%r2) }
           }

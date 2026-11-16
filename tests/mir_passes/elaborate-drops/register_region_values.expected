@@ -48,7 +48,7 @@
             instructions: [
               const { dest: %r0, value: string("del") },
               place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               consume.var { var: $v0 }
             ],
             terminator: return { value: absent }
@@ -76,14 +76,14 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: string("operand") },
-              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               loop { results: [], label: absent, operands: [%r1], arguments: [%r2], body: [bb0 { instructions: [var.store { var: $v0, src: %r2, binding_type: present(struct_type { name: Error, arguments: [] }), in_place: false }, drop.var { var: $v0 }], terminator: break { label: absent, values: [] } }] },
               const { dest: %r3, value: bool(true) },
-              if { results: [%r6], condition: %r3, then: [bb0 { instructions: [const { dest: %r7, value: string("then") }, call { dest: %r4, func: Error, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r4] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [const { dest: %r8, value: string("else") }, call { dest: %r5, func: Error, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r5] } }] },
+              if { results: [%r6], condition: %r3, then: [bb0 { instructions: [const { dest: %r7, value: string("then") }, call { dest: %r4, func: Error, raises: absent, args: [%r7], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r4] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [const { dest: %r8, value: string("else") }, call { dest: %r5, func: Error, raises: absent, args: [%r8], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [%r5] } }] },
               var.store { var: $v1, src: %r6, binding_type: present(struct_type { name: Error, arguments: [] }), in_place: false },
               drop.var { var: $v1 },
               const { dest: %r9, value: string("after") },
-              call { dest: %r10, func: print, raises: absent, args: [%r9], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r10, func: print, raises: absent, args: [%r9], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

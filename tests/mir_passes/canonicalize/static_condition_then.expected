@@ -21,7 +21,7 @@
             instructions: [
               const { dest: %r1, value: int(1) },
               const { dest: %r2, value: int(2) },
-              call { dest: %r4, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r4, func: print, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r2) }
           }

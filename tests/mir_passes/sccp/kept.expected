@@ -39,7 +39,7 @@
               var.store { var: $v2, src: %r9, binding_type: present(UInt), in_place: false },
               var.use { dest: %r10, var: $v1, mode: copy },
               drop.var { var: $v1 },
-              call { dest: %r11, func: print, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r11, func: print, raises: absent, args: [%r10], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r12, var: $v0, mode: copy },
               var.use { dest: %r13, var: $v2, mode: copy },
               drop.var { var: $v2 },

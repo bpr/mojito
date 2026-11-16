@@ -76,7 +76,7 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: "S.st", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: n, type: meta_value(Int) }))] }), instantiated_args: [], spread: absent },
+              call { dest: %r0, func: "S.st", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: n, type: meta_value(Int) }))] }), instantiated_args: [], spread: absent },
               const { dest: %r1, value: int_literal(1) },
               literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r4] },
@@ -135,7 +135,7 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: "S.st", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "caller", slot: 0, name: n, type: meta_value(Int) }))] }), instantiated_args: [], spread: absent }
+              call { dest: %r0, func: "S.st", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "caller", slot: 0, name: n, type: meta_value(Int) }))] }), instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r0) }
           }

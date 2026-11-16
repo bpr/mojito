@@ -457,7 +457,6 @@ pub fn dunder_method_call(
     raises: Option<Raises>,
     args: Vec<Reg>,
 ) -> MirInstr {
-    let arg_places = vec![None; args.len()];
     MirInstr::MethodCall {
         conventions: MirArgConventions::default(),
         dest,
@@ -469,11 +468,8 @@ pub fn dunder_method_call(
         result_adapter: None,
         args,
         kwargs: Vec::new(),
-        recv_place: None,
         recv_writes: false,
         receiver_convention: None,
-        arg_places,
-        kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         param_decls: Vec::new(),
@@ -503,11 +499,8 @@ pub fn subscript_store_call(
     }
     let MirInstr::MultiSet {
         receiver,
-        receiver_place,
         args,
-        mut arg_places,
         value,
-        value_place,
         value_keyword,
         call,
     } = std::mem::replace(instruction, MirInstr::Unsupported(String::new()))
@@ -520,9 +513,7 @@ pub fn subscript_store_call(
             MirSubscriptArg::Index(reg) => *reg,
         })
         .collect();
-    arg_places.resize(positional.len(), None);
-    let value_place = value_place.map(|place| *place);
-    let (kwargs, kwarg_places) = (vec![(value_keyword, value)], vec![value_place]);
+    let kwargs = vec![(value_keyword, value)];
     let call = *call;
     let spread = collector_operand(declared, positional.len(), &kwargs);
     *instruction = MirInstr::MethodCall {
@@ -536,14 +527,11 @@ pub fn subscript_store_call(
         result_adapter: None,
         args: positional,
         kwargs,
-        recv_place: receiver_place,
         recv_writes: !matches!(
             call.receiver_convention,
             Some(mojito_ast::ast::ArgConvention::Imm)
         ),
         receiver_convention: call.receiver_convention,
-        arg_places,
-        kwarg_places,
         capture_accesses: call.capture_accesses,
         param_arg_regs: Vec::new(),
         param_decls: Vec::new(),
@@ -569,39 +557,27 @@ pub fn receiverless_subscript_call(
     let index_operand = |argument: MirSubscriptArg| match argument {
         MirSubscriptArg::Index(reg) => reg,
     };
-    let (dest, args, mut arg_places, kwargs, kwarg_places, call) =
+    let (dest, args, kwargs, call) =
         match std::mem::replace(instruction, MirInstr::Unsupported(String::new())) {
             MirInstr::Index {
                 dest,
                 index,
-                index_place,
                 call: Some(call),
                 ..
-            } => (
-                dest,
-                vec![index],
-                vec![index_place.map(|place| *place)],
-                Vec::new(),
-                Vec::new(),
-                call,
-            ),
+            } => (dest, vec![index], Vec::new(), call),
             MirInstr::MultiIndex {
                 dest,
                 args,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 call: Some(call),
                 ..
             } => (
                 dest,
                 args.into_iter().map(index_operand).collect(),
-                arg_places,
                 kwargs
                     .into_iter()
                     .map(|(name, argument)| (name, index_operand(argument)))
                     .collect(),
-                kwarg_places,
                 call,
             ),
             other => {
@@ -609,7 +585,6 @@ pub fn receiverless_subscript_call(
                 return false;
             }
         };
-    arg_places.resize(args.len(), None);
     let spread = collector_operand(declared, args.len(), &kwargs);
     *instruction = MirInstr::Call {
         conventions: MirArgConventions::default(),
@@ -618,8 +593,6 @@ pub fn receiverless_subscript_call(
         raises: call.raises,
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         capture_accesses: call.capture_accesses,
         param_arg_regs: Vec::new(),
         receiver: None,
@@ -783,12 +756,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::ConstructTypeParam {
             dest,
             kwargs,
-            kwarg_places,
             element,
             ..
         } => {
             out.push(dest);
-            keyword_regs_mut(kwargs, kwarg_places, &mut out);
+            keyword_regs_mut(kwargs, &mut out);
             param_arg_regs_mut(element.as_mut_slice(), &mut out);
         }
         MirInstr::Const { dest, .. }
@@ -823,16 +795,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             raises,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             param_arg_regs,
             ..
         } => {
             out.push(dest);
             raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            keyword_regs_mut(kwargs, kwarg_places, &mut out);
+            keyword_regs_mut(kwargs, &mut out);
             param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::CallIndirect {
@@ -841,18 +810,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             raises,
             args,
             kwargs,
-            callee_place,
-            arg_places,
-            kwarg_places,
             param_arg_regs,
             ..
         } => {
             out.extend([dest, callee]);
             raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
-            places_regs_mut(callee_place.as_deref_mut(), &mut out);
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            keyword_regs_mut(kwargs, kwarg_places, &mut out);
+            keyword_regs_mut(kwargs, &mut out);
             param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::MethodCall {
@@ -861,18 +825,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             raises,
             args,
             kwargs,
-            recv_place,
-            arg_places,
-            kwarg_places,
             param_arg_regs,
             ..
         } => {
             out.extend([dest, recv]);
             raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
-            places_regs_mut(recv_place.as_deref_mut(), &mut out);
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            keyword_regs_mut(kwargs, kwarg_places, &mut out);
+            keyword_regs_mut(kwargs, &mut out);
             param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::PointerStorageTake {
@@ -898,14 +857,10 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             dest,
             base,
             index,
-            base_place,
-            index_place,
             call,
             ..
         } => {
             out.extend([dest, base, index]);
-            places_regs_mut(base_place.as_deref_mut(), &mut out);
-            places_regs_mut(index_place.as_deref_mut(), &mut out);
             if let Some(call) = call {
                 subscript_call_regs_mut(call, &mut out);
             }
@@ -914,30 +869,21 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             dest,
             object,
             args,
-            object_place,
-            arg_places,
             kwargs,
-            kwarg_places,
             call,
         } => {
             out.extend([dest, object]);
             for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
                 subscript_arg_regs_mut(arg, &mut out);
             }
-            places_regs_mut(object_place.as_deref_mut(), &mut out);
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            places_regs_mut(kwarg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
                 subscript_call_regs_mut(call, &mut out);
             }
         }
         MirInstr::MultiSet {
             receiver,
-            receiver_place,
             args,
-            arg_places,
             value,
-            value_place,
             call,
             ..
         } => {
@@ -945,9 +891,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             for arg in args {
                 subscript_arg_regs_mut(arg, &mut out);
             }
-            places_regs_mut(receiver_place.as_deref_mut(), &mut out);
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            places_regs_mut(value_place.as_deref_mut(), &mut out);
             subscript_call_regs_mut(call, &mut out);
         }
         MirInstr::Store { place: target, src } => {
@@ -1358,14 +1301,9 @@ fn places_regs_mut<'a>(
     }
 }
 
-/// A call's keyword registers, then those of the places they read.
-fn keyword_regs_mut<'a>(
-    kwargs: &'a mut [(String, Reg)],
-    kwarg_places: &'a mut [Option<MirPlace>],
-    out: &mut Vec<&'a mut Reg>,
-) {
+/// A call's keyword registers.
+fn keyword_regs_mut<'a>(kwargs: &'a mut [(String, Reg)], out: &mut Vec<&'a mut Reg>) {
     out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
-    places_regs_mut(kwarg_places.iter_mut().flatten(), out);
 }
 
 /// Whether an argument convention is a written-back reference (`mut`/`ref`).
@@ -2107,9 +2045,6 @@ pub enum MirInstr {
         /// The selected initializer's keyword arguments, each a read the
         /// initializer borrows.
         kwargs: Vec<(String, Reg)>,
-        /// Like `Call::kwarg_places`, aligned with `kwargs`: the retained
-        /// caller place each borrowed argument reads.
-        kwarg_places: Vec<Option<MirPlace>>,
         /// `Ts[i]()`: `param` is a type pack and this argument the index of
         /// the element constructed, as `Call::param_arg_regs` carries one —
         /// `value` the register the erased VM reads, `expr` the expression
@@ -2341,14 +2276,10 @@ pub enum MirInstr {
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
     /// backend matches them to the callee's parameter slots (filling defaults,
     /// collecting `*args`) via the phase-neutral call matcher.
-    /// A free-function call. `arg_places[i]` is `Some` when positional argument
-    /// `i` is a simple place (a variable or field chain, no dynamic index) and
-    /// either checking selected a `mut`/`ref` parameter (the place is retained
-    /// for handle passing/write-back) or the call's result is a borrowing view
-    /// lending that argument (the place is retained as a shared read so the
-    /// callee binds the caller's storage; the analysis classifies it by the
-    /// callee's convention at that slot). Ordinary copied arguments and
-    /// unsupported place shapes are `None`.
+    /// An operand the callee binds by address is a `ref.make` of the
+    /// caller's storage, as upstream's `lit.call` takes a `!lit.ref`
+    /// operand; the call carries no other record of the places it reads
+    /// ([`crate::mir::OperandAddresses`]).
     Call {
         dest: Reg,
         func: FuncRef,
@@ -2356,11 +2287,6 @@ pub enum MirInstr {
         raises: Option<Raises>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
-        arg_places: Vec<Option<MirPlace>>,
-        /// Retained caller places aligned with `kwargs`. Keyword binding is
-        /// reordered by the call ABI, so the backend resolves these by the
-        /// selected parameter name rather than by positional index.
-        kwarg_places: Vec<Option<MirPlace>>,
         /// The effective convention the selected callee binds each source
         /// argument by, as upstream's call carries each operand's convention
         /// in its callee's type: positional sources index `args` (a direct
@@ -2392,14 +2318,16 @@ pub enum MirInstr {
         /// call builds of its overflow (`total(1, 2)`, a `tuple.make`, as
         /// upstream's call builds the `VariadicPack`), or the caller's own
         /// collector spread (`show(*args)`), a `VariadicPack` over a pack
-        /// still a parameter, whose place `arg_places` retains when the
-        /// pack is read. The elaborator reads a spread's elements from
-        /// that place and builds the call's pack of them; a call of the
+        /// still a parameter. The elaborator reads a spread's elements from
+        /// that operand and builds the call's pack of them; a call of the
         /// builtin `print` takes the elements as its arguments instead.
         spread: Option<usize>,
     },
     /// A call through a runtime function value. Callable parameters use this
     /// instruction instead of treating the parameter name as a global symbol.
+    /// The callee is the operand alone, as upstream's indirect call takes
+    /// the closure or function value; a pass wanting its storage follows
+    /// the operand's defining load ([`crate::mir::callee_slots`]).
     CallIndirect {
         dest: Reg,
         callee: Reg,
@@ -2412,17 +2340,6 @@ pub enum MirInstr {
         raises: Option<Raises>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
-        /// Always `None`: the callee is the operand alone, as upstream's
-        /// indirect call takes the closure or function value, and a pass
-        /// wanting its storage follows the operand's defining load
-        /// ([`crate::mir::callee_slots`]). The verifier rejects one; MIR
-        /// text before 1.201 loads with it cleared.
-        callee_place: Option<Box<MirPlace>>,
-        /// Like `Call::arg_places`: the retained caller place for each
-        /// positional argument selected for a `mut`/`ref` parameter.
-        arg_places: Vec<Option<MirPlace>>,
-        /// Like `Call::kwarg_places`, aligned with `kwargs`.
-        kwarg_places: Vec<Option<MirPlace>>,
         capture_accesses: Vec<MirCaptureAccess>,
         /// Compile-time arguments supplied while invoking a generic callable
         /// value, named by their declarations as `Call`'s are.
@@ -2448,15 +2365,11 @@ pub enum MirInstr {
         /// the lifted body's instance.
         spread: Option<usize>,
     },
-    /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
-    /// is a writable place (a variable / field-index chain), so a `mut self` method
-    /// can write the updated receiver back. A temporary receiver (a call result)
-    /// admits only read-only methods (the checker guarantees this); it is `None`
-    /// unless the call result is a borrowing view, which is retained in its
-    /// call-result slot (a register-passable one in a `$view_recv_r` slot)
-    /// whose loans keep the borrowed source alive across the chained call, or
-    /// a memory-only one a `read` receiver takes by address, whose
-    /// call-result slot it names.
+    /// A method call `recv.method(args)`. A receiver the method binds by
+    /// address is a `ref.make` of the caller's storage, as `Call`'s
+    /// operands are: a writable place for a `mut self` method, or the
+    /// call-result slot a borrowing view or a memory-only `read` receiver
+    /// is retained in.
     MethodCall {
         dest: Reg,
         recv: Reg,
@@ -2476,8 +2389,7 @@ pub enum MirInstr {
         result_adapter: Option<Box<MirResultAdapter>>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
-        recv_place: Option<Box<MirPlace>>,
-        /// Whether the call may write through `recv_place`: a `mut` or
+        /// Whether the call may write through its receiver: a `mut` or
         /// mutable `ref` receiver, or a consuming one. A borrowed `self`
         /// receiver only reads its place, so a live shared loan on that place
         /// (a reference result used as the receiver) does not conflict with
@@ -2486,18 +2398,12 @@ pub enum MirInstr {
         /// The selected callee's receiver convention, as upstream's call
         /// carries each operand's convention; `None` when the call records
         /// no checked contract. A `deinit` receiver (upstream's `DeinitMem`)
-        /// makes the call itself consume `recv_place`, as upstream's call
-        /// consumes its operand (`memConsume`), so no marker after the call
-        /// ends it; with no `recv_place`, a `var` or `deinit` receiver
-        /// consumes the receiver register.
+        /// makes the call itself consume the storage its receiver
+        /// `ref.make` addresses, as upstream's call consumes its operand
+        /// (`memConsume`), so no marker after the call ends it; a
+        /// register-passable `var` or `deinit` receiver consumes the
+        /// receiver register.
         receiver_convention: Option<mojito_ast::ast::ArgConvention>,
-        /// Like `Call::arg_places`: `arg_places[i]` is `Some` for a
-        /// checker-selected `mut`/`ref` ordinary argument with a supported
-        /// caller place, or for a shared-read place a borrowing-view result
-        /// lends to.
-        arg_places: Vec<Option<MirPlace>>,
-        /// Like `Call::kwarg_places`, aligned with `kwargs`.
-        kwarg_places: Vec<Option<MirPlace>>,
         /// Like `Call::conventions`, the receiver's excluded
         /// (`receiver_convention`).
         conventions: MirArgConventions,
@@ -2585,11 +2491,6 @@ pub enum MirInstr {
         dest: Reg,
         base: Reg,
         index: Reg,
-        /// Stable receiver storage retained by checking/lowering. Nominal
-        /// `__getitem__` dispatch uses this for a `ref self` handle and for any
-        /// reference returned into the caller's frame.
-        base_place: Option<Box<MirPlace>>,
-        index_place: Option<Box<MirPlace>>,
         call: Option<Box<MirSubscriptCall>>,
         intrinsic: Option<MirIntrinsicSubscript>,
     },
@@ -2599,28 +2500,21 @@ pub enum MirInstr {
         dest: Reg,
         object: Reg,
         args: Vec<MirSubscriptArg>,
-        object_place: Option<Box<MirPlace>>,
-        arg_places: Vec<Option<MirPlace>>,
         /// Keyword subscript actuals — index values (`s[byte=i]`) or slice
         /// descriptors (`s[byte=a:b]`) — bound to keyword-only `__getitem__`
-        /// parameters through the checked contract's keyword sources,
-        /// parallel to `kwarg_places`.
+        /// parameters through the checked contract's keyword sources.
         kwargs: Vec<(String, MirSubscriptArg)>,
-        kwarg_places: Vec<Option<MirPlace>>,
         call: Option<Box<MirSubscriptCall>>,
     },
-    /// `object[a, b:c] = value`: checked `__setitem__` dispatch. The receiver
-    /// place is retained so a `mut self` implementation is written back after
-    /// the call. The value is passed by keyword, under `value_keyword`, the
+    /// `object[a, b:c] = value`: checked `__setitem__` dispatch. A `mut self`
+    /// implementation's receiver is a `ref.make` of the storage it writes,
+    /// as a method call's is. The value is passed by keyword, under `value_keyword`, the
     /// name of the first declared setter's last argument (upstream's
     /// `SubscriptDLValue::emitStore`).
     MultiSet {
         receiver: Reg,
-        receiver_place: Option<Box<MirPlace>>,
         args: Vec<MirSubscriptArg>,
-        arg_places: Vec<Option<MirPlace>>,
         value: Reg,
-        value_place: Option<Box<MirPlace>>,
         value_keyword: String,
         call: Box<MirSubscriptCall>,
     },

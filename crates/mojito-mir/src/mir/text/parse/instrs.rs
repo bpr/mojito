@@ -320,88 +320,74 @@ impl Decoder {
     }
 
     pub(super) fn instruction(&mut self, value: &Value) -> Option<MirInstr> {
-        self.pending_call = None;
         let mut instruction = self.decoded_instruction(value)?;
-        if let Some(places) = self.pending_call.take()
-            && self.minor < 201
-        {
-            self.legacy_calls.push(places);
-        }
-        // Schema 1.200 passes a `deinit` receiver as the operand its call
-        // consumes; an older call's receiver place goes to the upgrade
-        // alone.
-        if self.minor < 200
-            && instruction.deinit_receiver()
-            && let MirInstr::MethodCall { recv_place, .. } = &mut instruction
-        {
-            *recv_place = None;
+        if instruction.is_call_shaped() {
+            let places = self.legacy_call_places(value, &instruction)?;
+            if self.minor < 202 {
+                self.legacy_calls.push(places);
+            }
         }
         self.upgrade_contract_arguments(&mut instruction);
         Some(instruction)
     }
 
-    /// A call-shaped instruction's receiver place field `name`, kept for
-    /// the load-time upgrades as well.
-    fn legacy_receiver(
+    /// The operand places MIR text before 1.202 writes on a call-shaped
+    /// `instruction`, kept for the load-time upgrades alone, as upstream's
+    /// `lit.call` names no storage beside its operands. An artifact of
+    /// 1.202 or later writes none, and one it does write is an error.
+    fn legacy_call_places(
         &mut self,
         value: &Value,
-        fields: &[Field],
-        name: &str,
-    ) -> Result<Option<Box<MirPlace>>, ()> {
-        let place = self
-            .req(value, fields, name, |d, v| Some(d.option_place(v)))
-            .ok_or(())?;
-        self.pending_call
-            .get_or_insert_default()
-            .receiver
-            .clone_from(&place);
-        Ok(place.map(Box::new))
-    }
-
-    /// A call-shaped instruction's `arg_places`, kept for the load-time
-    /// upgrades as well.
-    fn legacy_positional(
-        &mut self,
-        value: &Value,
-        fields: &[Field],
-    ) -> Option<Vec<Option<MirPlace>>> {
-        let places = self.req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?;
-        self.pending_call
-            .get_or_insert_default()
-            .positional
-            .clone_from(&places);
+        instruction: &MirInstr,
+    ) -> Option<LegacyCallPlaces> {
+        let (_, fields) = self.any_record(value)?;
+        let (receiver, positional, keyword, trailing) = match instruction {
+            MirInstr::Call { .. } => (None, true, true, None),
+            MirInstr::CallIndirect { .. } => (Some("callee_place"), true, true, None),
+            MirInstr::MethodCall { .. } => (Some("recv_place"), true, true, None),
+            MirInstr::Index { .. } => (Some("base_place"), false, false, Some("index_place")),
+            MirInstr::MultiIndex { .. } => (Some("object_place"), true, true, None),
+            MirInstr::MultiSet { .. } => (Some("receiver_place"), true, false, Some("value_place")),
+            _ => (None, false, false, None),
+        };
+        if self.minor >= 202 {
+            for field in fields {
+                if LEGACY_PLACE_FIELDS.contains(&field.name.as_str()) {
+                    self.error(field.name_span, format!("unknown field `{}`", field.name));
+                }
+            }
+            return Some(LegacyCallPlaces::default());
+        }
+        let mut places = LegacyCallPlaces::default();
+        if let Some(name) = receiver {
+            let place = self.req(value, fields, name, |d, v| Some(d.option_place(v)))?;
+            // A `call.indirect` takes its callee as the operand alone since
+            // 1.201; no upgrade reads an older callee's place.
+            if !matches!(instruction, MirInstr::CallIndirect { .. }) {
+                places.receiver = place;
+            }
+        }
+        if positional {
+            places.positional =
+                self.req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?;
+        }
+        if keyword {
+            places.keyword = self.req(value, fields, "kwarg_places", |d, v| {
+                Some(d.places_option(v))
+            })?;
+        } else if matches!(instruction, MirInstr::ConstructTypeParam { .. }) {
+            // A type-parameter construction older than schema 1.19 passes
+            // no keyword argument and writes no keyword places.
+            places.keyword = self
+                .field(fields, "kwarg_places")
+                .ok()
+                .map(|found| self.places_option(found))
+                .unwrap_or_default();
+        }
+        if let Some(name) = trailing {
+            places.trailing = self.req(value, fields, name, |d, v| Some(d.option_place(v)))?;
+        }
         Some(places)
-    }
-
-    /// A call-shaped instruction's `kwarg_places`, kept for the load-time
-    /// upgrades as well.
-    fn legacy_keyword(&mut self, value: &Value, fields: &[Field]) -> Option<Vec<Option<MirPlace>>> {
-        let places = self.req(value, fields, "kwarg_places", |d, v| {
-            Some(d.places_option(v))
-        })?;
-        self.pending_call
-            .get_or_insert_default()
-            .keyword
-            .clone_from(&places);
-        Some(places)
-    }
-
-    /// An `index.get`'s `index_place` or an `index.multi_set`'s
-    /// `value_place`, kept for the load-time upgrades as well.
-    fn legacy_trailing(
-        &mut self,
-        value: &Value,
-        fields: &[Field],
-        name: &str,
-    ) -> Result<Option<Box<MirPlace>>, ()> {
-        let place = self
-            .req(value, fields, name, |d, v| Some(d.option_place(v)))
-            .ok_or(())?;
-        self.pending_call
-            .get_or_insert_default()
-            .trailing
-            .clone_from(&place);
-        Ok(place.map(Box::new))
     }
 
     #[allow(
@@ -519,15 +505,6 @@ impl Decoder {
                     .ok()
                     .map(|found| self.kwargs(found))
                     .unwrap_or_default();
-                let kwarg_places = self
-                    .field(fields, "kwarg_places")
-                    .ok()
-                    .map(|found| self.places_option(found))
-                    .unwrap_or_default();
-                self.pending_call
-                    .get_or_insert_default()
-                    .keyword
-                    .clone_from(&kwarg_places);
                 // Schema 1.21 records a pack element's index; an older
                 // artifact constructs a type parameter alone.
                 let element = self
@@ -539,7 +516,6 @@ impl Decoder {
                     dest,
                     param,
                     kwargs,
-                    kwarg_places,
                     element,
                 })
             }
@@ -624,8 +600,6 @@ impl Decoder {
                     raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                     args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                     kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                    arg_places: self.legacy_positional(value, fields)?,
-                    kwarg_places: self.legacy_keyword(value, fields)?,
                     capture_accesses: self.req(value, fields, "capture_accesses", |d, v| {
                         Some(d.mir_capture_accesses(v))
                     })?,
@@ -665,15 +639,6 @@ impl Decoder {
                 raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                // Schema 1.201 takes the callee as the operand alone; an
-                // older call's callee place is read and dropped.
-                callee_place: (self.req(value, fields, "callee_place", |d, v| {
-                    Some(d.option_place(v))
-                })?)
-                .filter(|_| self.minor >= 201)
-                .map(Box::new),
-                arg_places: self.legacy_positional(value, fields)?,
-                kwarg_places: self.legacy_keyword(value, fields)?,
                 capture_accesses: self.req(value, fields, "capture_accesses", |d, v| {
                     Some(d.mir_capture_accesses(v))
                 })?,
@@ -722,7 +687,6 @@ impl Decoder {
                     }),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                recv_place: self.legacy_receiver(value, fields, "recv_place").ok()?,
                 recv_writes: self.req(value, fields, "recv_writes", Self::boolean)?,
                 // Schema 1.100 records the callee's receiver convention;
                 // 1.98 and 1.99 record only whether it is `deinit`, and an
@@ -738,8 +702,6 @@ impl Decoder {
                         .and_then(|found| self.boolean(found))
                         .and_then(|deinit| deinit.then_some(ArgConvention::Deinit)),
                 },
-                arg_places: self.legacy_positional(value, fields)?,
-                kwarg_places: self.legacy_keyword(value, fields)?,
                 capture_accesses: self.req(value, fields, "capture_accesses", |d, v| {
                     Some(d.mir_capture_accesses(v))
                 })?,
@@ -820,8 +782,6 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 base: self.req(value, fields, "base", Self::reg)?,
                 index: self.req(value, fields, "index", Self::reg)?,
-                base_place: self.legacy_receiver(value, fields, "base_place").ok()?,
-                index_place: self.legacy_trailing(value, fields, "index_place").ok()?,
                 call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
                 })?)
@@ -837,10 +797,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 object: self.req(value, fields, "object", Self::reg)?,
                 args: self.req(value, fields, "args", |d, v| Some(d.subscript_args(v)))?,
-                object_place: self.legacy_receiver(value, fields, "object_place").ok()?,
-                arg_places: self.legacy_positional(value, fields)?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.subscript_kwargs(v)))?,
-                kwarg_places: self.legacy_keyword(value, fields)?,
                 call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
                 })?)
@@ -848,11 +805,8 @@ impl Decoder {
             }),
             "index.multi_set" => Some(MirInstr::MultiSet {
                 receiver: self.req(value, fields, "receiver", Self::reg)?,
-                receiver_place: self.legacy_receiver(value, fields, "receiver_place").ok()?,
                 args: self.req(value, fields, "args", |d, v| Some(d.subscript_args(v)))?,
-                arg_places: self.legacy_positional(value, fields)?,
                 value: self.req(value, fields, "value", Self::reg)?,
-                value_place: self.legacy_trailing(value, fields, "value_place").ok()?,
                 value_keyword: self.req(
                     value,
                     fields,
@@ -1513,6 +1467,20 @@ fn infer_try_labels(block: &mut MirBlock, next: &mut u32, target: Option<TryLabe
         };
     }
 }
+
+/// The operand place fields MIR text before 1.202 writes on a call-shaped
+/// instruction ([`Decoder::legacy_call_places`]).
+const LEGACY_PLACE_FIELDS: [&str; 9] = [
+    "arg_places",
+    "kwarg_places",
+    "callee_place",
+    "recv_place",
+    "base_place",
+    "index_place",
+    "object_place",
+    "receiver_place",
+    "value_place",
+];
 
 /// The slot a store [`legacy_error_store`] makes before a raise naming a
 /// `try` names until [`upgrade_error_slots`] names the `try`'s.

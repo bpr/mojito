@@ -59,7 +59,7 @@ mod bound_calls;
 pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
 mod call_addresses;
 pub use call_addresses::{
-    OperandTable, by_address_parameter, by_address_receiver, call_operand_parameters,
+    by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, operand_value_ty, read_addressed_operands,
 };
 mod call_operands;
@@ -3980,8 +3980,6 @@ impl<'a> Flatten<'a> {
                     raises: None,
                     args: vec![raised],
                     kwargs: Vec::new(),
-                    arg_places: vec![None],
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     receiver: None,

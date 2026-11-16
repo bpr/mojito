@@ -51,8 +51,6 @@ pub(super) fn verify_call_instruction(
             func: FuncRef(callee),
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             instantiated_args,
@@ -100,11 +98,6 @@ pub(super) fn verify_call_instruction(
                     errors,
                 );
             }
-            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
-                errors.push(format!(
-                    "{prefix}: call place metadata is not aligned with its arguments"
-                ));
-            }
         }
         MirInstr::MethodCall {
             dest,
@@ -116,8 +109,6 @@ pub(super) fn verify_call_instruction(
             result_adapter,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
@@ -251,11 +242,6 @@ pub(super) fn verify_call_instruction(
                         .map(|(decls, arguments)| (*decls, arguments.as_ref())),
                     errors,
                 );
-            }
-            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
-                errors.push(format!(
-                    "{prefix}: method-call place metadata is not aligned with its arguments"
-                ));
             }
         }
         // A spread names the collector of the method the checker selected;
@@ -837,12 +823,6 @@ pub(super) fn verify_function(
         &context,
         errors,
     );
-    verify_operand_tables(
-        (name, function),
-        &function.body,
-        &crate::mir::operand_addresses(&function.body, &function.reg_types),
-        errors,
-    );
 }
 
 /// `RuntimePack[T0, ...]` distinguishes a specialized heterogeneous `*args`
@@ -1047,30 +1027,17 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         raises,
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         capture_accesses,
         param_arg_regs,
         param_decls,
         instantiated_contract,
         instantiated_args,
-        callee_place,
         ..
     } = instruction
     else {
         return;
     };
     verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
-    if callee_place.is_some() {
-        errors.push(format!(
-            "{prefix}: an indirect call names no callee place; its callee is the operand"
-        ));
-    }
-    if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
-        errors.push(format!(
-            "{prefix}: indirect-call place metadata is not aligned with its arguments"
-        ));
-    }
     // A bound's callee, its value or the address its requirement call
     // passes, is called through the bound's `__call__`.
     let callee_ty = cx.reg_ty(*callee).map(|ty| match ty.kind() {
@@ -1330,59 +1297,4 @@ fn owned_receiver(
             mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit
         )
     })
-}
-
-/// Every call operand that is a `ref.make` addresses the storage its place
-/// table names beside it, when the table names one: the analyses read the
-/// operand's `ref.make` (`OperandAddresses::address`), so the two must not
-/// disagree while the tables remain. A place holding a reference (a `ref`
-/// binding's slot) is passed as the handle it holds, and its table keeps
-/// the holding place; a `mut` or `ref` parameter's slot is its handle,
-/// named directly or through itself alike.
-fn verify_operand_tables(
-    (name, function): (&str, &MirFunction),
-    block: &MirBlock,
-    addresses: &crate::mir::OperandAddresses,
-    errors: &mut Vec<String>,
-) {
-    for instruction in &block.instrs {
-        for operand in crate::mir::call_operands(instruction) {
-            if let (Some(table), Some(made)) = (operand.table, addresses.made(operand.reg))
-                && !addresses_table(function, made, table)
-            {
-                errors.push(format!(
-                    "MIR function '{name}': call operand %r{} ({:?}) is a `ref.make` of {made:?} but its place table names {table:?}",
-                    operand.reg.0, operand.slot
-                ));
-            }
-        }
-        for region in crate::mir::instruction_regions(instruction) {
-            verify_operand_tables((name, function), region, addresses, errors);
-        }
-    }
-}
-
-/// Whether a `ref.make` of `made` addresses `table`: the same storage, or
-/// the reference `table` holds, forwarded (`stored_handle`).
-fn addresses_table(function: &MirFunction, made: &MirPlace, table: &MirPlace) -> bool {
-    let reference_parameter = |root: mojito_hir::hir::VarId| {
-        function
-            .ref_params
-            .get(root as usize)
-            .copied()
-            .unwrap_or(false)
-    };
-    let through = |place: &MirPlace| match place.through {
-        Some(through) if through == place.root && reference_parameter(through) => None,
-        through => through,
-    };
-    let same = |place: &MirPlace| {
-        crate::mir::call_addresses::same_storage(place, made) && through(place) == through(made)
-    };
-    same(table)
-        || crate::mir::call_addresses::stored_handle(
-            table,
-            mojito_types::origin::Mutability::Immutable,
-        )
-        .is_some_and(|(handle, _)| same(&handle))
 }

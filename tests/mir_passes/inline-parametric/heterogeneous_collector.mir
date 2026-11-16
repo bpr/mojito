@@ -1,4 +1,4 @@
-mojito-mir 1.160
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -33,7 +33,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "count", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
-              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -62,7 +62,7 @@ artifact {
               var.use { dest: %r0, var: $v0, mode: copy },
               var.use { dest: %r1, var: $v1, mode: copy },
               tuple.make { dest: %r3, elems: [%r0, %r1], element_types: present([Int, Bool]) },
-              call { dest: %r2, func: count, raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)])), value_arg(ct_struct { name: TypeList, fields: [] })], spread: present(0) }
+              call { dest: %r2, func: count, raises: absent, args: [%r3], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)])), value_arg(ct_struct { name: TypeList, fields: [] })], spread: present(0) }
             ],
             terminator: return { value: present(%r2) }
           }

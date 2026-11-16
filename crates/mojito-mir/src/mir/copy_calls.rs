@@ -222,8 +222,6 @@ fn constructor_call(
     } else {
         (vec![source], Vec::new())
     };
-    let arg_places = vec![None; args.len()];
-    let kwarg_places = vec![None; kwargs.len()];
     MirInstr::Call {
         conventions: crate::mir::MirArgConventions::default(),
         dest,
@@ -231,8 +229,6 @@ fn constructor_call(
         raises: None,
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,

@@ -30,7 +30,7 @@
               var.use { dest: %r11, var: $v3, mode: forward },
               struct.create { dest: %r3, fields: [%r11] },
               var.use { dest: %r5, var: $v0, mode: copy },
-              call { dest: %r6, func: "plain_nested$inner", raises: absent, args: [%r3, %r5], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r6, func: "plain_nested$inner", raises: absent, args: [%r3, %r5], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r6) }
           }

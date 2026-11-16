@@ -19,7 +19,7 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: "h$inner", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r0, func: "h$inner", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r0) }
           }
@@ -73,7 +73,7 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: "outer$inner", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r0, func: "outer$inner", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r0) }
           }

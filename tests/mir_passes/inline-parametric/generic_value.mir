@@ -1,4 +1,4 @@
-mojito-mir 1.153
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -61,7 +61,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: scaled, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(3))], spread: absent }
+              call { dest: %r1, func: scaled, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(3))], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

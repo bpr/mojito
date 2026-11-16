@@ -378,9 +378,6 @@ fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at:
 struct Lending {
     binding_at: usize,
     load_at: usize,
-    /// The reader of the load, which may retain the slot as the place a
-    /// by-address operand binds.
-    consumer_at: usize,
     load: Reg,
     slot: VarId,
 }
@@ -460,7 +457,6 @@ fn lending_use(
     (silent && untouched).then_some(Lending {
         binding_at,
         load_at,
-        consumer_at,
         load,
         slot,
     })
@@ -501,31 +497,13 @@ fn retained_operand_places<'i>(
 
 /// Lend the dying source to the read call that takes the call-result
 /// slot: the load, the construction, the source's death, and the slot's
-/// binding go, and the slot's load, and the call's retained operand place,
-/// read the source instead. The slot's deaths become the source's once the whole function is rewritten.
+/// binding go, and the slot's load, the call's operand, reads the source
+/// instead. The slot's deaths become the source's once the whole function is rewritten.
 fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lending) -> Loan {
     if let MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. } =
         &mut instrs[lending.load_at]
     {
         place.root = source.var;
-    }
-    match &mut instrs[lending.consumer_at] {
-        MirInstr::Call {
-            arg_places,
-            kwarg_places,
-            ..
-        } => {
-            for place in arg_places.iter_mut().chain(kwarg_places).flatten() {
-                if place.root == lending.slot {
-                    place.root = source.var;
-                }
-            }
-        }
-        MirInstr::MethodCall {
-            recv_place: Some(place),
-            ..
-        } if place.root == lending.slot => place.root = source.var,
-        _ => {}
     }
     let mut removed = [lending.binding_at, source.drop_at, at, at - 1];
     removed.sort_unstable_by(|left, right| right.cmp(left));

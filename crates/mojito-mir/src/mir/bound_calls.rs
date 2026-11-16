@@ -10,7 +10,7 @@
 //! [`MirInstr::CallIndirect`].
 
 use super::legacy_places::{LegacyCursor, LegacyOperandTables};
-use super::{MirFunction, MirInstr, MirPlace};
+use super::{MirFunction, MirInstr};
 use mojito_symbol::symbol::{
     callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
 };
@@ -85,9 +85,6 @@ pub fn indirect_from_bound_call(
         raises,
         args,
         kwargs,
-        recv_place,
-        arg_places,
-        kwarg_places,
         capture_accesses,
         param_arg_regs,
         param_decls,
@@ -108,10 +105,7 @@ pub fn indirect_from_bound_call(
         return Vec::new();
     }
     let mut callee = *recv;
-    let loads = super::read_addressed_operands(
-        function,
-        [(&mut callee, super::OperandTable::OwnedBoxed(recv_place))],
-    );
+    let loads = super::read_addressed_operands(function, [&mut callee]);
     *instruction = MirInstr::CallIndirect {
         dest: *dest,
         callee,
@@ -119,9 +113,6 @@ pub fn indirect_from_bound_call(
         raises: raises.take(),
         args: std::mem::take(args),
         kwargs: std::mem::take(kwargs),
-        callee_place: None,
-        arg_places: std::mem::take(arg_places),
-        kwarg_places: std::mem::take(kwarg_places),
         capture_accesses: std::mem::take(capture_accesses),
         param_arg_regs: std::mem::take(param_arg_regs),
         param_decls: std::mem::take(param_decls),
@@ -174,12 +165,10 @@ pub(super) fn is_callable_bound(ty: &Ty) -> bool {
 /// The requirement call a lowered indirect call through a `def(...)`
 /// bound is, `instruction` itself for any other call: the bound's
 /// `__call__` on its read receiver, `callee`, the callee's address
-/// (`Flatten::address_bound_callee`) whose place is `callee_place`,
-/// keeping a generic bound's compile-time parameters and the arguments the
+/// (`Flatten::address_bound_callee`), keeping a generic bound's compile-time parameters and the arguments the
 /// call applies. `reference_result` is the call's checked reference result.
 pub(super) fn bound_call_from_indirect(
     instruction: MirInstr,
-    callee_place: Option<MirPlace>,
     callee_ty: Option<&Ty>,
     reference_result: Option<RefTy>,
 ) -> MirInstr {
@@ -201,8 +190,6 @@ pub(super) fn bound_call_from_indirect(
             raises,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
@@ -220,11 +207,8 @@ pub(super) fn bound_call_from_indirect(
             result_adapter: None,
             args,
             kwargs,
-            recv_place: callee_place.map(Box::new),
             recv_writes: false,
             receiver_convention: None,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,

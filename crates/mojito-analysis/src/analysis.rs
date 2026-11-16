@@ -800,9 +800,10 @@ mod interior_origin_tests {
 
     #[test]
     fn an_unclassified_call_place_through_a_shared_reference_is_not_a_write() {
-        // `show(pick(a))`: the reference result's handle passes to a slot
-        // whose convention the MIR does not record, which the checker bound
-        // to the shared reference.
+        // `show(pick(a))`: the reference result's handle, a `ref.make`
+        // through the shared reference, passes to a slot whose convention
+        // the MIR does not record, which the checker bound to the shared
+        // reference.
         let call = MirInstr::Call {
             conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: Reg(3),
@@ -810,20 +811,36 @@ mod interior_origin_tests {
             raises: None,
             args: vec![Reg(2)],
             kwargs: Vec::new(),
-            arg_places: vec![Some(through_reference(1))],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
             spread: None,
         };
-        let f = function(
+        let address = MirInstr::MakeRef {
+            dest: Reg(2),
+            place: through_reference(1),
+        };
+        let mut f = function(
             block(
-                vec![establish_with(1, 0, false, None), call, use_reference(1, 4)],
+                vec![
+                    establish_with(1, 0, false, None),
+                    address,
+                    call,
+                    use_reference(1, 4),
+                ],
                 MirTerm::Return(None),
             ),
             &[],
+        );
+        f.reg_types.insert(
+            2,
+            mojito_types::types::TyKind::Ref(mojito_types::origin::RefTy {
+                referent: Ty::int(),
+                origin: mojito_types::origin::Origin::Untracked { mutable: false },
+                mutability: mojito_types::origin::Mutability::Immutable,
+            })
+            .into(),
         );
         assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
     }

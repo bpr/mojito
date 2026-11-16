@@ -305,7 +305,7 @@ impl<'a> Flatten<'a> {
         object: Node<'a>,
         contract: mojito_checked::checked::CheckedCallContract,
     ) -> Reg {
-        let (recv, recv_place) = self.lower_receiver_value(e, object, false);
+        let (recv, _) = self.lower_receiver_value(e, object, false);
         let dest = self.fresh(e.location(), None);
         self.emit_interior_invalidations(object, None);
         let raises = self.call_raises(e, e.raises());
@@ -320,11 +320,8 @@ impl<'a> Flatten<'a> {
             result_adapter: contract.result_adapter.map(MirResultAdapter::new),
             args: Vec::new(),
             kwargs: Vec::new(),
-            recv_place: recv_place.map(Box::new),
             recv_writes: e.receiver_writes(),
             receiver_convention: e.receiver_convention(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: self.call_capture_accesses(e),
             param_arg_regs: Vec::new(),
             param_decls: contract.param_decls,
@@ -374,7 +371,7 @@ impl<'a> Flatten<'a> {
         if !has_call && let Some(d) = self.storage_element_read(e, object) {
             return d;
         }
-        let (base, base_place) = if has_call {
+        let (base, _) = if has_call {
             self.lower_setup_receiver_with(e, object, |this| {
                 this.lower_receiver_value(e, object, false)
             })
@@ -382,7 +379,7 @@ impl<'a> Flatten<'a> {
             (self.expr(object), self.simple_place(object))
         };
         self.bind_call_operands(e, 0, &[index], &[]);
-        let (mut idx, index_place) = self.lower_call_argument(index);
+        let (mut idx, _) = self.lower_call_argument(index);
         if has_call {
             self.close_call_setup(None);
         } else {
@@ -402,8 +399,6 @@ impl<'a> Flatten<'a> {
             dest: d,
             base,
             index: idx,
-            base_place: base_place.map(Box::new),
-            index_place: index_place.map(Box::new),
             call: call.map(Box::new),
             intrinsic,
         });
@@ -420,10 +415,10 @@ impl<'a> Flatten<'a> {
         step: Option<Node<'a>>,
     ) -> Reg {
         let has_call = e.call_contract().is_some();
-        let (obj, object_place) = if has_call {
-            self.lower_receiver_value(e, object, false)
+        let obj = if has_call {
+            self.lower_receiver_value(e, object, false).0
         } else {
-            (self.expr(object), self.simple_place(object))
+            self.expr(object)
         };
         let lower = lower.map(|bound| self.expr(bound));
         let upper = upper.map(|bound| self.expr(bound));
@@ -432,7 +427,7 @@ impl<'a> Flatten<'a> {
             .and_then(|descriptors| descriptors.first().cloned().flatten())
             .expect("checked slice has a selected descriptor");
         let sliced = self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
-        let (argument, argument_place) =
+        let (argument, _) =
             self.address_subscript_argument(e, CheckedCallArgumentSource::Positional(0), sliced);
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
@@ -440,7 +435,7 @@ impl<'a> Flatten<'a> {
         let call = self.subscript_call_contract(e, &[(None, argument.clone())]);
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(e, None);
-        self.emit_slice_read(d, obj, (argument, argument_place), object_place, call);
+        self.emit_slice_read(d, obj, argument, call);
         d
     }
 
@@ -517,14 +512,12 @@ impl<'a> Flatten<'a> {
     }
 
     /// Emit the read of `object` subscripted by the one constructed slice
-    /// value `argument`, with the place it is read from, into `dest`,
-    /// passed like any index.
+    /// value `argument` into `dest`, passed like any index.
     pub(in crate::mir) fn emit_slice_read(
         &mut self,
         dest: Reg,
         object: Reg,
-        (argument, argument_place): (MirSubscriptArg, Option<MirPlace>),
-        object_place: Option<MirPlace>,
+        argument: MirSubscriptArg,
         call: Option<MirSubscriptCall>,
     ) {
         self.record_call(dest, call.as_ref().map(|call| call.target.clone()), 0);
@@ -532,10 +525,7 @@ impl<'a> Flatten<'a> {
             dest,
             object,
             args: vec![argument],
-            object_place: object_place.map(Box::new),
-            arg_places: vec![argument_place],
             kwargs: Vec::new(),
-            kwarg_places: Vec::new(),
             call: call.map(Box::new),
         });
     }
@@ -563,19 +553,19 @@ impl<'a> Flatten<'a> {
             return self.pointer_subscript_read(e, object, operand(*value));
         }
         let has_call = e.call_contract().is_some();
-        let (object_reg, object_place) = if has_call {
+        let object_reg = if has_call {
             self.lower_setup_receiver_with(e, object, |this| {
                 this.lower_receiver_value(e, object, false)
             })
+            .0
         } else {
-            (self.expr(object), self.simple_place(object))
+            self.expr(object)
         };
         let descriptors =
             slice_descriptors(e.checked).expect("checked multi-subscript has descriptor metadata");
         self.bind_subscript_operands(e, args, operand);
-        let mut arg_places = Vec::with_capacity(args.len());
+        let mut positional = 0;
         let mut kwargs = Vec::new();
-        let mut kwarg_places = Vec::new();
         let mut evaluated = Vec::new();
         let lowered_args: Vec<_> = args
             .iter()
@@ -583,8 +573,7 @@ impl<'a> Flatten<'a> {
             .filter_map(|(argument, descriptor)| match argument {
                 CheckedSubscriptArg::Keyword { name, value } => {
                     debug_assert!(descriptor.is_none());
-                    let (register, place) = self.lower_call_argument(operand(*value));
-                    kwarg_places.push(place);
+                    let (register, _) = self.lower_call_argument(operand(*value));
                     evaluated.push((
                         Some(operand(*value).location()),
                         MirSubscriptArg::Index(register),
@@ -606,15 +595,14 @@ impl<'a> Flatten<'a> {
                         this.slice_literal_argument(e, &descriptor, operands)
                     });
                     let source = CheckedCallArgumentSource::Keyword(kwargs.len());
-                    let (argument, place) = self.address_subscript_argument(e, source, sliced);
-                    kwarg_places.push(place);
+                    let (argument, _) = self.address_subscript_argument(e, source, sliced);
                     kwargs.push((name.clone(), argument));
                     None
                 }
                 CheckedSubscriptArg::Index(value) => {
                     debug_assert!(descriptor.is_none());
-                    let (register, place) = self.lower_call_argument(operand(*value));
-                    arg_places.push(place);
+                    let (register, _) = self.lower_call_argument(operand(*value));
+                    positional += 1;
                     evaluated.push((
                         Some(operand(*value).location()),
                         MirSubscriptArg::Index(register),
@@ -629,9 +617,9 @@ impl<'a> Flatten<'a> {
                     let sliced = self.outside_call_setup(|this| {
                         this.slice_literal_argument(e, &descriptor, operands)
                     });
-                    let source = CheckedCallArgumentSource::Positional(arg_places.len());
-                    let (argument, place) = self.address_subscript_argument(e, source, sliced);
-                    arg_places.push(place);
+                    let source = CheckedCallArgumentSource::Positional(positional);
+                    let (argument, _) = self.address_subscript_argument(e, source, sliced);
+                    positional += 1;
                     Some(argument)
                 }
             })
@@ -652,10 +640,7 @@ impl<'a> Flatten<'a> {
             dest,
             object: object_reg,
             args: lowered_args,
-            object_place: object_place.map(Box::new),
-            arg_places,
             kwargs,
-            kwarg_places,
             call: call.map(Box::new),
         });
         dest
@@ -728,7 +713,7 @@ impl<'a> Flatten<'a> {
         // The pointer is read by value: the subscript accesses its
         // pointee, not the storage holding it.
         let base = self.expr(object);
-        let (idx, index_place) = self.lower_call_argument(index);
+        let (idx, _) = self.lower_call_argument(index);
         let idx = self.materialize_register(idx, &Ty::int(), index.location());
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(index, None);
@@ -737,8 +722,6 @@ impl<'a> Flatten<'a> {
             dest: d,
             base,
             index: idx,
-            base_place: None,
-            index_place: index_place.map(Box::new),
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::Pointer),
         });

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2275**.
+Next free ID: **R2276**.
 
 ## Ordered Work
 
@@ -9729,40 +9729,32 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2191 Every call-shaped instruction carries place tables beside
-  its reference operands**
+- [ ] **R2275 Four MIR pass cases fail at HEAD because their input or
+  expectation predates a later MIR change**
 
-  Upstream's `lit.call` has no side table of places. `call`,
-  `call.indirect`, `call.method`, `type.construct` (`ConstructTypeParam`),
-  `index.get`, `index.multi`, and `index.multi_set` carry `arg_places`,
-  `kwarg_places`, `recv_place`, `callee_place`, `base_place`,
-  `index_place`, `object_place`, `receiver_place`, and `value_place`.
-  - No pass decides anything from a table any more. What still touches
-    them goes with the fields: the text decoder's IR assignments beside
-    each `LegacyCallPlaces` it keeps (`text/parse/instrs.rs`
-    `legacy_receiver` and its siblings), the producers that
-    write an entry beside a `ref.make` (`canonicalize.rs` `direct_call`,
-    `nested.rs` `lower_storage_call_witness`, the elaborator's capture
-    splice) or beside a pack's loaded overflow operand
-    (`Flatten::lower_call_operand`), the pass-through shuffles and
-    `instruction_places_mut`, `verify_subscript_receiver_place`, the
-    `verify/drops.rs` rule rejecting a `deinit` receiver's `recv_place`,
-    and `table_fallback`, which no verified operand reaches.
-  - Fix: delete the fields, constructors, and text fields, with a MIR
-    text bump; older text still parses the fields into the reader's
-    `LegacyOperandTables` for the upgrades only.
-  - The owner approved the `tests/mir_passes` re-bless in advance
-    (2026-11-15). The session may run `UPDATE_EXPECT=1 cargo nextest run
-    --test mir_pass_test` and re-canonicalize the case inputs to the new
-    schema with `mojito opt`.
-  - The approval covers only the deleted place-table fields and the
-    schema bump. Any other change in an `.expected` file is a regression
-    to fix, not to bless. That includes a call that is no longer
-    inlined, an instruction added or removed, or a different `ref.make`.
-  - List the cases whose expectations changed in the summary, and say
-    that each one changed only in those fields.
-  - Depends on R2267, R2268, R2269, R2270, R2271.
-  - Model: Fable, Planned.
+  `tests/mir_pass_test.rs` fails these cases without any change to the
+  pass they test. R2191's re-bless left their expectations at HEAD, minus
+  the deleted place-table fields, rather than bless the drift.
+  - `sroa/borrowed_kept` and `sroa/borrowed_field`: the only thing that
+    "borrows" the slot is a register-passable `read self` receiver
+    (`Pt.copy`), which upstream passes by value, naming no storage
+    (R2268). Before R2191, SROA panicked on the receiver's `recv_place`
+    naming the slot it retired ("a retired slot is still addressed").
+    Since then, SROA splits the slot, as it should. Each input needs a
+    real borrow, a `ref.make` operand of a `mut self` or memory-only
+    receiver, so the case still shows a borrowed slot being kept.
+  - `inline-parametric/ref_param_at_ref_field`: the 1.170 input is not
+    canonical. Since 1.198, the reader turns the `place.load` of the `ref`
+    field into the stored handle's `ref.make`
+    (`call_addresses::upgrade_stored_handles`). R2191 re-canonicalized the
+    input. The expectation still shows the load.
+  - `inline-parametric/pack_length_concrete`: the expectation spells a
+    `comptime.if` value as `param(param_constant(ct_bool(true)))`, and the
+    pass now prints `bool(true)`.
+  - Fix: rebuild the SROA inputs around a real borrow. Re-bless all four,
+    checking that each expectation shows what its case is about.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's
   memory-only register rule and fail at load**

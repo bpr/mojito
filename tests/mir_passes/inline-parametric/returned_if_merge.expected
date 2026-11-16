@@ -65,7 +65,7 @@
               drop.var { var: $v2 },
               var.use { dest: %r15, var: $v0, mode: move },
               var.use { dest: %r16, var: $v1, mode: move },
-              call { dest: %r17, func: print, raises: absent, args: [%r15, %r16], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r17, func: print, raises: absent, args: [%r15, %r16], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

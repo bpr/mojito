@@ -713,8 +713,6 @@ fn direct_call(
         raises,
         args,
         kwargs,
-        arg_places,
-        kwarg_places,
         capture_accesses,
         ..
     } = instruction
@@ -769,11 +767,8 @@ fn direct_call(
             result_adapter: None,
             args: std::mem::take(args),
             kwargs: std::mem::take(kwargs),
-            recv_place: memory_only.then(|| Box::new((*storage).clone())),
             recv_writes: false,
             receiver_convention: None,
-            arg_places: std::mem::take(arg_places),
-            kwarg_places: std::mem::take(kwarg_places),
             capture_accesses: std::mem::take(capture_accesses),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
@@ -798,9 +793,7 @@ fn direct_call(
         };
     }
     let mut accesses = std::mem::take(capture_accesses);
-    let mut places = Vec::with_capacity(operands.len() + arg_places.len());
     for (index, (_, place)) in operands.iter().enumerate() {
-        places.push(Some((*place).clone()));
         let access = MirCaptureAccess {
             root: place.root,
             path: capture_path(place),
@@ -814,7 +807,6 @@ fn direct_call(
             accesses.push(access);
         }
     }
-    places.append(arg_places);
     *instruction = MirInstr::Call {
         conventions: mojito_mir::mir::MirArgConventions::default(),
         dest: *dest,
@@ -826,8 +818,6 @@ fn direct_call(
             .chain(args.drain(..))
             .collect(),
         kwargs: std::mem::take(kwargs),
-        arg_places: places,
-        kwarg_places: std::mem::take(kwarg_places),
         capture_accesses: accesses,
         param_arg_regs: Vec::new(),
         receiver: None,

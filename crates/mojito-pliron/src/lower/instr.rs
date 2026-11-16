@@ -478,8 +478,6 @@ impl FnLowering<'_> {
                 raises,
                 args,
                 kwargs,
-                arg_places: _,
-                kwarg_places: _,
                 conventions: _,
                 capture_accesses,
                 param_arg_regs: _,
@@ -672,9 +670,6 @@ impl FnLowering<'_> {
                 raises,
                 args,
                 kwargs,
-                callee_place,
-                arg_places: _,
-                kwarg_places: _,
                 capture_accesses,
                 param_arg_regs: _,
                 param_decls,
@@ -688,13 +683,7 @@ impl FnLowering<'_> {
                 // static facts execution erases; the callable value itself
                 // needs no stable storage natively — its environment record
                 // is the stable storage.
-                let _ = (
-                    resolved,
-                    raises,
-                    callee_place,
-                    capture_accesses,
-                    instantiated_args,
-                );
+                let _ = (resolved, raises, capture_accesses, instantiated_args);
                 // A generic-callable contract that still carries unresolved
                 // declarations at lowering is outside the monomorphized
                 // subset.

@@ -111,7 +111,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "pick", slot: 1, name: m, type: meta_value(Int) }) },
-              call { dest: %r1, func: is_big, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: is_big, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

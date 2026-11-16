@@ -83,7 +83,7 @@
               var.store { var: $v1, src: %r17, binding_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), in_place: false },
               place.load { dest: %r11, place: place { root: $v1, root_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), projections: [], type: present(Int), through: present($v1) } },
               drop.var { var: $v1 },
-              call { dest: %r13, func: print, raises: absent, args: [%r11], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r13, func: print, raises: absent, args: [%r11], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               drop.var { var: $v4 }
             ],
             terminator: return { value: absent }

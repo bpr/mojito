@@ -1244,18 +1244,19 @@ fn nominal_membership_retains_the_borrowed_container_place() {
         .expect("main MIR")
         .1;
     let instructions = main.body.instrs.iter().collect::<Vec<_>>();
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let membership_calls = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method, recv_place, ..
-            } if method == "__contains__" => Some(recv_place),
+            MirInstr::MethodCall { method, recv, .. } if method == "__contains__" => {
+                Some(addresses.made(*recv))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(membership_calls.len(), 2, "{instructions:#?}");
     assert!(
-        membership_calls.iter().all(|place| place.is_some()),
+        membership_calls.iter().all(Option::is_some),
         "membership must borrow the caller's container place: {instructions:#?}"
     );
     assert!(
@@ -1421,13 +1422,12 @@ fn projected_pointer_actual_retains_one_accessor_handle_and_one_dynamic_index() 
         2,
         "each source dynamic index must be evaluated exactly once: {instructions:#?}"
     );
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let retained = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if matches!(func.0.as_str(), "bump" | "observe") => {
-                arg_places.first().and_then(Option::as_ref)
+            MirInstr::Call { func, args, .. } if matches!(func.0.as_str(), "bump" | "observe") => {
+                args.first().and_then(|arg| addresses.made(*arg))
             }
             _ => None,
         })
@@ -1505,13 +1505,16 @@ fn augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation() {
     let MirInstr::Index {
         base,
         index,
-        base_place: Some(base_place),
         call: Some(getter),
         ..
     } = instructions[index_call]
     else {
         unreachable!()
     };
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let base_place = addresses
+        .made(*base)
+        .expect("the getter addresses its receiver's place");
     let MirInstr::MultiSet {
         receiver,
         args,
@@ -1757,26 +1760,24 @@ fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    let slot_place = |place: &Option<MirPlace>| {
-        place.as_ref().is_some_and(|place| {
+    let slot_place = |place: Option<&MirPlace>| {
+        place.is_some_and(|place| {
             place.is_whole_root()
                 && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
         })
     };
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let subscripts = nested_instructions(&main.body)
         .into_iter()
-        .filter_map(|instruction| match instruction {
-            MirInstr::MultiIndex {
-                arg_places,
-                kwarg_places,
-                ..
-            } => Some((arg_places, kwarg_places)),
-            _ => None,
+        .filter(|instruction| matches!(instruction, MirInstr::MultiIndex { .. }))
+        .map(|instruction| {
+            let operands = addresses.operands(instruction);
+            (operands.positional, operands.keyword)
         })
         .collect::<Vec<_>>();
     assert_eq!(subscripts.len(), 2, "{main:#?}");
-    assert!(slot_place(&subscripts[0].0[0]), "{main:#?}");
-    assert!(slot_place(&subscripts[1].1[0]), "{main:#?}");
+    assert!(slot_place(subscripts[0].0[0]), "{main:#?}");
+    assert!(slot_place(subscripts[1].1[0]), "{main:#?}");
 }
 
 #[test]
@@ -1791,12 +1792,13 @@ fn builtin_reads_a_string_parameter_in_place() {
         .expect("compile");
     let body = mir_function(compiled.elaborated_mir(), "ask");
     let instructions = nested_instructions(&body.body);
+    let addresses = mojito::mir::operand_addresses(&body.body, &body.reg_types);
     let place = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "input" => arg_places.first().cloned(),
+            MirInstr::Call { func, args, .. } if func.0 == "input" => {
+                args.first().map(|arg| addresses.made(*arg))
+            }
             _ => None,
         })
         .expect("input call")
@@ -1822,15 +1824,13 @@ fn converted_memory_only_subscript_key_reads_its_source_in_place() {
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
     let instructions = nested_instructions(&main.body);
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let (key, source_place) = instructions
         .iter()
         .find_map(|instruction| match instruction {
             MirInstr::Call {
-                dest,
-                func,
-                arg_places,
-                ..
-            } if func.0.contains("StridedSlice.__init__") => Some((*dest, arg_places[0].clone())),
+                dest, func, args, ..
+            } if func.0.contains("StridedSlice.__init__") => Some((*dest, addresses.made(args[0]))),
             _ => None,
         })
         .expect("the conversion");
@@ -2561,7 +2561,9 @@ fn aug_assign_on_a_name_is_read_modify_write() {
     // `x += 1` ⇒ a read of `x`, then `SIMD.__iadd__` over `x`'s own place,
     // as upstream's in-place dunder mutates its receiver: the declaration is
     // the one write.
-    let is = instrs("def main():\n    var x = 1\n    x += 1\n");
+    let (_, main) = checked_main("def main():\n    var x = 1\n    x += 1\n");
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let is = &main.body.instrs;
     let writes: Vec<_> = is
         .iter()
         .filter_map(|i| match i {
@@ -2576,10 +2578,12 @@ fn aug_assign_on_a_name_is_read_modify_write() {
             MirInstr::MethodCall {
                 method,
                 resolved,
-                recv_place: Some(place),
+                recv,
                 recv_writes: true,
                 ..
-            } if method == "__iadd__" => Some((resolved.as_deref(), place.root)),
+            } if method == "__iadd__" => addresses
+                .made(*recv)
+                .map(|place| (resolved.as_deref(), place.root)),
             _ => None,
         })
         .collect();
@@ -2591,7 +2595,9 @@ fn aug_assign_through_a_place_loads_and_stores_the_same_place() {
     // `xs[0] += 1` ⇒ one LoadPlace, then `__iadd__` writing the SAME place —
     // i.e. the subscript index is flattened once and shared (not re-evaluated
     // for the write).
-    let is = instrs(&pointer_program("    xs[0] += 1\n"));
+    let (_, main) = checked_main(&pointer_program("    xs[0] += 1\n"));
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let is = &main.body.instrs;
     let idx_reg = |p: &MirPlace| match p.proj.as_slice() {
         [Proj::Index(r)] => *r,
         other => panic!("expected a single Index projection, got {other:?}"),
@@ -2601,11 +2607,9 @@ fn aug_assign_through_a_place_loads_and_stores_the_same_place() {
         _ => None,
     });
     let stored = is.iter().find_map(|i| match i {
-        MirInstr::MethodCall {
-            method,
-            recv_place: Some(place),
-            ..
-        } if method == "__iadd__" => Some(idx_reg(place)),
+        MirInstr::MethodCall { method, recv, .. } if method == "__iadd__" => {
+            addresses.made(*recv).map(idx_reg)
+        }
         _ => None,
     });
     assert!(
@@ -3708,13 +3712,14 @@ def main():
     print(bump(Int(3)))
 "#;
     let (_, main) = checked_main(source);
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let first_place = |callee: &str| {
         nested_instructions(&main.body)
             .into_iter()
             .find_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func, arg_places, ..
-                } if func.0 == callee => Some(arg_places.first().cloned().flatten()),
+                MirInstr::Call { func, args, .. } if func.0 == callee => {
+                    Some(args.first().and_then(|arg| addresses.made(*arg)))
+                }
                 _ => None,
             })
             .unwrap_or_else(|| panic!("a call of `{callee}`"))
@@ -4350,16 +4355,17 @@ fn ref_returning_subscript_retains_a_typed_receiver_place() {
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let (receiver, call) = main
         .body
         .instrs
         .iter()
         .find_map(|instruction| match instruction {
             MirInstr::Index {
-                base_place: Some(place),
+                base,
                 call: Some(call),
                 ..
-            } => Some((place, call)),
+            } => addresses.made(*base).map(|place| (place, call)),
             _ => None,
         })
         .expect("nominal subscript retained its receiver place");
@@ -4394,19 +4400,16 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
         Some(TyKind::Ref(_))
     ));
     let instructions = main.body.instrs.iter().collect::<Vec<_>>();
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::EstablishLoans { reference, .. } if *reference == reference_slot
     )));
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::MethodCall {
-            method,
-            recv_place: Some(place),
-            ..
-        } if method == "bump"
-            && place.root == reference_slot
-            && place.through == Some(reference_slot)
+        MirInstr::MethodCall { method, recv, .. } if method == "bump"
+            && addresses.made(*recv).is_some_and(|place| place.root == reference_slot
+                && place.through == Some(reference_slot))
     )));
     assert!(
         mir.invariant_errors.is_empty(),
@@ -4430,13 +4433,16 @@ fn memory_only_read_argument_retains_its_place_and_register_passable_does_not() 
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered");
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let places = |callee: &str| {
         nested_instructions(&main.body)
             .into_iter()
             .find_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func, arg_places, ..
-                } if func.0 == callee => Some(arg_places.clone()),
+                MirInstr::Call { func, args, .. } if func.0 == callee => Some(
+                    args.iter()
+                        .map(|arg| addresses.made(*arg))
+                        .collect::<Vec<_>>(),
+                ),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("call of {callee}"))
@@ -4791,12 +4797,15 @@ fn pack_element_read_argument_retains_its_place() {
         .position(|name| name == "value")
         .expect("slot value") as u32;
     let instructions = nested_instructions(&build.body);
+    let addresses = mojito::mir::operand_addresses(&build.body, &build.reg_types);
     let places = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "show" => Some(arg_places.clone()),
+            MirInstr::Call { func, args, .. } if func.0 == "show" => Some(
+                args.iter()
+                    .map(|arg| addresses.made(*arg))
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         })
         .expect("call of show");
@@ -4863,12 +4872,13 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
         1,
         "the dynamic index expression must be evaluated once"
     );
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let retained = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "bump" => arg_places.first().and_then(Option::as_ref),
+            MirInstr::Call { func, args, .. } if func.0 == "bump" => {
+                args.first().and_then(|arg| addresses.made(*arg))
+            }
             _ => None,
         })
         .expect("mut actual retains a caller place");
@@ -5087,41 +5097,42 @@ fn by_value_operands_name_no_storage() {
         .expect("main MIR")
         .1;
     let instructions = nested_instructions(&main.body);
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let receivers: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method, recv_place, ..
-            } if method == "free" || method == "__int__" => Some(recv_place),
+            MirInstr::MethodCall { method, recv, .. }
+                if method == "free" || method == "__int__" =>
+            {
+                Some(addresses.made(*recv))
+            }
             _ => None,
         })
         .collect();
     assert_eq!(receivers.len(), 2, "{instructions:#?}");
-    assert!(
-        receivers.iter().all(|place| place.is_none()),
-        "{receivers:#?}"
-    );
+    assert!(receivers.iter().all(Option::is_none), "{receivers:#?}");
     let pointer_reads: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
-                base_place,
+                base,
                 intrinsic: Some(mojito::mir::MirIntrinsicSubscript::Pointer),
                 ..
-            } => Some(base_place),
+            } => Some(addresses.made(*base)),
             _ => None,
         })
         .collect();
     assert!(!pointer_reads.is_empty(), "{instructions:#?}");
-    assert!(pointer_reads.iter().all(|place| place.is_none()));
+    assert!(pointer_reads.iter().all(Option::is_none));
     let copies: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call {
-                kwargs,
-                kwarg_places,
-                ..
-            } if kwargs.iter().any(|(name, _)| name == "copy") => Some(kwarg_places),
+            MirInstr::Call { kwargs, .. } if kwargs.iter().any(|(name, _)| name == "copy") => Some(
+                kwargs
+                    .iter()
+                    .map(|(_, reg)| addresses.made(*reg))
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         })
         .collect();
@@ -5131,19 +5142,19 @@ fn by_value_operands_name_no_storage() {
         .iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
-                base_place,
+                base,
                 call: Some(call),
                 ..
-            } if call.target.contains("__getitem__") => Some(base_place),
+            } if call.target.contains("__getitem__") => Some(addresses.made(*base)),
             _ => None,
         })
         .collect();
     assert_eq!(getters.len(), 2, "{instructions:#?}");
-    assert!(getters.iter().all(|place| place.is_none()), "{getters:#?}");
+    assert!(getters.iter().all(Option::is_none), "{getters:#?}");
     let stored: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::MultiSet { value_place, .. } => Some(value_place),
+            MirInstr::MultiSet { value, .. } => Some(addresses.made(*value)),
             _ => None,
         })
         .collect();
@@ -5170,6 +5181,7 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
         .expect("main lowered")
         .1;
     let instructions: Vec<_> = main.body.instrs.iter().collect();
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let slot = |name: &str| {
         main.var_names
             .iter()
@@ -5180,17 +5192,17 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
         let calls: Vec<_> = instructions
             .iter()
             .filter_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func,
+                MirInstr::Call { func, args, .. } if func.0 == callee => Some((
                     args,
-                    arg_places,
-                    ..
-                } if func.0 == callee => Some((args, arg_places)),
+                    args.iter()
+                        .map(|arg| addresses.made(*arg))
+                        .collect::<Vec<_>>(),
+                )),
                 _ => None,
             })
             .collect();
         assert_eq!(calls.len(), 1, "one call of {callee}");
-        calls[0]
+        calls.into_iter().next().expect("one call")
     };
     let (init_args, init_places) = call("main$snapshot$__storage.__init__");
     assert!(
@@ -5222,9 +5234,9 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
                 MirInstr::MethodCall {
                     resolved: Some(resolved),
                     args,
-                    recv_place,
+                    recv,
                     ..
-                } if resolved == callee => Some((args, recv_place)),
+                } if resolved == callee => Some((args, addresses.made(*recv))),
                 _ => None,
             })
             .collect();
@@ -5293,13 +5305,12 @@ fn sibling_capture_holds_a_reference_to_the_sibling_storage() {
         instruction,
         MirInstr::DefVar { var, src, .. } if *var == helper_slot && *src == storage
     )));
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let captured = instructions
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "main$caller$__storage.__init__" => {
-                arg_places.first().cloned().flatten()
+            MirInstr::Call { func, args, .. } if func.0 == "main$caller$__storage.__init__" => {
+                args.first().and_then(|arg| addresses.made(*arg))
             }
             _ => None,
         })
@@ -5415,15 +5426,16 @@ fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
         )
     };
     assert!(storage(middle.var_tys.get(&helper_slot)));
+    let addresses = mojito::mir::operand_addresses(&middle.body, &middle.reg_types);
     let capture = middle
         .body
         .instrs
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "outer$middle$__storage.middle$inner$__storage.__init__" => {
-                arg_places.first().cloned().flatten()
+            MirInstr::Call { func, args, .. }
+                if func.0 == "outer$middle$__storage.middle$inner$__storage.__init__" =>
+            {
+                args.first().and_then(|arg| addresses.made(*arg))
             }
             _ => None,
         })
@@ -5824,6 +5836,7 @@ fn origin_specialized_function_values_use_indirect_call_mir() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let mut instructions = main.body.instrs.iter();
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
@@ -5834,8 +5847,8 @@ fn origin_specialized_function_values_use_indirect_call_mir() {
     )));
     assert!(instructions.any(|instruction| matches!(
         instruction,
-        MirInstr::CallIndirect { arg_places, .. }
-            if matches!(arg_places.as_slice(), [Some(_)])
+        MirInstr::CallIndirect { args, .. }
+            if matches!(args.as_slice(), [arg] if addresses.made(*arg).is_some())
     )));
 }
 
@@ -6950,13 +6963,11 @@ fn augmented_reference_getter_store_calls_the_dunder_in_place() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let instrs = |name| {
-        mir_function(compiled.elaborated_mir(), name)
-            .body
-            .instrs
-            .iter()
-            .collect::<Vec<_>>()
+        let function = mir_function(compiled.elaborated_mir(), name);
+        let addresses = mojito::mir::operand_addresses(&function.body, &function.reg_types);
+        (function.body.instrs.iter().collect::<Vec<_>>(), addresses)
     };
-    let bump = instrs("bump");
+    let (bump, addresses) = instrs("bump");
     assert!(
         !bump.iter().any(|instr| match instr {
             MirInstr::ReadRef { .. } | MirInstr::WriteRef { .. } => true,
@@ -6971,21 +6982,18 @@ fn augmented_reference_getter_store_calls_the_dunder_in_place() {
     assert!(
         bump.iter().any(|instr| matches!(
             instr,
-            MirInstr::MethodCall { method, recv_place: Some(place), arg_places, .. }
+            MirInstr::MethodCall { method, recv, args, .. }
                 if method == "__iadd__"
-                    && place.through.is_some()
-                    && arg_places.first().is_some_and(Option::is_some)
+                    && addresses.made(*recv).is_some_and(|place| place.through.is_some())
+                    && args.first().is_some_and(|arg| addresses.made(*arg).is_some())
         )),
         "{bump:#?}"
     );
-    let store = instrs("store");
+    let (store, addresses) = instrs("store");
     assert!(
         store.iter().any(|instr| matches!(
             instr,
-            MirInstr::MultiSet {
-                value_place: Some(_),
-                ..
-            }
+            MirInstr::MultiSet { value, .. } if addresses.made(*value).is_some()
         )),
         "{store:#?}"
     );
@@ -7099,15 +7107,19 @@ fn spread_pack_and_external_call_operands_are_values() {
         .compile_source(src, Path::new("mir_test.mojo"))
         .expect("compile");
     let mir = compiled.mir();
-    let spreads = nested_instructions(&mir_function(mir, "fwd").body)
+    let fwd = mir_function(mir, "fwd");
+    let fwd_addresses = mojito::mir::operand_addresses(&fwd.body, &fwd.reg_types);
+    let spreads = nested_instructions(&fwd.body)
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call {
                 func,
                 spread: Some(spread),
-                arg_places,
+                args,
                 ..
-            } if func.0 == "show" => Some(arg_places.get(*spread).cloned().flatten()),
+            } if func.0 == "show" => {
+                Some(args.get(*spread).and_then(|arg| fwd_addresses.made(*arg)))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -7115,12 +7127,16 @@ fn spread_pack_and_external_call_operands_are_values() {
         matches!(spreads.as_slice(), [None]),
         "fwd's spread of show: {spreads:?}"
     );
-    let external = nested_instructions(&mir_function(mir, "main").body)
+    let main = mir_function(mir, "main");
+    let main_addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let external = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "external_call" => Some(arg_places.clone()),
+            MirInstr::Call { func, args, .. } if func.0 == "external_call" => Some(
+                args.iter()
+                    .map(|arg| main_addresses.made(*arg))
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         })
         .expect("external_call");
@@ -7145,15 +7161,13 @@ fn read_builtin_operand_is_its_storage_reference_or_a_value() {
             _ => None,
         })
         .collect::<Vec<_>>();
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
     let operands = instructions
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::Call {
-                func,
-                args,
-                arg_places,
-                ..
-            } if func.0 == "input" => Some((args[0], arg_places[0].is_some())),
+            MirInstr::Call { func, args, .. } if func.0 == "input" => {
+                Some((args[0], addresses.made(args[0]).is_some()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();

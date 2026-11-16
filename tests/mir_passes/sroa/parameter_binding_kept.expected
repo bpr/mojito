@@ -23,7 +23,7 @@
               literal.materialize { dest: %r12, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r12] },
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
               const { dest: %r5, value: int_literal(1) },
               literal.materialize { dest: %r13, value: %r5, target: kgen_simd { dtype: int, width: 1 } },

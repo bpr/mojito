@@ -20,7 +20,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), projections: [], type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), through: absent } },
-              call { dest: %r1, func: "len$ov$T$Sized", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }
+              call { dest: %r1, func: "len$ov$T$Sized", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -68,11 +68,11 @@
               struct.create { dest: %r14, fields: [%r12, %r13] },
               struct.create { dest: %r15, fields: [%r14] },
               var.store { var: $v4, src: %r15, binding_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), in_place: false },
-              loop { results: [%r6], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r20, place: place { root: $v4, root_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), projections: [], type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), through: absent } }, call { dest: %r21, func: "len$ov$T$Sized", raises: absent, args: [%r20], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r21] } }] },
+              loop { results: [%r6], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r20, place: place { root: $v4, root_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), projections: [], type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), through: absent } }, call { dest: %r21, func: "len$ov$T$Sized", raises: absent, args: [%r20], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r21] } }] },
               var.use { dest: %r22, var: $v4, mode: forward },
-              call.method { dest: %r16, recv: %r22, method: __deinit__, resolved: present("VariadicList.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r16, recv: %r22, method: __deinit__, resolved: present("VariadicList.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: true, receiver_convention: present(deinit), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               drop.var { var: $v3 },
-              call { dest: %r7, func: print, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r7, func: print, raises: absent, args: [%r6], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

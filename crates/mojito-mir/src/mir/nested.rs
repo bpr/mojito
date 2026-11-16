@@ -1056,9 +1056,7 @@ fn lower_storage_call_witness(
         recv
     };
     let mut args = Vec::new();
-    let mut arg_places = Vec::new();
     let mut kwargs = Vec::new();
-    let mut kwarg_places = Vec::new();
     let mut spread = None;
     for (index, (name, ty, convention)) in parameters.iter().enumerate() {
         let var = index + 1;
@@ -1082,32 +1080,28 @@ fn lower_storage_call_witness(
         });
         // An owned parameter hands its storage on, as the method's owned
         // argument binds it, and runs no move initializer.
-        let place = if is_owned(convention) {
-            instrs.push(MirInstr::UseVar {
+        instrs.push(if is_owned(convention) {
+            MirInstr::UseVar {
                 dest,
                 var: var as VarId,
                 mode: UseMode::Forward,
                 constructor: None,
-            });
-            None
+            }
         } else if by_address {
             // A by-address parameter forwards its own slot's address, as
             // upstream's witness passes the `!lit.ref` it received.
-            let place = root(var, ty);
-            instrs.push(MirInstr::MakeRef {
+            MirInstr::MakeRef {
                 dest,
-                place: place.clone(),
-            });
-            Some(place)
+                place: root(var, ty),
+            }
         } else {
             // A register-passable `read` parameter (the forwarded collector
             // among them) forwards its value, as upstream's witness passes it.
-            instrs.push(MirInstr::LoadPlace {
+            MirInstr::LoadPlace {
                 dest,
                 place: root(var, ty),
-            });
-            None
-        };
+            }
+        });
         // A keyword-only parameter forwards by its name, the `**kwargs`
         // collector as the forwarded collector.
         let keyword = match method.slot_parameter(var) {
@@ -1124,14 +1118,12 @@ fn lower_storage_call_witness(
         match (keyword, method.slot_parameter(var)) {
             (Some(keyword), _) => {
                 kwargs.push((keyword, dest));
-                kwarg_places.push(place);
             }
             (None, slot) => {
                 if slot == mojito_checked::declaration::SlotParameter::Variadic {
                     spread = Some(args.len());
                 }
                 args.push(dest);
-                arg_places.push(place);
             }
         }
     }
@@ -1167,11 +1159,8 @@ fn lower_storage_call_witness(
         result_adapter: None,
         args,
         kwargs,
-        recv_place: (!storage.declared.register_passable()).then(|| Box::new(root(0, &storage.ty))),
         recv_writes: writes_self,
         receiver_convention: None,
-        arg_places,
-        kwarg_places,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         param_decls: method.param_decls.clone(),

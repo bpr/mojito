@@ -22,7 +22,7 @@
               var.use { dest: %r0, var: $v0, mode: copy },
               value.copy { dest: %r1, value: %r0 },
               var.use { dest: %r2, var: $v1, mode: copy },
-              call.indirect { dest: %r3, callee: %r1, resolved: absent, raises: absent, args: [%r2], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
+              call.indirect { dest: %r3, callee: %r1, resolved: absent, raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r3) }
           }

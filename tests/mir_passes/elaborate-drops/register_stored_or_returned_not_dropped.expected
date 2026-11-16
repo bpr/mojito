@@ -48,7 +48,7 @@
             instructions: [
               const { dest: %r0, value: string("del") },
               place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               consume.var { var: $v0 }
             ],
             terminator: return { value: absent }
@@ -76,7 +76,7 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: string("made") },
-              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -103,10 +103,10 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: string("kept") },
-              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r1, binding_type: absent, in_place: false },
               place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: Error, arguments: [] }), projections: [], type: present(struct_type { name: Error, arguments: [] }), through: absent } },
-              call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               drop.var { var: $v0 }
             ],
             terminator: return { value: absent }

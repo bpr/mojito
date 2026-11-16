@@ -21,7 +21,6 @@ impl Decoder {
             pack_upgrades: packs::PackUpgrades::default(),
             legacy_edge_errors: Vec::new(),
             legacy_calls: Vec::new(),
-            pending_call: None,
         }
     }
 
@@ -174,7 +173,7 @@ impl Decoder {
     ) -> Vec<LegacyCallPlaces> {
         let calls = std::mem::take(&mut self.legacy_calls);
         let shaped = call_shaped_count(function);
-        if self.minor < 201 && self.diagnostics.is_empty() && calls.len() != shaped {
+        if self.minor < 202 && self.diagnostics.is_empty() && calls.len() != shaped {
             self.error(
                 value.span,
                 format!(

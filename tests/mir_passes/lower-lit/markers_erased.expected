@@ -41,7 +41,7 @@
               var.use { dest: %r16, var: $v3, mode: borrow_shared },
               var.use { dest: %r17, var: $v1, mode: copy },
               drop.var { var: $v1 },
-              call.indirect { dest: %r18, callee: %r16, resolved: absent, raises: absent, args: [%r17], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              call.indirect { dest: %r18, callee: %r16, resolved: absent, raises: absent, args: [%r17], kwargs: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
               drop.var { var: $v3 }
             ],
             terminator: return { value: present(%r18) }

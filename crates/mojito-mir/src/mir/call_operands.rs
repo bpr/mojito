@@ -5,8 +5,8 @@
 //! checking, liveness, the inliner — works from that operand. MIR lowering
 //! forms the same operand, a `ref.make` of the operand's place
 //! (`Flatten::address_operand`), so a reader after lowering asks
-//! [`OperandAddresses::address`] for the storage an operand addresses instead
-//! of the instruction's place table.
+//! [`OperandAddresses::address`] for the storage an operand addresses; the
+//! instruction keeps no other record of it.
 //!
 //! Registers are function-wide unique and defined once, so one map over a
 //! function serves every call in it, wherever CSE or hoisting moved the
@@ -35,13 +35,17 @@ pub enum OperandSlot {
     Value,
 }
 
-/// One operand of a call-shaped instruction, with the entry its place table
-/// carries beside it.
+/// One operand of a call-shaped instruction, by the slot it fills.
 #[derive(Debug, Clone, Copy)]
-pub struct CallOperand<'i> {
+pub struct CallOperand {
     pub reg: Reg,
     pub slot: OperandSlot,
-    pub table: Option<&'i MirPlace>,
+}
+
+impl CallOperand {
+    const fn new(reg: Reg, slot: OperandSlot) -> Self {
+        Self { reg, slot }
+    }
 }
 
 /// The place each `ref.make` of a function defines its register to address.
@@ -50,13 +54,11 @@ pub struct OperandAddresses(HashMap<u32, MirPlace>);
 
 impl OperandAddresses {
     /// The storage `operand` addresses: the place of the `ref.make` its
-    /// register is, as upstream reads a `!lit.ref` operand.
-    ///
-    /// An operand that is no `ref.make` reads the place table instead
-    /// ([`table_fallback`]).
+    /// register is, as upstream reads a `!lit.ref` operand. An operand that
+    /// is no `ref.make` addresses none.
     #[must_use]
-    pub fn address<'a>(&'a self, operand: &CallOperand<'a>) -> Option<&'a MirPlace> {
-        self.made(operand.reg).or_else(|| table_fallback(operand))
+    pub fn address(&self, operand: &CallOperand) -> Option<&MirPlace> {
+        self.made(operand.reg)
     }
 
     /// The place `reg`'s defining `ref.make` addresses, when it is one.
@@ -151,183 +153,89 @@ pub fn callee_slots(body: &MirBlock) -> HashMap<u32, VarId> {
     slots
 }
 
-/// The operands of a call-shaped instruction, each with its place-table
-/// entry.
+/// The operands of a call-shaped instruction.
 ///
 /// The call-shaped instructions are `call`, `call.indirect`,
 /// `call.method`, `index.get`, `index.multi`, `index.multi_set`, and
 /// `type.construct_param`; any other instruction has none.
 #[must_use]
-pub fn call_operands(instruction: &MirInstr) -> Vec<CallOperand<'_>> {
+pub fn call_operands(instruction: &MirInstr) -> Vec<CallOperand> {
     let mut operands = Vec::new();
     match instruction {
-        MirInstr::Call {
-            args,
-            kwargs,
-            arg_places,
-            kwarg_places,
-            ..
-        } => {
-            push_positional(&mut operands, args.iter().copied(), arg_places);
-            push_keywords(
-                &mut operands,
-                kwargs.iter().map(|(_, reg)| *reg),
-                kwarg_places,
-            );
+        MirInstr::Call { args, kwargs, .. } => {
+            push_positional(&mut operands, args.iter().copied());
+            push_keywords(&mut operands, kwargs.iter().map(|(_, reg)| *reg));
         }
         MirInstr::CallIndirect {
             callee,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             ..
         } => {
-            operands.push(CallOperand {
-                reg: *callee,
-                slot: OperandSlot::Callee,
-                table: None,
-            });
-            push_positional(&mut operands, args.iter().copied(), arg_places);
-            push_keywords(
-                &mut operands,
-                kwargs.iter().map(|(_, reg)| *reg),
-                kwarg_places,
-            );
+            operands.push(CallOperand::new(*callee, OperandSlot::Callee));
+            push_positional(&mut operands, args.iter().copied());
+            push_keywords(&mut operands, kwargs.iter().map(|(_, reg)| *reg));
         }
         MirInstr::MethodCall {
-            recv,
-            recv_place,
-            args,
-            kwargs,
-            arg_places,
-            kwarg_places,
-            ..
+            recv, args, kwargs, ..
         } => {
-            operands.push(CallOperand {
-                reg: *recv,
-                slot: OperandSlot::Receiver,
-                table: recv_place.as_deref(),
-            });
-            push_positional(&mut operands, args.iter().copied(), arg_places);
-            push_keywords(
-                &mut operands,
-                kwargs.iter().map(|(_, reg)| *reg),
-                kwarg_places,
-            );
+            operands.push(CallOperand::new(*recv, OperandSlot::Receiver));
+            push_positional(&mut operands, args.iter().copied());
+            push_keywords(&mut operands, kwargs.iter().map(|(_, reg)| *reg));
         }
-        MirInstr::Index {
-            base,
-            index,
-            base_place,
-            index_place,
-            ..
-        } => {
-            operands.push(CallOperand {
-                reg: *base,
-                slot: OperandSlot::Receiver,
-                table: base_place.as_deref(),
-            });
-            operands.push(CallOperand {
-                reg: *index,
-                slot: OperandSlot::Index,
-                table: index_place.as_deref(),
-            });
+        MirInstr::Index { base, index, .. } => {
+            operands.push(CallOperand::new(*base, OperandSlot::Receiver));
+            operands.push(CallOperand::new(*index, OperandSlot::Index));
         }
         MirInstr::MultiIndex {
             object,
-            object_place,
             args,
-            arg_places,
             kwargs,
-            kwarg_places,
             ..
         } => {
-            operands.push(CallOperand {
-                reg: *object,
-                slot: OperandSlot::Receiver,
-                table: object_place.as_deref(),
-            });
-            push_positional(&mut operands, args.iter().map(subscript_reg), arg_places);
+            operands.push(CallOperand::new(*object, OperandSlot::Receiver));
+            push_positional(&mut operands, args.iter().map(subscript_reg));
             push_keywords(
                 &mut operands,
                 kwargs.iter().map(|(_, argument)| subscript_reg(argument)),
-                kwarg_places,
             );
         }
         MirInstr::MultiSet {
             receiver,
-            receiver_place,
             args,
-            arg_places,
             value,
-            value_place,
             ..
         } => {
-            operands.push(CallOperand {
-                reg: *receiver,
-                slot: OperandSlot::Receiver,
-                table: receiver_place.as_deref(),
-            });
-            push_positional(&mut operands, args.iter().map(subscript_reg), arg_places);
-            operands.push(CallOperand {
-                reg: *value,
-                slot: OperandSlot::Value,
-                table: value_place.as_deref(),
-            });
+            operands.push(CallOperand::new(*receiver, OperandSlot::Receiver));
+            push_positional(&mut operands, args.iter().map(subscript_reg));
+            operands.push(CallOperand::new(*value, OperandSlot::Value));
         }
-        MirInstr::ConstructTypeParam {
-            kwargs,
-            kwarg_places,
-            ..
-        } => push_keywords(
-            &mut operands,
-            kwargs.iter().map(|(_, reg)| *reg),
-            kwarg_places,
-        ),
+        MirInstr::ConstructTypeParam { kwargs, .. } => {
+            push_keywords(&mut operands, kwargs.iter().map(|(_, reg)| *reg));
+        }
         _ => {}
     }
     operands
 }
 
-fn push_positional<'i>(
-    operands: &mut Vec<CallOperand<'i>>,
-    regs: impl Iterator<Item = Reg>,
-    tables: &'i [Option<MirPlace>],
-) {
-    operands.extend(regs.enumerate().map(|(index, reg)| CallOperand {
-        reg,
-        slot: OperandSlot::Positional(index),
-        table: tables.get(index).and_then(Option::as_ref),
-    }));
+fn push_positional(operands: &mut Vec<CallOperand>, regs: impl Iterator<Item = Reg>) {
+    operands.extend(
+        regs.enumerate()
+            .map(|(index, reg)| CallOperand::new(reg, OperandSlot::Positional(index))),
+    );
 }
 
-fn push_keywords<'i>(
-    operands: &mut Vec<CallOperand<'i>>,
-    regs: impl Iterator<Item = Reg>,
-    tables: &'i [Option<MirPlace>],
-) {
-    operands.extend(regs.enumerate().map(|(index, reg)| CallOperand {
-        reg,
-        slot: OperandSlot::Keyword(index),
-        table: tables.get(index).and_then(Option::as_ref),
-    }));
+fn push_keywords(operands: &mut Vec<CallOperand>, regs: impl Iterator<Item = Reg>) {
+    operands.extend(
+        regs.enumerate()
+            .map(|(index, reg)| CallOperand::new(reg, OperandSlot::Keyword(index))),
+    );
 }
 
 const fn subscript_reg(argument: &MirSubscriptArg) -> Reg {
     match argument {
         MirSubscriptArg::Index(reg) => *reg,
     }
-}
-
-/// The place-table entry of an operand that is no `ref.make`, the shapes
-/// whose call still names its storage only in the table:
-///
-/// - a `var` receiver's `recv_place`;
-/// - an operand that is already a reference without being a `ref.make` of
-///   its table's place (a forwarded reference parameter).
-const fn table_fallback<'a>(operand: &CallOperand<'a>) -> Option<&'a MirPlace> {
-    operand.table
 }
 
 /// The whole-slot reads of a body, gathered for [`callee_slots`].

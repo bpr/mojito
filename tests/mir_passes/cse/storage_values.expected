@@ -52,7 +52,7 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               simd.make { dest: %r1, dtype: float32, width: 4, elems: [%r0] },
-              call { dest: %r2, func: take, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: take, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(kgen_simd { dtype: float32, width: 4 }), in_place: true },
               var.store { var: $v2, src: %r1, binding_type: present(kgen_simd { dtype: float32, width: 4 }), in_place: false },
               var.use { dest: %r5, var: $v1, mode: copy },

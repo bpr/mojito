@@ -51,11 +51,11 @@
             instructions: [
               const { dest: %r2, value: int(2) },
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               field.get { dest: %r8, base: %r3, field: x },
               field.get { dest: %r9, base: %r3, field: y },
               struct.create { dest: %r4, fields: [%r8, %r9] },
-              call { dest: %r5, func: take, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r5, func: take, raises: absent, args: [%r4], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r7, a: %r5, b: %r8, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r7) }

@@ -261,14 +261,11 @@ impl<'a> Flatten<'a> {
             // preserving the selected signature. The `index` it returns
             // casts to `Int`, as upstream's `index(idx)` does. Its `read`
             // receiver binds a named memory-only Indexer where it lies.
-            let (recv, recv_place) = e
+            let recv = e
                 .ty()
                 .filter(super::super::calls::owns_droppable_storage)
                 .and_then(|_| self.read_in_place(e))
-                .map_or_else(
-                    || (self.expr_unconverted(e), None),
-                    |(value, place)| (value, Some(place)),
-                );
+                .map_or_else(|| self.expr_unconverted(e), |(value, _)| value);
             if let Some(source) = e.ty() {
                 self.f.reg_types.entry(recv.0).or_insert(source);
             }
@@ -284,11 +281,8 @@ impl<'a> Flatten<'a> {
                 result_adapter: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                recv_place: recv_place.map(Box::new),
                 recv_writes: false,
                 receiver_convention: None,
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
@@ -397,9 +391,9 @@ impl<'a> Flatten<'a> {
             (e.conversion_reads_source() || materialized.is_some()).then_some(Mutability::Immutable)
         };
         let place = materialized.or_else(|| source_place.clone()).or(read_place);
-        let (argument, argument_place) = match wanted {
-            Some(wanted) => self.address_operand(e, (argument, place), wanted),
-            None => (argument, place),
+        let argument = match wanted {
+            Some(wanted) => self.address_operand(e, (argument, place), wanted).0,
+            None => argument,
         };
         self.emit(MirInstr::Call {
             conventions: crate::mir::MirArgConventions::default(),
@@ -408,8 +402,6 @@ impl<'a> Flatten<'a> {
             raises,
             args: vec![argument],
             kwargs: Vec::new(),
-            arg_places: vec![argument_place],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
@@ -670,8 +662,6 @@ impl<'a> Flatten<'a> {
             raises: None,
             args: vec![value],
             kwargs: Vec::new(),
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,

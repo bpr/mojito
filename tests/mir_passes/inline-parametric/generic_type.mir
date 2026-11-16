@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -9,7 +9,7 @@ artifact {
   ],
   decls: [
     decl { lowered_name: generic_type, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
-    decl { lowered_name: ident, param_names: [x], param_types: [param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+    decl { lowered_name: ident, param_names: [x], param_types: [param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: param { owner: "ident", slot: 0, name: T, bounds: [ImplicitlyCopyable, Movable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
   ],
   functions: [
       fn {
@@ -59,7 +59,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: ident, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(Int)], spread: absent }
+              call { dest: %r1, func: ident, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(Int)], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

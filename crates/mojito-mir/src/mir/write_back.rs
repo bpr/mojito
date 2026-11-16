@@ -82,17 +82,6 @@ impl<'a> Flatten<'a> {
                 ))
             })
             .collect::<Vec<_>>();
-        let arg_places = indices
-            .iter()
-            .enumerate()
-            .map(|(position, index)| {
-                Self::checked_call_source_place(
-                    &plan.getter,
-                    CheckedCallArgumentSource::Positional(position),
-                    &index.place,
-                )
-            })
-            .collect::<Vec<_>>();
         let getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &evaluated_indices(&indices, &args),
@@ -102,15 +91,11 @@ impl<'a> Flatten<'a> {
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
         let call = Some(Box::new(getter_call));
-        let base_place = Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref())
-            .map(Box::new);
         self.emit(match (target.op(), args.as_slice()) {
             (CheckedOp::Index { .. }, [MirSubscriptArg::Index(index)]) => MirInstr::Index {
                 dest: current,
                 base: receiver,
                 index: *index,
-                base_place,
-                index_place: arg_places.into_iter().next().flatten().map(Box::new),
                 call,
                 intrinsic: None,
             },
@@ -118,10 +103,7 @@ impl<'a> Flatten<'a> {
                 dest: current,
                 object: receiver,
                 args,
-                object_place: base_place,
-                arg_places,
                 kwargs: Vec::new(),
-                kwarg_places: Vec::new(),
                 call,
             },
         });
@@ -189,7 +171,6 @@ impl<'a> Flatten<'a> {
             ),
         );
         let mut args = Vec::with_capacity(indices.len());
-        let mut arg_places = Vec::with_capacity(indices.len());
         for (position, index) in indices.iter().enumerate() {
             let source = CheckedCallArgumentSource::Positional(position);
             let raw = self.reload_augmented_source(
@@ -206,13 +187,8 @@ impl<'a> Flatten<'a> {
                     index.node.location(),
                 ),
             ));
-            arg_places.push(Self::checked_call_source_place(
-                setter,
-                source,
-                &index.place,
-            ));
         }
-        let (value, value_place) = self.augmented_setter_value(
+        let (value, _) = self.augmented_setter_value(
             target,
             setter,
             CheckedCallArgumentSource::Keyword(0),
@@ -226,11 +202,8 @@ impl<'a> Flatten<'a> {
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
-            receiver_place: receiver_place.map(Box::new),
             args,
-            arg_places,
             value,
-            value_place: value_place.map(Box::new),
             value_keyword: plan.value_keyword.clone(),
             call: Box::new(setter_call),
         });

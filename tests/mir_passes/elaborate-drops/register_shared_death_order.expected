@@ -48,7 +48,7 @@
             instructions: [
               const { dest: %r0, value: string("del") },
               place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               consume.var { var: $v0 }
             ],
             terminator: return { value: absent }
@@ -76,22 +76,22 @@
           bb0 {
             instructions: [
               const { dest: %r0, value: int(1) },
-              call { dest: %r1, func: Noisy, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: Noisy, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r1, binding_type: absent, in_place: false },
               const { dest: %r2, value: string("mid") },
-              call { dest: %r3, func: Error, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: Error, raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r4, value: int(2) },
-              call { dest: %r5, func: Noisy, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r5, func: Noisy, raises: absent, args: [%r4], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r5, binding_type: absent, in_place: false },
               place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [], type: present(struct_type { name: Noisy, arguments: [] }), through: absent } },
               place.load { dest: %r7, place: place { root: $v1, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [], type: present(struct_type { name: Noisy, arguments: [] }), through: absent } },
-              call { dest: %r8, func: print, raises: absent, args: [%r6, %r3, %r7], kwargs: [], arg_places: [absent, absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r8, func: print, raises: absent, args: [%r6, %r3, %r7], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r9, var: $v1, mode: forward },
-              call.method { dest: %r10, recv: %r9, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r10, recv: %r9, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: true, receiver_convention: present(deinit), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               var.store { var: $v2, src: %r3, binding_type: present(struct_type { name: Error, arguments: [] }), in_place: false },
               drop.var { var: $v2 },
               var.use { dest: %r11, var: $v0, mode: forward },
-              call.method { dest: %r12, recv: %r11, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+              call.method { dest: %r12, recv: %r11, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: true, receiver_convention: present(deinit), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

@@ -55,7 +55,7 @@
               literal.materialize { dest: %r9, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r9] },
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: Pt, raises: absent, args: [%r0, %r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               field.get { dest: %r11, base: %r3, field: x },
               field.get { dest: %r15, base: %r11, field: _mlir_value },
               var.store { var: $v1, src: %r15, binding_type: present(kgen_simd { dtype: int, width: 1 }), in_place: false },
@@ -72,7 +72,7 @@
               place.load { dest: %r19, place: place { root: $v2, root_type: present(kgen_simd { dtype: int, width: 1 }), projections: [], type: present(kgen_simd { dtype: int, width: 1 }), through: absent } },
               struct.create { dest: %r14, fields: [%r19] },
               struct.create { dest: %r7, fields: [%r13, %r14] },
-              call { dest: %r8, func: take, raises: absent, args: [%r7], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r8, func: take, raises: absent, args: [%r7], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               drop.var { var: $v1 },
               drop.var { var: $v2 }
             ],

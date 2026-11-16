@@ -1,4 +1,4 @@
-mojito-mir 1.101
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -93,7 +93,7 @@ artifact {
               const { dest: %r2, value: int(1) },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: le, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [%r13], condition: %r3, then: [bb0 { instructions: [], terminator: yield { values: [%r2] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [var.use { dest: %r7, var: $v0, mode: copy }, binary { op: sub, dest: %r10, a: %r7, b: %r2, resolved: absent, raises: absent }, call { dest: %r11, func: fact, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.use { dest: %r6, var: $v0, mode: copy }, binary { op: mul, dest: %r12, a: %r6, b: %r11, resolved: absent, raises: absent }], terminator: yield { values: [%r12] } }] }
+              if { results: [%r13], condition: %r3, then: [bb0 { instructions: [], terminator: yield { values: [%r2] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [var.use { dest: %r7, var: $v0, mode: copy }, binary { op: sub, dest: %r10, a: %r7, b: %r2, resolved: absent, raises: absent }, call { dest: %r11, func: fact, raises: absent, args: [%r10], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.use { dest: %r6, var: $v0, mode: copy }, binary { op: mul, dest: %r12, a: %r6, b: %r11, resolved: absent, raises: absent }], terminator: yield { values: [%r12] } }] }
             ],
             terminator: return { value: present(%r13) }
           }
@@ -121,14 +121,14 @@ artifact {
             instructions: [
               const { dest: %r1, value: int(1) },
               const { dest: %r3, value: int(2) },
-              call { dest: %r4, func: add, raises: absent, args: [%r1, %r3], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r4, func: add, raises: absent, args: [%r1, %r3], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r6, value: int(3) },
-              call { dest: %r7, func: kept, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r7, func: kept, raises: absent, args: [%r6], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r8, a: %r4, b: %r7, resolved: absent, raises: absent },
               const { dest: %r10, value: int(4) },
-              call { dest: %r11, func: fact, raises: absent, args: [%r10], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r11, func: fact, raises: absent, args: [%r10], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r12, a: %r8, b: %r11, resolved: absent, raises: absent },
-              call { dest: %r13, func: print, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r13, func: print, raises: absent, args: [%r12], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

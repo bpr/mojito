@@ -170,28 +170,16 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         MirInstr::MultiSet {
             receiver,
-            receiver_place,
             args,
-            arg_places,
             value,
-            value_place,
             call,
             ..
         } => {
             out.push(*receiver);
-            if let Some(receiver_place) = receiver_place {
-                index_regs(receiver_place, out);
-            }
             for argument in args {
                 subscript_arg_regs(argument, out);
             }
-            for argument_place in arg_places.iter().flatten() {
-                index_regs(argument_place, out);
-            }
             out.push(*value);
-            if let Some(value_place) = value_place {
-                index_regs(value_place, out);
-            }
             out.extend(
                 call.param_arg_regs
                     .iter()
@@ -201,19 +189,11 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::Call {
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             param_arg_regs,
             ..
         } => {
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, register)| *register));
-            for p in arg_places.iter().flatten() {
-                index_regs(p, out);
-            }
-            for p in kwarg_places.iter().flatten() {
-                index_regs(p, out);
-            }
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
         }
         MirInstr::CallIndirect {
@@ -221,46 +201,24 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             args,
             kwargs,
             param_arg_regs,
-            callee_place,
-            arg_places,
-            kwarg_places,
             ..
         } => {
             out.push(*callee);
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, register)| *register));
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
-            for p in callee_place
-                .as_deref()
-                .into_iter()
-                .chain(arg_places.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
-            {
-                index_regs(p, out);
-            }
         }
         MirInstr::MethodCall {
             recv,
             args,
             kwargs,
             param_arg_regs,
-            recv_place,
-            arg_places,
-            kwarg_places,
             ..
         } => {
             out.push(*recv);
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, register)| *register));
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
-            for p in recv_place
-                .as_deref()
-                .into_iter()
-                .chain(arg_places.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
-            {
-                index_regs(p, out);
-            }
         }
         MirInstr::PointerStorageTake { pointer, index, .. }
         | MirInstr::PointerStorageDestroy { pointer, index, .. } => {
@@ -271,20 +229,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::UninitStorageDestroy { storage, .. } => out.push(*storage),
         MirInstr::GetField { base, .. } => out.push(*base),
         MirInstr::Index {
-            base,
-            index,
-            base_place,
-            index_place,
-            call,
-            ..
+            base, index, call, ..
         } => {
             out.extend([*base, *index]);
-            if let Some(base_place) = base_place {
-                index_regs(base_place, out);
-            }
-            if let Some(index_place) = index_place {
-                index_regs(index_place, out);
-            }
             if let Some(call) = call {
                 out.extend(
                     call.param_arg_regs
@@ -296,10 +243,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::MultiIndex {
             object,
             args,
-            object_place,
-            arg_places,
             kwargs,
-            kwarg_places,
             call,
             ..
         } => {
@@ -309,12 +253,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
             for (_, argument) in kwargs {
                 subscript_arg_regs(argument, out);
-            }
-            if let Some(object_place) = object_place {
-                index_regs(object_place, out);
-            }
-            for argument_place in arg_places.iter().chain(kwarg_places).flatten() {
-                index_regs(argument_place, out);
             }
             if let Some(call) = call {
                 out.extend(
@@ -378,16 +316,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.push(*value);
         }
         MirInstr::ConstructTypeParam {
-            kwargs,
-            kwarg_places,
-            element,
-            ..
+            kwargs, element, ..
         } => {
             out.extend(element.iter().filter_map(|argument| argument.value));
             out.extend(kwargs.iter().map(|(_, register)| *register));
-            for p in kwarg_places.iter().flatten() {
-                index_regs(p, out);
-            }
         }
         MirInstr::If { cond, .. } => out.push(*cond),
         MirInstr::Loop { operands, .. } | MirInstr::ComptimeFor { operands, .. } => {

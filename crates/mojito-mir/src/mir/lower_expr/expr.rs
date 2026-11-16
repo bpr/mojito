@@ -276,8 +276,8 @@ impl<'a> Flatten<'a> {
         container: Node<'a>,
     ) -> Reg {
         self.bind_call_operands(node, 0, &[value], &[]);
-        let (argument, arg_place) = self.lower_call_argument(value);
-        let (recv, recv_place) = self.lower_receiver_value(node, container, false);
+        let (argument, _) = self.lower_call_argument(value);
+        let (recv, _) = self.lower_receiver_value(node, container, false);
         let contains = self.fresh_typed(node.location(), None, Ty::bool());
         // A generic `__contains__[T]` binds its own parameters from the
         // call's solved arguments, as a spelled method call's does.
@@ -304,11 +304,8 @@ impl<'a> Flatten<'a> {
             result_adapter: None,
             args: vec![argument],
             kwargs: Vec::new(),
-            recv_place: recv_place.map(Box::new),
             recv_writes: node.receiver_writes(),
             receiver_convention: node.receiver_convention(),
-            arg_places: vec![arg_place],
-            kwarg_places: Vec::new(),
             capture_accesses: self.call_capture_accesses(node),
             param_arg_regs: Vec::new(),
             param_decls,
@@ -462,9 +459,7 @@ impl<'a> Flatten<'a> {
             dest,
             func: FuncRef::named(func),
             raises: None,
-            arg_places: vec![None; args.len()],
             args,
-            kwarg_places: vec![None; kwargs.len()],
             kwargs,
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
@@ -499,10 +494,8 @@ impl<'a> Flatten<'a> {
                 dest: d,
                 func: FuncRef::named(&constructor),
                 raises: None,
-                args: regs.clone(),
+                args: regs,
                 kwargs: vec![("__list_literal__".to_string(), none)],
-                arg_places: vec![None; regs.len()],
-                kwarg_places: vec![None],
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![
                     MirParamArg {
@@ -594,10 +587,8 @@ impl<'a> Flatten<'a> {
                 dest,
                 func: FuncRef::named(constructor),
                 raises: None,
-                args: regs.clone(),
+                args: regs,
                 kwargs: Vec::new(),
-                arg_places: vec![None; regs.len()],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,

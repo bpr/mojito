@@ -178,7 +178,7 @@ impl<'a> Flatten<'a> {
                 .cloned()
         {
             self.bind_call_operands(call, 0, &[], kwargs);
-            let (kwargs, kwarg_places) = self
+            let (kwargs, _) = self
                 .copy_construction_keywords(kwargs)
                 .unwrap_or_else(|| self.lower_call_keywords(kwargs));
             let dest = self.fresh(call.location(), None);
@@ -186,7 +186,6 @@ impl<'a> Flatten<'a> {
                 dest,
                 param,
                 kwargs,
-                kwarg_places,
                 element: None,
             });
             return Some(dest);
@@ -352,9 +351,6 @@ impl<'a> Flatten<'a> {
                     raises: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    callee_place: None,
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
@@ -362,7 +358,6 @@ impl<'a> Flatten<'a> {
                     instantiated_args: Vec::new(),
                     spread: None,
                 },
-                callee_place,
                 factory_ty.as_ref(),
                 None,
             ));
@@ -538,7 +533,7 @@ impl<'a> Flatten<'a> {
         self.emit_indirect_invocation(
             call,
             callee,
-            callee_place,
+            callee_place.as_ref(),
             callable_ty.as_ref(),
             resolved,
             raises,
@@ -574,7 +569,7 @@ impl<'a> Flatten<'a> {
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
         let (regs, arg_places) = self.lower_call_arguments(args);
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+        let (kw, _) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
         let callee_place = variable
@@ -588,10 +583,8 @@ impl<'a> Flatten<'a> {
             .map_or((None, Vec::new()), |(contract, arguments)| {
                 (Some(contract), arguments)
             });
-        let transfer_arg_places = arg_places.clone();
         // A callable-struct value is the receiver of its own
         // `__call__` transfer effects; its place is the callee's.
-        let transfer_recv_place = callee_place.clone();
         self.record_call(dest, callable_target(&node.adjustments), 0);
         let raises = self.call_raises(call, call.raises());
         let callee = self.address_bound_callee(
@@ -608,9 +601,6 @@ impl<'a> Flatten<'a> {
                 raises: raises.clone(),
                 args: regs,
                 kwargs: kw,
-                callee_place: None,
-                arg_places,
-                kwarg_places,
                 capture_accesses,
                 param_arg_regs,
                 param_decls,
@@ -618,11 +608,10 @@ impl<'a> Flatten<'a> {
                 instantiated_args,
                 spread: Self::spread_position(args),
             },
-            callee_place,
             callable_ty.as_ref(),
             call.reference_result(),
         ));
-        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.install_call_transfers(call, callee_place.as_ref(), &arg_places);
         self.error_region(raises);
         dest
     }
@@ -675,22 +664,21 @@ impl<'a> Flatten<'a> {
         // A fieldwise construction passes its keywords positionally, its
         // record renumbered to match.
         let conventions = call.argument_conventions();
-        let ((regs, arg_places, kw, kwarg_places), conventions) =
-            match node.ty.clone().as_ref().map(Ty::kind) {
-                Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
-                    .fieldwise_keywords_positional(
-                        constructed,
-                        (regs, arg_places, kw, kwarg_places),
-                        conventions,
-                    ),
-                _ => ((regs, arg_places, kw, kwarg_places), conventions),
-            };
+        let ((regs, arg_places, kw, _), conventions) = match node.ty.clone().as_ref().map(Ty::kind)
+        {
+            Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
+                .fieldwise_keywords_positional(
+                    constructed,
+                    (regs, arg_places, kw, kwarg_places),
+                    conventions,
+                ),
+            _ => ((regs, arg_places, kw, kwarg_places), conventions),
+        };
         let target = callable_target(&node.adjustments)
             .unwrap_or_else(|| self.overloaded_name(name, args.len()));
         let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);
-        let transfer_arg_places = arg_places.clone();
         let instantiated_args = call.instantiated_args();
         self.record_call(d, Some(target.clone()), 0);
         let raises = self.call_raises(call, call.raises());
@@ -701,8 +689,6 @@ impl<'a> Flatten<'a> {
             raises: raises.clone(),
             args: regs,
             kwargs: kw,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             receiver: None,
@@ -710,7 +696,7 @@ impl<'a> Flatten<'a> {
             spread: Self::spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
-        self.install_call_transfers(call, None, &transfer_arg_places);
+        self.install_call_transfers(call, None, &arg_places);
         self.error_region(raises);
         d
     }
@@ -863,9 +849,9 @@ impl<'a> Flatten<'a> {
             self.allow_argument_anchors = call.call_anchors_arguments();
             self.open_call_setup();
             self.bind_call_operands(call, 0, args, kwargs);
-            let (regs, arg_places) = self.lower_call_arguments(args);
+            let (regs, _) = self.lower_call_arguments(args);
             self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+            let (kw, _) = self.lower_call_keywords(kwargs);
             self.close_call_setup(Some(call));
             let dest = self.fresh(call.location(), None);
             let target =
@@ -881,8 +867,6 @@ impl<'a> Flatten<'a> {
                 raises: raises.clone(),
                 args: regs,
                 kwargs: kw,
-                arg_places,
-                kwarg_places,
                 capture_accesses: self.call_capture_accesses(call),
                 param_arg_regs,
                 receiver,
@@ -922,15 +906,13 @@ impl<'a> Flatten<'a> {
         self.bind_call_operands(call, 0, args, kwargs);
         let (argument_regs, arg_places) = self.lower_call_arguments(args);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs);
+        let (keyword_regs, _) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, callable_target(&node.adjustments), 0);
         let raises = self.call_raises(call, call.raises());
-        let transfer_recv_place = recv_place.clone();
-        let transfer_arg_places = arg_places.clone();
         self.emit_call(MirInstr::MethodCall {
             conventions: call.argument_conventions(),
             dest,
@@ -948,11 +930,8 @@ impl<'a> Flatten<'a> {
                 .map(MirResultAdapter::new),
             args: argument_regs,
             kwargs: keyword_regs,
-            recv_place: recv_place.map(Box::new),
             recv_writes: call.receiver_writes(),
             receiver_convention: call.receiver_convention(),
-            arg_places,
-            kwarg_places,
             capture_accesses: self.call_capture_accesses(call),
             param_arg_regs,
             param_decls: param_decls.to_vec(),
@@ -964,7 +943,7 @@ impl<'a> Flatten<'a> {
                 .map(MirRefinedBound::boxed),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
-        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.install_call_transfers(call, recv_place.as_ref(), &arg_places);
         self.error_region(raises);
         dest
     }
@@ -1004,7 +983,6 @@ impl<'a> Flatten<'a> {
             dest,
             param: pack,
             kwargs: Vec::new(),
-            kwarg_places: Vec::new(),
             element,
         });
         Some(dest)

@@ -1338,8 +1338,6 @@ mod tests {
             raises: None,
             args: vec![Reg(1)],
             kwargs: Vec::new(),
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,

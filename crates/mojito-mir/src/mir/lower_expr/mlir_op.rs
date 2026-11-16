@@ -217,8 +217,6 @@ impl<'a> Flatten<'a> {
             dest,
             base,
             index,
-            base_place: None,
-            index_place: None,
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::TupleStorage),
         });

@@ -894,16 +894,6 @@ impl RegisterDestroys<'_> {
             }
             let (reg, what) = match instruction {
                 MirInstr::Drop { reg, .. } => (*reg, "drop.reg"),
-                MirInstr::MethodCall {
-                    recv_place: Some(_),
-                    ..
-                } if instruction.deinit_receiver() => {
-                    errors.push(format!(
-                        "MIR function '{}': call.method deinit receiver names its consumed storage by a receiver place rather than by its operand",
-                        self.name
-                    ));
-                    continue;
-                }
                 MirInstr::MethodCall { recv, .. }
                     if instruction.deinit_receiver() && !self.forwarded.contains(&recv.0) =>
                 {

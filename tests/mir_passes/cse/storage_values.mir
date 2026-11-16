@@ -1,4 +1,4 @@
-mojito-mir 1.154
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -6,7 +6,7 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: P, fields: [field { name: x, type: Int }, field { name: v, type: kgen_simd { dtype: float32, width: 4 } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+    struct { name: P, fields: [field { name: x, type: Int }, field { name: v, type: kgen_simd { dtype: float32, width: 4 } }], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], register_passable: true }
   ],
   decls: [
     decl { lowered_name: fields, param_names: [p], param_types: [struct_type { name: P, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: kgen_simd { dtype: float32, width: 4 }, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
@@ -67,7 +67,7 @@ artifact {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               simd.make { dest: %r1, dtype: float32, width: 4, elems: [%r0] },
-              call { dest: %r2, func: take, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: take, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(kgen_simd { dtype: float32, width: 4 }), in_place: true },
               simd.make { dest: %r4, dtype: float32, width: 4, elems: [%r0] },
               var.store { var: $v2, src: %r4, binding_type: present(kgen_simd { dtype: float32, width: 4 }), in_place: false },

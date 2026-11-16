@@ -293,8 +293,6 @@ impl<'a> Specializer<'a> {
             raises,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             spread,
             ..
@@ -307,9 +305,7 @@ impl<'a> Specializer<'a> {
             target,
             mojito_mir::mir::CallOperands {
                 args,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 spread,
             },
         )?;
@@ -321,8 +317,6 @@ impl<'a> Specializer<'a> {
                 raises: raises.take(),
                 args: std::mem::take(args),
                 kwargs: std::mem::take(kwargs),
-                arg_places: std::mem::take(arg_places),
-                kwarg_places: std::mem::take(kwarg_places),
                 capture_accesses: std::mem::take(capture_accesses),
                 param_arg_regs: Vec::new(),
                 receiver: None,
@@ -349,17 +343,13 @@ impl<'a> Specializer<'a> {
             && let MirInstr::Call {
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } = instruction
         {
             mojito_mir::mir::CallOperands {
                 args,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 spread,
             }
             .remove(&dropped.positional, &dropped.keyword);
@@ -3238,8 +3228,6 @@ impl<'a> Specializer<'a> {
                     func,
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                     param_arg_regs,
                     receiver: static_receiver,
                     instantiated_args,
@@ -3311,9 +3299,7 @@ impl<'a> Specializer<'a> {
                             &target,
                             mojito_mir::mir::CallOperands {
                                 args,
-                                arg_places,
                                 kwargs,
-                                kwarg_places,
                                 spread,
                             },
                         )?;
@@ -3334,9 +3320,6 @@ impl<'a> Specializer<'a> {
                     param_decls,
                     instantiated_args,
                     spread,
-                    recv_place,
-                    arg_places,
-                    kwarg_places,
                     ..
                 } => {
                     let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -3355,19 +3338,9 @@ impl<'a> Specializer<'a> {
                         param_decls.clear();
                         instantiated_args.clear();
                         param_arg_regs.clear();
-                        let operands = std::iter::once((
-                            recv,
-                            mojito_mir::mir::OperandTable::OwnedBoxed(recv_place),
-                        ))
-                        .chain(
+                        let operands = std::iter::once(recv).chain(
                             args.iter_mut()
-                                .chain(kwargs.iter_mut().map(|(_, register)| register))
-                                .zip(
-                                    arg_places
-                                        .iter_mut()
-                                        .chain(kwarg_places.iter_mut())
-                                        .map(mojito_mir::mir::OperandTable::Owned),
-                                ),
+                                .chain(kwargs.iter_mut().map(|(_, register)| register)),
                         );
                         let loads = mojito_mir::mir::read_addressed_operands(function, operands);
                         if !loads.is_empty() {
@@ -3483,8 +3456,6 @@ impl<'a> Specializer<'a> {
                     raises,
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                     capture_accesses,
                     param_arg_regs,
                     param_decls: contract,
@@ -3524,12 +3495,7 @@ impl<'a> Specializer<'a> {
                         // captured places themselves.
                         if !captures_are_empty {
                             let captured = self.capture_arguments(owner, function, &callable)?;
-                            arg_places.resize(args.len(), None);
                             args.splice(0..0, captured.iter().map(|(reg, _)| *reg));
-                            arg_places.splice(
-                                0..0,
-                                captured.iter().map(|(_, place)| Some(place.clone())),
-                            );
                             let loads = captured
                                 .into_iter()
                                 .map(|(dest, place)| MirInstr::MakeRef { dest, place })
@@ -3611,9 +3577,7 @@ impl<'a> Specializer<'a> {
                                     &target,
                                     mojito_mir::mir::CallOperands {
                                         args,
-                                        arg_places,
                                         kwargs,
-                                        kwarg_places,
                                         spread,
                                     },
                                 )?;
@@ -3629,8 +3593,6 @@ impl<'a> Specializer<'a> {
                             raises: raises.clone(),
                             args: std::mem::take(args),
                             kwargs: std::mem::take(kwargs),
-                            arg_places: std::mem::take(arg_places),
-                            kwarg_places: std::mem::take(kwarg_places),
                             capture_accesses: std::mem::take(capture_accesses),
                             param_arg_regs: Vec::new(),
                             receiver: None,

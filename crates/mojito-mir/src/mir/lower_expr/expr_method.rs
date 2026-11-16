@@ -147,7 +147,7 @@ impl<'a> Flatten<'a> {
             arg_places.extend(slice_places);
         }
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
+        let (kw, _) = self.lower_call_keywords(kwargs);
         // A leading operand shifts the positional sources off the contract's.
         self.close_call_setup(leading.is_none().then_some(call));
         let dest = self.fresh(call.location(), None);
@@ -176,8 +176,6 @@ impl<'a> Flatten<'a> {
             raises: raises.clone(),
             args: regs,
             kwargs: kw,
-            arg_places,
-            kwarg_places,
             capture_accesses: self.call_capture_accesses(call),
             param_arg_regs,
             receiver,
@@ -215,7 +213,7 @@ impl<'a> Flatten<'a> {
                 .cloned()
         {
             self.bind_call_operands(call, 0, &[], kwargs);
-            let (kwargs, kwarg_places) = self
+            let (kwargs, _) = self
                 .copy_construction_keywords(kwargs)
                 .unwrap_or_else(|| self.lower_call_keywords(kwargs));
             let dest = self.fresh(call.location(), None);
@@ -223,7 +221,6 @@ impl<'a> Flatten<'a> {
                 dest,
                 param,
                 kwargs,
-                kwarg_places,
                 element: None,
             });
             return Some(dest);
@@ -320,7 +317,7 @@ impl<'a> Flatten<'a> {
             return Some(self.emit_indirect_invocation(
                 call,
                 callee,
-                callee_place,
+                callee_place.as_ref(),
                 Some(&callable),
                 resolved,
                 raises,
@@ -726,7 +723,7 @@ impl<'a> Flatten<'a> {
             recv,
             recv_place,
             positional: (regs, arg_places),
-            keywords: (kw, kwarg_places),
+            keywords: (kw, _),
         } = operands;
         let (args, kwargs) = sources;
         let d = self.fresh(call.location(), None);
@@ -741,8 +738,6 @@ impl<'a> Flatten<'a> {
             .call_contract()
             .map(|contract| contract.param_decls)
             .unwrap_or_default();
-        let transfer_recv_place = recv_place.clone();
-        let transfer_arg_places = arg_places.clone();
         // A value parameter the call leaves to inference travels in its
         // solved arguments, as a generic `def`'s does; a per-call clone has
         // baked every parameter and takes none.
@@ -774,11 +769,8 @@ impl<'a> Flatten<'a> {
             // the call consumes (a `deinit` `receiver_convention`): the callee owns the
             // receiver from then on and destroys its fields itself. An
             // implicitly copied receiver's place is its copy's slot.
-            recv_place: recv_place.map(Box::new),
             recv_writes: call.receiver_writes(),
             receiver_convention: call.receiver_convention(),
-            arg_places,
-            kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
@@ -790,7 +782,7 @@ impl<'a> Flatten<'a> {
                 .map(MirRefinedBound::boxed),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
-        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.install_call_transfers(call, recv_place.as_ref(), &arg_places);
         self.error_region(raises);
         d
     }

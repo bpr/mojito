@@ -1165,17 +1165,6 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
-    pub(super) fn checked_call_source_place(
-        contract: &mojito_checked::checked::CheckedCallContract,
-        source: mojito_checked::checked::CheckedCallArgumentSource,
-        place: &Option<MirPlace>,
-    ) -> Option<MirPlace> {
-        Self::checked_call_source_requires_place(contract, source)
-            .then(|| place.clone())
-            .flatten()
-    }
-
     /// Apply the adaptations frozen on one selected call to an already
     /// evaluated source register. This deliberately ignores the expression's
     /// compatibility adjustment table: getter and setter facts can share the
@@ -1214,7 +1203,6 @@ impl<'a> Flatten<'a> {
         site: SourceSpan,
     ) -> Reg {
         let mut value = raw;
-        let mut place = None;
         for adjustment in adjustments {
             value = match adjustment {
                 mojito_checked::checked::CheckedCallValueAdjustment::ResolveCallable { target } => {
@@ -1245,8 +1233,6 @@ impl<'a> Flatten<'a> {
                         raises: None,
                         args: vec![value],
                         kwargs: Vec::new(),
-                        arg_places: vec![place.take()],
-                        kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
                         receiver: None,
@@ -1271,11 +1257,8 @@ impl<'a> Flatten<'a> {
                         result_adapter: None,
                         args: Vec::new(),
                         kwargs: Vec::new(),
-                        recv_place: None,
                         recv_writes: false,
                         receiver_convention: None,
-                        arg_places: Vec::new(),
-                        kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
                         param_decls: Vec::new(),
@@ -1291,10 +1274,8 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeSource(
                     materialization,
                 ) => {
-                    let (read, read_place) =
-                        self.materialize_conversion_source(value, materialization, site.clone());
-                    place = read_place;
-                    read
+                    self.materialize_conversion_source(value, materialization, site.clone())
+                        .0
                 }
             };
         }
@@ -1327,8 +1308,6 @@ impl<'a> Flatten<'a> {
             raises: None,
             args: vec![value],
             kwargs: Vec::new(),
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
@@ -2161,21 +2140,6 @@ impl<'a> Flatten<'a> {
             receiver.location(),
             lowered,
         )
-    }
-
-    /// The place table entry of a value getter's receiver `receiver`,
-    /// whose storage is `place`: the place when the getter's `contract`
-    /// takes the receiver by address ([`Self::address_receiver`]), else
-    /// `None`, as upstream passes a register-passable `read self` by value,
-    /// naming no storage. The setter keeps the place to re-address the
-    /// receiver.
-    pub(super) fn getter_receiver_place(
-        contract: &mojito_checked::checked::CheckedCallContract,
-        receiver: Node<'a>,
-        place: Option<&MirPlace>,
-    ) -> Option<MirPlace> {
-        receiver_by_address(contract, receiver.register_passable_read())
-            .and_then(|_| place.cloned())
     }
 
     /// [`Self::address_receiver`] of a receiver no checked node spells, as

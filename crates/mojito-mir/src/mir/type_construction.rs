@@ -10,8 +10,7 @@
 //! member symbols.
 
 use crate::mir::{
-    Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, MirPlace, Reg,
-    instruction_regions_mut,
+    Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, Reg, instruction_regions_mut,
 };
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{Ty, TyArg, TyKind};
@@ -194,12 +193,7 @@ pub fn construct_type_parameters<C: ConstructionTypes>(
 /// passes the struct's arguments as its `instantiated_args`; a struct whose
 /// copy is its trivial fieldwise copy records none, and copies by
 /// [`MirInstr::CopyValue`].
-pub fn struct_copy(
-    dest: Reg,
-    ty: &Ty,
-    (source, place): (Reg, Option<MirPlace>),
-    declarations: &MirDeclarations,
-) -> MirInstr {
+pub fn struct_copy(dest: Reg, ty: &Ty, source: Reg, declarations: &MirDeclarations) -> MirInstr {
     let Some(initializer) = declarations.copy_initializer(ty) else {
         return MirInstr::CopyValue {
             dest,
@@ -212,7 +206,6 @@ pub fn struct_copy(
         initializer,
         struct_arguments(ty, declarations),
         vec![("copy".to_string(), source)],
-        vec![place],
     )
 }
 
@@ -291,7 +284,6 @@ fn default_construction(
                     initializer,
                     struct_arguments(ty, declarations),
                     Vec::new(),
-                    Vec::new(),
                 )
             },
         )]),
@@ -311,7 +303,6 @@ fn copy_construction<C: ConstructionTypes>(
         dest,
         param,
         kwargs,
-        kwarg_places,
         ..
     } = instruction
     else {
@@ -324,14 +315,13 @@ fn copy_construction<C: ConstructionTypes>(
         return None;
     }
     let bound = types.bound(param)?;
-    let place = kwarg_places.first().cloned().flatten();
     let copy = match bound.kind() {
         ty if mojito_types::types::builtin_copy_is_value_read(ty) => MirInstr::CopyValue {
             dest: *dest,
             value: *source,
             constructor: None,
         },
-        TyKind::Struct(..) => struct_copy(*dest, bound, (*source, place), declarations),
+        TyKind::Struct(..) => struct_copy(*dest, bound, *source, declarations),
         _ => return None,
     };
     Some(registers.read_through(copy))
@@ -360,7 +350,6 @@ fn initializer_call(
     initializer: &str,
     instantiated_args: Vec<TyArg>,
     kwargs: Vec<(String, Reg)>,
-    kwarg_places: Vec<Option<MirPlace>>,
 ) -> MirInstr {
     MirInstr::Call {
         conventions: crate::mir::MirArgConventions::default(),
@@ -369,8 +358,6 @@ fn initializer_call(
         raises: None,
         args: Vec::new(),
         kwargs,
-        arg_places: Vec::new(),
-        kwarg_places,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,

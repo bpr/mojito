@@ -1,4 +1,4 @@
-//! The operand places MIR text older than 1.201 writes on each call-shaped
+//! The operand places MIR text older than 1.202 writes on each call-shaped
 //! instruction, held by the reader for the load-time upgrades.
 //!
 //! Upstream's `lit.call` names no storage beside its operands, and the IR

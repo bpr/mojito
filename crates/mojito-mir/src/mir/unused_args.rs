@@ -12,8 +12,8 @@ use crate::mir::call_defaults::erase_unpassed_defaults;
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
-    MirSubscriptArg, MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirSubscriptArg,
+    MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
     instruction_regions_mut, instruction_slots, instruction_subscript_call,
     instruction_subscript_call_mut, operator_method, retire_parameters, subscript_store_call,
     table_member,
@@ -238,7 +238,7 @@ pub fn removed_argument_operands(
 /// rewritten each call of a generator it removed an argument from to name
 /// the clone without it (`_REMOVED_ARG`), as it walks callees first: an
 /// argument the body only passed on to one is unused in turn. A call drops
-/// the operands [`removed_argument_operands`] binds, with their places, and
+/// the operands [`removed_argument_operands`] binds, and
 /// a resolved method call whose callee removed its receiver takes a
 /// register no instruction defines, of the receiver's type, in its stead:
 /// the rewritten call passes no receiver but still names the struct
@@ -265,9 +265,8 @@ pub fn without_removed_argument_forwards<'a>(
 /// a left-out default's evaluation among them; `None` when no call drops
 /// one.
 ///
-/// Each call keeps those operands, with their registers' types, and only
-/// loses their places, a removed receiver taking a register no instruction
-/// defines as in that view, since the elaborator binds the call against the
+/// Each call keeps those operands, with their registers' types, a removed
+/// receiver taking a register no instruction defines as in that view, since the elaborator binds the call against the
 /// callee's full declaration before it drops them, as it names the
 /// generator without them. Returns the view beside the kept operands no
 /// instruction defines any more, ascending, whose types the instance
@@ -303,20 +302,18 @@ pub fn erase_removed_operands(
     erase_forward_chains(function, declarations, &HashSet::new(), before, false);
 }
 
-/// The runtime operands of one call, with their places and the position of
+/// The runtime operands of one call, with the position of
 /// the positional collector it passes.
 pub struct CallOperands<'c> {
     pub args: &'c mut Vec<Reg>,
-    pub arg_places: &'c mut Vec<Option<MirPlace>>,
     pub kwargs: &'c mut Vec<(String, Reg)>,
-    pub kwarg_places: &'c mut Vec<Option<MirPlace>>,
     pub spread: &'c mut Option<usize>,
 }
 
 impl CallOperands<'_> {
-    /// Remove the operands at the `positional` and `keyword` indexes with
-    /// their places, the collector's position following its operand, or
-    /// leaving with it; gives the registers removed.
+    /// Remove the operands at the `positional` and `keyword` indexes, the
+    /// collector's position following its operand, or leaving with it;
+    /// gives the registers removed.
     pub fn remove(&mut self, positional: &BTreeSet<usize>, keyword: &BTreeSet<usize>) -> Vec<Reg> {
         *self.spread = self.spread.and_then(|spread| {
             (!positional.contains(&spread)).then(|| spread - positional.range(..spread).count())
@@ -324,22 +321,16 @@ impl CallOperands<'_> {
         let mut removed = Vec::with_capacity(positional.len() + keyword.len());
         for &index in positional.iter().rev() {
             removed.push(self.args.remove(index));
-            if index < self.arg_places.len() {
-                self.arg_places.remove(index);
-            }
         }
         for &index in keyword.iter().rev() {
             removed.push(self.kwargs.remove(index).1);
-            if index < self.kwarg_places.len() {
-                self.kwarg_places.remove(index);
-            }
         }
         removed
     }
 
     /// Drop the operands that bind the removed `slots` of the function
-    /// `declaration` declares or, by `operands`, only their places, adding
-    /// their registers to `dropped`; returns whether it dropped one. A call
+    /// `declaration` declares or, by `operands`, keep them, adding their
+    /// registers to `dropped`; returns whether it dropped one. A call
     /// whose arguments do not bind is left whole.
     fn drop(
         mut self,
@@ -363,16 +354,6 @@ impl CallOperands<'_> {
             Operands::Keep => {
                 dropped.extend(positional.iter().map(|&index| self.args[index].0));
                 dropped.extend(keyword.iter().map(|&index| self.kwargs[index].1.0));
-                for &index in &positional {
-                    if let Some(place) = self.arg_places.get_mut(index) {
-                        *place = None;
-                    }
-                }
-                for &index in &keyword {
-                    if let Some(place) = self.kwarg_places.get_mut(index) {
-                        *place = None;
-                    }
-                }
             }
         }
         !positional.is_empty() || !keyword.is_empty()
@@ -431,7 +412,7 @@ pub fn shed_subscript_contract(
 }
 
 /// Remove from a subscript `instruction` the operands at the `positional`
-/// and `keyword` indexes, with their places; gives their registers.
+/// and `keyword` indexes; gives their registers.
 ///
 /// An `index.get` or a slice whose one operand goes becomes a
 /// multi-subscript with none, as upstream's rewritten call of the accessor
@@ -446,32 +427,21 @@ pub fn shed_subscript_operands(
         MirInstr::Index {
             dest,
             base: object,
-            base_place: object_place,
             call,
             ..
         } if positional.contains(&0) => {
-            let (dest, object) = (*dest, *object);
-            let (call, object_place) = (call.take(), object_place.take());
+            let (dest, object, call) = (*dest, *object, call.take());
             *instruction = MirInstr::MultiIndex {
                 dest,
                 object,
                 args: Vec::new(),
-                object_place,
-                arg_places: Vec::new(),
                 kwargs: Vec::new(),
-                kwarg_places: Vec::new(),
                 call,
             };
         }
-        MirInstr::MultiIndex {
-            args,
-            arg_places,
-            kwargs,
-            kwarg_places,
-            ..
-        } => {
-            shed_indexes(args, arg_places, positional);
-            shed_indexes(kwargs, kwarg_places, keyword);
+        MirInstr::MultiIndex { args, kwargs, .. } => {
+            shed_indexes(args, positional);
+            shed_indexes(kwargs, keyword);
         }
         _ => {}
     }
@@ -695,8 +665,7 @@ impl Receivers<'_> {
 }
 
 /// Drop from each direct call in `block` and their regions the operands
-/// of its callee's removed arguments or, by `operands`, only their places,
-/// adding each callee that lost one to `discounted` and each operand's
+/// of its callee's removed arguments or, by `operands`, keep them, adding each callee that lost one to `discounted` and each operand's
 /// register to `dropped`.
 ///
 /// A resolved operator is the call of the dunder it names, the receiver
@@ -815,20 +784,11 @@ fn drop_removed_operands<'a>(
             // struct's parameters, which its type spells, as a method
             // call's does.
             if receiver
-                && let MirInstr::Index {
-                    base: object,
-                    base_place: object_place,
-                    ..
-                }
-                | MirInstr::MultiIndex {
-                    object,
-                    object_place,
-                    ..
-                } = instruction
+                && let MirInstr::Index { base: object, .. } | MirInstr::MultiIndex { object, .. } =
+                    instruction
             {
                 let fresh = receivers.fresh(*object);
                 *object = fresh;
-                *object_place = None;
                 dropped.insert(fresh.0);
             }
             match operands {
@@ -844,7 +804,6 @@ fn drop_removed_operands<'a>(
                 Operands::Keep => {
                     let kept = subscript_operand_regs(instruction, &positional, &keyword);
                     dropped.extend(kept.into_iter().map(|reg| reg.0));
-                    clear_subscript_places(instruction, &positional, &keyword);
                 }
             }
             discounted.insert(target);
@@ -855,16 +814,12 @@ fn drop_removed_operands<'a>(
                 func,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } => {
                 let call = CallOperands {
                     args,
-                    arg_places,
                     kwargs,
-                    kwarg_places,
                     spread,
                 };
                 if let Some((slots, declaration)) = callee(&func.0)
@@ -878,9 +833,6 @@ fn drop_removed_operands<'a>(
                 resolved: Some(target),
                 args,
                 kwargs,
-                recv_place,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } => {
@@ -892,9 +844,7 @@ fn drop_removed_operands<'a>(
                 // collector a call builds does.
                 let call = CallOperands {
                     args,
-                    arg_places,
                     kwargs,
-                    kwarg_places,
                     spread,
                 };
                 let mut changed = call.drop(declaration, slots, operands, dropped);
@@ -905,7 +855,6 @@ fn drop_removed_operands<'a>(
                     // a register no instruction defines carries that type.
                     let fresh = receivers.fresh(*recv);
                     *recv = fresh;
-                    *recv_place = None;
                     dropped.insert(fresh.0);
                 }
                 if changed {
@@ -917,9 +866,9 @@ fn drop_removed_operands<'a>(
     }
 }
 
-/// Clear the places of the operands a subscript store `instruction` passes
-/// for the removed `slots` of its setter, so declared, adding their
-/// registers to `dropped`, and give it a receiver no instruction defines
+/// Keep the operands a subscript store `instruction` passes for the
+/// removed `slots` of its setter, so declared, adding their registers to
+/// `dropped`, and give it a receiver no instruction defines
 /// where the setter removed its own; returns whether it lost an operand.
 ///
 /// The value is the setter's last positional argument, or its `value`
@@ -934,11 +883,8 @@ fn keep_store_operands(
 ) -> bool {
     let MirInstr::MultiSet {
         receiver,
-        receiver_place,
         args,
-        arg_places,
         value,
-        value_place,
         value_keyword,
         ..
     } = instruction
@@ -955,25 +901,19 @@ fn keep_store_operands(
         match args.get(index) {
             Some(MirSubscriptArg::Index(reg)) => {
                 dropped.insert(reg.0);
-                if let Some(place) = arg_places.get_mut(index) {
-                    *place = None;
-                }
             }
             None => {
                 dropped.insert(value.0);
-                *value_place = None;
             }
         }
     }
     if !keyword.is_empty() {
         dropped.insert(value.0);
-        *value_place = None;
     }
     if declaration.has_receiver && slots.contains(&0) {
         changed = true;
         let fresh = receivers.fresh(*receiver);
         *receiver = fresh;
-        *receiver_place = None;
         dropped.insert(fresh.0);
     }
     changed
@@ -1006,46 +946,11 @@ fn subscript_operand_regs(
     }
 }
 
-/// Clear the places of a subscript `instruction`'s operands at the
-/// `positional` and `keyword` indexes.
-fn clear_subscript_places(
-    instruction: &mut MirInstr,
-    positional: &BTreeSet<usize>,
-    keyword: &BTreeSet<usize>,
-) {
-    let clear = |places: &mut Vec<Option<MirPlace>>, indexes: &BTreeSet<usize>| {
-        for &index in indexes {
-            if let Some(place) = places.get_mut(index) {
-                *place = None;
-            }
-        }
-    };
-    match instruction {
-        MirInstr::Index { index_place, .. } if positional.contains(&0) => *index_place = None,
-        MirInstr::MultiIndex {
-            arg_places,
-            kwarg_places,
-            ..
-        } => {
-            clear(arg_places, positional);
-            clear(kwarg_places, keyword);
-        }
-        _ => {}
-    }
-}
-
-/// Remove from `operands`, and their `places`, the `indexes`.
-fn shed_indexes<T>(
-    operands: &mut Vec<T>,
-    places: &mut Vec<Option<MirPlace>>,
-    indexes: &BTreeSet<usize>,
-) {
+/// Remove from `operands` the `indexes`.
+fn shed_indexes<T>(operands: &mut Vec<T>, indexes: &BTreeSet<usize>) {
     for &index in indexes.iter().rev() {
         if index < operands.len() {
             operands.remove(index);
-        }
-        if index < places.len() {
-            places.remove(index);
         }
     }
 }

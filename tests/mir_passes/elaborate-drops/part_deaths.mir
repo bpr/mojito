@@ -1,4 +1,4 @@
-mojito-mir 1.96
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -6,8 +6,8 @@ artifact {
   ],
   traits: [],
   structs: [
-    struct { name: D, fields: [field { name: v, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "D.__deinit__" }] },
-    struct { name: S, fields: [field { name: d, type: struct_type { name: D, arguments: [] } }, field { name: e, type: struct_type { name: D, arguments: [] } }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "S.__deinit__" }] }
+    struct { name: D, fields: [field { name: v, type: Int }], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "D.__deinit__" }] },
+    struct { name: S, fields: [field { name: d, type: struct_type { name: D, arguments: [] } }, field { name: e, type: struct_type { name: D, arguments: [] } }], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "S.__deinit__" }] }
   ],
   decls: [
     decl { lowered_name: "D.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
@@ -93,7 +93,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }
@@ -120,10 +120,10 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              call { dest: %r1, func: "D.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: "D.__init__", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r1 },
               var.use { dest: %r2, var: $v1, mode: copy },
-              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r3 }
             ],
             terminator: return { value: absent }
@@ -176,14 +176,14 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: S, arguments: [] }), in_place: true },
               place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r3, func: note, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: note, raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r4, var: $v0, mode: copy },
-              call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r6, var: $v0, mode: copy },
-              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.store { place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r7 },
               place.load { dest: %r9, place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r10, value: %r9 }
@@ -213,12 +213,12 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v2, src: %r1, binding_type: present(struct_type { name: S, arguments: [] }), in_place: true },
               var.use { dest: %r2, var: $v1, mode: copy },
-              if { results: [], condition: %r2, then: [bb0 { instructions: [place.move { dest: %r3, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } }, var.store { var: $v3, src: %r3, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [var.use { dest: %r4, var: $v0, mode: copy }, call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r2, then: [bb0 { instructions: [place.move { dest: %r3, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } }, var.store { var: $v3, src: %r3, binding_type: absent, in_place: false }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [var.use { dest: %r4, var: $v0, mode: copy }, call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] },
               var.use { dest: %r6, var: $v0, mode: copy },
-              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.store { place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r7 },
               place.load { dest: %r9, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r10, value: %r9 }
@@ -248,9 +248,9 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r2, var: $v1, mode: copy },
-              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r3 }
             ],
             terminator: return { value: absent }

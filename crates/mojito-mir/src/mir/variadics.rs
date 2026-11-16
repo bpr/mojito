@@ -172,8 +172,6 @@ pub fn build_variadic_list(
         raises: None,
         args: vec![array_reference],
         kwargs: Vec::new(),
-        arg_places: vec![None],
-        kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,

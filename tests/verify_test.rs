@@ -954,40 +954,6 @@ fn verifier_requires_an_immutable_def_bound_receiver() {
 }
 
 #[test]
-fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
-    let f = function(
-        block(
-            vec![
-                MirInstr::Const {
-                    dest: Reg(0),
-                    k: Const::Int(1),
-                },
-                MirInstr::Const {
-                    dest: Reg(1),
-                    k: Const::Int(0),
-                },
-                MirInstr::Index {
-                    dest: Reg(2),
-                    base: Reg(0),
-                    index: Reg(1),
-                    base_place: Some(Box::new(MirPlace::root(
-                        0,
-                        Some(Ty::string_literal_of("s")),
-                    ))),
-                    index_place: None,
-                    call: None,
-                    intrinsic: Some(MirIntrinsicSubscript::Pointer),
-                },
-            ],
-            MirTerm::Return(Some(Reg(2))),
-        ),
-        3,
-        &[(0, Ty::int()), (1, Ty::int()), (2, Ty::int())],
-    );
-    expect_finding(&program(f), "subscript receiver place type StringLiteral");
-}
-
-#[test]
 fn verifier_rejects_corrupt_subscript_argument_contracts() {
     const SOURCE: &str = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    print(box[index])\n";
 
@@ -1106,8 +1072,6 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
             dest,
             base: value,
             index,
-            base_place: None,
-            index_place: None,
             call: None,
             intrinsic: Some(intrinsic),
         };
@@ -1682,8 +1646,6 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
                     raises: None,
                     args: vec![Reg(0)],
                     kwargs: Vec::new(),
-                    arg_places: vec![None],
-                    kwarg_places: Vec::new(),
                     param_arg_regs: Vec::new(),
                     capture_accesses: Vec::new(),
                     receiver: None,
@@ -1748,8 +1710,6 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
                 raises: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
                     name: Some("n".to_string()),
@@ -1863,9 +1823,6 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
                 raises: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                callee_place: None,
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
                     name: Some("n".to_string()),
@@ -1906,56 +1863,6 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
 }
 
 #[test]
-fn verifier_rejects_an_indirect_call_naming_a_callee_place() {
-    let callable: Ty = TyKind::Func(Box::new(FuncTy {
-        environment: mojito::CallableEnvironment::Thin,
-        params: Vec::new(),
-        names: Vec::new(),
-        ret: Ty::none(),
-        required: Vec::new(),
-        variadic: None,
-        kw_variadic: None,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        error: None,
-        conventions: Vec::new(),
-        ref_params: Vec::new(),
-        ref_return: None,
-        transfers: TransferSet::default(),
-    }))
-    .into();
-    let f = function(
-        block(
-            vec![MirInstr::CallIndirect {
-                dest: Reg(1),
-                callee: Reg(0),
-                resolved: None,
-                raises: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                callee_place: Some(Box::new(MirPlace::root(0, Some(callable.clone())))),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_contract: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            }],
-            MirTerm::Return(None),
-        ),
-        2,
-        &[(0, callable), (1, Ty::none())],
-    );
-    expect_finding(
-        &program(f),
-        "an indirect call names no callee place; its callee is the operand",
-    );
-}
-
-#[test]
 fn verifier_substitutes_retained_dependent_callable_arguments() {
     let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
@@ -1967,9 +1874,6 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                 raises: None,
                 args: vec![Reg(2)],
                 kwargs: Vec::new(),
-                callee_place: None,
-                arg_places: vec![None],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
                     name: Some("index".to_string()),
@@ -2007,9 +1911,6 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                 raises: None,
                 args: vec![Reg(2)],
                 kwargs: Vec::new(),
-                callee_place: None,
-                arg_places: vec![None],
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: vec![MirParamArg {
                     name: Some("index".to_string()),
@@ -2093,9 +1994,6 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
                 raises: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                callee_place: None,
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
@@ -2130,8 +2028,6 @@ fn verifier_rejects_misaligned_call_place_metadata() {
                     raises: None,
                     args: vec![Reg(0)],
                     kwargs: Vec::new(),
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     param_arg_regs: Vec::new(),
                     capture_accesses: Vec::new(),
                     receiver: None,
@@ -2251,11 +2147,8 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     result_adapter,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    recv_place: None,
                     recv_writes: true,
                     receiver_convention: None,
-                    arg_places: Vec::new(),
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
@@ -2436,11 +2329,8 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
                     result_adapter: None,
                     args: vec![Reg(1)],
                     kwargs: Vec::new(),
-                    recv_place: None,
                     recv_writes: false,
                     receiver_convention: None,
-                    arg_places: vec![None],
-                    kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
@@ -2566,8 +2456,6 @@ fn raising_call() -> Vec<MirInstr> {
             }),
             args: Vec::new(),
             kwargs: Vec::new(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             param_arg_regs: Vec::new(),
             capture_accesses: Vec::new(),
             receiver: None,
@@ -2894,11 +2782,8 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
         result_adapter: None,
         args: vec![Reg(0)],
         kwargs: Vec::new(),
-        recv_place: None,
         recv_writes: false,
         receiver_convention: None,
-        arg_places: vec![None],
-        kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         param_decls: Vec::new(),
@@ -2974,11 +2859,8 @@ fn deinit_call(dest: u32, recv: u32) -> MirInstr {
         result_adapter: None,
         args: Vec::new(),
         kwargs: Vec::new(),
-        recv_place: None,
         recv_writes: true,
         receiver_convention: Some(mojito::ast::ArgConvention::Deinit),
-        arg_places: Vec::new(),
-        kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         param_decls: Vec::new(),
@@ -3048,50 +2930,30 @@ fn verifier_rejects_a_destroy_of_a_memory_only_register() {
 
 /// A `deinit`-receiver call names the storage it consumes by its operand,
 /// upstream's `DeinitMem` `!lit.ref`: one whose receiver is a `ref.make`
-/// of `x` passes, while one naming `x` by a receiver place beside a
-/// loaded value is rejected.
+/// of `x` passes.
 #[test]
-fn verifier_rejects_a_deinit_receiver_named_by_its_place() {
+fn verifier_accepts_a_deinit_receiver_named_by_its_operand() {
     let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
     let x = MirPlace::root(0, Some(s.clone()));
-    let findings = |instrs: Vec<MirInstr>| -> Vec<String> {
-        owned_register_findings(
-            block(instrs, MirTerm::Return(None)),
-            &[
-                (2, reference_ty(s.clone(), mojito::Mutability::Mutable)),
-                (3, Ty::none()),
-            ],
-            MirDeclarations::default(),
-        )
-        .into_iter()
-        .filter(|finding| finding.contains("deinit receiver"))
-        .collect()
-    };
     let addressed = vec![
         MirInstr::MakeRef {
             dest: Reg(2),
-            place: x.clone(),
+            place: x,
         },
         deinit_call(3, 2),
     ];
-    assert_eq!(findings(addressed), Vec::<String>::new());
-    let mut placed = deinit_call(3, 0);
-    if let MirInstr::MethodCall { recv_place, .. } = &mut placed {
-        *recv_place = Some(Box::new(x.clone()));
-    }
-    let loaded = vec![
-        MirInstr::LoadPlace {
-            dest: Reg(0),
-            place: x,
-        },
-        placed,
-    ];
-    assert_eq!(
-        findings(loaded),
-        [
-            "MIR function 'test': call.method deinit receiver names its consumed storage by a receiver place rather than by its operand"
-        ]
-    );
+    let findings: Vec<String> = owned_register_findings(
+        block(addressed, MirTerm::Return(None)),
+        &[
+            (2, reference_ty(s, mojito::Mutability::Mutable)),
+            (3, Ty::none()),
+        ],
+        MirDeclarations::default(),
+    )
+    .into_iter()
+    .filter(|finding| finding.contains("deinit receiver"))
+    .collect();
+    assert_eq!(findings, Vec::<String>::new());
 }
 
 /// `x` stored from r0.
@@ -3543,7 +3405,6 @@ fn verifier_checks_a_def_bound_requirement_call() {
         recv,
         resolved,
         args,
-        arg_places,
         ..
     } = call.clone()
     {
@@ -3554,9 +3415,6 @@ fn verifier_checks_a_def_bound_requirement_call() {
             raises: None,
             args,
             kwargs: Vec::new(),
-            callee_place: None,
-            arg_places,
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
@@ -3622,7 +3480,6 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
         dest,
         recv,
         args,
-        arg_places,
         param_arg_regs,
         param_decls,
         ..
@@ -3635,9 +3492,6 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
             raises: None,
             args,
             kwargs: Vec::new(),
-            callee_place: None,
-            arg_places,
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs,
             param_decls,

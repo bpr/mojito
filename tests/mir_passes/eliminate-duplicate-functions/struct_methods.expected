@@ -75,10 +75,10 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: "Shelf.__len__$mono$TInt", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r1, func: "Shelf.__len__$mono$TInt", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r2, func: "Shelf.width$mono$TInt", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call { dest: %r3, func: "Shelf.width$mono$TInt", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r0, func: "Shelf.__len__$mono$TInt", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: "Shelf.__len__$mono$TInt", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: "Shelf.width$mono$TInt", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r3, func: "Shelf.width$mono$TInt", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r4, value: none }
             ],
             terminator: return { value: present(%r4) }

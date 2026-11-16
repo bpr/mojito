@@ -21,10 +21,10 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               drop.var { var: $v0 },
-              call { dest: %r1, func: "range$ov$Int", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: "range$ov$Int", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), in_place: false },
               place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent } },
-              call.method { dest: %r2, recv: %r3, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent }), recv_writes: false, receiver_convention: absent, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r2, recv: %r3, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               drop.var { var: $v1 }
             ],
             terminator: return { value: present(%r2) }

@@ -2497,21 +2497,20 @@ holds, as upstream passes the `!lit.ref` the field or binding is
 the read through it becomes a forwarding `ref.make` of the `ref` field's
 place, typed as the stored reference, or a `ref.make` of the binding's
 slot through itself, and a subscript store's setter takes the same
-reference of its base. The place stays beside it until R2191 deletes the tables; the
-inliner binds a parameter passed a `ref` field to the handle it stores
-(`place_binding`). Backends read the operand, not the place: the VM binds
-the reference, and Pliron passes its pointer as upstream's LLVM lowering
-passes a `!lit.ref`, loading it at a slot its lowered signature takes as a
-scalar (`call_operand_value`, `by_address_operand`, `lower/abi.rs`); only a
-`deinit` receiver's consumed place is still read from the place table
-(R2191). So do the analyses that place a call's accesses and the
-inliner: `mir::operand_addresses` maps each `ref.make` of a function
+reference of its base. The operand is the only record of the storage a
+call names: no call-shaped instruction carries a place table beside its
+operands, as upstream's `lit.call` carries none. The inliner binds a
+parameter passed a `ref` field to the handle it stores (`place_binding`).
+Backends read the operand: the VM binds the reference, and Pliron passes
+its pointer as upstream's LLVM lowering passes a `!lit.ref`, loading it at
+a slot its lowered signature takes as a scalar (`call_operand_value`,
+`by_address_operand`, `lower/abi.rs`). So do the analyses that place a
+call's accesses and the inliner: `mir::operand_addresses` maps each `ref.make` of a function
 forming a `ref` handle to the place it addresses (one typed a `!lit.ref`
 is a value the program spells, passed by value), `mir::call_operands`
 lists a call-shaped instruction's operands, and
-`OperandAddresses::address` gives the storage an operand addresses. Its
-place-table fallback (`table_fallback`) is reached by no operand of
-verified MIR, and R2191 deletes it with the tables. A pass or verifier
+`OperandAddresses::address` gives the storage an operand addresses, none
+for an operand that is no `ref.make`. A pass or verifier
 rule takes an operand's type from its register (`mir::operand_value_ty`
 peels a reference: `receiver_ty`, `member_receiver_ty`, `call_defaults`'
 `Site::of`), its owner and escape from its `ref.make`
@@ -2519,8 +2518,7 @@ peels a reference: `receiver_ty`, `member_receiver_ty`, `call_defaults`'
 `rebound_variables`), and its by-address requirement from its type being
 a reference (`verify_callable_contract_call`, `verify_subscript_call`, a
 `def(...)` bound's `__call__` receiver); `verify::instruction_places`
-lists no call's tables, since each operand's `ref.make` lists its place
-(R2270). The loan check (`loans.rs` `loan_accesses`), the drop
+lists no call's places, since each operand's `ref.make` lists its own. The loan check (`loans.rs` `loan_accesses`), the drop
 facts' by-value loads and reference-result owners (`register_loans.rs`
 `ArgumentPassing::by_value`, `RegisterLoanStep::new`'s receiver seeds),
 `RegisterEnds`' consumed operands (`CallArguments`,
@@ -2535,11 +2533,8 @@ removal (`unused_params.rs` `SelfCall::of`, `receiver_type`) read it; a
 free call's tracked-pointer result inherits the provenance of the operands
 whose types name its origin (`RegisterLoanStep`'s `origin_operands`,
 `types::named_origins`), as upstream keeps an origin's memory live while a
-value whose type names it is, and copy elision's `lend`
-re-roots the table beside the `ref.make` until R2191; `verify_operand_tables` (`verify/calls.rs`) requires a
-`ref.make` operand and its table entry to name the same storage, a `ref`
-binding's forwarded handle and a reference parameter's slot reached
-through itself included. The verifier
+value whose type names it is, and copy elision's `lend` re-roots the
+operand's `ref.make`. The verifier
 (`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
 or `call.method` binding by its callee's declaration; the same rule at a
 by-address `read` slot waits on the shapes above (R2251). A MIR text
@@ -2551,12 +2546,12 @@ older call's operand places from the reader's side table
 (`mir/legacy_places.rs`, `LegacyOperandTables`), paired with the
 call-shaped instructions of each function in decode order, as an MLIR
 dialect's bytecode upgrade reads an old encoding inside the reader: no
-upgrade reads or writes a place field of the IR, and the reader drops a
-pre-1.201 `callee_place` and a pre-1.200 `deinit` receiver's `recv_place`
-as it reads them. `mir::call_operand_parameters` maps each operand
+place field remains in the IR: MIR text 1.202 writes none, and the reader
+requires an older artifact's place fields and keeps them only in that side
+table (`Decoder::legacy_call_places`). `mir::call_operand_parameters` maps each operand
 to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a
-memory-only type, with a retained `recv_place` becomes a `ref.make` of it,
+memory-only type, is a `ref.make` of the receiver's storage,
 so `p.bump(q)` and `Big.bump(p, q)` pass two addresses; its arguments map
 to parameters past the receiver. A checked subscript (`index.get`,
 `index.multi`, `index.multi_set`) is its accessor's call on the base, as
@@ -2573,9 +2568,7 @@ receiver register-passable (`read x: T` at `T = Int`), as upstream's pass
 loads such an argument at the call; the move check and the inliner's
 receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
-referent. The place stays in `arg_places`, which no backend binds a
-parameter from (Pliron reads only a `deinit` receiver's, R2191); the VM
-binds each operand as the call passes it,
+referent. The VM binds each operand as the call passes it,
 a by-address one as its reference, as upstream's callee binds its
 `!lit.ref`, reads one through only for a builtin taking values, and
 passes the pointer a place-pointer slot holds for a reference to that
@@ -6334,10 +6327,10 @@ current Mojo:
 - A named place bound to a read parameter (`BorrowReadArgument`) is read
   where it lies, and a memory-only one is passed by address, as upstream
   passes a memory-only `read` argument: `lower_call_operand`
-  (`mir/calls.rs`) retains its place in the call's `arg_places`, so the
-  ownership analysis classifies a shared read and the VM binds the
-  parameter to the caller's storage, and passes it as the place's
-  immutable `ref.make` when the check judged the parameter by address. The checker marks a read argument
+  (`mir/calls.rs`) passes it as the place's immutable `ref.make` when the
+  check judged the parameter by address, so the ownership analysis
+  classifies a shared read of that place and the VM binds the parameter to
+  the caller's storage. The checker marks a read argument
   whose type is proven register-passable `RegisterPassableRead`
   (`Checker::record_result_conventions`), which is passed by value and
   retains no place, as upstream passes a register-passable `read`: a
@@ -6715,7 +6708,7 @@ of that storage (`Flatten::consume_receiver`, and `mir::lower_drops` for
 a dying part), and a register-passable one, which the check marks
 `SemanticAdjustment::RegisterPassableConsume`, is the owned value moved
 out of it (`MirInstr::take_place`), consuming no place at the call; the
-call carries no `recv_place`. This is as upstream's call consumes its
+call names no place beside it. This is as upstream's call consumes its
 `DeinitMem` operand (`memConsume`, read by `checkConsume` in both
 `UninitializedValueScan` and `DestructorInsertion`); no marker follows the
 call. The move scan, drop elaboration, the interior and loan transfers,
@@ -7112,7 +7105,7 @@ point where a slot declared in a loop is uninitialized again.
   inlined `apply[double]` inlines a `nodebug` `double` too. A closure of
   reference captures folds the same way, as `CallIndirectOp::canonicalize`
   prepends a `create_closure`'s captures: each captured place is a
-  `place.load` before the call, passed at its `arg_places` entry with a
+  `ref.make` before the call, passed as a leading operand with a
   `capture_accesses` entry its parameter's `param_writes` decides, as a
   direct call of a storage-less nested body passes it; a closure over a
   capture-list `def`'s storage becomes the `call.method` of the storage's

@@ -16,17 +16,10 @@ pub(super) fn verify_subscript_instruction(
             dest,
             base,
             index,
-            base_place,
             call,
             intrinsic,
             ..
         } => {
-            verify_subscript_receiver_place(
-                prefix,
-                cx.reg_ty(*base),
-                base_place.as_deref(),
-                errors,
-            );
             if call.is_some() == intrinsic.is_some() {
                 errors.push(format!(
                     "{prefix}: index operation must carry exactly one checked-call or intrinsic dispatch"
@@ -71,23 +64,9 @@ pub(super) fn verify_subscript_instruction(
             dest,
             object,
             args,
-            object_place,
-            arg_places,
             kwargs,
-            kwarg_places,
             call,
         } => {
-            verify_subscript_receiver_place(
-                prefix,
-                cx.reg_ty(*object),
-                object_place.as_deref(),
-                errors,
-            );
-            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
-                errors.push(format!(
-                    "{prefix}: multi-subscript place metadata is not aligned with its arguments"
-                ));
-            }
             let positional_types = args
                 .iter()
                 .map(|argument| subscript_argument_ty(cx.function, argument))
@@ -119,24 +98,11 @@ pub(super) fn verify_subscript_instruction(
         }
         MirInstr::MultiSet {
             receiver,
-            receiver_place,
             args,
-            arg_places,
             value,
             call,
             ..
         } => {
-            verify_subscript_receiver_place(
-                prefix,
-                cx.reg_ty(*receiver),
-                receiver_place.as_deref(),
-                errors,
-            );
-            if arg_places.len() != args.len() {
-                errors.push(format!(
-                    "{prefix}: subscript-set place metadata is not aligned with its index arguments"
-                ));
-            }
             let positional_types = args
                 .iter()
                 .map(|argument| subscript_argument_ty(cx.function, argument))
@@ -204,37 +170,6 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
         target: element,
         permission,
     })
-}
-
-pub(super) fn verify_subscript_receiver_place(
-    prefix: &str,
-    receiver_ty: Option<&Ty>,
-    receiver_place: Option<&MirPlace>,
-    errors: &mut Vec<String>,
-) {
-    let (Some(found), Some(storage)) = (
-        receiver_ty,
-        receiver_place.and_then(|place| place.ty.as_ref()),
-    ) else {
-        return;
-    };
-    let receiver = match storage.kind() {
-        TyKind::Ref(reference) => &reference.referent,
-        _ => storage,
-    };
-    // The loaded base register may legitimately stay reference-typed one
-    // level above its place (the VM's LoadPlace second dereference resolves
-    // it at runtime); peel exactly one level, symmetric with the storage
-    // peel above, so genuine mismatches still fail.
-    let found = match found.kind() {
-        TyKind::Ref(reference) => &reference.referent,
-        _ => found,
-    };
-    if !types_compatible(found, receiver) {
-        errors.push(format!(
-            "{prefix}: subscript receiver place type {receiver} does not match base value type {found}"
-        ));
-    }
 }
 
 #[allow(

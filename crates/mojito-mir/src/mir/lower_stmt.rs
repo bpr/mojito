@@ -58,7 +58,6 @@ struct SubscriptSetter<'a> {
     receiver: Reg,
     receiver_place: Option<MirPlace>,
     args: Vec<MirSubscriptArg>,
-    arg_places: Vec<Option<MirPlace>>,
     value_keyword: String,
     call: MirSubscriptCall,
 }
@@ -76,11 +75,10 @@ struct AugmentedStore<'a> {
 }
 
 /// An augmented store's right-hand side as its operator step consumes it:
-/// the lowered `expression`'s argument registers and retained places.
+/// the lowered `expression`'s argument registers.
 struct AugmentedOperand<'a> {
     expression: Node<'a>,
     args: Vec<Reg>,
-    places: Vec<Option<MirPlace>>,
 }
 
 impl<'a> Flatten<'a> {
@@ -743,11 +741,10 @@ impl<'a> Flatten<'a> {
             return false;
         };
         let (receiver, receiver_place) = self.lower_call_receiver(object);
-        let (receiver, receiver_place) =
-            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
+        let (receiver, _) = self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
         let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source);
-        let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
+        let (raw_index, _) = self.lower_augmented_argument_source(index, retain_index);
         let getter_index = self.apply_checked_call_value_adjustments(
             &plan.getter,
             index_source,
@@ -772,13 +769,6 @@ impl<'a> Flatten<'a> {
             dest: handle,
             base: receiver,
             index: getter_index,
-            base_place: receiver_place.map(Box::new),
-            index_place: (Self::checked_call_source_place(
-                &plan.getter,
-                index_source,
-                &index_place,
-            ))
-            .map(Box::new),
             call: Some(Box::new(getter_call)),
             intrinsic: None,
         });
@@ -902,13 +892,6 @@ impl<'a> Flatten<'a> {
                 dest: handle,
                 base: receiver,
                 index: getter_index,
-                base_place: receiver_place.map(Box::new),
-                index_place: (Self::checked_call_source_place(
-                    &plan.getter,
-                    index_source,
-                    &index_place,
-                ))
-                .map(Box::new),
                 call: Some(Box::new(getter_call)),
                 intrinsic: None,
             });
@@ -943,14 +926,6 @@ impl<'a> Flatten<'a> {
             dest: current,
             base: receiver,
             index: getter_index,
-            base_place: Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref())
-                .map(Box::new),
-            index_place: (Self::checked_call_source_place(
-                &plan.getter,
-                index_source,
-                &index_place,
-            ))
-            .map(Box::new),
             call: Some(Box::new(getter_call)),
             intrinsic: None,
         });
@@ -979,8 +954,7 @@ impl<'a> Flatten<'a> {
             index.location(),
         );
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
-        let (value, value_place) =
-            self.augmented_setter_value(target, setter, value_argument, result);
+        let (value, _) = self.augmented_setter_value(target, setter, value_argument, result);
         let mut setter_call = self.mir_subscript_call_contract(
             setter.clone(),
             &[(Some(index.location()), MirSubscriptArg::Index(setter_index))],
@@ -995,15 +969,8 @@ impl<'a> Flatten<'a> {
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
-            receiver_place: receiver_place.map(Box::new),
             args: vec![MirSubscriptArg::Index(setter_index)],
-            arg_places: vec![Self::checked_call_source_place(
-                setter,
-                index_source,
-                &index_place,
-            )],
             value,
-            value_place: value_place.map(Box::new),
             value_keyword: value_keyword
                 .clone()
                 .expect("a store through a setter names its value"),
@@ -1049,13 +1016,7 @@ impl<'a> Flatten<'a> {
         if plan.setter.is_none() {
             self.emit_checked_call_boundary(&plan.getter, &target.location());
             let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-            self.emit_slice_read(
-                handle,
-                receiver,
-                (getter_argument, argument_place),
-                receiver_place,
-                Some(getter_call),
-            );
+            self.emit_slice_read(handle, receiver, getter_argument, Some(getter_call));
             self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
             return;
         }
@@ -1063,13 +1024,7 @@ impl<'a> Flatten<'a> {
         let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-        self.emit_slice_read(
-            current,
-            receiver,
-            (getter_argument, argument_place.clone()),
-            Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref()),
-            Some(getter_call),
-        );
+        self.emit_slice_read(current, receiver, getter_argument, Some(getter_call));
         let result = self.apply_augmented_operator(target, current, plan, op, rhs);
         let setter = plan
             .setter
@@ -1082,8 +1037,7 @@ impl<'a> Flatten<'a> {
             object,
         );
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
-        let (value, value_place) =
-            self.augmented_setter_value(target, setter, value_argument, result);
+        let (value, _) = self.augmented_setter_value(target, setter, value_argument, result);
         let mut setter_call =
             self.mir_subscript_call_contract(setter.clone(), &[], target.location());
         self.convert_raised(
@@ -1100,11 +1054,8 @@ impl<'a> Flatten<'a> {
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
-            receiver_place: receiver_place.map(Box::new),
             args: vec![setter_argument],
-            arg_places: vec![argument_place],
             value,
-            value_place: value_place.map(Box::new),
             value_keyword: value_keyword
                 .clone()
                 .expect("a store through a setter names its value"),
@@ -1213,17 +1164,6 @@ impl<'a> Flatten<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let getter_places = source_places
-            .iter()
-            .enumerate()
-            .map(|(position, place)| {
-                Self::checked_call_source_place(
-                    &plan.getter,
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
-                    place,
-                )
-            })
-            .collect::<Vec<_>>();
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
             &spanned_operands(&source_spans, &getter_args),
@@ -1243,10 +1183,7 @@ impl<'a> Flatten<'a> {
                 dest: handle,
                 object: receiver,
                 args: getter_args,
-                object_place: receiver_place.map(Box::new),
-                arg_places: getter_places,
                 kwargs: Vec::new(),
-                kwarg_places: Vec::new(),
                 call: Some(Box::new(getter_call)),
             });
             self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
@@ -1260,15 +1197,7 @@ impl<'a> Flatten<'a> {
             dest: current,
             object: receiver,
             args: getter_args,
-            object_place: Self::getter_receiver_place(
-                &plan.getter,
-                object,
-                receiver_place.as_ref(),
-            )
-            .map(Box::new),
-            arg_places: getter_places,
             kwargs: Vec::new(),
-            kwarg_places: Vec::new(),
             call: Some(Box::new(getter_call)),
         });
         let result = self.apply_augmented_operator(target, current, plan, op, rhs);
@@ -1316,20 +1245,8 @@ impl<'a> Flatten<'a> {
                 }
             })
             .collect::<Vec<_>>();
-        let setter_places = source_places
-            .iter()
-            .enumerate()
-            .map(|(position, place)| {
-                Self::checked_call_source_place(
-                    setter,
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
-                    place,
-                )
-            })
-            .collect::<Vec<_>>();
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
-        let (value, value_place) =
-            self.augmented_setter_value(target, setter, value_argument, result);
+        let (value, _) = self.augmented_setter_value(target, setter, value_argument, result);
         let mut setter_call = self.mir_subscript_call_contract(
             setter.clone(),
             &spanned_operands(&source_spans, &setter_args),
@@ -1343,11 +1260,8 @@ impl<'a> Flatten<'a> {
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
-            receiver_place: receiver_place.map(Box::new),
             args: setter_args,
-            arg_places: setter_places,
             value,
-            value_place: value_place.map(Box::new),
             value_keyword: value_keyword
                 .clone()
                 .expect("a store through a setter names its value"),
@@ -1369,7 +1283,6 @@ impl<'a> Flatten<'a> {
         AugmentedOperand {
             expression: rhs_expression,
             args: vec![self.expr(rhs_expression)],
-            places: vec![None],
         }
     }
 
@@ -1388,12 +1301,11 @@ impl<'a> Flatten<'a> {
         );
         self.bind_operand(rhs_expression, binding);
         let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
-        let (args, places) = self.lower_call_arguments(&[rhs_expression]);
+        let (args, _) = self.lower_call_arguments(&[rhs_expression]);
         self.allow_argument_anchors = saved_anchor_permission;
         AugmentedOperand {
             expression: rhs_expression,
             args,
-            places,
         }
     }
 
@@ -1408,7 +1320,7 @@ impl<'a> Flatten<'a> {
         op: InfixOp,
         operand: AugmentedOperand<'a>,
     ) {
-        let (recv, recv_place) = if contract.receiver_requires_place {
+        let (recv, _) = if contract.receiver_requires_place {
             self.address_operand(site, receiver, mojito_types::origin::Mutability::Mutable)
         } else {
             receiver
@@ -1433,11 +1345,8 @@ impl<'a> Flatten<'a> {
             result_adapter: contract.result_adapter.map(MirResultAdapter::new),
             args: operand.args,
             kwargs: Vec::new(),
-            recv_place: recv_place.map(Box::new),
             recv_writes: true,
             receiver_convention: contract.receiver_convention,
-            arg_places: operand.places,
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: contract.param_decls.clone(),
@@ -1739,7 +1648,7 @@ impl<'a> Flatten<'a> {
             );
             self.bind_operand(value_expression, binding);
         }
-        let Some((setter, (value, value_place))) = self.lower_subscript_setter(target, |this| {
+        let Some((setter, (value, _))) = self.lower_subscript_setter(target, |this| {
             this.outside_call_setup(|this| {
                 let value = this.lower_assignment_value(target, value_expression);
                 this.converted_store_value(target, value)
@@ -1756,7 +1665,7 @@ impl<'a> Flatten<'a> {
             }
             return false;
         };
-        self.emit_subscript_set(setter, value, value_place, Some(value_expression));
+        self.emit_subscript_set(setter, value, Some(value_expression));
         true
     }
 
@@ -1920,13 +1829,12 @@ impl<'a> Flatten<'a> {
             this.lower_receiver_value(target, object, false)
         });
         let mut indices = Vec::new();
-        let mut arg_places = Vec::with_capacity(descriptors.len());
+        let mut positional = 0;
         let mut evaluated = Vec::new();
         let args = match source_arguments {
             SetArguments::Index(index) => {
                 self.bind_call_operands(target, 0, &[index], &[]);
-                let (register, place) = self.lower_call_argument(index);
-                arg_places.push(place);
+                let (register, _) = self.lower_call_argument(index);
                 indices.push(index);
                 evaluated.push((Some(index.location()), MirSubscriptArg::Index(register)));
                 vec![MirSubscriptArg::Index(register)]
@@ -1942,8 +1850,8 @@ impl<'a> Flatten<'a> {
                         mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
                             debug_assert!(descriptor.is_none());
                             let index = Self::subscript_operand(target, *value);
-                            let (register, place) = self.lower_call_argument(index);
-                            arg_places.push(place);
+                            let (register, _) = self.lower_call_argument(index);
+                            positional += 1;
                             indices.push(index);
                             evaluated
                                 .push((Some(index.location()), MirSubscriptArg::Index(register)));
@@ -1960,14 +1868,14 @@ impl<'a> Flatten<'a> {
                                 descriptor,
                                 [*lower, *upper, *step],
                             );
-                            let (argument, place) = self.address_subscript_argument(
+                            let (argument, _) = self.address_subscript_argument(
                                 target,
                                 mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    arg_places.len(),
+                                    positional,
                                 ),
                                 sliced,
                             );
-                            arg_places.push(place);
+                            positional += 1;
                             argument
                         }
                         _ => unreachable!("keyword subscript assignment is rejected at checking"),
@@ -1980,14 +1888,11 @@ impl<'a> Flatten<'a> {
                     descriptors.first().cloned().flatten(),
                     [lower, upper, step],
                 );
-                let (argument, place) = self.address_subscript_argument(
+                let (argument, _) = self.address_subscript_argument(
                     target,
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                        arg_places.len(),
-                    ),
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
                     sliced,
                 );
-                arg_places.push(place);
                 vec![argument]
             }
         };
@@ -2004,7 +1909,6 @@ impl<'a> Flatten<'a> {
                 receiver,
                 receiver_place,
                 args,
-                arg_places,
                 value_keyword,
                 call,
             },
@@ -2012,14 +1916,13 @@ impl<'a> Flatten<'a> {
         ))
     }
 
-    /// Emit `setter`'s call storing `value` (read in `value_place` when it
-    /// lies there), after the writes it makes stale: its index arguments',
+    /// Emit `setter`'s call storing `value`, after the writes it makes
+    /// stale: its index arguments',
     /// the store's `value_expression`'s when it has one, and the target's.
     fn emit_subscript_set(
         &mut self,
         setter: SubscriptSetter<'a>,
         value: Reg,
-        value_place: Option<MirPlace>,
         value_expression: Option<Node<'a>>,
     ) {
         for index in setter.indices {
@@ -2031,11 +1934,8 @@ impl<'a> Flatten<'a> {
         self.emit_interior_invalidations(setter.target, None);
         self.emit(MirInstr::MultiSet {
             receiver: setter.receiver,
-            receiver_place: setter.receiver_place.map(Box::new),
             args: setter.args,
-            arg_places: setter.arg_places,
             value,
-            value_place: value_place.map(Box::new),
             value_keyword: setter.value_keyword,
             call: Box::new(setter.call),
         });
@@ -2500,7 +2400,6 @@ impl<'a> Flatten<'a> {
         at: &SourceSpan,
     ) -> Reg {
         let mut args = Vec::new();
-        let mut arg_places = Vec::new();
         for ((capture, (_, field)), declared) in info
             .captures
             .iter()
@@ -2512,7 +2411,6 @@ impl<'a> Flatten<'a> {
                 && let TyKind::Ref(reference) = field.kind()
             {
                 args.push(self.place_address(at.clone(), &place, reference.mutability));
-                arg_places.push(Some(place));
                 continue;
             }
             let ty = match field.kind() {
@@ -2527,23 +2425,20 @@ impl<'a> Flatten<'a> {
                     mode: UseMode::Forward,
                     constructor: None,
                 });
-                arg_places.push(None);
             } else if declared.by_address {
                 self.emit(MirInstr::LoadPlace {
                     dest,
                     place: place.clone(),
                 });
-                let (address, place) = self.address_lowered_operand(
+                let (address, _) = self.address_lowered_operand(
                     at.clone(),
                     (dest, Some(place)),
                     mojito_types::origin::Mutability::Immutable,
                 );
                 args.push(address);
-                arg_places.push(place);
                 continue;
             } else {
                 self.emit(MirInstr::LoadPlace { dest, place });
-                arg_places.push(None);
             }
             args.push(dest);
         }
@@ -2560,8 +2455,6 @@ impl<'a> Flatten<'a> {
             raises: None,
             args,
             kwargs: Vec::new(),
-            arg_places,
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
@@ -3351,8 +3244,6 @@ impl<'a> Flatten<'a> {
                 dest: raw,
                 base,
                 index: idx,
-                base_place: base_place.cloned().map(Box::new),
-                index_place: None,
                 call: call.map(Box::new),
                 intrinsic,
             });
@@ -3483,9 +3374,8 @@ impl<'a> Flatten<'a> {
                                     place_node.location(),
                                 ),
                             };
-                            let (value, value_place) =
-                                self.converted_store_value(place_node, (elem, None));
-                            self.emit_subscript_set(*setter, value, value_place, None);
+                            let (value, _) = self.converted_store_value(place_node, (elem, None));
+                            self.emit_subscript_set(*setter, value, None);
                         }
                         (None, None) => self.emit(MirInstr::Unsupported(
                             "a destructuring place leaf without its lowered place".into(),
@@ -4221,11 +4111,8 @@ impl<'a> Flatten<'a> {
             result_adapter: None,
             args: Vec::new(),
             kwargs: Vec::new(),
-            recv_place: recv_place.map(Box::new),
             recv_writes: owned,
             receiver_convention: owned.then_some(ArgConvention::Var),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
@@ -4275,11 +4162,8 @@ impl<'a> Flatten<'a> {
             result_adapter: call.result_adapter.map(MirResultAdapter::new),
             args: Vec::new(),
             kwargs: Vec::new(),
-            recv_place: Some(Box::new(place)),
             recv_writes: true,
             receiver_convention: Some(ArgConvention::Mut),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),

@@ -23,7 +23,7 @@
               const { dest: %r1, value: int_literal(4) },
               literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r4] },
-              call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
+              call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r3) }
           }
@@ -52,12 +52,12 @@
               const { dest: %r0, value: int_literal(1) },
               literal.materialize { dest: %r8, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r8] },
-              call { dest: %r2, func: "outer$inner", raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r2, func: "outer$inner", raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r3, value: int_literal(5) },
               literal.materialize { dest: %r9, value: %r3, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r4, fields: [%r9] },
               ref.make { dest: %r5, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
-              call { dest: %r6, func: "outer$cap", raises: absent, args: [%r5, %r4], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r6, func: "outer$cap", raises: absent, args: [%r5, %r4], kwargs: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r7, a: %r2, b: %r6, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r7) }
@@ -149,7 +149,7 @@
               literal.materialize { dest: %r4, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r4] },
               ref.make { dest: %r2, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
-              call { dest: %r3, func: "cap2$c", raises: absent, args: [%r2, %r1], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r3, func: "cap2$c", raises: absent, args: [%r2, %r1], kwargs: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r3) }
           }
@@ -205,11 +205,11 @@
           bb0 {
             instructions: [
               closure.make { dest: %r0, function: "g$ign", captures: [], arguments: [] },
-              call { dest: %r1, func: apply, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r1, func: apply, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               const { dest: %r2, value: int_literal(9) },
               literal.materialize { dest: %r6, value: %r2, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r3, fields: [%r6] },
-              call { dest: %r4, func: "g$ign", raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r4, func: "g$ign", raises: absent, args: [%r3], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r5, a: %r1, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r5) }
@@ -273,7 +273,7 @@
               const { dest: %r0, value: int_literal(9) },
               literal.materialize { dest: %r3, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r3] },
-              call { dest: %r2, func: "h$only", raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r2, func: "h$only", raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r2) }
           }

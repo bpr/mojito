@@ -1030,6 +1030,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- No call-shaped instruction carries a place table beside its operands any
+  more, as upstream's `lit.call` names no storage beside its operands: an
+  operand its callee takes by address is the `ref.make` of the caller's
+  storage, the only record of it, and one passed by value names none. The
+  `call`, `call.indirect`, `call.method`, `type.construct`, `index.get`,
+  `index.multi`, and `index.multi_set` instructions lose their
+  `arg_places`, `kwarg_places`, `callee_place`, `recv_place`,
+  `base_place`, `index_place`, `object_place`, `receiver_place`, and
+  `value_place` fields, with the verifier rules and fallback that read
+  them. MIR text moves to schema 1.202, which writes none and rejects one;
+  an older artifact's are still required and kept beside the IR for the
+  load-time upgrades alone. No program output changes. (R2191)
+
 - The MIR text reader's load-time upgrades of artifacts older than 1.201
   read each call's operand places from a reader-side side table, paired
   with the function's call-shaped instructions in decode order, as an

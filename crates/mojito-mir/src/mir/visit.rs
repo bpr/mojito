@@ -314,8 +314,6 @@ macro_rules! type_visitor {
                 } => visitor.visit_ty(ty, TySite::Instruction),
                 I::Call {
                     raises,
-                    arg_places,
-                    kwarg_places,
                     param_arg_regs,
                     receiver,
                     instantiated_args,
@@ -326,17 +324,12 @@ macro_rules! type_visitor {
                         opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
                         TySite::Contract,
                     )?;
-                    $helpers::visit_places(visitor, arg_places)?;
-                    $helpers::visit_places(visitor, kwarg_places)?;
                     $helpers::visit_opt_ty(visitor, opt_ref!($($m)? receiver), TySite::Receiver)?;
                     $helpers::visit_ty_args(visitor, instantiated_args)?;
                     $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)
                 }
                 I::CallIndirect {
                     raises,
-                    callee_place,
-                    arg_places,
-                    kwarg_places,
                     param_arg_regs,
                     param_decls,
                     instantiated_contract,
@@ -348,9 +341,6 @@ macro_rules! type_visitor {
                         opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
                         TySite::Contract,
                     )?;
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? callee_place))?;
-                    $helpers::visit_places(visitor, arg_places)?;
-                    $helpers::visit_places(visitor, kwarg_places)?;
                     $helpers::visit_opt_ty(
                         visitor,
                         opt_ref!($($m)? instantiated_contract),
@@ -363,9 +353,6 @@ macro_rules! type_visitor {
                 I::MethodCall {
                     raises,
                     reference_result,
-                    recv_place,
-                    arg_places,
-                    kwarg_places,
                     param_arg_regs,
                     param_decls,
                     instantiated_args,
@@ -382,9 +369,6 @@ macro_rules! type_visitor {
                             .map(|reference| &$($m)? reference.referent),
                         TySite::Result,
                     )?;
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? recv_place))?;
-                    $helpers::visit_places(visitor, arg_places)?;
-                    $helpers::visit_places(visitor, kwarg_places)?;
                     $helpers::visit_ty_args(visitor, instantiated_args)?;
                     $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
                     visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
@@ -408,39 +392,23 @@ macro_rules! type_visitor {
                     $helpers::visit_opt_constant(visitor, opt_ref!($($m)? fastmath))
                 }
                 I::Index {
-                    base_place,
-                    index_place,
                     call,
                     ..
                 } => {
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? base_place))?;
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? index_place))?;
                     opt_deref!($($m)? call)
                         .map_or(Ok(()), |call| $helpers::walk_subscript_call(visitor, call))
                 }
                 I::MultiIndex {
-                    object_place,
-                    arg_places,
-                    kwarg_places,
                     call,
                     ..
                 } => {
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? object_place))?;
-                    $helpers::visit_places(visitor, arg_places)?;
-                    $helpers::visit_places(visitor, kwarg_places)?;
                     opt_deref!($($m)? call)
                         .map_or(Ok(()), |call| $helpers::walk_subscript_call(visitor, call))
                 }
                 I::MultiSet {
-                    receiver_place,
-                    arg_places,
-                    value_place,
                     call,
                     ..
                 } => {
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? receiver_place))?;
-                    $helpers::visit_places(visitor, arg_places)?;
-                    $helpers::visit_opt_place(visitor, opt_deref!($($m)? value_place))?;
                     $helpers::walk_subscript_call(visitor, call)
                 }
                 I::MakeTuple {
@@ -451,12 +419,10 @@ macro_rules! type_visitor {
                 I::ConstructType { ty, .. } => visitor.visit_ty(ty, TySite::ConstructedType),
                 I::ConstructTypeParam {
                     param,
-                    kwarg_places,
                     element,
                     ..
                 } => {
                     visitor.visit_param_ref(param)?;
-                    $helpers::visit_places(visitor, kwarg_places)?;
                     opt_ref!($($m)? element).map_or(Ok(()), |element| {
                         visitor.visit_param_arg(element, ParamArgSite::ConstructedElement)
                     })
@@ -567,7 +533,7 @@ macro_rules! type_visitor {
 
         mod $helpers {
             use super::{
-                $Visitor, Const, MirParamArg, MirPlace, MirSubscriptCall, ParamArgSite,
+                $Visitor, Const, MirParamArg, MirSubscriptCall, ParamArgSite,
                 ParamDeclSite, SimdDtype, SimdWidth, Ty, TyArg, TySite,
             };
 
@@ -584,22 +550,6 @@ macro_rules! type_visitor {
                 constant: Option<&$($m)? Const>,
             ) -> Result<(), V::Error> {
                 constant.map_or(Ok(()), |constant| visitor.visit_constant(constant))
-            }
-
-            pub(super) fn visit_opt_place<V: $Visitor + ?Sized>(
-                visitor: &mut V,
-                place: Option<&$($m)? MirPlace>,
-            ) -> Result<(), V::Error> {
-                place.map_or(Ok(()), |place| visitor.visit_place(place))
-            }
-
-            pub(super) fn visit_places<V: $Visitor + ?Sized>(
-                visitor: &mut V,
-                places: &$($m)? [Option<MirPlace>],
-            ) -> Result<(), V::Error> {
-                slice_iter!($($m)? places)
-                    .flatten()
-                    .try_for_each(|place| visitor.visit_place(place))
             }
 
             pub(super) fn visit_param_args<V: $Visitor + ?Sized>(
@@ -904,11 +854,8 @@ mod tests {
             result_adapter: None,
             args: Vec::new(),
             kwargs: Vec::new(),
-            recv_place: None,
             recv_writes: false,
             receiver_convention: None,
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: vec![MirParamArg {
                 name: None,

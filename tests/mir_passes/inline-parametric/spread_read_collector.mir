@@ -1,4 +1,4 @@
-mojito-mir 1.160
+mojito-mir 1.202
 artifact {
   features: [],
   files: [
@@ -33,7 +33,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "show", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
-              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: len, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -60,7 +60,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent } },
-              call { dest: %r1, func: show, raises: absent, args: [%r0], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), projections: [], type: present(variadic_pack(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent })), through: absent })], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })], spread: present(0) }
+              call { dest: %r1, func: show, raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(param { owner: "outer", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })], spread: present(0) }
             ],
             terminator: return { value: present(%r1) }
           }

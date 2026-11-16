@@ -678,7 +678,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             dest,
             param,
             kwargs,
-            kwarg_places,
             element,
         } => {
             if let Some(element) = element {
@@ -703,14 +702,6 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     ));
                 }
                 return;
-            }
-            if kwarg_places.len() != kwargs.len() {
-                errors.push(format!(
-                    "{prefix}: type-parameter construction of '{}' has {} keyword places for {} keyword arguments",
-                    param.name,
-                    kwarg_places.len(),
-                    kwargs.len()
-                ));
             }
             if let Some(found) = cx.reg_ty(*dest)
                 && !matches!(found.kind(), TyKind::Param { binder, .. } if binder == param)
