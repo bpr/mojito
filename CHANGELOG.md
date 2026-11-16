@@ -1025,6 +1025,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A builtin standing for a library function's `read` parameter
+  (`input`'s prompt, `std.os.abort`'s `_mojito_abort` message) receives a
+  memory-only `String` as a `ref.make` of its storage, and a
+  register-passable operand by value with no place, as upstream passes a
+  `read`. The native backend reads a `String` through that reference. No
+  program output changes. (R2260)
+
 - A register-passable `read` receiver is passed by value with no
   place-table entry even when the call's reference or view result borrows
   it (`args[i]` over a read pack, a `Span` slice), as upstream passes a

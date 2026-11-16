@@ -252,22 +252,11 @@ impl FnLowering<'_> {
         if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
             return Ok((descriptor.data, descriptor.len));
         }
+        if let Some(ptr) = self.string_storage(ctx, arg)? {
+            return Ok(self.string_parts(ctx, ptr, dest));
+        }
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
             Some(kind) if kind.is_error() => {
-                let ptr = self.reg_ptr(ctx, arg)?;
-                return Ok(self.string_parts(ctx, ptr, dest));
-            }
-            Some(struct_ty)
-                if let Some((name, _)) = struct_ty.as_non_simd_struct()
-                    && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-            {
-                let ptr = self.reg_ptr(ctx, arg)?;
-                return Ok(self.string_parts(ctx, ptr, dest));
-            }
-            Some(struct_ty)
-                if let Some((name, _)) = struct_ty.as_non_simd_struct()
-                    && mojito_symbol::symbol::is_stdlib_string_span_struct(name) =>
-            {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

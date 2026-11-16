@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2265**.
+Next free ID: **R2266**.
 
 ## Ordered Work
 
@@ -9677,21 +9677,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2260 A read builtin's operand keeps a place-table entry beside
-  its value**
+- [ ] **R2265 The inliner answers a spliced call's operands from its
+  place table**
 
-  Upstream's `abort(message: String)`, `print`, `input`, and `Error`
-  take a memory-only `read` as a `!lit.ref`, and a register-passable one
-  by value. Mojito's `bind_read_builtin_argument`
-  (`checker/builtins.rs`) passes the operand as a value and retains its
-  named or parameter place, so the call reaches `table_fallback`
-  (`mir/call_operands.rs`).
-  - Probe: `_mojito_abort`'s `String` at `RawFileDescriptor.write_bytes`,
-    `write_string`, `_debug_assert_msg`, `std.os.abort`, and
-    `String.resize` (about 26k verifications over std and the corpus).
-  - Fix: pass a memory-only operand as a `ref.make` of its place, and a
-    register-passable one as a value with no place, then drop the
-    `borrow_*` calls the binding keeps only for the table.
+  Upstream's inliner reads every `lit.call`'s `!lit.ref` operand, the
+  ones a splice just introduced included. `inline_calls`
+  (`analysis/inline_parametric.rs`) builds `Inliner::addresses` once,
+  before splicing, so a call inside a body it spliced in that round has
+  `ref.make` operands the map never saw, and `Inliner::inlinable` reads
+  their storage through `table_fallback` (`mir/call_operands.rs`).
+  - Probe: `abort(s)` over a named `String` (the spliced `std.os.abort`'s
+    `_mojito_abort` operand), and the spliced receivers and positional
+    `read` operands `input(prompt)` and `print` reach (a dozen per
+    program; count calls where `made` is `None` but the register is a
+    `ref`).
+  - Fix: extend the map with each spliced body's `ref.make`s as the
+    splice renumbers them.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9747,7 +9748,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2260, R2261.
+  - Depends on R2188, R2189, R2190, R2254, R2260, R2261, R2265.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

@@ -26,22 +26,37 @@ impl FnLowering<'_> {
         // A nominal String's byte buffer (the VM's `write_to` bridge reads
         // the same bytes), or a `StringSpan` view's (`{data, size}` at the
         // same offsets).
-        let is_string = self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .and_then(|ty| ty.kind().as_non_simd_struct())
-            .is_some_and(|(name, _)| {
-                mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    || mojito_types::types::is_stdlib_string_span_struct(name)
-            });
-        if is_string {
-            let ptr = self.reg_ptr(ctx, arg)?;
+        if let Some(ptr) = self.string_storage(ctx, arg)? {
             let (data, size) = self.string_parts(ctx, ptr, dest);
             self.write_stdout(ctx, data, size, dest);
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// The storage of a nominal String or `StringSpan` register, or of the
+    /// one a reference register addresses (a memory-only `read` operand
+    /// passed as its `!lit.ref`), when `arg` is either.
+    pub(super) fn string_storage(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+    ) -> Result<Option<Value>, PlironError> {
+        let is_string = |ty: &Ty| {
+            ty.kind().as_non_simd_struct().is_some_and(|(name, _)| {
+                mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    || mojito_types::types::is_stdlib_string_span_struct(name)
+            })
+        };
+        match self.func.reg_types.get(&arg.0).map(Ty::kind) {
+            Some(mojito_types::types::TyKind::Ref(reference)) if is_string(&reference.referent) => {
+                self.reg_value(ctx, arg, ScalarTy::Ptr).map(Some)
+            }
+            Some(_) if self.func.reg_types.get(&arg.0).is_some_and(is_string) => {
+                self.reg_ptr(ctx, arg).map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The display bytes of one `DType` value, or with `repr` its

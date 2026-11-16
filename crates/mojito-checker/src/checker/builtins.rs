@@ -155,22 +155,19 @@ impl Checker {
     }
 
     /// Bind `argument`, of type `ty`, as the `read` parameter of upstream's
-    /// library function a builtin stands for (`print`, `input`, `abort`,
-    /// `Error`) binds it: a named place or a reference result is read where
-    /// it lies, and an owned temporary is read in its call-result slot,
-    /// which the caller destroys once the call returns. The builtin is a
-    /// runtime intrinsic, which takes its operand by value as an
-    /// `external_call` does, so the argument is never by address.
+    /// library function a builtin stands for (`input`, `abort`) binds it:
+    /// a memory-only operand is passed as the `!lit.ref` of its storage (a
+    /// named place or reference result where it lies, an owned temporary
+    /// in its call-result slot, which the caller destroys once the call
+    /// returns), and a register-passable one by value.
     pub(super) fn bind_read_builtin_argument(&self, site: &SourceSpan, argument: &Expr, ty: &Ty) {
         self.borrow_reference_result_argument(argument);
-        self.borrow_nominal_place_argument(argument, ty);
-        self.borrow_parameter_place_argument(argument, ty);
         self.record_read_temporary_argument(argument);
         self.record_operand_convention(
             site,
             mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
             None,
-            false,
+            self.memory_only(ty),
         );
     }
 

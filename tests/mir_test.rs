@@ -7020,3 +7020,43 @@ fn spread_pack_and_external_call_operands_are_values() {
         .expect("external_call");
     assert!(external.iter().all(Option::is_none), "{external:?}");
 }
+
+#[test]
+fn read_builtin_operand_is_its_storage_reference_or_a_value() {
+    // Upstream's `input(prompt: String)` takes a memory-only `read` as a
+    // `!lit.ref` of its storage, and a register-passable one by value with
+    // no place.
+    let src = "def main():\n    var prompt = String(\"name? \")\n    try:\n        print(input(prompt))\n        print(input(\"again? \"))\n    except e:\n        print(e)\n";
+    let compiled = Compiler::default()
+        .compile_source(src, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.mir(), "main");
+    let instructions = nested_instructions(&main.body);
+    let made = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, .. } => Some(*dest),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let operands = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                args,
+                arg_places,
+                ..
+            } if func.0 == "input" => Some((args[0], arg_places[0].is_some())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(named, _), (literal, literal_place)] = operands.as_slice() else {
+        panic!("two input calls: {operands:?}");
+    };
+    assert!(made.contains(named), "the String prompt is a ref.make");
+    assert!(
+        !made.contains(literal) && !literal_place,
+        "the literal is a value"
+    );
+}
