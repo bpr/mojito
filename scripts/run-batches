@@ -58,6 +58,8 @@ def main() -> int:
     p.add_argument("--max-growth", type=float, default=1.0, metavar="PCT",
                    help="largest instruction growth locked in without stopping (default 1.0)")
     args = p.parse_args()
+    if args.start < 1:
+        p.error("--start counts from 1, as --dry-run numbers the batches")
     os.chdir(ROOT)
     use_working_llvm()
 
