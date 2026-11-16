@@ -667,7 +667,9 @@ impl RegisterLoanStep {
         let mut operands = Vec::new();
         mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
         let mut owners = active_register_loan_roots(
-            var_uses(instruction).into_iter().map(|(var, _)| var),
+            var_uses(instruction, ends.addresses())
+                .into_iter()
+                .map(|(var, _)| var),
             generations,
             loan_roots,
         );
@@ -710,29 +712,23 @@ impl RegisterLoanStep {
         }
 
         // A nominal subscript returning `ref T` establishes a transient handle to
-        // its retained receiver place. Unlike `MakeRef`, the handle is produced by
+        // the storage its receiver operand addresses, as upstream's call reads
+        // its `!lit.ref` receiver. Unlike `MakeRef`, the handle is produced by
         // the callee, so no explicit loan generation exists at this instruction.
         // Seed the destination register with the receiver root directly; subsequent
         // `ReadRef`/call uses then keep that caller slot alive until the handle has
         // actually been consumed.
+        let receiver = || ends.addresses().operands(instruction).receiver;
         let reference_subscript_place = match instruction {
-            MirInstr::Index {
-                dest,
-                base_place: Some(place),
-                ..
-            }
-            | MirInstr::MultiIndex {
-                dest,
-                object_place: Some(place),
-                ..
-            } if matches!(
-                register_types
-                    .get(&dest.0)
-                    .map(mojito_types::types::Ty::kind),
-                Some(mojito_types::types::TyKind::Ref(_))
-            ) =>
+            MirInstr::Index { dest, .. } | MirInstr::MultiIndex { dest, .. }
+                if matches!(
+                    register_types
+                        .get(&dest.0)
+                        .map(mojito_types::types::Ty::kind),
+                    Some(mojito_types::types::TyKind::Ref(_))
+                ) =>
             {
-                Some(place)
+                receiver()
             }
             // A direct method call returning `ref T` (no adapter) is the same
             // callee-produced transient handle as a reference subscript: the
@@ -741,19 +737,16 @@ impl RegisterLoanStep {
             MirInstr::MethodCall {
                 reference_result: Some(_),
                 result_adapter: None,
-                recv_place: Some(place),
                 ..
-            } => Some(place),
+            } => receiver(),
             // A method call returning a tracked pointer (`xs.unsafe_ptr()`, a
             // `pointer_self`/`pointer_place` provenance) hands out a handle into
             // the receiver's storage the same way: the receiver must outlive
             // every consumer of the pointer register — a callee reading the
             // pointee included. Untracked and unsafe-any results carry no loan.
-            MirInstr::MethodCall {
-                dest,
-                recv_place: Some(place),
-                ..
-            } if tracked_pointer_result(register_types, dest) => Some(place),
+            MirInstr::MethodCall { dest, .. } if tracked_pointer_result(register_types, dest) => {
+                receiver()
+            }
             _ => None,
         };
         let mut seeded = BTreeSet::new();
@@ -761,7 +754,8 @@ impl RegisterLoanStep {
             seeded.extend(reached(place));
         }
         // A free call returning a tracked pointer borrows through its retained
-        // argument places.
+        // argument places, read at the table while a register-passable `read`
+        // goes by value with no `ref.make` (R2256).
         if let MirInstr::Call {
             dest, arg_places, ..
         } = instruction
@@ -776,11 +770,11 @@ impl RegisterLoanStep {
         // finishes, and a scalar one borrows the pack for that consumer alone.
         if let MirInstr::Index {
             dest,
-            base_place: Some(place),
             intrinsic:
                 Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage),
             ..
         } = instruction
+            && let Some(place) = receiver()
         {
             if register_types
                 .get(&dest.0)

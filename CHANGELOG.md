@@ -1031,6 +1031,13 @@ to evolve under the `0.x` compatibility rules.
   `__len__`, `get`) inlines again. The liveness scan and three more
   readers remain (R2255). (R2190)
 
+- The liveness scan, the move check's subscript-set receiver, the
+  interior check, copy elision, unused-parameter removal, and the drop
+  facts' reference-result owners now read the storage a call's
+  `ref.make` operand addresses, as upstream reads a `lit.call`'s
+  `!lit.ref`, instead of the call's place tables. No diagnostic or MIR
+  changes; `mir::capture_accesses` is public. (R2255)
+
 - The Pliron backend passes a by-address argument or receiver as the
   pointer its reference operand is, as upstream's LLVM lowering passes a
   `!lit.ref`, loading it where the lowered signature takes a scalar,

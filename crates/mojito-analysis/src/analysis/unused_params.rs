@@ -84,10 +84,11 @@ use super::pre_elaboration::{CallGraphPass, Callees, Cycles};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
-    MirSubscriptArg, Reg, instruction_regions, instruction_subscript_call, lifecycle_callees,
-    method_owner_params, named_lifted_bodies, operator_method, removed_argument_operands,
-    supplied_parameter_arguments, unread_parameters_of, unused_arguments,
-    without_removed_argument_forwards, without_removed_arguments, without_removed_forwards,
+    OperandAddresses, OperandSlot, Reg, call_operands, instruction_regions,
+    instruction_subscript_call, lifecycle_callees, method_owner_params, named_lifted_bodies,
+    operand_addresses, operator_method, removed_argument_operands, supplied_parameter_arguments,
+    unread_parameters_of, unused_arguments, without_removed_argument_forwards,
+    without_removed_arguments, without_removed_forwards,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamId, ParamKind};
@@ -308,8 +309,15 @@ fn self_forwarded_parameters(
     function: &MirFunction,
     declarations: &MirDeclarations,
 ) -> Vec<ParamId> {
+    let addresses = operand_addresses(&function.body, &function.reg_types);
     let mut forwarded = None;
-    self_forwards(name, function, &function.body, declarations, &mut forwarded);
+    self_forwards(
+        name,
+        (function, &addresses),
+        &function.body,
+        declarations,
+        &mut forwarded,
+    );
     forwarded.unwrap_or_default()
 }
 
@@ -328,13 +336,14 @@ fn self_forwarded_arguments(
     };
     let mut reads = HashMap::new();
     whole_slot_reads(&function.body, &mut reads);
+    let addresses = operand_addresses(&function.body, &function.reg_types);
     let mut forwarded = None;
     self_argument_forwards(
         name,
         declaration,
         function.n_params,
         &function.body,
-        &reads,
+        (&reads, &addresses),
         &mut forwarded,
     );
     forwarded.unwrap_or_default()
@@ -426,7 +435,7 @@ fn nested_bodies<'a>(
 /// `instantiated_args` entry when those align with the callee's binders.
 fn self_forwards(
     name: &str,
-    function: &MirFunction,
+    (function, addresses): (&MirFunction, &OperandAddresses),
     block: &MirBlock,
     declarations: &MirDeclarations,
     forwarded: &mut Option<Vec<ParamId>>,
@@ -449,17 +458,13 @@ fn self_forwards(
             }),
             MirInstr::MethodCall {
                 recv,
-                recv_place,
                 resolved: Some(target),
                 param_arg_regs,
                 param_decls,
                 instantiated_args,
                 ..
             } if target == name => {
-                let receiver = recv_place
-                    .as_deref()
-                    .and_then(|place| place.storage_ty(&function.var_tys))
-                    .or_else(|| function.reg_types.get(&recv.0));
+                let receiver = receiver_type(function, addresses, instruction, *recv);
                 Some((
                     param_decls.as_slice(),
                     param_arg_regs.as_slice(),
@@ -477,20 +482,15 @@ fn self_forwards(
             }
             MirInstr::Index {
                 base: object,
-                base_place: object_place,
                 call: Some(call),
                 ..
             }
             | MirInstr::MultiIndex {
                 object,
-                object_place,
                 call: Some(call),
                 ..
             } if call.target == name => {
-                let receiver = object_place
-                    .as_deref()
-                    .and_then(|place| place.storage_ty(&function.var_tys))
-                    .or_else(|| function.reg_types.get(&object.0));
+                let receiver = receiver_type(function, addresses, instruction, *object);
                 Some((
                     call.param_decls.as_slice(),
                     call.param_arg_regs.as_slice(),
@@ -531,9 +531,25 @@ fn self_forwards(
             }
         }
         for region in instruction_regions(instruction) {
-            self_forwards(name, function, region, declarations, forwarded);
+            self_forwards(name, (function, addresses), region, declarations, forwarded);
         }
     }
+}
+
+/// The type of the receiver `recv` a method call or subscript read passes:
+/// that of the storage its operand addresses, the referent of the
+/// `!lit.ref` upstream's call types its receiver with, else the register's.
+fn receiver_type<'a>(
+    function: &'a MirFunction,
+    addresses: &'a OperandAddresses,
+    instruction: &'a MirInstr,
+    recv: Reg,
+) -> Option<&'a Ty> {
+    addresses
+        .operands(instruction)
+        .receiver
+        .and_then(|place| place.storage_ty(&function.var_tys))
+        .or_else(|| function.reg_types.get(&recv.0))
 }
 
 /// The parameters of the struct whose method `name` is that a call of
@@ -611,7 +627,7 @@ fn self_argument_forwards(
     declaration: &MirFunctionDeclaration,
     n_params: usize,
     block: &MirBlock,
-    reads: &HashMap<u32, VarId>,
+    (reads, addresses): (&HashMap<u32, VarId>, &OperandAddresses),
     forwarded: &mut Option<Vec<VarId>>,
 ) {
     let itself = |slot: VarId, (reg, place): Operand<'_>| {
@@ -619,7 +635,7 @@ fn self_argument_forwards(
             || place.is_some_and(|place| place.root == slot && place.proj.is_empty())
     };
     for instruction in &block.instrs {
-        if let Some(call) = SelfCall::of(name, instruction) {
+        if let Some(call) = SelfCall::of(name, instruction, addresses) {
             let keywords: Vec<&str> = call.kwargs.iter().map(|(name, _)| *name).collect();
             let passed: Vec<VarId> = (0..n_params as VarId)
                 .filter(|&slot| {
@@ -653,7 +669,14 @@ fn self_argument_forwards(
             }
         }
         for region in instruction_regions(instruction) {
-            self_argument_forwards(name, declaration, n_params, region, reads, forwarded);
+            self_argument_forwards(
+                name,
+                declaration,
+                n_params,
+                region,
+                (reads, addresses),
+                forwarded,
+            );
         }
     }
 }
@@ -671,123 +694,79 @@ struct SelfCall<'a> {
 impl<'a> SelfCall<'a> {
     /// The operands `instruction` passes `name`, if it calls it: a direct
     /// call, a resolved method call, a resolved operator, whose left
-    /// operand is the receiver, or a subscript read of its accessor.
-    fn of(name: &str, instruction: &'a MirInstr) -> Option<Self> {
-        let operands = |regs: &'a [Reg], places: &'a [Option<MirPlace>]| {
-            regs.iter()
-                .enumerate()
-                .map(|(index, reg)| (Some(*reg), places.get(index).and_then(Option::as_ref)))
-                .collect()
-        };
-        let keyword_operands = |kwargs: &'a [(String, Reg)], places: &'a [Option<MirPlace>]| {
-            kwargs
-                .iter()
-                .enumerate()
-                .map(|(index, (name, reg))| {
-                    (
-                        name.as_str(),
-                        (Some(*reg), places.get(index).and_then(Option::as_ref)),
-                    )
-                })
-                .collect()
-        };
-        let subscript = |argument: &MirSubscriptArg| match argument {
-            MirSubscriptArg::Index(reg) => Some(*reg),
-        };
-        match instruction {
-            MirInstr::Call {
-                func,
-                args,
-                kwargs,
-                arg_places,
-                kwarg_places,
-                spread,
-                ..
-            } if func.0 == name => Some(Self {
-                receiver: None,
-                args: operands(args, arg_places),
-                kwargs: keyword_operands(kwargs, kwarg_places),
-                spread: spread.is_some(),
-            }),
+    /// operand is the receiver, or a subscript read of its accessor. Each
+    /// operand's place is the storage `addresses` says it addresses.
+    fn of(name: &str, instruction: &'a MirInstr, addresses: &'a OperandAddresses) -> Option<Self> {
+        let calls = match instruction {
+            MirInstr::Call { func, .. } => func.0 == name,
             MirInstr::MethodCall {
-                recv,
-                recv_place,
                 resolved: Some(target),
-                args,
-                kwargs,
-                arg_places,
-                kwarg_places,
-                spread,
                 ..
-            } if target == name => Some(Self {
-                receiver: Some((*recv, recv_place.as_deref())),
-                args: operands(args, arg_places),
-                kwargs: keyword_operands(kwargs, kwarg_places),
-                spread: spread.is_some(),
-            }),
+            } => target == name,
             MirInstr::BinOp {
                 op,
                 a,
                 b,
                 resolved: Some(target),
                 ..
-            } if target == name && operator_method(*op).is_some() => Some(Self {
-                receiver: Some((*a, None)),
-                args: vec![(Some(*b), None)],
-                kwargs: Vec::new(),
-                spread: false,
-            }),
+            } => {
+                return (target == name && operator_method(*op).is_some()).then(|| Self {
+                    receiver: Some((*a, None)),
+                    args: vec![(Some(*b), None)],
+                    kwargs: Vec::new(),
+                    spread: false,
+                });
+            }
             MirInstr::Index {
-                base,
-                index,
-                base_place,
-                index_place,
-                call: Some(call),
-                ..
-            } if call.target == name => Some(Self {
-                receiver: Some((*base, base_place.as_deref())),
-                args: vec![(Some(*index), index_place.as_deref())],
-                kwargs: Vec::new(),
-                spread: false,
-            }),
-            MirInstr::MultiIndex {
-                object,
-                object_place,
-                args,
-                arg_places,
-                kwargs,
-                kwarg_places,
-                call: Some(call),
-                ..
-            } if call.target == name => Some(Self {
-                receiver: Some((*object, object_place.as_deref())),
-                args: args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, argument)| {
-                        (
-                            subscript(argument),
-                            arg_places.get(index).and_then(Option::as_ref),
-                        )
-                    })
-                    .collect(),
-                kwargs: kwargs
-                    .iter()
-                    .enumerate()
-                    .map(|(index, (name, argument))| {
-                        (
-                            name.as_str(),
-                            (
-                                subscript(argument),
-                                kwarg_places.get(index).and_then(Option::as_ref),
-                            ),
-                        )
-                    })
-                    .collect(),
-                spread: false,
-            }),
-            _ => None,
+                call: Some(call), ..
+            }
+            | MirInstr::MultiIndex {
+                call: Some(call), ..
+            } => call.target == name,
+            _ => false,
+        };
+        if !calls {
+            return None;
         }
+        let mut call = Self {
+            receiver: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            spread: matches!(
+                instruction,
+                MirInstr::Call {
+                    spread: Some(_),
+                    ..
+                } | MirInstr::MethodCall {
+                    spread: Some(_),
+                    ..
+                }
+            ),
+        };
+        let keywords = keyword_names(instruction);
+        for operand in call_operands(instruction) {
+            let entry = (Some(operand.reg), addresses.address(&operand));
+            match operand.slot {
+                OperandSlot::Receiver => call.receiver = Some((operand.reg, entry.1)),
+                OperandSlot::Positional(_) | OperandSlot::Index => call.args.push(entry),
+                OperandSlot::Keyword(index) => call.kwargs.push((keywords[index], entry)),
+                OperandSlot::Callee | OperandSlot::Value => {}
+            }
+        }
+        Some(call)
+    }
+}
+
+/// The keyword of each keyword operand of a call or a subscript read.
+fn keyword_names(instruction: &MirInstr) -> Vec<&str> {
+    match instruction {
+        MirInstr::Call { kwargs, .. } | MirInstr::MethodCall { kwargs, .. } => {
+            kwargs.iter().map(|(name, _)| name.as_str()).collect()
+        }
+        MirInstr::MultiIndex { kwargs, .. } => {
+            kwargs.iter().map(|(name, _)| name.as_str()).collect()
+        }
+        _ => Vec::new(),
     }
 }
 

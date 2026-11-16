@@ -648,6 +648,30 @@ pub fn instruction_subscript_call_mut(instruction: &mut MirInstr) -> Option<&mut
     }
 }
 
+/// The capture accesses an instruction records: static ownership facts
+/// whose roots name the same slots the body addresses.
+pub fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {
+    match instruction {
+        MirInstr::Call {
+            capture_accesses, ..
+        }
+        | MirInstr::CallIndirect {
+            capture_accesses, ..
+        }
+        | MirInstr::MethodCall {
+            capture_accesses, ..
+        } => capture_accesses,
+        MirInstr::Index {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiIndex {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiSet { call, .. } => &call.capture_accesses,
+        _ => &[],
+    }
+}
+
 /// Add every register read in `blocks`, their regions included, to
 /// `reads`. Each register an instruction names counts as a read but its
 /// own results, so an operand no enumeration classifies is kept alive.
@@ -1263,30 +1287,6 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         for inner in instruction_regions(instruction) {
             collect_block_slots(inner, addressed);
         }
-    }
-}
-
-/// The capture accesses an instruction records: static ownership facts
-/// whose roots name the same slots the body addresses.
-fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {
-    match instruction {
-        MirInstr::Call {
-            capture_accesses, ..
-        }
-        | MirInstr::CallIndirect {
-            capture_accesses, ..
-        }
-        | MirInstr::MethodCall {
-            capture_accesses, ..
-        } => capture_accesses,
-        MirInstr::Index {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiIndex {
-            call: Some(call), ..
-        }
-        | MirInstr::MultiSet { call, .. } => &call.capture_accesses,
-        _ => &[],
     }
 }
 

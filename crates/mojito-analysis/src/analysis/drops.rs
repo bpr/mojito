@@ -3,7 +3,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
+use mojito_mir::mir::{
+    OperandAddresses, instruction_regions, instruction_regions_mut, operand_addresses,
+};
 
 /// Insert a drop at each value's death, on the structured body, as
 /// upstream's `DestructorInsertion` does: a `DropVar` of a variable, or a
@@ -71,8 +73,11 @@ pub(super) fn elaborate_drops(
         &demands.deinit,
     );
     let mut plan = DropPlan::default();
+    // Drop elaboration splices only drops, so the map stays the body's.
+    let addresses = operand_addresses(&function.body, &function.reg_types);
     let liveness = DropLiveness {
         f: &function,
+        addresses: &addresses,
         facts: &facts,
         loan_roots: &loan_roots,
         values,
@@ -90,6 +95,7 @@ pub(super) fn elaborate_drops(
     facts.moved_block(root, &blocks);
     let splice = Splice {
         f: &function,
+        addresses: &addresses,
         receiver,
         demands: &demands,
         loan_roots: &loan_roots,
@@ -270,6 +276,7 @@ impl BackwardRecorder<DenseSet> for DropPlan {
 /// and a split `deinit` parameter's whole-object bit.
 struct DropLiveness<'a> {
     f: &'a MirFunction,
+    addresses: &'a OperandAddresses,
     facts: &'a DropFacts,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     values: &'a DropValues,
@@ -284,7 +291,13 @@ impl BackwardScan for DropLiveness<'_> {
     }
 
     fn transfer(&self, live: &mut DenseSet, instr: &MirInstr) {
-        effects(self.values, live, instr, self.facts.uses(instr));
+        effects(
+            self.values,
+            live,
+            instr,
+            self.facts.uses(instr),
+            self.addresses,
+        );
     }
 
     fn enters(&self, _instr: &MirInstr) -> bool {
@@ -426,6 +439,7 @@ fn effects(
     live: &mut DenseSet,
     instr: &MirInstr,
     uses: &RegisterUses,
+    addresses: &OperandAddresses,
 ) -> Effects {
     let marked_whole = marked_whole(instr);
     let mut effects = Effects {
@@ -445,7 +459,7 @@ fn effects(
         }
         effects.defined.push(part.bits());
     }
-    let accesses = instruction_uses(instr);
+    let accesses = instruction_uses(instr, addresses);
     let stored = |used: &Used<'_>| match (instr, used) {
         (MirInstr::Store { .. }, Used::Place(place)) => place
             .owned_path()
@@ -471,7 +485,8 @@ fn effects(
         MirInstr::MovePlace { .. } | MirInstr::DropPlace { .. } | MirInstr::MarkDestroyed { .. }
     );
     // A `deinit`-receiver call consumes its receiver place alone, not the
-    // places of its other operands.
+    // places of its other operands. Its receiver is no `ref.make` (R2191),
+    // so the access is the very `recv_place`.
     let receiver = instr.consumed_receiver();
     let consumes = |place: &MirPlace| consuming || receiver.is_some_and(|r| std::ptr::eq(r, place));
     for (used, _) in &accesses {
@@ -532,6 +547,7 @@ impl Effects {
 /// before the blocks holding them.
 struct Splice<'a> {
     f: &'a MirFunction,
+    addresses: &'a OperandAddresses,
     /// An initializer's `out self`, which a path leaving without returning
     /// drops.
     receiver: Option<VarId>,
@@ -937,7 +953,13 @@ impl BlockReplay<'_> {
 
             // The backward step.
             let register_uses = step.uses;
-            let effects = effects(values, &mut live, &instr, register_uses);
+            let effects = effects(
+                values,
+                &mut live,
+                &instr,
+                register_uses,
+                self.splice.addresses,
+            );
             let extra_before = loan_extras(&live, generation_before, self.loan_roots, values);
 
             let retired: Vec<ValueRef> = if std::ptr::eq(generation_before, generation_after)

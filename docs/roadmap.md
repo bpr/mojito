@@ -9663,27 +9663,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2255 The liveness scan, the interior check, copy elision, and
-  unused-parameter removal read a call's place table rather than its
-  reference operands**
-
-  Upstream's liveness and checks read the `!lit.ref` operand of a
-  `lit.call`. The loan check, the drop facts, `RegisterEnds`, and the
-  inliner already read `mir::OperandAddresses`, but four readers still
-  take `arg_places` and its siblings.
-  - `scan.rs` `instruction_uses`, a per-instruction function with eleven
-    callers in the move check and drop elaboration, needs the function's
-    `OperandAddresses` threaded through its walkers.
-  - `interior.rs` `add_subscript_call_places` and the subscript arms of
-    its call invalidation.
-  - `copy_elision.rs` `retained_operand_places` (a reader); `lend`
-    rewrites the table beside the `ref.make` until R2191.
-  - `unused_params.rs` `SelfCall::of` and its receiver types.
-  - Stop when `cargo run -- check` reports the same diagnostic as before on
-    every `assets/ownership_error` and `assets/ownership_ok` fixture.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2256 A register-passable `read` a reference result borrows keeps a
   place only to root the result's loans**
 
@@ -9752,7 +9731,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2255, R2256, R2257.
+  - Depends on R2188, R2189, R2190, R2254, R2256, R2257.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

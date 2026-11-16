@@ -3,14 +3,16 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
+use mojito_mir::mir::{
+    OperandAddresses, call_operands, capture_accesses, instruction_regions, instruction_regions_mut,
+};
 
 /// The variables a MIR instruction reads, each paired with a nearby result
 /// register (for a diagnostic span). Covers direct reads (`UseVar`), place roots
 /// (`Store`/`LoadPlace`/a `mut self` receiver — so a write *through* a moved value
 /// is caught too), and the `for` iterator variable.
-pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
-    instruction_uses(i)
+pub(super) fn var_uses(i: &MirInstr, addresses: &OperandAddresses) -> Vec<(VarId, Reg)> {
+    instruction_uses(i, addresses)
         .into_iter()
         .flat_map(|(used, reg)| match used {
             Used::Var(var) => vec![(var, reg)],
@@ -27,8 +29,12 @@ pub(super) enum Used<'a> {
 }
 
 /// What a MIR instruction reads ([`var_uses`]), each place whole, each
-/// paired with a nearby result register.
-pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
+/// paired with a nearby result register. A call operand's place is the
+/// storage `addresses` says it addresses.
+pub(super) fn instruction_uses<'a>(
+    i: &'a MirInstr,
+    addresses: &'a OperandAddresses,
+) -> Vec<(Used<'a>, Reg)> {
     match i {
         MirInstr::EstablishLoans { loans, marker, .. } => loans
             .iter()
@@ -44,154 +50,33 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
         MirInstr::MovePlace { dest, place } => vec![(Used::Place(place), *dest)],
         MirInstr::Store { place, src } => vec![(Used::Place(place), *src)],
         MirInstr::StoreRef { place, reference } => vec![(Used::Place(place), *reference)],
-        MirInstr::MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
-            call,
-            value,
-            ..
-        } => {
-            let mut uses = receiver_place
-                .as_deref()
-                .into_iter()
-                .chain(arg_places.iter().flatten())
-                .chain(value_place.as_deref())
-                .map(|place| (Used::Place(place), *value))
-                .collect::<Vec<_>>();
-            uses.extend(
-                call.capture_accesses
-                    .iter()
-                    .map(|access| (Used::Var(access.root), *value)),
-            );
-            uses
-        }
         MirInstr::VariantSet { place, value, .. } => vec![(Used::Place(place), *value)],
         MirInstr::VariantReplace { place, value, .. } => vec![(Used::Place(place), *value)],
         MirInstr::LoadPlace { dest, place } => vec![(Used::Place(place), *dest)],
         MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => vec![(Used::Place(place), Reg(0))],
-        // Call arguments are evaluated into registers first, but mutable/ref
-        // conventions still consume their retained places at the call
-        // boundary for handle passing and write-back. Keep those slots alive
-        // through the instruction. (Interior stale-use checking deliberately
-        // does not count this as a second value read.)
-        MirInstr::Call {
-            dest,
-            arg_places,
-            kwarg_places,
-            capture_accesses,
-            ..
-        } => {
-            let mut uses = arg_places
+        // A call reads the storage each by-address operand addresses, as
+        // upstream's `lit.call` uses its `!lit.ref` operands, so those slots
+        // stay alive through the call. (Interior stale-use checking
+        // deliberately does not count this as a second value read.)
+        MirInstr::Call { dest, .. }
+        | MirInstr::CallIndirect { dest, .. }
+        | MirInstr::MethodCall { dest, .. }
+        | MirInstr::Index { dest, .. }
+        | MirInstr::MultiIndex { dest, .. }
+        | MirInstr::ConstructTypeParam { dest, .. }
+        | MirInstr::MultiSet { value: dest, .. } => {
+            let mut uses = call_operands(i)
                 .iter()
-                .flatten()
-                .chain(kwarg_places.iter().flatten())
+                .filter_map(|operand| addresses.address(operand))
                 .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
             uses.extend(
-                capture_accesses
+                capture_accesses(i)
                     .iter()
                     .map(|access| (Used::Var(access.root), *dest)),
             );
-            uses
-        }
-        MirInstr::ConstructTypeParam {
-            dest, kwarg_places, ..
-        } => kwarg_places
-            .iter()
-            .flatten()
-            .map(|place| (Used::Place(place), *dest))
-            .collect(),
-        MirInstr::CallIndirect {
-            dest,
-            callee_place,
-            arg_places,
-            kwarg_places,
-            capture_accesses,
-            ..
-        } => {
-            let mut uses = callee_place
-                .as_deref()
-                .into_iter()
-                .chain(arg_places.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
-                .map(|place| (Used::Place(place), *dest))
-                .collect::<Vec<_>>();
-            uses.extend(
-                capture_accesses
-                    .iter()
-                    .map(|access| (Used::Var(access.root), *dest)),
-            );
-            uses
-        }
-        MirInstr::MethodCall {
-            dest,
-            recv_place,
-            arg_places,
-            kwarg_places,
-            capture_accesses,
-            ..
-        } => {
-            let mut uses = recv_place
-                .as_deref()
-                .into_iter()
-                .chain(arg_places.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
-                .map(|place| (Used::Place(place), *dest))
-                .collect::<Vec<_>>();
-            uses.extend(
-                capture_accesses
-                    .iter()
-                    .map(|access| (Used::Var(access.root), *dest)),
-            );
-            uses
-        }
-        MirInstr::Index {
-            dest,
-            base_place,
-            index_place,
-            call,
-            ..
-        } => {
-            let mut uses = base_place
-                .as_deref()
-                .into_iter()
-                .chain(index_place.as_deref())
-                .map(|place| (Used::Place(place), *dest))
-                .collect::<Vec<_>>();
-            if let Some(call) = call {
-                uses.extend(
-                    call.capture_accesses
-                        .iter()
-                        .map(|access| (Used::Var(access.root), *dest)),
-                );
-            }
-            uses
-        }
-        MirInstr::MultiIndex {
-            dest,
-            object_place: base_place,
-            arg_places: index_place,
-            kwarg_places,
-            call,
-            ..
-        } => {
-            let mut uses = base_place
-                .as_deref()
-                .into_iter()
-                .chain(index_place.iter().flatten())
-                .chain(kwarg_places.iter().flatten())
-                .map(|place| (Used::Place(place), *dest))
-                .collect::<Vec<_>>();
-            if let Some(call) = call {
-                uses.extend(
-                    call.capture_accesses
-                        .iter()
-                        .map(|access| (Used::Var(access.root), *dest)),
-                );
-            }
             uses
         }
         MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
@@ -210,7 +95,7 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
                 for_each_instr_deep(region, &mut |instr| {
                     if !matches!(instr, MirInstr::Try { .. }) {
                         uses.extend(
-                            var_uses(instr)
+                            var_uses(instr, addresses)
                                 .into_iter()
                                 .map(|(var, reg)| (Used::Var(var), reg)),
                         );

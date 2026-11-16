@@ -59,8 +59,9 @@ use mojito_ast::ast::ArgConvention;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
-    CALL_RESULT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, Reg,
-    RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, terminator_regs,
+    CALL_RESULT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, OperandAddresses,
+    Reg, RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, operand_addresses,
+    terminator_regs,
 };
 use mojito_types::types::Ty;
 use std::collections::{HashMap, HashSet};
@@ -73,14 +74,16 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
     let mut uses = HashMap::new();
     count_operand_uses(&function.body, &mut uses);
     let forwarded = forwarded_registers(function, declarations);
+    let addresses = operand_addresses(&function.body, &function.reg_types);
     let elision = Elision {
         var_names: &function.var_names,
         var_tys: &function.var_tys,
         reg_types: &function.reg_types,
         declarations,
         uses,
-        mentions: count_slot_mentions(&function.body),
+        mentions: count_slot_mentions(&function.body, &addresses),
         forwarded,
+        addresses,
     };
     let mut lent = Vec::new();
     rewrite_blocks(&mut function.body, &elision, &mut lent);
@@ -105,6 +108,13 @@ struct Elision<'a> {
     /// The registers an instruction hands its callee by storage
     /// ([`RegisterEnds::forwarded`]).
     forwarded: HashSet<u32>,
+    /// The storage each call operand addresses, as the rewrite found the
+    /// function, like `mentions`. A `lend` re-roots a `ref.make` this map
+    /// still names the call-result slot for, which no later question
+    /// observes: the lent source's death is gone, so the pass finds no
+    /// later dying copy of it, and nothing but its binding, its load, and
+    /// that load's consumer names the slot.
+    addresses: OperandAddresses,
 }
 
 impl Elision<'_> {
@@ -158,14 +168,14 @@ fn count_operand_uses(block: &MirBlock, uses: &mut HashMap<u32, usize>) {
 /// How often each slot is named outside its `DropVar`s:
 /// a call-result slot that only its binding and its one load name is
 /// one a lent source can stand in for.
-fn count_slot_mentions(block: &MirBlock) -> HashMap<VarId, usize> {
+fn count_slot_mentions(block: &MirBlock, addresses: &OperandAddresses) -> HashMap<VarId, usize> {
     let mut mentions = HashMap::new();
     for_each_instr_deep(block, &mut |instruction| {
         // A `try` reports its regions' uses as its own; the walk visits them.
         let uses = if matches!(instruction, MirInstr::Try { .. }) {
             Vec::new()
         } else {
-            var_uses(instruction)
+            var_uses(instruction, addresses)
         };
         for var in uses
             .into_iter()
@@ -194,7 +204,7 @@ fn rewrite_blocks(block: &mut MirBlock, elision: &Elision, lent: &mut Vec<Loan>)
             at += 1;
             continue;
         };
-        if let Some(forward_at) = forwarding_use(instrs, source, elision.var_names) {
+        if let Some(forward_at) = forwarding_use(instrs, source, elision) {
             forward(instrs, at, source, forward_at);
         } else if let Some(lending) = lending_use(instrs, at, source, elision) {
             lent.push(lend(instrs, at, source, lending));
@@ -312,11 +322,12 @@ fn copy_construction(instruction: &MirInstr) -> Option<(&Reg, &Reg)> {
 /// nothing past the
 /// source's death up to the call that consumes the slot can raise, names
 /// the source, or names the slot.
-fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
+fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, elision: &Elision) -> Option<usize> {
     let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at.or(source.held_at)?] else {
         return None;
     };
-    if !var_names
+    if !elision
+        .var_names
         .get(slot as usize)
         .is_some_and(|name| name.starts_with(CALL_RESULT_SLOT))
     {
@@ -340,7 +351,8 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
     (source.drop_at + 1..consumer_at)
         .all(|at| {
             let instruction = &instrs[at];
-            quiet(instruction, source.var) && (at == forward_at || !names(instruction, slot))
+            quiet(instruction, source.var, &elision.addresses)
+                && (at == forward_at || !names(instruction, slot, &elision.addresses))
         })
         .then_some(forward_at)
 }
@@ -420,9 +432,13 @@ fn lending_use(
         return None;
     }
     let consumer_at = first_reader(instrs, load_at + 1..end, load)?;
-    let retained = retained_operand_places(&instrs[consumer_at], elision.declarations)
-        .filter(|place| place.root == slot)
-        .count();
+    let retained = retained_operand_places(
+        &instrs[consumer_at],
+        elision.declarations,
+        &elision.addresses,
+    )
+    .filter(|place| place.root == slot)
+    .count();
     if elision.mentions.get(&slot) != Some(&(2 + retained)) {
         return None;
     }
@@ -438,7 +454,8 @@ fn lending_use(
             .iter()
             .enumerate()
             .any(|(offset, instruction)| {
-                binding_at + 1 + offset != source.drop_at && names(instruction, source.var)
+                binding_at + 1 + offset != source.drop_at
+                    && names(instruction, source.var, &elision.addresses)
             });
     (silent && untouched).then_some(Lending {
         binding_at,
@@ -449,37 +466,37 @@ fn lending_use(
     })
 }
 
-/// The places a call retains for its by-address operands, which MIR
-/// lowering passes as `ref.make`s (`Flatten::address_operand`): a
-/// direct call's, and the receiver's place of a method whose declared
-/// receiver is `read`; any other receiver's place, which a `ref self`
-/// binds, is not one.
+/// The storage a call's by-address operands address, as upstream's call
+/// reads its `!lit.ref` operands: a direct call's, and the receiver of a
+/// method whose declared receiver is `read`; any other receiver, which a
+/// `ref self` binds, is not one.
 fn retained_operand_places<'i>(
     instruction: &'i MirInstr,
     declarations: &MirDeclarations,
+    addresses: &'i OperandAddresses,
 ) -> impl Iterator<Item = &'i MirPlace> {
-    let (arguments, receiver) = match instruction {
-        MirInstr::Call {
-            arg_places,
-            kwarg_places,
-            ..
-        } => (Some(arg_places.iter().chain(kwarg_places).flatten()), None),
-        MirInstr::MethodCall {
-            recv_place,
-            resolved: Some(resolved),
-            ..
-        } if declarations.function(resolved).is_some_and(|declaration| {
+    let operands = addresses.operands(instruction);
+    let read_receiver = |resolved: &str| {
+        declarations.function(resolved).is_some_and(|declaration| {
             matches!(
                 declaration.receiver_convention,
                 None | Some(ArgConvention::Imm)
             )
-        }) =>
-        {
-            (None, recv_place.as_deref())
-        }
-        _ => (None, None),
+        })
     };
-    arguments.into_iter().flatten().chain(receiver)
+    let addressed = match instruction {
+        MirInstr::Call { .. } => operands
+            .positional
+            .into_iter()
+            .chain(operands.keyword)
+            .collect(),
+        MirInstr::MethodCall {
+            resolved: Some(resolved),
+            ..
+        } if read_receiver(resolved) => vec![operands.receiver],
+        _ => Vec::new(),
+    };
+    addressed.into_iter().flatten()
 }
 
 /// Lend the dying source to the read call that takes the call-result
@@ -657,8 +674,11 @@ fn taken_at_setup(
         return false;
     }
     let end = segment_end(instrs, at + 1);
-    first_reader(instrs, at + 1..end, dest)
-        .is_some_and(|consumer_at| instrs[at + 1..consumer_at].iter().all(|i| quiet(i, source)))
+    first_reader(instrs, at + 1..end, dest).is_some_and(|consumer_at| {
+        instrs[at + 1..consumer_at]
+            .iter()
+            .all(|i| quiet(i, source, &elision.addresses))
+    })
 }
 
 /// The index of the first region op other than `try` at or after `from`,
@@ -693,8 +713,8 @@ fn first_reader(instrs: &[MirInstr], within: std::ops::Range<usize>, reg: Reg) -
 /// Whether `instruction` can sit between a dying source's copy and the
 /// call taking it: a drop, or an instruction that cannot raise, that does
 /// not name `source`.
-fn quiet(instruction: &MirInstr, source: VarId) -> bool {
-    (is_drop(instruction) || cannot_raise(instruction)) && !names(instruction, source)
+fn quiet(instruction: &MirInstr, source: VarId, addresses: &OperandAddresses) -> bool {
+    (is_drop(instruction) || cannot_raise(instruction)) && !names(instruction, source, addresses)
 }
 
 const fn is_drop(instruction: &MirInstr) -> bool {
@@ -713,13 +733,15 @@ fn cannot_raise(instruction: &MirInstr) -> bool {
 }
 
 /// Whether `instruction` reads, writes, moves, declares, or destroys `var`.
-fn names(instruction: &MirInstr, var: VarId) -> bool {
+fn names(instruction: &MirInstr, var: VarId, addresses: &OperandAddresses) -> bool {
     matches!(
         instruction,
         MirInstr::DropVar { var: named, .. } | MirInstr::DeclareVar { var: named } if *named == var
     ) || var_def(instruction) == Some(var)
         || vars_moved(instruction).contains(&var)
-        || var_uses(instruction).iter().any(|(named, _)| *named == var)
+        || var_uses(instruction, addresses)
+            .iter()
+            .any(|(named, _)| *named == var)
 }
 
 /// Make every death of a lent slot its source's: its `DropVar`s, and its

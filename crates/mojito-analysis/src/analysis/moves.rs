@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::{OperandAddresses, operand_addresses};
 
 /// A place's move/init state. A three-point lattice ordered by how "moved" a
 /// place might be; the merge of disagreeing paths is `MaybeMoved`.
@@ -370,6 +371,8 @@ pub(super) struct MoveContext {
     /// as an operand, the receiver included, or a variadic pack collects
     /// for one.
     call_operands: HashSet<u32>,
+    /// The storage each call operand addresses.
+    addresses: OperandAddresses,
 }
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
@@ -489,12 +492,11 @@ pub(super) fn place_uses(
             }
             vec![(place.root, path, Touch::Write { parent }, Reg(0))]
         }
-        MirInstr::MultiSet {
-            receiver_place,
-            value,
-            ..
-        } => receiver_place
-            .as_deref()
+        // A subscript set reads the storage its receiver operand addresses.
+        MirInstr::MultiSet { value, .. } => context
+            .addresses
+            .operands(i)
+            .receiver
             .into_iter()
             .map(|place| (place.root, place_path(place), Touch::Read, *value))
             .collect(),
@@ -625,7 +627,7 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
             check_whole_destruction(&state.moves[*var as usize], *var, f)?;
         }
         if !scan.interior.is_empty() {
-            check_interior_instruction_uses(&state.interior, instr, f)?;
+            check_interior_instruction_uses(&state.interior, instr, f, &scan.context.addresses)?;
         }
         Ok(())
     };
@@ -792,6 +794,7 @@ fn move_context(f: &MirFunction) -> MoveContext {
         setup_owners: HashMap::new(),
         caller_aliases: HashSet::new(),
         call_operands: HashSet::new(),
+        addresses: operand_addresses(&f.body, &f.reg_types),
     };
     let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.body, &mut |instr| match instr {

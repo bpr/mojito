@@ -238,7 +238,10 @@ pub(super) fn analyze_loans(
     // order, so a conflict names the same one on every run; keyed by the
     // instruction's address, which is stable while `f` is borrowed.
     let mut live_references: HashMap<*const MirInstr, Vec<VarId>> = HashMap::new();
-    let liveness = ReferenceLiveness { outside: &outside };
+    let liveness = ReferenceLiveness {
+        outside: &outside,
+        addresses: &addresses,
+    };
     walk_backward(
         &liveness,
         &f.body,
@@ -898,6 +901,7 @@ fn check_loans_at(
 /// instruction inside a `try` only reads.
 struct ReferenceLiveness<'a> {
     outside: &'a HashSet<*const MirInstr>,
+    addresses: &'a OperandAddresses,
 }
 
 impl BackwardScan for ReferenceLiveness<'_> {
@@ -913,7 +917,11 @@ impl BackwardScan for ReferenceLiveness<'_> {
         {
             live.remove(&def);
         }
-        live.extend(var_uses(instr).into_iter().map(|(used, _)| used));
+        live.extend(
+            var_uses(instr, self.addresses)
+                .into_iter()
+                .map(|(used, _)| used),
+        );
     }
 
     fn enters(&self, _instr: &MirInstr) -> bool {

@@ -2515,15 +2515,23 @@ falling back to the place table only for an operand that is no such
 `ref.make` (a register-passable `read` a result borrows, a consumed
 receiver, a spread pack, `external_call`'s retained places, a closure
 call's callee). The loan check (`loans.rs` `loan_accesses`), the drop
-facts' by-value loads and reference-result owners (`register_loans.rs`),
+facts' by-value loads and reference-result owners (`register_loans.rs`
+`ArgumentPassing::by_value`, `RegisterLoanStep::new`'s receiver seeds),
 `RegisterEnds`' consumed operands (`CallArguments`,
-`SubscriptArguments`), and the inliner's parameter bindings
+`SubscriptArguments`), the inliner's parameter bindings
 (`inline_parametric.rs`, whose `owner_ty` reads a reference receiver's
-referent) read it; `verify_operand_tables` (`verify/calls.rs`) requires a
+referent), the liveness scan (`scan.rs` `instruction_uses`, behind
+`var_uses` and drop elaboration's `effects`), the move check's
+subscript-set receiver (`moves.rs` `place_uses`), the interior check
+(`interior.rs` `interior_reference_uses`), copy elision
+(`copy_elision.rs` `retained_operand_places`), and unused-parameter
+removal (`unused_params.rs` `SelfCall::of`, `receiver_type`) read it; a
+free call's tracked-pointer result still seeds its owners from
+`arg_places` (`RegisterLoanStep::new`, R2256), and copy elision's `lend`
+re-roots the table beside the `ref.make` until R2191; `verify_operand_tables` (`verify/calls.rs`) requires a
 `ref.make` operand and its table entry to name the same storage, a `ref`
 binding's forwarded handle and a reference parameter's slot reached
-through itself included. The liveness scan, the interior check, copy
-elision, and unused-parameter removal still read the tables (R2255). The verifier
+through itself included. The verifier
 (`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
 or `call.method` binding by its callee's declaration; the same rule at a
 by-address `read` slot waits on the shapes above (R2251). A MIR text

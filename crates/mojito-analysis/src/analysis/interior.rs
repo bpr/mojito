@@ -231,8 +231,9 @@ pub(super) fn check_interior_instruction_uses(
     state: &InteriorState,
     instr: &MirInstr,
     f: &MirFunction,
+    addresses: &mojito_mir::mir::OperandAddresses,
 ) -> Result<(), OwnershipError> {
-    for (reference, marker) in interior_reference_uses(instr) {
+    for (reference, marker) in interior_reference_uses(instr, addresses) {
         let Some(active) = state.active.get(&reference) else {
             continue;
         };
@@ -311,8 +312,12 @@ pub(super) fn interior_origin_invalidated_by(
 /// with a register carrying the source span for the diagnostic. Place roots are
 /// included as well as `through`: roots can themselves be reference-bearing
 /// aggregate slots, while an ordinary reference place normally names its owner
-/// root and records the actual reference in `through`.
-pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
+/// root and records the actual reference in `through`. A subscript call's
+/// operand place is the storage `addresses` says it addresses.
+pub(super) fn interior_reference_uses(
+    instr: &MirInstr,
+    addresses: &mojito_mir::mir::OperandAddresses,
+) -> Vec<(VarId, Reg)> {
     pub(super) fn add_place(uses: &mut Vec<(VarId, Reg)>, place: &MirPlace, marker: Reg) {
         uses.push((place.root, marker));
         if let Some(reference) = place.through {
@@ -324,8 +329,8 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         uses: &mut Vec<(VarId, Reg)>,
         call: &mojito_mir::mir::MirSubscriptCall,
         receiver_place: Option<&MirPlace>,
-        positional_places: &[Option<MirPlace>],
-        keyword_places: &[Option<MirPlace>],
+        positional_places: &[Option<&MirPlace>],
+        keyword_places: &[Option<&MirPlace>],
         marker: Reg,
     ) {
         if call.receiver_requires_place
@@ -339,10 +344,10 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             }
             let place = match argument.source {
                 mojito_checked::checked::CheckedCallArgumentSource::Positional(index) => {
-                    positional_places.get(index).and_then(Option::as_ref)
+                    positional_places.get(index).copied().flatten()
                 }
                 mojito_checked::checked::CheckedCallArgumentSource::Keyword(index) => {
-                    keyword_places.get(index).and_then(Option::as_ref)
+                    keyword_places.get(index).copied().flatten()
                 }
                 mojito_checked::checked::CheckedCallArgumentSource::Default => None,
             };
@@ -372,54 +377,47 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         MirInstr::StoreRef { place, reference } => {
             add_place(&mut uses, place, *reference);
         }
-        MirInstr::MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
-            value,
-            call,
-            ..
-        } => {
-            let positional = arg_places.clone();
-            let keyword = vec![value_place.as_deref().cloned()];
+        MirInstr::MultiSet { value, call, .. } => {
+            let operands = addresses.operands(instr);
             add_subscript_call_places(
                 &mut uses,
                 call,
-                receiver_place.as_deref(),
-                &positional,
-                &keyword,
+                operands.receiver,
+                &operands.positional,
+                &[operands.value],
                 *value,
             );
         }
         MirInstr::Index {
             dest,
-            base_place,
-            index_place,
             call: Some(call),
             ..
-        } => add_subscript_call_places(
-            &mut uses,
-            call,
-            base_place.as_deref(),
-            &[index_place.as_deref().cloned()],
-            &[],
-            *dest,
-        ),
+        } => {
+            let operands = addresses.operands(instr);
+            add_subscript_call_places(
+                &mut uses,
+                call,
+                operands.receiver,
+                &[operands.index],
+                &[],
+                *dest,
+            );
+        }
         MirInstr::MultiIndex {
             dest,
-            object_place,
-            arg_places,
-            kwarg_places,
             call: Some(call),
             ..
-        } => add_subscript_call_places(
-            &mut uses,
-            call,
-            object_place.as_deref(),
-            arg_places,
-            kwarg_places,
-            *dest,
-        ),
+        } => {
+            let operands = addresses.operands(instr);
+            add_subscript_call_places(
+                &mut uses,
+                call,
+                operands.receiver,
+                &operands.positional,
+                &operands.keyword,
+                *dest,
+            );
+        }
         MirInstr::VariantSet { place, value, .. }
         | MirInstr::VariantReplace { place, value, .. } => {
             add_place(&mut uses, place, *value);
@@ -429,11 +427,11 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             uses.push((*iter, *dest));
         }
         // Call argument and receiver registers were evaluated before the
-        // call-boundary invalidation. `arg_places`/`recv_place` are write-back
-        // metadata, not a second read of a copied argument at call time, but
-        // a `deinit`-receiver call consuming a part of its receiver reads it,
-        // as upstream's `checkConsume` checks the interior origins reachable
-        // through a consumed operand.
+        // call-boundary invalidation, and a by-address operand is read at its
+        // `ref.make`, not a second time at the call; but a `deinit`-receiver
+        // call consuming a part of its receiver reads it, as upstream's
+        // `checkConsume` checks the interior origins reachable through a
+        // consumed operand (read at its place table until R2191).
         MirInstr::MethodCall { recv, .. } => {
             if let Some(place) = instr
                 .consumed_receiver()
