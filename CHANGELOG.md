@@ -707,6 +707,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time value or other materialized temporary at a register-passable
+  `read` parameter (`self == FastMathFlag.NONE`, a `StringLiteral` at
+  `StringSpan.__init__`) is now passed by value with no `$mat_r` slot or
+  place-table entry, as upstream passes a register-passable `read` (R2266).
+
 - A pointer an ordinary call returns, passed straight to another call
   (`read(id(Pointer(to=x)))`), keeps the storage its origin names alive
   until that call reads it: the result inherits the provenance of the

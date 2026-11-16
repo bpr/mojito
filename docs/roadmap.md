@@ -9677,29 +9677,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2266 A materialized temporary at a register-passable `read`
-  parameter keeps its slot's place-table entry**
-
-  Upstream passes a register-passable `read` argument by value, a
-  compile-time value as its `kgen.param.constant`, with no storage.
-  `lower_call_operand` (`mir/calls.rs`) returns the `$mat_r` slot's place
-  from its `materialize_borrow_source` branch even when the operand binds
-  by value (`by_address: false`), so `table_fallback` answers it.
-  - The checker's `materialize_parameter_read` mints the
-    `MaterializeBorrowSource` for a compile-time member read as a value.
-  - Probe: `FastMathFlag.__eq__`'s `other` in `FastMathFlag._mlir_attr`
-    (`self == FastMathFlag.NONE`).
-  - Probe: `StringSpan.__init__(StringLiteral)` in `Bool.write_to`, and
-    `StringSpan.__init__$ov$$$KgenString` over a lifted compile-time
-    `$mat_r` slot (`bind_comptime_memory`).
-  - Fix: return no place there for a register-passable `read`, as the
-    `BorrowReadArgument` branch does, and materialize no slot where
-    nothing borrows it.
-  - Find the shapes by logging `OperandAddresses::address` calls whose
-    operand is no `ref.make` but has a table entry, over `print(True)`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2191 Every call-shaped instruction carries place tables beside
   its reference operands**
 

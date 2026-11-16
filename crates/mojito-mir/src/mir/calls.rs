@@ -870,9 +870,15 @@ impl<'a> Flatten<'a> {
         // An `Indexer` normalized to `Int` likewise passes its result.
         let converted = expression.implicit_conversion().is_some()
             || expression.index_normalization().is_some();
+        // A register-passable `read` operand passes by value with no
+        // storage, as upstream passes it (a compile-time value as its
+        // constant): nothing borrows a slot for it.
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(adjustments)
             && !converted
         {
+            if self.register_passable_read_binding(expression) {
+                return (self.expr(expression), None);
+            }
             return self.materialize_borrow_source(expression, owner);
         }
         let retains_place = adjustments.iter().any(|adjustment| {
@@ -2998,6 +3004,14 @@ impl<'a> Flatten<'a> {
     /// whatever the actual's own type.
     fn read_by_address_binding(&self, expression: Node<'a>) -> bool {
         self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true })
+    }
+
+    /// Whether call operand `expression` binds a `read` parameter by value
+    /// and the check proved its type register-passable
+    /// (`RegisterPassableRead`), as upstream passes it with no storage.
+    fn register_passable_read_binding(&self, expression: Node<'a>) -> bool {
+        expression.register_passable_read()
+            && self.operand_binding(expression) == Some(OperandBinding::Read { by_address: false })
     }
 
     /// Whether call operand `expression` is a `read` temporary upstream
