@@ -25,6 +25,7 @@
 //! ([`upgrade_call_operands`]).
 
 use crate::mir::bound_calls::callable_bound_requirement;
+use crate::mir::legacy_places::{LegacyCallPlaces, LegacyCursor, LegacyOperandTables};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirSubscriptArg, Proj, Reg, TraitRequirement, count_register_reads, instruction_regions,
@@ -104,41 +105,6 @@ pub fn operand_value_ty(ty: &Ty) -> &Ty {
         TyKind::Ref(reference) => &reference.referent,
         _ => ty,
     }
-}
-
-/// Upgrade the calls of `functions`, read from an artifact written before
-/// lowering passed by-address operands as references.
-///
-/// Each by-address operand its contract binds is addressed as lowering
-/// addresses it ([`address_call_operands`]), then every operand
-/// a call's place table names that no contract binds (a requirement call
-/// over a pack element's receiver) and that is by address whatever its
-/// convention: a read back through a `ref.make` of that same place, the
-/// address an older lowering already formed, or a load of a memory-only
-/// place.
-pub fn upgrade_call_operands(
-    functions: &mut [(String, MirFunction)],
-    declarations: &MirDeclarations,
-) {
-    address_call_operands(functions, declarations, Operands::All);
-    for (name, function) in functions.iter_mut() {
-        let parameters = ParameterKinds::of(function, declarations.function(name));
-        forward_read_addresses(function, declarations, &parameters);
-    }
-}
-
-/// Upgrade the calls of `functions`, read from an artifact written before
-/// lowering forwarded the reference a place holds.
-///
-/// A place holding a reference is a `ref` field or a `ref` binding's slot,
-/// and an older call passed the value read through it as a by-address
-/// operand: each such operand its contract binds forwards the stored
-/// handle, as lowering forwards it ([`stored_handle`]).
-pub fn upgrade_stored_handles(
-    functions: &mut [(String, MirFunction)],
-    declarations: &MirDeclarations,
-) {
-    address_call_operands(functions, declarations, Operands::StoredHandles);
 }
 
 /// Read a call's by-address operand through its reference where the
@@ -277,6 +243,45 @@ pub fn stored_handle(place: &MirPlace, mutability: Mutability) -> Option<(MirPla
     })
     .into();
     Some((place.clone(), handle))
+}
+
+/// Upgrade the calls of `functions`, read from an artifact written before
+/// lowering passed by-address operands as references, whose operand
+/// places the reader kept in `legacy`.
+///
+/// Each by-address operand its contract binds is addressed as lowering
+/// addresses it ([`address_call_operands`]), then every operand
+/// the call's legacy places name that no contract binds (a requirement
+/// call over a pack element's receiver) and that is by address whatever
+/// its convention: a read back through a `ref.make` of that same place,
+/// the address an older lowering already formed, or a load of a
+/// memory-only place.
+pub fn upgrade_call_operands(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+    legacy: &LegacyOperandTables,
+) {
+    address_call_operands(functions, declarations, legacy, Operands::All);
+    for (index, (name, function)) in functions.iter_mut().enumerate() {
+        let parameters = ParameterKinds::of(function, declarations.function(name));
+        forward_read_addresses(function, declarations, &parameters, legacy.cursor(index));
+    }
+}
+
+/// Upgrade the calls of `functions`, read from an artifact written before
+/// lowering forwarded the reference a place holds, whose operand places
+/// the reader kept in `legacy`.
+///
+/// A place holding a reference is a `ref` field or a `ref` binding's slot,
+/// and an older call passed the value read through it as a by-address
+/// operand: each such operand its contract binds forwards the stored
+/// handle, as lowering forwards it ([`stored_handle`]).
+pub fn upgrade_stored_handles(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+    legacy: &LegacyOperandTables,
+) {
+    address_call_operands(functions, declarations, legacy, Operands::StoredHandles);
 }
 
 /// The declarations of the functions a program calls, by lowered name:
@@ -535,12 +540,11 @@ fn operand_parameters(
 /// A resolved call's operands as its callee's contract binds them.
 struct BoundCall<'i> {
     contract: Contract<'i>,
-    /// The receiver operand and the place it reads, for a method call or a
-    /// subscript.
-    receiver: Option<(Reg, Option<&'i MirPlace>)>,
-    /// Each regular operand, positional then keyword, with its retained
-    /// place and the parameter it binds (`None` for a collector's).
-    operands: Vec<(Reg, Option<&'i MirPlace>, Option<usize>)>,
+    /// The receiver operand, for a method call or a subscript.
+    receiver: Option<Reg>,
+    /// Each regular operand, positional then keyword, with the parameter
+    /// it binds (`None` for a collector's).
+    operands: Vec<(Reg, Option<usize>)>,
 }
 
 /// The operands of a resolved direct `call`, `call.method`, or checked
@@ -569,8 +573,6 @@ fn bound_call<'i>(
             func,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             spread: None,
             ..
         } => {
@@ -579,15 +581,13 @@ fn bound_call<'i>(
             Some(BoundCall {
                 contract: Contract::Declared(declaration),
                 receiver: None,
-                operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
+                operands: operand_list(args, kwargs, &parameters),
             })
         }
         MirInstr::CallIndirect {
             callee,
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             instantiated_contract,
             spread: None,
             ..
@@ -603,17 +603,14 @@ fn bound_call<'i>(
             Some(BoundCall {
                 contract,
                 receiver: None,
-                operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
+                operands: operand_list(args, kwargs, &parameters),
             })
         }
         MirInstr::MethodCall {
             recv,
-            recv_place,
             resolved: Some(callee),
             args,
             kwargs,
-            arg_places,
-            kwarg_places,
             spread: None,
             recv_writes,
             receiver_convention,
@@ -649,20 +646,19 @@ fn bound_call<'i>(
                 || matches!(contract, Contract::Signature(_));
             Some(BoundCall {
                 contract,
-                receiver: (!unrecorded).then_some((*recv, recv_place.as_deref())),
-                operands: operand_list(args, kwargs, arg_places, kwarg_places, &parameters),
+                receiver: (!unrecorded).then_some(*recv),
+                operands: operand_list(args, kwargs, &parameters),
             })
         }
         MirInstr::ConstructTypeParam {
             kwargs,
-            kwarg_places,
             element: None,
             ..
-        } => match (kwargs.as_slice(), kwarg_places.as_slice()) {
-            ([(keyword, source)], [place]) if keyword == "copy" => Some(BoundCall {
+        } => match kwargs.as_slice() {
+            [(keyword, source)] if keyword == "copy" => Some(BoundCall {
                 contract: Contract::Copy,
                 receiver: None,
-                operands: vec![(*source, place.as_ref(), Some(0))],
+                operands: vec![(*source, Some(0))],
             }),
             _ => None,
         },
@@ -682,11 +678,7 @@ fn bound_call<'i>(
             Some(BoundCall {
                 contract: Contract::Declared(declaration),
                 receiver: Some(subscript.receiver),
-                operands: registers
-                    .zip(subscript.places)
-                    .zip(parameters)
-                    .map(|((register, place), parameter)| (register, place, parameter))
-                    .collect(),
+                operands: registers.zip(parameters).collect(),
             })
         }
     }
@@ -707,13 +699,11 @@ fn function_signature(ty: &Ty) -> Option<&FuncTy> {
 struct SubscriptOperands<'i> {
     /// The accessor the checker selected.
     callee: &'i str,
-    /// The base and the place it reads.
-    receiver: (Reg, Option<&'i MirPlace>),
+    /// The base.
+    receiver: Reg,
     positional: Vec<Reg>,
     /// A keyword index, or a store's value under the setter's keyword.
     keywords: Vec<(&'i str, Reg)>,
-    /// Each positional then keyword operand's retained place.
-    places: Vec<Option<&'i MirPlace>>,
 }
 
 impl<'i> SubscriptOperands<'i> {
@@ -725,35 +715,26 @@ impl<'i> SubscriptOperands<'i> {
             MirInstr::Index {
                 base,
                 index,
-                base_place,
-                index_place,
-                call: Some(call),
-                ..
-            } => {
-                let indexed = !call.arguments.is_empty();
-                Some(Self {
-                    callee: &call.target,
-                    receiver: (*base, base_place.as_deref()),
-                    positional: indexed.then_some(*index).into_iter().collect(),
-                    keywords: Vec::new(),
-                    places: indexed
-                        .then_some(index_place.as_deref())
-                        .into_iter()
-                        .collect(),
-                })
-            }
-            MirInstr::MultiIndex {
-                object,
-                args,
-                object_place,
-                arg_places,
-                kwargs,
-                kwarg_places,
                 call: Some(call),
                 ..
             } => Some(Self {
                 callee: &call.target,
-                receiver: (*object, object_place.as_deref()),
+                receiver: *base,
+                positional: (!call.arguments.is_empty())
+                    .then_some(*index)
+                    .into_iter()
+                    .collect(),
+                keywords: Vec::new(),
+            }),
+            MirInstr::MultiIndex {
+                object,
+                args,
+                kwargs,
+                call: Some(call),
+                ..
+            } => Some(Self {
+                callee: &call.target,
+                receiver: *object,
                 positional: args
                     .iter()
                     .map(|MirSubscriptArg::Index(reg)| *reg)
@@ -762,54 +743,39 @@ impl<'i> SubscriptOperands<'i> {
                     .iter()
                     .map(|(name, MirSubscriptArg::Index(reg))| (name.as_str(), *reg))
                     .collect(),
-                places: arg_places
-                    .iter()
-                    .chain(kwarg_places)
-                    .map(Option::as_ref)
-                    .collect(),
             }),
             MirInstr::MultiSet {
                 receiver,
-                receiver_place,
                 args,
-                arg_places,
                 value,
-                value_place,
                 value_keyword,
                 call,
+                ..
             } => Some(Self {
                 callee: &call.target,
-                receiver: (*receiver, receiver_place.as_deref()),
+                receiver: *receiver,
                 positional: args
                     .iter()
                     .map(|MirSubscriptArg::Index(reg)| *reg)
                     .collect(),
                 keywords: vec![(value_keyword.as_str(), *value)],
-                places: arg_places
-                    .iter()
-                    .map(Option::as_ref)
-                    .chain([value_place.as_deref()])
-                    .collect(),
             }),
             _ => None,
         }
     }
 }
 
-/// A call's positional then keyword operands with their places and the
-/// parameters they bind.
-fn operand_list<'i>(
+/// A call's positional then keyword operands with the parameters they
+/// bind.
+fn operand_list(
     args: &[Reg],
     kwargs: &[(String, Reg)],
-    arg_places: &'i [Option<MirPlace>],
-    kwarg_places: &'i [Option<MirPlace>],
     parameters: &[Option<usize>],
-) -> Vec<(Reg, Option<&'i MirPlace>, Option<usize>)> {
+) -> Vec<(Reg, Option<usize>)> {
     args.iter()
         .chain(kwargs.iter().map(|(_, register)| register))
-        .zip(arg_places.iter().chain(kwarg_places).map(Option::as_ref))
-        .zip(parameters)
-        .map(|((register, place), parameter)| (*register, place, *parameter))
+        .copied()
+        .zip(parameters.iter().copied())
         .collect()
 }
 
@@ -916,10 +882,11 @@ fn operand_handle(place: MirPlace, mutability: Mutability) -> (MirPlace, Ty) {
 ///
 /// The calls are every direct call, call through a function value,
 /// resolved method call, checked subscript, and type parameter's copy
-/// construction of an artifact [`upgrade_call_operands`] loads.
+/// construction of an artifact [`upgrade_call_operands`] loads, and each
+/// operand's place is the one `legacy` keeps for it.
 ///
 /// The operand's definition is rewritten when its one reader is the call
-/// and it reads the storage the call's place table names: a `place.load`
+/// and it reads the storage the call's legacy places name: a `place.load`
 /// of it, or a `ref.read` of a `ref.make` of it, which goes too when
 /// nothing else reads it. Any other by-address operand, one whose read
 /// another use shares or that is no whole read of the place, is passed as
@@ -929,10 +896,11 @@ fn operand_handle(place: MirPlace, mutability: Mutability) -> (MirPlace, Ty) {
 fn address_call_operands(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
+    legacy: &LegacyOperandTables,
     operands: Operands,
 ) {
     let callees = Callees::of(declarations);
-    for (name, function) in functions.iter_mut() {
+    for (index, (name, function)) in functions.iter_mut().enumerate() {
         let parameters = ParameterKinds::of(function, declarations.function(name));
         let context = RemainingContext {
             declarations,
@@ -940,12 +908,16 @@ fn address_call_operands(
             parameters: &parameters,
             operands,
         };
-        address_function_operands(function, &context);
-        address_remaining_operands(function, &context);
+        address_function_operands(function, &context, legacy.cursor(index));
+        address_remaining_operands(function, &context, legacy.cursor(index));
     }
 }
 
-fn address_function_operands(function: &mut MirFunction, context: &RemainingContext<'_, '_>) {
+fn address_function_operands(
+    function: &mut MirFunction,
+    context: &RemainingContext<'_, '_>,
+    mut cursor: LegacyCursor<'_>,
+) {
     let mut definitions = HashMap::new();
     let mut operands = Vec::new();
     collect(
@@ -956,6 +928,7 @@ fn address_function_operands(function: &mut MirFunction, context: &RemainingCont
             reg_types: &function.reg_types,
             operands: context.operands,
         },
+        &mut cursor,
         &mut definitions,
         &mut operands,
     );
@@ -1090,10 +1063,12 @@ struct Collector<'c, 'a> {
 fn collect(
     block: &MirBlock,
     collector: &Collector<'_, '_>,
+    cursor: &mut LegacyCursor<'_>,
     definitions: &mut HashMap<u32, Definition>,
     operands: &mut Vec<(Reg, MirPlace, Mutability)>,
 ) {
     for instruction in &block.instrs {
+        let places = cursor.visit(instruction);
         match instruction {
             MirInstr::LoadPlace { dest, place } => {
                 definitions.insert(dest.0, Definition::Load(place.clone()));
@@ -1105,29 +1080,40 @@ fn collect(
                 definitions.insert(dest.0, Definition::Address(place.clone()));
             }
             _ => {
-                if let Some(bound) = bound_call(instruction, collector.callees, collector.reg_types)
+                if let Some(places) = places
+                    && let Some(bound) =
+                        bound_call(instruction, collector.callees, collector.reg_types)
                 {
                     operands.extend(
-                        by_address_operands(&bound, collector.declarations, collector.operands)
-                            .into_iter()
-                            .map(|(_, register, place, mutability)| (register, place, mutability)),
+                        by_address_operands(
+                            &bound,
+                            places,
+                            instruction,
+                            collector.declarations,
+                            collector.operands,
+                        )
+                        .into_iter()
+                        .map(|(_, register, place, mutability)| (register, place, mutability)),
                     );
                 }
             }
         }
         for region in instruction_regions(instruction) {
-            collect(region, collector, definitions, operands);
+            collect(region, collector, cursor, definitions, operands);
         }
     }
 }
 
-/// The receiver and each operand of a call that its callee receives by
-/// address, with the place it addresses: its position among the
-/// operands [`operand_registers_mut`] lists, `None` for the receiver. A
-/// place holding a reference is judged by its referent, which the operand
-/// passes; `operands` may keep only such places.
+/// The receiver and each operand of `instruction`, bound as `bound`, that
+/// its callee receives by address, with the place `places` keeps for it:
+/// its position among the operands [`operand_registers_mut`] lists, `None`
+/// for the receiver. A place holding a reference is judged by its
+/// referent, which the operand passes; `operands` may keep only such
+/// places.
 fn by_address_operands(
     bound: &BoundCall<'_>,
+    places: &LegacyCallPlaces,
+    instruction: &MirInstr,
     declarations: &MirDeclarations,
     operands: Operands,
 ) -> Vec<(Option<usize>, Reg, MirPlace, Mutability)> {
@@ -1137,13 +1123,17 @@ fn by_address_operands(
         let holds_reference = matches!(ty.kind(), TyKind::Ref(_));
         (operands == Operands::All || holds_reference).then(|| operand_value_ty(ty).clone())
     };
-    if let Some((register, Some(place))) = bound.receiver
+    if let Some(register) = bound.receiver
+        && let Some(place) = &places.receiver
         && let Some(ty) = value_ty(place)
         && let Some(mutability) = bound.contract.receiver(&ty, declarations)
     {
         addressed.push((None, register, place.clone(), mutability));
     }
-    for (position, (register, place, parameter)) in bound.operands.iter().enumerate() {
+    let operand_places = places.operands(instruction);
+    for (position, ((register, parameter), place)) in
+        bound.operands.iter().zip(operand_places).enumerate()
+    {
         let (Some(place), Some(parameter)) = (place, parameter) else {
             continue;
         };
@@ -1151,7 +1141,7 @@ fn by_address_operands(
             continue;
         };
         if let Some(mutability) = bound.contract.parameter(*parameter, &ty, declarations) {
-            addressed.push((Some(position), *register, (*place).clone(), mutability));
+            addressed.push((Some(position), *register, place.clone(), mutability));
         }
     }
     addressed
@@ -1182,13 +1172,18 @@ fn rewrite_blocks(block: &mut MirBlock, rewrites: &HashMap<u32, Rewrite>, retire
 
 /// Pass each by-address operand still read as a value as a fresh
 /// `ref.make` of its place, emitted just before its call.
-fn address_remaining_operands(function: &mut MirFunction, context: &RemainingContext<'_, '_>) {
+fn address_remaining_operands(
+    function: &mut MirFunction,
+    context: &RemainingContext<'_, '_>,
+    mut cursor: LegacyCursor<'_>,
+) {
     let mut next = function.n_regs;
     let mut types = Vec::new();
     address_remaining_in(
         &mut function.body,
         &function.reg_types,
         context,
+        &mut cursor,
         &mut next,
         &mut types,
     );
@@ -1213,27 +1208,38 @@ fn address_remaining_in(
     block: &mut MirBlock,
     reg_types: &HashMap<u32, Ty>,
     context: &RemainingContext<'_, '_>,
+    cursor: &mut LegacyCursor<'_>,
     next: &mut u32,
     types: &mut Vec<(u32, Ty, u32)>,
 ) {
     let mut index = 0;
     while index < block.instrs.len() {
         for region in instruction_regions_mut(&mut block.instrs[index]) {
-            address_remaining_in(region, reg_types, context, next, types);
+            address_remaining_in(region, reg_types, context, cursor, next, types);
         }
+        let places = cursor.visit(&block.instrs[index]);
         let is_value = |register: Reg| {
             !matches!(
                 reg_types.get(&register.0).map(Ty::kind),
                 Some(TyKind::Ref(_))
             )
         };
-        let remaining: Vec<(Option<usize>, Reg, MirPlace, Mutability)> =
-            bound_call(&block.instrs[index], context.callees, reg_types)
-                .map(|bound| by_address_operands(&bound, context.declarations, context.operands))
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(_, register, ..)| is_value(*register))
-                .collect();
+        let instruction = &block.instrs[index];
+        let remaining: Vec<(Option<usize>, Reg, MirPlace, Mutability)> = places
+            .zip(bound_call(instruction, context.callees, reg_types))
+            .map(|(places, bound)| {
+                by_address_operands(
+                    &bound,
+                    places,
+                    instruction,
+                    context.declarations,
+                    context.operands,
+                )
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, register, ..)| is_value(*register))
+            .collect();
         let mut addresses = Vec::new();
         if !remaining.is_empty() {
             let (receiver, mut operands) = operand_registers_mut(&mut block.instrs[index]);
@@ -1272,6 +1278,7 @@ fn forward_read_addresses(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     parameters: &ParameterKinds,
+    mut cursor: LegacyCursor<'_>,
 ) {
     let mut definitions = HashMap::new();
     collect_definitions(&function.body, &mut definitions);
@@ -1280,7 +1287,7 @@ fn forward_read_addresses(
     let mut forwards: HashMap<u32, Reg> = HashMap::new();
     let mut rewrites: HashMap<u32, Rewrite> = HashMap::new();
     let mut pairs = Vec::new();
-    retained_operands(&function.body, &mut pairs);
+    retained_operands(&function.body, &mut cursor, &mut pairs);
     let is_value = |ty: Option<&Ty>| !matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
     for (operand, place) in pairs {
         if reads.get(operand.0 as usize) != Some(&1)
@@ -1350,30 +1357,34 @@ fn collect_definitions(block: &MirBlock, definitions: &mut HashMap<u32, Definiti
     }
 }
 
-/// Each argument of a `call` or `call.method` with the place its table
-/// retains for it; a method call's receiver place may be the one an
-/// owned receiver consumes, so receivers are left to their contracts.
-fn retained_operands(block: &MirBlock, pairs: &mut Vec<(Reg, MirPlace)>) {
+/// Each argument of a `call` or `call.method` with the place the reader
+/// kept for it; a method call's receiver place may be the one an owned
+/// receiver consumes, so receivers are left to their contracts.
+fn retained_operands(
+    block: &MirBlock,
+    cursor: &mut LegacyCursor<'_>,
+    pairs: &mut Vec<(Reg, MirPlace)>,
+) {
     for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
-            retained_operands(region, pairs);
+            retained_operands(region, cursor, pairs);
         }
-        let (MirInstr::Call {
-            args,
-            kwargs,
-            arg_places,
-            kwarg_places,
-            spread,
-            ..
-        }
-        | MirInstr::MethodCall {
-            args,
-            kwargs,
-            arg_places,
-            kwarg_places,
-            spread,
-            ..
-        }) = instruction
+        let places = cursor.visit(instruction);
+        let (
+            Some(places),
+            MirInstr::Call {
+                args,
+                kwargs,
+                spread,
+                ..
+            }
+            | MirInstr::MethodCall {
+                args,
+                kwargs,
+                spread,
+                ..
+            },
+        ) = (places, instruction)
         else {
             continue;
         };
@@ -1382,11 +1393,11 @@ fn retained_operands(block: &MirBlock, pairs: &mut Vec<(Reg, MirPlace)>) {
             .chain(kwargs.iter().map(|(_, register)| register));
         // A spread passes its collector whole, which the elaborator expands.
         let operands = registers
-            .zip(arg_places.iter().chain(kwarg_places))
+            .zip(places.operands(instruction))
             .enumerate()
             .filter(|(position, _)| *spread != Some(*position));
         for (_, (register, place)) in operands {
-            pairs.extend(place.clone().map(|place| (*register, place)));
+            pairs.extend(place.map(|place| (*register, place.clone())));
         }
     }
 }
@@ -1440,7 +1451,7 @@ fn load_in_blocks(
                 if matches!(bound.contract, Contract::Required { .. }) {
                     return None;
                 }
-                let receiver = bound.receiver.is_some_and(|(register, _)| {
+                let receiver = bound.receiver.is_some_and(|register| {
                     let Contract::Declared(declaration) = bound.contract else {
                         return false;
                     };
@@ -1451,7 +1462,7 @@ fn load_in_blocks(
                 let operands: Vec<bool> = bound
                     .operands
                     .iter()
-                    .map(|(_, _, parameter)| {
+                    .map(|(_, parameter)| {
                         parameter.is_some_and(|parameter| {
                             bound
                                 .contract

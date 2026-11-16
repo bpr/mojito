@@ -1030,6 +1030,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR text reader's load-time upgrades of artifacts older than 1.201
+  read each call's operand places from a reader-side side table, paired
+  with the function's call-shaped instructions in decode order, as an
+  MLIR dialect's bytecode upgrade reads an old encoding inside the
+  reader, instead of from the IR's place tables. Older artifacts load to
+  the same IR as before; a function whose tables do not pair is reported
+  (R2271).
+
 - Passes and the MIR verifier read a call's operands, not its place
   tables, as upstream's passes read a `lit.call` operand's type and
   defining op: receiver and member types come from the operand's register,

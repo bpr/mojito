@@ -9,6 +9,7 @@
 //! function value, which has no witness table, to its own
 //! [`MirInstr::CallIndirect`].
 
+use super::legacy_places::{LegacyCursor, LegacyOperandTables};
 use super::{MirFunction, MirInstr, MirPlace};
 use mojito_symbol::symbol::{
     callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
@@ -142,14 +143,18 @@ pub fn indirect_from_bound_call(
 /// artifact written before such a call passed its callee's address.
 ///
 /// Each requirement call whose receiver is still the callee's value and
-/// that kept the callee's typed place passes an immutable `ref.make` of
-/// that place (the reference a place holding one stores), as lowering
-/// forms it: the read defining the receiver in the call's block becomes
-/// the `ref.make`, or one is emitted before the call.
-pub fn upgrade_bound_receivers(functions: &mut [(String, MirFunction)]) {
-    for (_, function) in functions {
+/// whose receiver place, as the reader kept it in `legacy`, is the
+/// callee's typed place passes an immutable `ref.make` of that place (the
+/// reference a place holding one stores), as lowering forms it: the read
+/// defining the receiver in the call's block becomes the `ref.make`, or
+/// one is emitted before the call.
+pub fn upgrade_bound_receivers(
+    functions: &mut [(String, MirFunction)],
+    legacy: &LegacyOperandTables,
+) {
+    for (index, (_, function)) in functions.iter_mut().enumerate() {
         let mut body = std::mem::take(&mut function.body);
-        upgrade_bound_receivers_in(&mut body, function);
+        upgrade_bound_receivers_in(&mut body, function, &mut legacy.cursor(index));
         function.body = body;
     }
 }
@@ -238,27 +243,32 @@ fn peel_refs(ty: &Ty) -> &Ty {
     }
 }
 
-fn upgrade_bound_receivers_in(block: &mut super::MirBlock, function: &mut MirFunction) {
+fn upgrade_bound_receivers_in(
+    block: &mut super::MirBlock,
+    function: &mut MirFunction,
+    cursor: &mut LegacyCursor<'_>,
+) {
     let mut index = 0;
     while index < block.instrs.len() {
         for region in super::instruction_regions_mut(&mut block.instrs[index]) {
-            upgrade_bound_receivers_in(region, function);
+            upgrade_bound_receivers_in(region, function, cursor);
         }
+        let place = cursor
+            .visit(&block.instrs[index])
+            .and_then(|places| places.receiver.as_ref());
         let receiver = bound_call_contract(&block.instrs[index], &function.reg_types)
             .is_some()
             .then_some(&block.instrs[index])
-            .and_then(|instruction| match instruction {
-                MirInstr::MethodCall {
-                    recv,
-                    recv_place: Some(place),
-                    ..
-                } if place.is_typed()
-                    && !matches!(
-                        function.reg_types.get(&recv.0).map(Ty::kind),
-                        Some(TyKind::Ref(_))
-                    ) =>
+            .zip(place)
+            .and_then(|(instruction, place)| match instruction {
+                MirInstr::MethodCall { recv, .. }
+                    if place.is_typed()
+                        && !matches!(
+                            function.reg_types.get(&recv.0).map(Ty::kind),
+                            Some(TyKind::Ref(_))
+                        ) =>
                 {
-                    Some((*recv, (**place).clone()))
+                    Some((*recv, place.clone()))
                 }
                 _ => None,
             });

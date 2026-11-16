@@ -4765,36 +4765,7 @@ fn older_mut_argument_loads_as_its_address() {
     main.var_names = vec!["i".into()];
     main.var_tys.insert(0, Ty::int());
     let mut program = program_with(vec![("main".into(), main)]);
-    program.declarations.functions.push(MirFunctionDeclaration {
-        lowered_name: "inc".into(),
-        param_names: vec!["x".into()],
-        param_types: vec![Ty::int()],
-        defaults: vec![None],
-        required: vec![true],
-        variadic: None,
-        variadic_convention: None,
-        variadic_index: None,
-        kw_variadic: None,
-        kw_variadic_convention: None,
-        kw_variadic_index: None,
-        positional_only: None,
-        keyword_only: None,
-        param_decls: Vec::new(),
-        has_receiver: false,
-        receiver_convention: None,
-        param_conventions: vec![Some(ArgConvention::Mut)],
-        ret_ty: Ty::none(),
-        returns_reference: false,
-        raises: false,
-        error_ty: None,
-        ref_params: vec![true],
-        param_writes: vec![true],
-        availability: Vec::new(),
-        enclosing: None,
-        region_binders: Vec::new(),
-        inline: mojito_checked::declaration::InlineLevel::default(),
-        provenance: mojito_checked::declaration::FunctionProvenance::default(),
-    });
+    program.declarations.functions.push(inc_declaration());
     let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
     let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
@@ -4940,5 +4911,252 @@ fn older_indirect_call_loads_with_no_callee_place() {
         ),
         "{:?}",
         f.body.instrs
+    );
+}
+
+/// `inc(mut x: Int)`, the callee of the legacy by-address operand tests.
+fn inc_declaration() -> MirFunctionDeclaration {
+    MirFunctionDeclaration {
+        lowered_name: "inc".into(),
+        param_names: vec!["x".into()],
+        param_types: vec![Ty::int()],
+        defaults: vec![None],
+        required: vec![true],
+        variadic: None,
+        variadic_convention: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_convention: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: Vec::new(),
+        has_receiver: false,
+        receiver_convention: None,
+        param_conventions: vec![Some(ArgConvention::Mut)],
+        ret_ty: Ty::none(),
+        returns_reference: false,
+        raises: false,
+        error_ty: None,
+        ref_params: vec![true],
+        param_writes: vec![true],
+        availability: Vec::new(),
+        enclosing: None,
+        region_binders: Vec::new(),
+        inline: mojito_checked::declaration::InlineLevel::default(),
+        provenance: mojito_checked::declaration::FunctionProvenance::default(),
+    }
+}
+
+/// Below MIR 1.201 the reader keeps each call's operand places beside the
+/// IR and the upgrades pair them with the calls in decode order: a
+/// `mut` argument in every region kind is addressed at its own place.
+#[test]
+fn older_call_places_pair_with_their_calls_in_every_region() {
+    use crate::mir::{LoopLabel, MirCase, MirElif};
+    const CALLS: u32 = 15;
+    let condition = Reg(2 * CALLS);
+    let call = |var: u32| {
+        let place = MirPlace::root(var, Some(Ty::int()));
+        vec![
+            MirInstr::LoadPlace {
+                dest: Reg(var),
+                place: place.clone(),
+            },
+            MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
+                dest: Reg(CALLS + var),
+                func: FuncRef("inc".into()),
+                raises: None,
+                args: vec![Reg(var)],
+                kwargs: Vec::new(),
+                arg_places: vec![Some(place)],
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                receiver: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            },
+        ]
+    };
+    let block = |var: u32, term: MirTerm| MirBlock {
+        instrs: call(var),
+        term,
+    };
+    let boxed = |var: u32, term: MirTerm| Box::new(block(var, term));
+    let mut instrs = vec![
+        MirInstr::If {
+            results: Vec::new(),
+            cond: condition,
+            then: boxed(0, MirTerm::Yield(Vec::new())),
+            else_args: Vec::new(),
+            elifs: vec![MirElif {
+                cond_args: Vec::new(),
+                then_args: Vec::new(),
+                cond: block(
+                    1,
+                    MirTerm::ElifCond {
+                        cond: condition,
+                        values: Vec::new(),
+                    },
+                ),
+                then: block(2, MirTerm::Yield(Vec::new())),
+            }],
+            orelse: boxed(3, MirTerm::Yield(Vec::new())),
+        },
+        MirInstr::Loop {
+            label: Some(LoopLabel(0)),
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: Vec::new(),
+            body: boxed(
+                4,
+                MirTerm::Break {
+                    label: Some(LoopLabel(0)),
+                    values: Vec::new(),
+                },
+            ),
+        },
+        MirInstr::ComptimeIf {
+            results: Vec::new(),
+            values: vec![Const::Bool(true)],
+            arms: vec![block(5, MirTerm::ComptimeYield(Vec::new()))],
+            orelse: boxed(6, MirTerm::ComptimeYield(Vec::new())),
+        },
+        MirInstr::ComptimeFor {
+            binder: test_binder("i"),
+            source: mojito_checked::checked::ComptimeSequence {
+                initial: int_parameter("$test:it", 0, "it"),
+                has_next: int_parameter("$test:has", 0, "has"),
+                next_iter: int_parameter("$test:next", 0, "next"),
+                next_value: int_parameter("$test:value", 0, "value"),
+            },
+            operands: Vec::new(),
+            args: Vec::new(),
+            results: Vec::new(),
+            body: boxed(7, MirTerm::ComptimeContinue(Vec::new())),
+            orelse: boxed(8, MirTerm::Unreachable),
+        },
+        MirInstr::Match {
+            results: Vec::new(),
+            else_args: Vec::new(),
+            cases: vec![MirCase {
+                args: Vec::new(),
+                body: block(9, MirTerm::MatchComplete(Vec::new())),
+            }],
+            orelse: boxed(10, MirTerm::Yield(Vec::new())),
+        },
+        MirInstr::Try {
+            label: TryLabel(0),
+            error: None,
+            results: Vec::new(),
+            body: boxed(11, MirTerm::TryYield(Vec::new())),
+            handler_args: Vec::new(),
+            handler: Some(boxed(12, MirTerm::TryYield(Vec::new()))),
+            else_args: Vec::new(),
+            orelse: Some(boxed(13, MirTerm::TryYield(Vec::new()))),
+        },
+    ];
+    instrs.extend(call(14));
+    let types = (0..CALLS)
+        .map(|_| Ty::int())
+        .chain((0..CALLS).map(|_| Ty::none()))
+        .chain([Ty::bool()])
+        .collect();
+    let mut main = function_with(types, instrs);
+    main.n_vars = CALLS as usize;
+    main.var_names = (0..CALLS).map(|var| format!("v{var}")).collect();
+    main.var_tys = (0..CALLS).map(|var| (var, Ty::int())).collect();
+    let mut program = program_with(vec![("main".into(), main)]);
+    program.declarations.functions.push(inc_declaration());
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, main) = &parsed.program.functions[0];
+    assert_eq!(
+        main.n_regs,
+        2 * CALLS + 1,
+        "no operand needed a fresh address"
+    );
+    fn addressed(block: &MirBlock, seen: &mut Vec<u32>) {
+        for instruction in &block.instrs {
+            if let MirInstr::Call { args, .. } = instruction {
+                let [Reg(var)] = args[..] else {
+                    panic!("{args:?}");
+                };
+                assert!(
+                    block.instrs.iter().any(|defining| matches!(
+                        defining,
+                        MirInstr::MakeRef { dest, place }
+                            if *dest == Reg(var) && place.root == var
+                    )),
+                    "call over v{var} is not addressed at its own place: {:?}",
+                    block.instrs
+                );
+                seen.push(var);
+            }
+            for region in crate::mir::instruction_regions(instruction) {
+                addressed(region, seen);
+            }
+        }
+    }
+    let mut seen = Vec::new();
+    addressed(&main.body, &mut seen);
+    seen.sort_unstable();
+    assert_eq!(seen, (0..CALLS).collect::<Vec<_>>());
+}
+
+/// A function whose call-shaped instructions outnumber the operand place
+/// tables the reader kept cannot pair them, and is rejected rather than
+/// upgraded off-pair.
+#[test]
+fn unpaired_legacy_operand_places_are_rejected() {
+    let place = MirPlace::root(0, Some(Ty::int()));
+    let mut main = function_with(
+        vec![Ty::int(), Ty::none()],
+        vec![MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
+            dest: Reg(1),
+            func: FuncRef("inc".into()),
+            raises: None,
+            args: vec![Reg(0)],
+            kwargs: Vec::new(),
+            arg_places: vec![Some(place)],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        }],
+    );
+    main.n_vars = 1;
+    main.var_names = vec!["i".into()];
+    main.var_tys.insert(0, Ty::int());
+    let program = program_with(vec![("main".into(), main)]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program).replacen(&current, "mojito-mir 1.191", 1);
+    let mut parser = Parser::new(&text);
+    parser.header();
+    let artifact = parser.value().expect("artifact record");
+    let mut decoder = Decoder::new(false, 191);
+    let fields = decoder.record(&artifact, "artifact").expect("artifact");
+    let functions = decoder.field(fields, "functions").expect("functions");
+    let value = &decoder.list(functions).expect("function list")[0];
+    let function = decoder.function(value).expect("decoded function");
+    assert!(decoder.diagnostics.is_empty(), "{:?}", decoder.diagnostics);
+    let paired = decoder.paired_legacy_calls(value, &function);
+    assert_eq!(paired.len(), 1);
+    assert!(decoder.diagnostics.is_empty(), "{:?}", decoder.diagnostics);
+    decoder.function(value).expect("decoded function");
+    decoder.legacy_calls.push(LegacyCallPlaces::default());
+    decoder.paired_legacy_calls(value, &function);
+    assert!(
+        decoder.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("1 call-shaped instructions but 2 operand place tables")),
+        "{:?}",
+        decoder.diagnostics
     );
 }

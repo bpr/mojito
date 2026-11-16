@@ -1207,8 +1207,9 @@ moved out of that storage (a forwarding `var.use` of a whole slot, a
 storage it consumes is the place its receiver's `ref.make` addresses
 (`MirInstr::consumed_receiver`), and the verifier rejects one that keeps
 a receiver place. The syntax is unchanged. An older artifact's `deinit`
-call is upgraded as it loads (`mir::upgrade_deinit_receivers`): the load
-of its receiver place becomes that `ref.make`, retyped as the reference,
+call is upgraded as it loads (`drop_calls::upgrade_deinit_receivers`,
+which reads the receiver place the reader kept aside rather than the IR's
+field, left empty): the load of its receiver place becomes that `ref.make`, retyped as the reference,
 or the move. The package format moves to `mojito-package 225` with it,
 when the check records `SemanticAdjustment::RegisterPassableConsume` on a
 register-passable `deinit` receiver (R2267).
@@ -1218,8 +1219,8 @@ upstream's indirect call takes the closure or function value: the
 instruction's `callee_place` is always `absent`, and the verifier rejects
 one that names a place. A pass wanting the storage the callee was read
 from follows its defining load (`mir::callee_slots`). The syntax is
-unchanged. An older artifact's `call.indirect` loads with the field
-cleared (`mir::upgrade_callee_places`). The package format moves to
+unchanged. The reader reads and drops an older artifact's
+`callee_place`, so its `call.indirect` loads with the field cleared. The package format moves to
 `mojito-package 226` with it (R2269).
 
 Schema 1.199 passes a `def(...)` bound's callee to its `__call__`
@@ -1230,7 +1231,8 @@ wherever the call keeps the callee's place. Struct declarations drop
 `mut_self_methods`, which only the VM's receiver write-back read: a 1.199
 reader rejects the field, and reads and drops it below 1.199. An older
 artifact's bound calls are addressed as it loads
-(`mir::upgrade_bound_receivers`). The package format moves to
+(`bound_calls::upgrade_bound_receivers`, over the receiver places the
+reader kept aside). The package format moves to
 `mojito-package 224` with it (R2254).
 
 Schema 1.198 passes a by-address operand whose retained place holds a
@@ -1240,7 +1242,8 @@ forwards it, or of the binding's slot through itself, rather than a value
 read through it. The verifier's rule requiring a reference at a `mut` or
 `ref` slot covers these operands. The syntax is unchanged. An older
 artifact's such operands are forwarded as it loads
-(`mir::upgrade_stored_handles`). The package format moves to
+(`call_addresses::upgrade_stored_handles`, over the operand places the
+reader kept aside). The package format moves to
 `mojito-package 223` with it (R2187).
 
 Schema 1.197 adds an optional `by_address: true` to the
@@ -1289,7 +1292,8 @@ Schema 1.192 passes every `mut` or `ref` argument of a `call` or resolved
 caller's storage, a `ref.make` of the place the call retains, as upstream's
 `lit.call` takes a `!lit.ref` operand; the verifier rejects a value there
 (R1920). The syntax is unchanged. An older artifact's calls are upgraded as
-it loads (`mir::upgrade_call_operands`): each by-address operand its
+it loads (`call_addresses::upgrade_call_operands`, over the operand places
+the reader kept aside): each by-address operand its
 contract binds becomes a reference, as lowering forms it, and an
 argument no contract binds (a requirement call over a pack element's
 receiver) becomes one where it reads back a `ref.make` of its retained

@@ -9729,21 +9729,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2271 The legacy MIR text upgrades read place tables off the
-  instructions they rewrite**
-
-  `upgrade_call_operands`, `upgrade_stored_handles`,
-  `upgrade_bound_receivers` and `address_call_operands` read the tables
-  from the IR, so the fields cannot leave the IR while the reader accepts
-  older 1.x artifacts.
-  - Fix: the text parser reads the legacy fields into a reader-side
-    `LegacyOperandTables`, paired with call-shaped instructions by a
-    pre-order walk, and the upgrades take that.
-  - Probe: `cargo run -- exec tests/snapshots/mir/exec_print.mir` and a
-    1.170 `tests/mir_passes` input still upgrade.
-  - Depends on R2267, R2268, R2269.
-  - Model: Opus, Planned.
-
 - [ ] **R2191 Every call-shaped instruction carries place tables beside
   its reference operands**
 
@@ -9753,7 +9738,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `kwarg_places`, `recv_place`, `callee_place`, `base_place`,
   `index_place`, `object_place`, `receiver_place`, and `value_place`.
   - No pass decides anything from a table any more. What still touches
-    them goes with the fields: R2271's legacy upgrades, the producers that
+    them goes with the fields: the text decoder's IR assignments beside
+    each `LegacyCallPlaces` it keeps (`text/parse/instrs.rs`
+    `legacy_receiver` and its siblings), the producers that
     write an entry beside a `ref.make` (`canonicalize.rs` `direct_call`,
     `nested.rs` `lower_storage_call_witness`, the elaborator's capture
     splice) or beside a pack's loaded overflow operand
@@ -9762,8 +9749,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `verify/drops.rs` rule rejecting a `deinit` receiver's `recv_place`,
     and `table_fallback`, which no verified operand reaches.
   - Fix: delete the fields, constructors, and text fields, with a MIR
-    text bump; older text parses the fields into R2271's legacy tables
-    for the upgrades only.
+    text bump; older text still parses the fields into the reader's
+    `LegacyOperandTables` for the upgrades only.
   - The owner approved the `tests/mir_passes` re-bless in advance
     (2026-11-15). The session may run `UPDATE_EXPECT=1 cargo nextest run
     --test mir_pass_test` and re-canonicalize the case inputs to the new

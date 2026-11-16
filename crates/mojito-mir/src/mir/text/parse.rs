@@ -1,4 +1,5 @@
 use super::{ArtifactDiagnostic, ArtifactReport, ArtifactSourceMap, ParsedArtifact};
+use crate::mir::legacy_places::{LegacyCallPlaces, LegacyOperandTables, call_shaped_count};
 use crate::mir::{
     Const, FuncRef, MirBlock, MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirLoan,
@@ -183,6 +184,14 @@ struct Decoder {
     /// placeholder slot [`instrs::legacy_edge_slot`] gives its index until
     /// [`instrs::upgrade_edge_errors`] gives it a slot of its own.
     legacy_edge_errors: Vec<crate::mir::Reg>,
+    /// The operand places of each call-shaped instruction of the function
+    /// being read, in decode order, which MIR text before 1.201 writes on
+    /// the call: the load-time upgrades read them from
+    /// [`LegacyOperandTables`], never from the IR.
+    legacy_calls: Vec<LegacyCallPlaces>,
+    /// The places of the call-shaped instruction being read, pushed to
+    /// `legacy_calls` once it decodes.
+    pending_call: Option<LegacyCallPlaces>,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

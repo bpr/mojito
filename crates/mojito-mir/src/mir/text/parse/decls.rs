@@ -20,6 +20,8 @@ impl Decoder {
             minor,
             pack_upgrades: packs::PackUpgrades::default(),
             legacy_edge_errors: Vec::new(),
+            legacy_calls: Vec::new(),
+            pending_call: None,
         }
     }
 
@@ -67,8 +69,10 @@ impl Decoder {
         let Ok(function_values) = self.list(function_values) else {
             return Err(self.diagnostics);
         };
-        for function in function_values {
-            if let Some(function) = self.function(function) {
+        let mut legacy = LegacyOperandTables::default();
+        for value in function_values {
+            if let Some(function) = self.function(value) {
+                legacy.push_function(self.paired_legacy_calls(value, &function));
                 functions.push(function);
             }
         }
@@ -108,30 +112,42 @@ impl Decoder {
         // Schema 1.192 passes each operand a callee takes by address as a
         // reference to the caller's storage; an older call may pass a
         // value beside the place it reads.
+        // Each upgrade below reads an older call's operand places from
+        // `legacy`, which the decoder filled as it read them.
+        if !self.diagnostics.is_empty() {
+            return Err(self.diagnostics);
+        }
         if self.minor < 192 {
-            crate::mir::upgrade_call_operands(&mut functions, &declarations);
+            crate::mir::call_addresses::upgrade_call_operands(
+                &mut functions,
+                &declarations,
+                &legacy,
+            );
         } else if self.minor < 198 {
             // Schema 1.198 passes the reference a place holds (a `ref`
             // field, a `ref` binding's slot) as its by-address operand; an
             // older call reads the value through it.
-            crate::mir::upgrade_stored_handles(&mut functions, &declarations);
+            crate::mir::call_addresses::upgrade_stored_handles(
+                &mut functions,
+                &declarations,
+                &legacy,
+            );
         }
         // Schema 1.199 passes a `def(...)` bound's callee to its
         // `__call__` requirement by address; an older call passes the value.
         if self.minor < 199 {
-            crate::mir::upgrade_bound_receivers(&mut functions);
+            crate::mir::bound_calls::upgrade_bound_receivers(&mut functions, &legacy);
         }
         // Schema 1.200 passes a `deinit` receiver as the call consumes it:
         // a memory-only one by address, a register-passable one moved out
         // of its storage; an older call names that storage by its receiver
         // place.
         if self.minor < 200 {
-            crate::mir::upgrade_deinit_receivers(&mut functions, &declarations);
-        }
-        // Schema 1.201 takes a `call.indirect`'s callee as the operand
-        // alone; an older call names the slot it read the callee from.
-        if self.minor < 201 {
-            crate::mir::upgrade_callee_places(&mut functions);
+            crate::mir::drop_calls::upgrade_deinit_receivers(
+                &mut functions,
+                &declarations,
+                &legacy,
+            );
         }
         if self.diagnostics.is_empty() {
             Ok((
@@ -145,6 +161,30 @@ impl Decoder {
         } else {
             Err(self.diagnostics)
         }
+    }
+
+    /// The operand places kept for the call-shaped instructions of
+    /// `function`, just read from `value`; an older artifact whose places
+    /// do not pair one to one with those instructions is reported, so no
+    /// upgrade reads a call's places off another call.
+    pub(super) fn paired_legacy_calls(
+        &mut self,
+        value: &Value,
+        (name, function): &(String, MirFunction),
+    ) -> Vec<LegacyCallPlaces> {
+        let calls = std::mem::take(&mut self.legacy_calls);
+        let shaped = call_shaped_count(function);
+        if self.minor < 201 && self.diagnostics.is_empty() && calls.len() != shaped {
+            self.error(
+                value.span,
+                format!(
+                    "function `{name}` has {shaped} call-shaped instructions but {} \
+                     operand place tables",
+                    calls.len()
+                ),
+            );
+        }
+        calls
     }
 
     pub(super) fn struct_declarations(&mut self, value: &Value) -> Vec<MirStructDeclaration> {

@@ -3171,6 +3171,22 @@ impl MirInstr {
         }
     }
 
+    /// Whether this instruction is call-shaped: a call, a method call, a
+    /// subscript, or a type parameter's construction, the instructions
+    /// that bind operands to a callee's parameters.
+    pub const fn is_call_shaped(&self) -> bool {
+        matches!(
+            self,
+            Self::Call { .. }
+                | Self::CallIndirect { .. }
+                | Self::MethodCall { .. }
+                | Self::Index { .. }
+                | Self::MultiIndex { .. }
+                | Self::MultiSet { .. }
+                | Self::ConstructTypeParam { .. }
+        )
+    }
+
     /// Whether this is a method call whose callee's receiver is `deinit`,
     /// upstream's `DeinitMem` convention.
     pub const fn deinit_receiver(&self) -> bool {

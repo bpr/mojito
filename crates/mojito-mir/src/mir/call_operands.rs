@@ -12,10 +12,7 @@
 //! function serves every call in it, wherever CSE or hoisting moved the
 //! `ref.make` an operand is.
 
-use crate::mir::{
-    MirBlock, MirFunction, MirInstr, MirPlace, MirSubscriptArg, Reg, VarId, instruction_regions,
-    instruction_regions_mut,
-};
+use crate::mir::{MirBlock, MirInstr, MirPlace, MirSubscriptArg, Reg, VarId, instruction_regions};
 use mojito_types::types::{Ty, TyKind};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
@@ -152,17 +149,6 @@ pub fn callee_slots(body: &MirBlock) -> HashMap<u32, VarId> {
             .filter_map(|(dest, reference)| Some((dest, *roots.get(&reference)?))),
     );
     slots
-}
-
-/// Clear the `callee_place` of every `call.indirect` of `functions`.
-///
-/// An artifact older than 1.201 names the slot an indirect call read its
-/// callee from; the operand already carries the callee, whose slot
-/// [`callee_slots`] finds through its defining load.
-pub fn upgrade_callee_places(functions: &mut [(String, MirFunction)]) {
-    for (_, function) in functions {
-        clear_callee_places(&mut function.body);
-    }
 }
 
 /// The operands of a call-shaped instruction, each with its place-table
@@ -377,17 +363,6 @@ impl Loads {
 
 fn whole_slot(place: &MirPlace) -> bool {
     place.is_whole_root() && place.through.is_none()
-}
-
-fn clear_callee_places(block: &mut MirBlock) {
-    for instruction in &mut block.instrs {
-        if let MirInstr::CallIndirect { callee_place, .. } = instruction {
-            *callee_place = None;
-        }
-        for region in instruction_regions_mut(instruction) {
-            clear_callee_places(region);
-        }
-    }
 }
 
 fn collect<S: BuildHasher>(

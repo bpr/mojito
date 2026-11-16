@@ -18,6 +18,7 @@
 //! dying register is the call's receiver itself, as upstream's destructor
 //! call consumes an owned SSA value.
 
+use super::legacy_places::{LegacyCursor, LegacyOperandTables};
 use super::{
     MirBlock, MirFunction, MirInstr, MirPlace, Reg, UseMode, VarId, fresh_register,
     instruction_regions_mut,
@@ -44,6 +45,27 @@ pub fn lower_drops(
     let mut blocks = std::mem::take(&mut function.body);
     lower_list(&mut blocks, &judge, function);
     function.body = blocks;
+}
+
+/// Pass the receiver of every `deinit`-receiver call of `functions` that
+/// names its consumed storage by its receiver place, as MIR text before
+/// schema 1.200 does and the reader keeps in `legacy`, as the operand
+/// upstream's call consumes.
+///
+/// A memory-only receiver becomes a mutable `ref.make` of the storage, and
+/// a register-passable one the owned value moved out of it
+/// ([`MirInstr::take_place`]). The load defining the receiver becomes that
+/// operand; where none precedes the call in its block, a fresh one does.
+pub fn upgrade_deinit_receivers(
+    functions: &mut [(String, MirFunction)],
+    declarations: &super::MirDeclarations,
+    legacy: &LegacyOperandTables,
+) {
+    for (index, (_, function)) in functions.iter_mut().enumerate() {
+        let mut body = std::mem::take(&mut function.body);
+        upgrade_deinit_receivers_in(&mut body, function, declarations, &mut legacy.cursor(index));
+        function.body = body;
+    }
 }
 
 /// The predicates [`lower_drops`] lowers by.
@@ -165,45 +187,24 @@ fn consumed_place_handle(place: &MirPlace, ty: Ty) -> Ty {
         })
 }
 
-/// Pass the receiver of every `deinit`-receiver call of `functions` that
-/// names its consumed storage by its receiver place, as MIR text before
-/// schema 1.200 does, as the operand upstream's call consumes.
-///
-/// A memory-only receiver becomes a mutable `ref.make` of the storage, and
-/// a register-passable one the owned value moved out of it
-/// ([`MirInstr::take_place`]). The load defining the receiver becomes that
-/// operand; where none precedes the call in its block, a fresh one does.
-pub fn upgrade_deinit_receivers(
-    functions: &mut [(String, MirFunction)],
-    declarations: &super::MirDeclarations,
-) {
-    for (_, function) in functions {
-        let mut body = std::mem::take(&mut function.body);
-        upgrade_deinit_receivers_in(&mut body, function, declarations);
-        function.body = body;
-    }
-}
-
 /// [`upgrade_deinit_receivers`] over `block` and its regions.
 fn upgrade_deinit_receivers_in(
     block: &mut MirBlock,
     function: &mut MirFunction,
     declarations: &super::MirDeclarations,
+    cursor: &mut LegacyCursor<'_>,
 ) {
     let mut index = 0;
     while index < block.instrs.len() {
         for region in instruction_regions_mut(&mut block.instrs[index]) {
-            upgrade_deinit_receivers_in(region, function, declarations);
+            upgrade_deinit_receivers_in(region, function, declarations, cursor);
         }
-        let deinit = block.instrs[index].deinit_receiver();
-        let MirInstr::MethodCall {
-            recv, recv_place, ..
-        } = &mut block.instrs[index]
-        else {
-            index += 1;
-            continue;
-        };
-        let Some(place) = recv_place.take_if(|_| deinit).map(|place| *place) else {
+        let instruction = &block.instrs[index];
+        let place = cursor
+            .visit(instruction)
+            .filter(|_| instruction.deinit_receiver())
+            .and_then(|places| places.receiver.clone());
+        let (Some(place), MirInstr::MethodCall { recv, .. }) = (place, instruction) else {
             index += 1;
             continue;
         };

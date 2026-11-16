@@ -2544,9 +2544,16 @@ through itself included. The verifier
 or `call.method` binding by its callee's declaration; the same rule at a
 by-address `read` slot waits on the shapes above (R2251). A MIR text
 artifact older than 1.192 is upgraded as it loads
-(`mir::upgrade_call_operands`), and one older than 1.198 has its
+(`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded
-(`mir::upgrade_stored_handles`). `mir::call_operand_parameters` maps each operand
+(`call_addresses::upgrade_stored_handles`). Every load-time upgrade reads an
+older call's operand places from the reader's side table
+(`mir/legacy_places.rs`, `LegacyOperandTables`), paired with the
+call-shaped instructions of each function in decode order, as an MLIR
+dialect's bytecode upgrade reads an old encoding inside the reader: no
+upgrade reads or writes a place field of the IR, and the reader drops a
+pre-1.201 `callee_place` and a pre-1.200 `deinit` receiver's `recv_place`
+as it reads them. `mir::call_operand_parameters` maps each operand
 to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a
 memory-only type, with a retained `recv_place` becomes a `ref.make` of it,
