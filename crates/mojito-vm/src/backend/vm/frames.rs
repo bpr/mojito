@@ -392,7 +392,6 @@ impl VmBackend {
             result_adapter,
             args,
             kwargs,
-            recv_place,
             ..
         } = instruction
         else {
@@ -470,25 +469,19 @@ impl VmBackend {
         };
         // The receiver enters by the rule [`Self::method_call`] applies: a
         // by-address receiver as its reference, an owned one as its value,
-        // and the call consumes a `deinit` receiver's place, as upstream's
-        // call consumes a `DeinitMem` operand: the place holds the
-        // ended-place tombstone from the call on.
+        // and the call consumes the storage a `deinit` receiver's reference
+        // addresses, as upstream's call consumes a `DeinitMem` operand: the
+        // storage holds the ended-place tombstone from the call on.
         let deinit_receiver = definition.deinit_params.first().copied().unwrap_or(false);
         let owned_receiver =
             deinit_receiver || definition.owned_params.first().copied().unwrap_or(false);
+        if deinit_receiver && let Some(reference) = &receiver_operand {
+            self.write_reference(reference, caller.id, &mut caller.variables, Value::Moved)?;
+        }
         let receiver = match receiver_operand {
             Some(reference) if !owned_receiver => reference,
             _ => receiver,
         };
-        if deinit_receiver && let Some(place) = recv_place.as_deref() {
-            self.store_at_call_place(
-                caller.id,
-                place,
-                Value::Moved,
-                &caller.registers,
-                &mut caller.variables,
-            )?;
-        }
         let mut call_args = Vec::with_capacity(bound.len() + 1);
         call_args.push(receiver);
         call_args.extend(bound);

@@ -830,6 +830,18 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this `deinit` receiver's type is proven register-passable,
+    /// so it is passed as an owned value taken out of its storage rather
+    /// than by address.
+    pub(super) fn register_passable_consume(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::RegisterPassableConsume
+            )
+        })
+    }
+
     /// Whether the value this node lowers to is returned through memory, as
     /// upstream's `ByRefResult` argument: an implicit conversion's when its
     /// constructor's is, a conditional expression's when the checker did

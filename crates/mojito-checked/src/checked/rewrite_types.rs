@@ -733,6 +733,7 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::Truthiness
             | Self::RegisterPassableResult
             | Self::RegisterPassableRead
+            | Self::RegisterPassableConsume
             | Self::IndirectResult
             | Self::ConversionIndirectResult
             | Self::ConversionReadsSource

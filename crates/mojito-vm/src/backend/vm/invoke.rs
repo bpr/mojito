@@ -170,7 +170,6 @@ impl VmBackend {
             arguments: args,
             keyword_arguments: kwargs,
             receiver_operand,
-            receiver_place,
         } = invocation;
         let CallerFrame {
             id: frame_id,
@@ -258,20 +257,21 @@ impl VmBackend {
                 // A by-address receiver enters as the reference its operand
                 // is, as upstream's method binds its `!lit.ref` `self`; an
                 // owned or `deinit` receiver is the value the call transfers,
-                // and the call consumes a `deinit` receiver's place, as
-                // upstream's call consumes a `DeinitMem` operand: the
-                // callee's elaborated drops destroy its fields, and the
-                // place holds the VM's ended-place tombstone from the call on.
+                // and the call consumes the storage a `deinit` receiver's
+                // reference addresses, as upstream's call consumes a
+                // `DeinitMem` operand: the callee's elaborated drops destroy
+                // its fields, and the storage holds the VM's ended-place
+                // tombstone from the call on.
                 let deinit_receiver = function.deinit_params.first().copied().unwrap_or(false);
                 let owned_receiver =
                     deinit_receiver || function.owned_params.first().copied().unwrap_or(false);
+                if deinit_receiver && let Some(reference) = &receiver_operand {
+                    self.write_reference(reference, frame_id, vars, Value::Moved)?;
+                }
                 let receiver = match receiver_operand {
                     Some(reference) if !owned_receiver => reference,
                     _ => recv.clone(),
                 };
-                if deinit_receiver && let Some(place) = receiver_place {
-                    self.store_at_call_place(frame_id, place, Value::Moved, regs, vars)?;
-                }
                 let mut call_args = Vec::with_capacity(bound.len() + 1);
                 call_args.push(receiver);
                 call_args.extend(bound);

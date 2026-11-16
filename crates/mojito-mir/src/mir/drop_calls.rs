@@ -11,44 +11,56 @@
 //! it, which ends it and hands its storage to the callee as Mojo's owned
 //! argument convention does, and a call of the named destructor on it as the
 //! `deinit self` receiver, which is what an explicit `x^.finish()` lowers
-//! to; a dying part becomes a load of the part and the call on it with the
-//! part as its receiver's place, whose `deinit` receiver consumes the part
-//! in place, as upstream's call consumes the field's address; a dying
-//! register is the call's receiver itself, as upstream's destructor call
-//! consumes an owned SSA value.
+//! to; a dying memory-only part becomes a `ref.make` of the part, the call's
+//! `DeinitMem` operand, whose call consumes the referenced storage as
+//! upstream's call consumes the field's address, and a register-passable
+//! one is moved out of its storage into the owned value the call takes; a
+//! dying register is the call's receiver itself, as upstream's destructor
+//! call consumes an owned SSA value.
 
 use super::{
     MirBlock, MirFunction, MirInstr, MirPlace, Reg, UseMode, VarId, fresh_register,
     instruction_regions_mut,
 };
 use mojito_common::token::SourceSpan;
-use mojito_types::types::TyKind;
+use mojito_types::types::{Ty, TyKind};
 
 /// Lower every named drop of `function`, in its regions too, to a call of
 /// its destructor.
 ///
 /// A destructor `unconditional` does not hold of, one available only where
 /// a `where` clause holds, stays a drop for the elaborator to name per
-/// instance.
-pub fn lower_drops(function: &mut MirFunction, unconditional: &dyn Fn(&str) -> bool) {
+/// instance. `register_passable` judges a dying part's type, which decides
+/// whether the call takes it by address or as a value moved out of it.
+pub fn lower_drops(
+    function: &mut MirFunction,
+    unconditional: &dyn Fn(&str) -> bool,
+    register_passable: &dyn Fn(&Ty) -> bool,
+) {
+    let judge = Judge {
+        unconditional,
+        register_passable,
+    };
     let mut blocks = std::mem::take(&mut function.body);
-    lower_list(&mut blocks, unconditional, function);
+    lower_list(&mut blocks, &judge, function);
     function.body = blocks;
 }
 
+/// The predicates [`lower_drops`] lowers by.
+struct Judge<'p> {
+    unconditional: &'p dyn Fn(&str) -> bool,
+    register_passable: &'p dyn Fn(&Ty) -> bool,
+}
+
 /// Lower the named drops of the block list `list` and of its regions.
-fn lower_list(
-    block: &mut MirBlock,
-    unconditional: &dyn Fn(&str) -> bool,
-    function: &mut MirFunction,
-) {
+fn lower_list(block: &mut MirBlock, judge: &Judge<'_>, function: &mut MirFunction) {
     let instructions = std::mem::take(&mut block.instrs);
     block.instrs = Vec::with_capacity(instructions.len());
     for mut instruction in instructions {
         for region in instruction_regions_mut(&mut instruction) {
-            lower_list(region, unconditional, function);
+            lower_list(region, judge, function);
         }
-        match lowered(&instruction, unconditional, function) {
+        match lowered(&instruction, judge, function) {
             Some(lowered) => block.instrs.extend(lowered),
             None => block.instrs.push(instruction),
         }
@@ -59,7 +71,7 @@ fn lower_list(
 /// instruction.
 fn lowered(
     instruction: &MirInstr,
-    unconditional: &dyn Fn(&str) -> bool,
+    judge: &Judge<'_>,
     function: &mut MirFunction,
 ) -> Option<Vec<MirInstr>> {
     let (dying, destructor) = match instruction {
@@ -77,11 +89,11 @@ fn lowered(
         } => (Dying::Reg(*reg), destructor),
         _ => return None,
     };
-    if !unconditional(destructor) {
+    if !(judge.unconditional)(destructor) {
         return None;
     }
-    let (recv, place, load) = match dying {
-        Dying::Reg(reg) => (reg, None, None),
+    let (recv, load) = match dying {
+        Dying::Reg(reg) => (reg, None),
         Dying::Var(var) => {
             let ty = function.var_tys.get(&var).cloned()?;
             let span = death_span(function, var);
@@ -92,17 +104,23 @@ fn lowered(
                 mode: UseMode::Forward,
                 constructor: None,
             };
-            (recv, None, Some(load))
+            (recv, Some(load))
         }
         Dying::Place(place) => {
             let ty = place.ty.clone()?;
             let span = death_span(function, place.root);
-            let recv = fresh_register(function, ty, span.as_ref());
-            let load = MirInstr::LoadPlace {
-                dest: recv,
-                place: place.clone(),
-            };
-            (recv, Some(place), Some(load))
+            if (judge.register_passable)(&ty) {
+                let recv = fresh_register(function, ty, span.as_ref());
+                (recv, Some(MirInstr::take_place(recv, place.clone())))
+            } else {
+                let handle = consumed_place_handle(place, ty);
+                let recv = fresh_register(function, handle, span.as_ref());
+                let make = MirInstr::MakeRef {
+                    dest: recv,
+                    place: place.clone(),
+                };
+                (recv, Some(make))
+            }
         }
     };
     let span = function.spans.0.get(&recv.0).map(|(span, _)| span.clone());
@@ -118,7 +136,7 @@ fn lowered(
         result_adapter: None,
         args: Vec::new(),
         kwargs: Vec::new(),
-        recv_place: place.cloned().map(Box::new),
+        recv_place: None,
         recv_writes: true,
         receiver_convention: Some(mojito_ast::ast::ArgConvention::Deinit),
         arg_places: Vec::new(),
@@ -131,6 +149,122 @@ fn lowered(
         refined_bound: None,
     };
     Some(load.into_iter().chain([call]).collect())
+}
+
+/// The type of the mutable reference a `deinit` call consumes `place`,
+/// of type `ty`, through.
+fn consumed_place_handle(place: &MirPlace, ty: Ty) -> Ty {
+    super::mir_place_handle_ty(place, Some(mojito_types::origin::Mutability::Mutable))
+        .unwrap_or_else(|| {
+            TyKind::Ref(mojito_types::origin::RefTy {
+                referent: ty,
+                origin: mojito_types::origin::Origin::Untracked { mutable: true },
+                mutability: mojito_types::origin::Mutability::Mutable,
+            })
+            .into()
+        })
+}
+
+/// Pass the receiver of every `deinit`-receiver call of `functions` that
+/// names its consumed storage by its receiver place, as MIR text before
+/// schema 1.200 does, as the operand upstream's call consumes.
+///
+/// A memory-only receiver becomes a mutable `ref.make` of the storage, and
+/// a register-passable one the owned value moved out of it
+/// ([`MirInstr::take_place`]). The load defining the receiver becomes that
+/// operand; where none precedes the call in its block, a fresh one does.
+pub fn upgrade_deinit_receivers(
+    functions: &mut [(String, MirFunction)],
+    declarations: &super::MirDeclarations,
+) {
+    for (_, function) in functions {
+        let mut body = std::mem::take(&mut function.body);
+        upgrade_deinit_receivers_in(&mut body, function, declarations);
+        function.body = body;
+    }
+}
+
+/// [`upgrade_deinit_receivers`] over `block` and its regions.
+fn upgrade_deinit_receivers_in(
+    block: &mut MirBlock,
+    function: &mut MirFunction,
+    declarations: &super::MirDeclarations,
+) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            upgrade_deinit_receivers_in(region, function, declarations);
+        }
+        let deinit = block.instrs[index].deinit_receiver();
+        let MirInstr::MethodCall {
+            recv, recv_place, ..
+        } = &mut block.instrs[index]
+        else {
+            index += 1;
+            continue;
+        };
+        let Some(place) = recv_place.take_if(|_| deinit).map(|place| *place) else {
+            index += 1;
+            continue;
+        };
+        let register = *recv;
+        let ty = place
+            .ty
+            .clone()
+            .or_else(|| function.reg_types.get(&register.0).cloned());
+        let register_passable = ty
+            .as_ref()
+            .is_some_and(|ty| declarations.register_passable(ty));
+        let loaded = block.instrs[..index].iter().rposition(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::LoadPlace { dest, place: read }
+                    if *dest == register
+                        && super::call_addresses::same_storage(read, &place)
+                        && read.through == place.through
+            )
+        });
+        let receiver = match (loaded, register_passable) {
+            (Some(at), true) => {
+                block.instrs[at] = MirInstr::take_place(register, place);
+                register
+            }
+            (Some(at), false) => {
+                let handle = consumed_place_handle(&place, ty.unwrap_or_else(Ty::error));
+                function.reg_types.insert(register.0, handle);
+                block.instrs[at] = MirInstr::MakeRef {
+                    dest: register,
+                    place,
+                };
+                register
+            }
+            (None, true) => {
+                let taken = fresh_register(function, ty.unwrap_or_else(Ty::error), None);
+                block
+                    .instrs
+                    .insert(index, MirInstr::take_place(taken, place));
+                index += 1;
+                taken
+            }
+            (None, false) => {
+                let handle = consumed_place_handle(&place, ty.unwrap_or_else(Ty::error));
+                let address = fresh_register(function, handle, None);
+                block.instrs.insert(
+                    index,
+                    MirInstr::MakeRef {
+                        dest: address,
+                        place,
+                    },
+                );
+                index += 1;
+                address
+            }
+        };
+        if let MirInstr::MethodCall { recv, .. } = &mut block.instrs[index] {
+            *recv = receiver;
+        }
+        index += 1;
+    }
 }
 
 /// What a named drop destroys.

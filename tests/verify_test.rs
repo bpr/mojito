@@ -2880,6 +2880,54 @@ fn verifier_rejects_a_destroy_of_a_memory_only_register() {
     assert!(findings(vec![forwarded, deinit_call(3, 0)]).is_empty());
 }
 
+/// A `deinit`-receiver call names the storage it consumes by its operand,
+/// upstream's `DeinitMem` `!lit.ref`: one whose receiver is a `ref.make`
+/// of `x` passes, while one naming `x` by a receiver place beside a
+/// loaded value is rejected.
+#[test]
+fn verifier_rejects_a_deinit_receiver_named_by_its_place() {
+    let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
+    let x = MirPlace::root(0, Some(s.clone()));
+    let findings = |instrs: Vec<MirInstr>| -> Vec<String> {
+        owned_register_findings(
+            block(instrs, MirTerm::Return(None)),
+            &[
+                (2, reference_ty(s.clone(), mojito::Mutability::Mutable)),
+                (3, Ty::none()),
+            ],
+            MirDeclarations::default(),
+        )
+        .into_iter()
+        .filter(|finding| finding.contains("deinit receiver"))
+        .collect()
+    };
+    let addressed = vec![
+        MirInstr::MakeRef {
+            dest: Reg(2),
+            place: x.clone(),
+        },
+        deinit_call(3, 2),
+    ];
+    assert_eq!(findings(addressed), Vec::<String>::new());
+    let mut placed = deinit_call(3, 0);
+    if let MirInstr::MethodCall { recv_place, .. } = &mut placed {
+        *recv_place = Some(Box::new(x.clone()));
+    }
+    let loaded = vec![
+        MirInstr::LoadPlace {
+            dest: Reg(0),
+            place: x,
+        },
+        placed,
+    ];
+    assert_eq!(
+        findings(loaded),
+        [
+            "MIR function 'test': call.method deinit receiver names its consumed storage by a receiver place rather than by its operand"
+        ]
+    );
+}
+
 /// `x` stored from r0.
 fn store_x() -> Vec<MirInstr> {
     vec![MirInstr::DefVar {

@@ -635,7 +635,7 @@ impl FnLowering<'_> {
     }
 
     /// Whether `reg` is a reference: the `!lit.ref` a by-address operand is.
-    fn is_reference_operand(&self, reg: Reg) -> bool {
+    pub(super) fn is_reference_operand(&self, reg: Reg) -> bool {
         matches!(
             self.func.reg_types.get(&reg.0).map(Ty::kind),
             Some(TyKind::Ref(_))

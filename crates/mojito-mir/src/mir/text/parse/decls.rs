@@ -121,6 +121,13 @@ impl Decoder {
         if self.minor < 199 {
             crate::mir::upgrade_bound_receivers(&mut functions);
         }
+        // Schema 1.200 passes a `deinit` receiver as the call consumes it:
+        // a memory-only one by address, a register-passable one moved out
+        // of its storage; an older call names that storage by its receiver
+        // place.
+        if self.minor < 200 {
+            crate::mir::upgrade_deinit_receivers(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

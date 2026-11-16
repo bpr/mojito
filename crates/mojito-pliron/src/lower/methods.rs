@@ -42,9 +42,9 @@ impl FnLowering<'_> {
     }
 
     /// A resolved method call: a by-address receiver or argument passes the
-    /// reference its operand is, and an aggregate passes by pointer.
-    /// `recv_place` is read only for a `deinit` receiver, whose consumed
-    /// place the call still takes from the place table (R2191).
+    /// reference its operand is, and an aggregate passes by pointer. A
+    /// `deinit` receiver that is a reference is the `DeinitMem` operand
+    /// whose storage the call consumes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_method_call(
         &mut self,
@@ -55,7 +55,6 @@ impl FnLowering<'_> {
         resolved: Option<&str>,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
@@ -130,16 +129,14 @@ impl FnLowering<'_> {
             ));
         }
         let recv_owned = owned.first().copied().unwrap_or(false);
-        // An aggregate `deinit` receiver with a place consumes the caller's
-        // storage in place (R2191). A `mut`/`ref` receiver passes the reference its
+        // An aggregate `deinit` receiver that is a reference consumes the
+        // storage it addresses in place, and a scalar one passes the value
+        // read through it. A `mut`/`ref` receiver passes the reference its
         // operand is, and a zero-sized one (a numeric literal) has no
         // physical operand: the compiled signature erased its slot.
-        let recv_value = if deinit_receiver
-            && matches!(params[0], LowerTy::Aggregate { .. })
-            && let Some(place) = recv_place
-        {
-            Some(self.aliased_receiver_address(ctx, place, dest)?)
-        } else if by_reference.first().copied().unwrap_or(false) {
+        let deinit_reference = deinit_receiver && self.is_reference_operand(recv);
+        let aggregate_deinit = deinit_reference && matches!(params[0], LowerTy::Aggregate { .. });
+        let recv_value = if aggregate_deinit || by_reference.first().copied().unwrap_or(false) {
             Some(self.by_address_operand(ctx, recv, dest)?)
         } else if matches!(params[0], LowerTy::ZeroSized) {
             None
@@ -148,7 +145,7 @@ impl FnLowering<'_> {
                 ctx,
                 recv,
                 &params[0],
-                recv_owned || deinit_receiver,
+                (recv_owned || deinit_receiver) && !deinit_reference,
                 dest,
             )?)
         };

@@ -136,7 +136,7 @@ pub(super) const fn loan_liveness_def(i: &MirInstr) -> Option<VarId> {
 
 /// The variable transferred out by this instruction (a `^` move), if any — such a
 /// variable is *not* dropped here (its value has moved to a new owner).
-pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
+pub(super) fn vars_moved(i: &MirInstr, addresses: &OperandAddresses) -> Vec<VarId> {
     match i {
         MirInstr::UseVar { var, mode, .. } if mode.moves() => vec![*var],
         // A `deinit` parameter's or pack's end before the exit.
@@ -146,7 +146,7 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
         // upstream's call consumes its `DeinitMem` operand; splicing an
         // ordinary drop as well would run the destructor the named
         // destructor replaced.
-        MirInstr::MethodCall { .. } => i.consumed_receiver_slot().into_iter().collect(),
+        MirInstr::MethodCall { .. } => i.consumed_receiver_slot(addresses).into_iter().collect(),
         // A whole slot marked destroyed has handed its value on through a
         // pointer (an owned `VariadicList`'s element).
         MirInstr::MarkDestroyed { place } if place.is_whole_root() => vec![place.root],

@@ -464,7 +464,8 @@ rejects both as unknown, which is the intended failure.
 
 Schema 1.98 adds `deinit_receiver` after a `call.method`'s `recv_writes`:
 whether the callee's receiver is `deinit` (upstream's `DeinitMem`), so the
-call itself consumes its `recv_place`, as upstream's call consumes its
+call itself consumed its `recv_place` (since 1.200 the storage its
+receiver's `ref.make` addresses), as upstream's call consumes its
 operand (`memConsume`). The verifier requires it to match the callee's
 declared receiver convention. An explicit destroy is the call alone: no
 `consume.var` of a whole receiver follows it, and `consume.place`, which
@@ -1197,6 +1198,20 @@ it loads: a `rebind` of the pack to its pointers, which the load then
 takes. The package format moves to `mojito-package 218` with it, when a
 checked `kgen.struct.load_indirect` records
 `SemanticAdjustment::KgenStructLoadIndirect` (R1922).
+
+Schema 1.200 passes a `deinit` receiver as upstream's call takes it: a
+memory-only one as a mutable `ref.make` of the storage the call consumes,
+its `DeinitMem` operand, and a register-passable one as the owned value
+moved out of that storage (a forwarding `var.use` of a whole slot, a
+`place.move` of a part). A `deinit` call carries no `recv_place`; the
+storage it consumes is the place its receiver's `ref.make` addresses
+(`MirInstr::consumed_receiver`), and the verifier rejects one that keeps
+a receiver place. The syntax is unchanged. An older artifact's `deinit`
+call is upgraded as it loads (`mir::upgrade_deinit_receivers`): the load
+of its receiver place becomes that `ref.make`, retyped as the reference,
+or the move. The package format moves to `mojito-package 225` with it,
+when the check records `SemanticAdjustment::RegisterPassableConsume` on a
+register-passable `deinit` receiver (R2267).
 
 Schema 1.199 passes a `def(...)` bound's callee to its `__call__`
 requirement call as an immutable `ref.make` of the callee's place (the

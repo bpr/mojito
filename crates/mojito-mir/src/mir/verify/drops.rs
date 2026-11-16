@@ -53,8 +53,8 @@ use super::{
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
-    MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds, TryLabel, UseMode,
-    VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
+    MirDeclarations, MirPlace, OperandAddresses, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds,
+    TryLabel, UseMode, VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -71,7 +71,7 @@ pub(super) fn verify_slot_ends(
     errors: &mut Vec<String>,
 ) {
     let owned = RegisterEnds::new(function, declarations);
-    if owned.is_empty() && !ends_slots(&function.body) {
+    if owned.is_empty() && !ends_slots(&function.body, owned.addresses()) {
         return;
     }
     let mut walk = Walk::new(name, function, owned);
@@ -90,13 +90,15 @@ pub(super) fn verify_slot_ends(
 }
 
 /// Report every destroy of a memory-only register in `function`: a
-/// `drop.reg`, or a `deinit`-receiver call with no
-/// receiver place, of a register whose type
+/// `drop.reg`, or a `deinit`-receiver call, of a register whose type
 /// [`MirDeclarations::register_passable`] answers no for. Upstream's
 /// `CheckLifetimes` tracks only a register-passable value as an SSA value
 /// (`ValueSet::addValue`'s `numValueBits = 1`) and destroys a memory-only
-/// one through its storage. A receiver a forwarding `var.use` defines is
+/// one through its storage: a `deinit` receiver addressing that storage is
+/// a reference, which passes. A receiver a forwarding `var.use` defines is
 /// that storage handed over, the form `lower_drops` gives every slot drop.
+/// A `deinit`-receiver call names the storage it consumes by its operand
+/// alone, never by a receiver place.
 pub(super) fn verify_register_destroys(
     name: &str,
     function: &MirFunction,
@@ -730,12 +732,14 @@ impl<'a> Walk<'a> {
         }
         // A `deinit`-receiver call ends its receiver as a `drop.place`
         // does, after the call has read it.
-        let consumed = instruction.consumed_receiver();
+        let consumed = instruction
+            .consumed_receiver(self.owned.addresses())
+            .cloned();
         if report {
             if let MirInstr::DropPlace { place, .. } = instruction {
                 self.report_destroy(state, "drop.place", place);
             }
-            if let Some(place) = consumed {
+            if let Some(place) = &consumed {
                 self.report_destroy(state, "call.method deinit receiver", place);
             }
         }
@@ -763,7 +767,7 @@ impl<'a> Walk<'a> {
             | MirInstr::MarkDestroyed { place } => vec![place],
             _ => Vec::new(),
         };
-        for place in ended.into_iter().chain(consumed) {
+        for place in ended.into_iter().chain(consumed.as_ref()) {
             if place.is_whole_root() {
                 state.end(place.root);
             } else if let Some(path) = place.owned_path() {
@@ -813,13 +817,15 @@ fn part_text(part: &[OwnedStep]) -> String {
 /// Whether `block`, at any depth, ends a slot or destroys a part: a
 /// `drop.var`, a `var.consume`, a `drop.place`, or a `deinit`-receiver
 /// call.
-fn ends_slots(block: &MirBlock) -> bool {
+fn ends_slots(block: &MirBlock, addresses: &OperandAddresses) -> bool {
     block.instrs.iter().any(|instruction| {
         matches!(
             instruction,
             MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. } | MirInstr::DropPlace { .. }
-        ) || instruction.consumed_receiver().is_some()
-            || instruction_regions(instruction).into_iter().any(ends_slots)
+        ) || instruction.consumed_receiver(addresses).is_some()
+            || instruction_regions(instruction)
+                .into_iter()
+                .any(|region| ends_slots(region, addresses))
     })
 }
 
@@ -889,10 +895,18 @@ impl RegisterDestroys<'_> {
             let (reg, what) = match instruction {
                 MirInstr::Drop { reg, .. } => (*reg, "drop.reg"),
                 MirInstr::MethodCall {
-                    recv,
-                    recv_place: None,
+                    recv_place: Some(_),
                     ..
-                } if instruction.deinit_receiver() && !self.forwarded.contains(&recv.0) => {
+                } if instruction.deinit_receiver() => {
+                    errors.push(format!(
+                        "MIR function '{}': call.method deinit receiver names its consumed storage by a receiver place rather than by its operand",
+                        self.name
+                    ));
+                    continue;
+                }
+                MirInstr::MethodCall { recv, .. }
+                    if instruction.deinit_receiver() && !self.forwarded.contains(&recv.0) =>
+                {
                     (*recv, "call.method deinit receiver")
                 }
                 _ => continue,
@@ -900,7 +914,9 @@ impl RegisterDestroys<'_> {
             let Some(ty) = self.function.reg_types.get(&reg.0) else {
                 continue;
             };
-            if !self.declarations.register_passable(ty) {
+            let addressed =
+                what != "drop.reg" && matches!(ty.kind(), mojito_types::types::TyKind::Ref(_));
+            if !addressed && !self.declarations.register_passable(ty) {
                 errors.push(format!(
                     "MIR function '{}': {what} destroys %r{} of memory-only type {ty}, which upstream destroys through its storage",
                     self.name, reg.0

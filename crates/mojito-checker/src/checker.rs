@@ -2490,7 +2490,9 @@ impl Checker {
     /// ([`mojito_checked::checked::SemanticAdjustment::ConversionReadsSource`]).
     /// A read argument, a borrowed place or a temporary,
     /// whose type is not memory-only is passed by value
-    /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]).
+    /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]),
+    /// and so is a `deinit` receiver whose type is not memory-only
+    /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableConsume`]).
     fn record_result_conventions(&self) {
         let memory_only = |ty: &Ty| self.memory_only(ty);
         // An initializer's declared result is its `out self`, the struct at
@@ -2502,7 +2504,7 @@ impl Checker {
                 .filter(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
                 .and_then(|(name, _)| self.self_instance_ty(name))
         };
-        let judged: Vec<(SourceSpan, bool, bool, bool, bool)> = {
+        let judged: Vec<(SourceSpan, bool, bool, bool, bool, bool)> = {
             let records = self.node_facts.borrow();
             records
                 .iter()
@@ -2540,17 +2542,33 @@ impl Checker {
                         .is_some_and(|ty| memory_only(ty) || facts.conversion_raises.is_some());
                     let reads_source =
                         facts.conversion_reads_source && facts.ty.as_ref().is_some_and(memory_only);
-                    (indirect || converted || by_value || facts.conversion_reads_source)
-                        .then(|| (span.clone(), indirect, converted, by_value, reads_source))
+                    let consumed_by_value = facts.consumed_receiver
+                        && facts.ty.as_ref().is_some_and(|ty| !memory_only(ty));
+                    (indirect
+                        || converted
+                        || by_value
+                        || consumed_by_value
+                        || facts.conversion_reads_source)
+                        .then(|| {
+                            (
+                                span.clone(),
+                                indirect,
+                                converted,
+                                by_value,
+                                consumed_by_value,
+                                reads_source,
+                            )
+                        })
                 })
                 .collect()
         };
         let mut records = self.node_facts.borrow_mut();
-        for (span, indirect, converted, by_value, reads_source) in judged {
+        for (span, indirect, converted, by_value, consumed_by_value, reads_source) in judged {
             if let Some(facts) = records.get_mut(&span) {
                 facts.indirect_result = indirect;
                 facts.conversion_indirect_result = converted;
                 facts.register_passable_read = by_value;
+                facts.register_passable_consume = consumed_by_value;
                 facts.conversion_reads_source = reads_source;
             }
         }

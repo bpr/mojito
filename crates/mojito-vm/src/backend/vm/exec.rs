@@ -1050,7 +1050,6 @@ impl VmBackend {
                 result_adapter,
                 args,
                 kwargs,
-                recv_place,
                 ..
             } => {
                 let reg_types = &prog.mir.functions[function].1.reg_types;
@@ -1096,7 +1095,6 @@ impl VmBackend {
                             arguments: argv,
                             keyword_arguments: kw,
                             receiver_operand,
-                            receiver_place: recv_place.as_deref(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1222,7 +1220,6 @@ impl VmBackend {
                 dest,
                 base,
                 index,
-                base_place,
                 call,
                 intrinsic,
                 ..
@@ -1293,7 +1290,6 @@ impl VmBackend {
                             arguments,
                             keyword_arguments: Vec::new(),
                             receiver_operand,
-                            receiver_place: base_place.as_deref(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1368,7 +1364,6 @@ impl VmBackend {
                 dest,
                 object,
                 args,
-                object_place,
                 kwargs,
                 call,
                 ..
@@ -1401,7 +1396,6 @@ impl VmBackend {
                         arguments,
                         keyword_arguments,
                         receiver_operand,
-                        receiver_place: object_place.as_deref(),
                     },
                     CallerFrame {
                         id: frame_id,
@@ -1415,7 +1409,6 @@ impl VmBackend {
             }
             MirInstr::MultiSet {
                 receiver,
-                receiver_place,
                 args,
                 value,
                 value_keyword,
@@ -1443,7 +1436,6 @@ impl VmBackend {
                         arguments,
                         keyword_arguments,
                         receiver_operand,
-                        receiver_place: receiver_place.as_deref(),
                     },
                     CallerFrame {
                         id: frame_id,

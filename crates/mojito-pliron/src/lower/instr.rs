@@ -434,7 +434,6 @@ impl FnLowering<'_> {
                 result_adapter,
                 args,
                 kwargs,
-                recv_place,
                 capture_accesses,
                 ..
             } => {
@@ -444,7 +443,7 @@ impl FnLowering<'_> {
                 // Capture accesses are static ownership facts execution
                 // erases; verified concrete MIR carries no compile-time
                 // argument slots. A by-address operand is the reference the
-                // call passes; only a `deinit` receiver's place is read.
+                // call passes, a `deinit` receiver's included.
                 let _ = capture_accesses;
                 let adapter = result_adapter
                     .as_deref()
@@ -457,7 +456,6 @@ impl FnLowering<'_> {
                     resolved.as_deref(),
                     args,
                     kwargs,
-                    recv_place.as_deref(),
                 )?;
                 // `__next__` reached through the iterator contract yields its
                 // element by value. An implementation that returns `ref`

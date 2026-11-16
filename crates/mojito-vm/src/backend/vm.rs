@@ -1486,8 +1486,6 @@ struct MethodInvocation<'a> {
     /// by-address receiver is, which the method binds as its `self`.
     /// `None` for a receiver passed by value.
     receiver_operand: Option<Value>,
-    /// The receiver's place, which a `deinit` receiver's call consumes.
-    receiver_place: Option<&'a MirPlace>,
 }
 
 /// Check that each `mut`/`ref` parameter of `function` binds a reference,

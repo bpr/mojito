@@ -4806,3 +4806,96 @@ fn older_mut_argument_loads_as_its_address() {
     );
     assert!(matches!(main.reg_types[&0].kind(), TyKind::Ref(_)));
 }
+
+/// A `deinit`-receiver call below MIR 1.200 names the storage it consumes
+/// by its receiver place beside a loaded value; the upgrade passes a
+/// memory-only receiver as a `ref.make` of that storage and a
+/// register-passable one moved out of it, with no receiver place.
+#[test]
+fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
+    let read = |ty: Ty| {
+        let place = MirPlace::root(0, Some(ty.clone()));
+        let mut function = function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![
+                MirInstr::LoadPlace {
+                    dest: Reg(0),
+                    place: place.clone(),
+                },
+                MirInstr::MethodCall {
+                    conventions: crate::mir::MirArgConventions::default(),
+                    dest: Reg(1),
+                    recv: Reg(0),
+                    method: "take".into(),
+                    resolved: Some("S.take".into()),
+                    raises: None,
+                    reference_result: None,
+                    result_adapter: None,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    recv_place: Some(Box::new(place)),
+                    recv_writes: true,
+                    receiver_convention: Some(mojito_ast::ast::ArgConvention::Deinit),
+                    arg_places: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                    refined_bound: None,
+                },
+            ],
+        );
+        function.n_vars = 1;
+        function.var_names = vec!["x".into()];
+        function.var_tys = HashMap::from([(0, ty)]);
+        let text = write::program(&program_with(vec![("main".into(), function)])).replacen(
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            "mojito-mir 1.199",
+            1,
+        );
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("the text reads");
+        let (_, function) = parsed.program.functions.into_iter().next().expect("main");
+        function
+    };
+    let memory_only = read(TyKind::Struct("S".into(), Vec::new()).into());
+    assert!(
+        matches!(
+            &memory_only.body.instrs[..],
+            [
+                MirInstr::MakeRef { dest: Reg(0), .. },
+                MirInstr::MethodCall {
+                    recv: Reg(0),
+                    recv_place: None,
+                    ..
+                },
+            ]
+        ),
+        "{memory_only:#?}"
+    );
+    assert!(matches!(
+        memory_only.reg_types.get(&0).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
+    let register_passable = read(Ty::int());
+    assert!(
+        matches!(
+            &register_passable.body.instrs[..],
+            [
+                MirInstr::UseVar {
+                    dest: Reg(0),
+                    var: 0,
+                    mode: crate::mir::UseMode::Forward,
+                    ..
+                },
+                MirInstr::MethodCall {
+                    recv: Reg(0),
+                    recv_place: None,
+                    ..
+                },
+            ]
+        ),
+        "{register_passable:#?}"
+    );
+}

@@ -102,13 +102,14 @@ pub(super) fn transfer_interior_instruction(
     instr: &MirInstr,
     generations: &BTreeMap<u32, InteriorGeneration>,
     f: &MirFunction,
+    addresses: &mojito_mir::mir::OperandAddresses,
 ) {
     match instr {
         MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => {
             remove_active_interior_reference(state, *var);
         }
         MirInstr::MethodCall { .. } => {
-            if let Some(var) = instr.consumed_receiver_slot() {
+            if let Some(var) = instr.consumed_receiver_slot(addresses) {
                 remove_active_interior_reference(state, var);
             }
         }
@@ -431,10 +432,10 @@ pub(super) fn interior_reference_uses(
         // `ref.make`, not a second time at the call; but a `deinit`-receiver
         // call consuming a part of its receiver reads it, as upstream's
         // `checkConsume` checks the interior origins reachable through a
-        // consumed operand (read at its place table until R2191).
+        // consumed operand.
         MirInstr::MethodCall { recv, .. } => {
             if let Some(place) = instr
-                .consumed_receiver()
+                .consumed_receiver(addresses)
                 .filter(|place| !place.is_whole_root())
             {
                 add_place(&mut uses, place, *recv);

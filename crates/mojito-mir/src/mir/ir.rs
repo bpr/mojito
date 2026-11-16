@@ -3139,14 +3139,32 @@ impl MirInstr {
     }
 
     /// The place a `deinit`-receiver call consumes in place, as upstream's
-    /// call consumes a `DeinitMem` operand (`memConsume`).
-    pub fn consumed_receiver(&self) -> Option<&MirPlace> {
+    /// call consumes a `DeinitMem` operand (`memConsume`): the storage its
+    /// receiver operand, a `ref.make`, addresses (`addresses`). A receiver
+    /// passed by value, moved out of its storage, consumes no place here.
+    pub fn consumed_receiver<'a>(
+        &self,
+        addresses: &'a crate::mir::OperandAddresses,
+    ) -> Option<&'a MirPlace> {
         match self {
-            Self::MethodCall {
-                recv_place: Some(place),
-                ..
-            } if self.deinit_receiver() => Some(place),
+            Self::MethodCall { recv, .. } if self.deinit_receiver() => addresses.made(*recv),
             _ => None,
+        }
+    }
+
+    /// The instruction that takes the value `place` holds into `dest`,
+    /// ending the storage, as upstream moves an owned argument out of it: a
+    /// forwarding use of a whole slot, or a `place.move` of a part.
+    pub fn take_place(dest: Reg, place: MirPlace) -> Self {
+        if place.proj.is_empty() && place.through.is_none() {
+            Self::UseVar {
+                dest,
+                var: place.root,
+                mode: UseMode::Forward,
+                constructor: None,
+            }
+        } else {
+            Self::MovePlace { dest, place }
         }
     }
 
@@ -3164,8 +3182,11 @@ impl MirInstr {
 
     /// The slot a `deinit`-receiver call consumes whole: its receiver place
     /// names a root, which ends there as a `consume.var` of it would.
-    pub fn consumed_receiver_slot(&self) -> Option<VarId> {
-        self.consumed_receiver()
+    pub fn consumed_receiver_slot(
+        &self,
+        addresses: &crate::mir::OperandAddresses,
+    ) -> Option<VarId> {
+        self.consumed_receiver(addresses)
             .filter(|place| place.is_whole_root())
             .map(|place| place.root)
     }

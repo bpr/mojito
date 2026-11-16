@@ -1601,8 +1601,15 @@ fn augmented_mutating_index_reloads_typed_source_before_setter() {
     assert_eq!(main.reg_types.get(&reload.0.0), Some(&Ty::int()));
 }
 
+/// The storage `call`, a `deinit`-receiver call of `function`, consumes:
+/// the place its receiver's `ref.make` addresses.
+fn consumed_receiver_place(function: &MirFunction, call: &MirInstr) -> Option<MirPlace> {
+    let addresses = mojito::mir::operand_addresses(&function.body, &function.reg_types);
+    call.consumed_receiver(&addresses).cloned()
+}
+
 #[test]
-fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
+fn implicitly_copied_tuple_transform_receivers_take_an_owned_copy() {
     let source = "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair, suffix, reversed, joined)\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1645,26 +1652,32 @@ fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
         .instrs
         .iter()
         .filter_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method, recv_place, ..
-            } if matches!(method.as_str(), "reverse" | "concat") => {
-                Some((method.as_str(), recv_place))
+            MirInstr::MethodCall { method, recv, .. }
+                if matches!(method.as_str(), "reverse" | "concat") =>
+            {
+                Some((*recv, consumed_receiver_place(main, instruction)))
             }
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2, "{calls:#?}");
-    // The copy lives in a call-result slot the `deinit` receiver consumes,
-    // never in the source's place.
+    // A register-passable `Tuple`'s copy is the owned value the `deinit`
+    // receiver takes, as upstream passes it: it consumes no storage, and
+    // never the source's place.
+    let copied = |receiver: Reg| {
+        main.body.instrs.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::CopyValue { dest, .. }
+                    | MirInstr::UseVar { dest, mode: UseMode::Copy, .. } if *dest == receiver
+            )
+        })
+    };
     assert!(
         calls
             .iter()
-            .all(|(_, place)| place.as_ref().is_some_and(|place| {
-                place.is_whole_root()
-                    && main.var_names[place.root as usize]
-                        .starts_with(mojito::mir::CALL_RESULT_SLOT)
-            })),
-        "{calls:#?}"
+            .all(|(receiver, place)| place.is_none() && copied(*receiver)),
+        "{main:#?}"
     );
     let pair = main
         .var_names
@@ -1694,9 +1707,10 @@ fn implicitly_copied_tuple_transform_receivers_consume_a_call_result_slot() {
 
 #[test]
 fn parameterized_explicit_destroy_receiver_consumes_its_place() {
-    // `counter^.take_param[2]()` hands the `deinit` receiver `counter`'s
-    // place, as the unparameterized `counter^.take()` does: the call
-    // consumes the storage, with no forwarded copy of it in a register.
+    // `counter^.take_param[2]()` passes the memory-only `deinit` receiver
+    // as a `ref.make` of `counter`, as the unparameterized
+    // `counter^.take()` does: the call consumes the storage, with no
+    // forwarded copy of it in a register.
     let source = "struct Counter(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter^.take_param[2]())\n";
     let mir = lower_program(&linked(source)).expect("checked lowering");
     let main = &mir
@@ -1715,13 +1729,13 @@ fn parameterized_explicit_destroy_receiver_consumes_its_place() {
         .instrs
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method, recv_place, ..
-            } if method == "take_param" => Some(recv_place.clone()),
+            MirInstr::MethodCall { method, .. } if method == "take_param" => {
+                Some(consumed_receiver_place(main, instruction))
+            }
             _ => None,
         })
         .expect("parameterized method call")
-        .expect("the explicit destroy keeps its receiver place");
+        .expect("the explicit destroy addresses its receiver");
     assert!(place.is_whole_root() && place.root == counter, "{main:#?}");
     assert!(
         !main.body.instrs.iter().any(|instruction| matches!(
@@ -1885,7 +1899,7 @@ fn transferred_temporary_receiver_is_its_call_result_slot() {
 #[test]
 fn implicitly_copied_consuming_receiver_is_consumed_in_its_call_result_slot() {
     // `v.unwrap[Int]()` over an `ImplicitlyCopyable` `Variant` copies `v`
-    // into a call-result slot whose place the `deinit` receiver consumes,
+    // into a call-result slot whose `ref.make` the `deinit` receiver is,
     // as upstream passes the copy's temporary as the `DeinitMem` operand.
     let source = "from std.utils import Variant\n\ndef main():\n    var v = Variant[Int, String](3)\n    print(v.unwrap[Int]())\n";
     let compiled = Compiler::default()
@@ -1896,13 +1910,13 @@ fn implicitly_copied_consuming_receiver_is_consumed_in_its_call_result_slot() {
     let place = nested_instructions(&main.body)
         .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method, recv_place, ..
-            } if method == "unwrap" => Some(recv_place.clone()),
+            MirInstr::MethodCall { method, .. } if method == "unwrap" => {
+                Some(consumed_receiver_place(main, instruction))
+            }
             _ => None,
         })
         .expect("the unwrap call")
-        .expect("the copied receiver's place");
+        .expect("the copied receiver's address");
     assert!(
         place.is_whole_root()
             && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
@@ -1963,10 +1977,11 @@ fn parameterized_implicit_receiver_copy_consumes_a_call_result_slot() {
         .find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method,
-                recv_place,
                 param_decls,
                 ..
-            } if method == "take_param" => Some((recv_place, param_decls)),
+            } if method == "take_param" => {
+                Some((consumed_receiver_place(main, instruction), param_decls))
+            }
             _ => None,
         })
         .expect("parameterized method call");

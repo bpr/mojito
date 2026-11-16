@@ -468,38 +468,26 @@ fn borrowed_operands(
         | MirInstr::VariantIs { variant: value, .. }
         | MirInstr::VariantTag { variant: value, .. }
         | MirInstr::VariantGet { variant: value, .. } => vec![value.0],
-        MirInstr::Index {
-            base,
-            base_place,
-            call,
-            ..
-        } => match call {
+        MirInstr::Index { base, call, .. } => match call {
             None => vec![base.0],
-            Some(call) if receiver_borrows(call.receiver_convention, base_place.is_some()) => {
+            Some(call) if receiver_borrows(call.receiver_convention) => {
                 vec![base.0]
             }
             Some(_) => Vec::new(),
         },
         MirInstr::MultiIndex {
             object,
-            object_place,
             call: Some(call),
             ..
-        } if receiver_borrows(call.receiver_convention, object_place.is_some()) => {
+        } if receiver_borrows(call.receiver_convention) => {
             vec![object.0]
         }
-        MirInstr::MultiSet {
-            receiver,
-            receiver_place,
-            call,
-            ..
-        } if receiver_borrows(call.receiver_convention, receiver_place.is_some()) => {
+        MirInstr::MultiSet { receiver, call, .. } if receiver_borrows(call.receiver_convention) => {
             vec![receiver.0]
         }
         MirInstr::MethodCall {
             recv,
             resolved: Some(resolved),
-            recv_place,
             args,
             kwargs,
             ..
@@ -511,7 +499,7 @@ fn borrowed_operands(
                 return Vec::new();
             }
             let mut borrowed = borrowed_slots(declaration, args, kwargs);
-            if receiver_borrows(declaration.receiver_convention, recv_place.is_some()) {
+            if receiver_borrows(declaration.receiver_convention) {
                 borrowed.push(recv.0);
             }
             borrowed
@@ -589,18 +577,17 @@ fn borrowed_slots(
     positional.chain(keyword).collect()
 }
 
-/// Whether a receiver of `convention` only borrows its register. A `mut` or
-/// `deinit` receiver borrows through its retained place (the call addresses
-/// the place directly); without one it takes a copy that the write-back or
-/// the destructor consumes.
-const fn receiver_borrows(
-    convention: Option<mojito_ast::ast::ArgConvention>,
-    has_place: bool,
-) -> bool {
-    match convention {
-        Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Out) => false,
-        // A `deinit` receiver borrows its consumed place in place (R2191).
-        Some(mojito_ast::ast::ArgConvention::Deinit) => has_place,
-        _ => true,
-    }
+/// Whether a receiver of `convention` only borrows its register. A `var`
+/// or `out` receiver takes it, and so does a `deinit` one: a memory-only
+/// `deinit` receiver is the reference whose storage the call consumes, and
+/// a register-passable one the owned value moved out of its storage.
+const fn receiver_borrows(convention: Option<mojito_ast::ast::ArgConvention>) -> bool {
+    !matches!(
+        convention,
+        Some(
+            mojito_ast::ast::ArgConvention::Var
+                | mojito_ast::ast::ArgConvention::Out
+                | mojito_ast::ast::ArgConvention::Deinit
+        )
+    )
 }

@@ -41,6 +41,7 @@ pub(super) fn transfer_loan_generation(
     state: &mut LoanGenerationState,
     instruction: &MirInstr,
     generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
+    addresses: &OperandAddresses,
 ) {
     match instruction {
         MirInstr::EstablishLoans {
@@ -98,7 +99,7 @@ pub(super) fn transfer_loan_generation(
             state.active.remove(var);
         }
         MirInstr::MethodCall { .. } => {
-            if let Some(var) = instruction.consumed_receiver_slot() {
+            if let Some(var) = instruction.consumed_receiver_slot(addresses) {
                 state.active.remove(&var);
             }
         }
@@ -260,6 +261,7 @@ pub(super) fn analyze_loans(
     let scan = LoanScan {
         dests: loan_generation_dests(f),
         outside: &outside,
+        addresses: &addresses,
     };
     let mut check = |state: &LoanGenerationState, instr: &MirInstr| {
         if !outside.contains(&std::ptr::from_ref(instr)) {
@@ -927,6 +929,7 @@ impl BackwardScan for ReferenceLiveness<'_> {
 struct LoanScan<'a> {
     dests: BTreeMap<u32, Option<MirInteriorOrigin>>,
     outside: &'a HashSet<*const MirInstr>,
+    addresses: &'a OperandAddresses,
 }
 
 impl ForwardScan for LoanScan<'_> {
@@ -942,7 +945,7 @@ impl ForwardScan for LoanScan<'_> {
 
     fn transfer(&self, state: &mut LoanGenerationState, instr: &MirInstr) {
         if self.outside.contains(&std::ptr::from_ref(instr)) {
-            transfer_loan_generation(state, instr, &self.dests);
+            transfer_loan_generation(state, instr, &self.dests, self.addresses);
         }
     }
 

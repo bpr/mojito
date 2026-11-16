@@ -6305,10 +6305,11 @@ current Mojo:
   call binds to a `read` parameter and takes any other. A receiver returned in registers that a `ref
   self` binds is materialized in a `$mat_r` slot, as upstream's
   `getLValueForResult` gives an rvalue storage. An implicitly copied
-  `deinit self` receiver owning droppable storage is copied into a slot
-  of its own whose place the call consumes
+  memory-only `deinit self` receiver owning droppable storage is copied
+  into a slot of its own whose `ref.make` the call takes and consumes
   (`Flatten::copy_consuming_receiver`), as upstream's `DeinitMem` operand
-  is the copy's temporary. A loan-carrying memory-only temporary is bound
+  is the copy's temporary; a register-passable copy is the owned value
+  the call takes. A loan-carrying memory-only temporary is bound
   to its call-result slot with its loans on that slot: by its argument
   anchor where the call lets arguments anchor, and otherwise by
   `Flatten::loaned_call_result`, so a construction's argument, a condition,
@@ -6691,8 +6692,14 @@ A named explicit destructor is lowered as a call alone. `MethodCall`
 carries `receiver_convention`, its callee's receiver convention as
 upstream's call carries each operand's (MIR text 1.100), which the
 verifier checks against the callee's declaration; a `deinit` one
-(upstream's `DeinitMem`) makes the call consume its receiver place
-(`MirInstr::consumed_receiver`), as upstream's call consumes its
+(upstream's `DeinitMem`) makes the call consume the storage its receiver
+operand addresses (`MirInstr::consumed_receiver` over
+`OperandAddresses::made`): a memory-only receiver is a mutable `ref.make`
+of that storage (`Flatten::consume_receiver`, and `mir::lower_drops` for
+a dying part), and a register-passable one, which the check marks
+`SemanticAdjustment::RegisterPassableConsume`, is the owned value moved
+out of it (`MirInstr::take_place`), consuming no place at the call; the
+call carries no `recv_place`. This is as upstream's call consumes its
 `DeinitMem` operand (`memConsume`, read by `checkConsume` in both
 `UninitializedValueScan` and `DestructorInsertion`); no marker follows the
 call. The move scan, drop elaboration, the interior and loan transfers,
@@ -6702,8 +6709,9 @@ no ordinary `DropVar` is spliced after the call (which would re-run the
 whole-value `__deinit__` the named destructor replaced). The callee owns
 its `deinit` receiver from the call on: its body's elaborated drops
 destroy its fields, each at its own last use, and its `ConsumeVar` ends
-the receiver. The VM stores its ended-place tombstone (`Value::Moved`)
-into the caller's receiver place at the call, as a move leaves one.
+the receiver. The VM writes its ended-place tombstone (`Value::Moved`)
+through the receiver reference at the call, as a move leaves one, and
+Pliron passes the reference as the aggregate receiver's address.
 Consumption is unconditional: a raising named
 destructor leaves the source uninitialized on both edges (upstream's rule),
 and the checker rejects an `except` arm that re-consumes it.

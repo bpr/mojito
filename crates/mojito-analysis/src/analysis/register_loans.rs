@@ -830,7 +830,7 @@ impl RegisterLoanStep {
             .collect();
         let mut consumed = Vec::new();
         ends.consumed(instruction, &mut consumed);
-        let mut ended = super::scan::vars_moved(instruction);
+        let mut ended = super::scan::vars_moved(instruction, ends.addresses());
         ended.extend(
             consumed
                 .into_iter()
@@ -1158,12 +1158,17 @@ impl ForwardScan for DropFactsScan<'_> {
 
     fn transfer(&self, state: &mut DropFactsState, instr: &MirInstr) {
         self.step(state, instr).transfer(&mut state.registers);
-        transfer_loan_generation(&mut state.generations, instr, self.generation_dests);
+        transfer_loan_generation(
+            &mut state.generations,
+            instr,
+            self.generation_dests,
+            self.ends.addresses(),
+        );
         if !self.exits.is_empty() {
             if let Some(def) = var_def(instr) {
                 state.ended.remove(&def);
             }
-            let ended = vars_moved(instr).into_iter();
+            let ended = vars_moved(instr, self.ends.addresses()).into_iter();
             state
                 .ended
                 .extend(ended.filter(|var| self.exits.contains(var)));

@@ -90,7 +90,7 @@ pub use teardown_calls::name_teardown_destructors;
 mod destroys;
 pub use destroys::{Destroyed, StructFields, destroyed_structs};
 mod drop_calls;
-pub use drop_calls::lower_drops;
+pub use drop_calls::{lower_drops, upgrade_deinit_receivers};
 mod facts;
 pub mod link;
 mod lower_expr;
@@ -3588,7 +3588,7 @@ impl<'a> Flatten<'a> {
     /// runs its copy lifecycle (`__init__(copy:)`) into a fresh temporary the
     /// callee consumes, so the original place keeps its own storage and its
     /// ordinary drop. Under `deinit`, a copy owning droppable storage lives
-    /// in a call-result slot whose place the call consumes, as upstream
+    /// in a call-result slot whose address the call consumes, as upstream
     /// passes the copy's temporary as the `DeinitMem` operand
     /// ([`Self::consumed_copy`]). Scalars and other non-nominal values copy
     /// by plain read.
@@ -3627,9 +3627,9 @@ impl<'a> Flatten<'a> {
     }
 
     /// `copied`, a fresh copy of type `ty` a consuming receiver takes. A
-    /// `deinit` receiver's copy owning droppable storage is in a call-result
-    /// slot of its own, with the slot's place, which the call consumes; any
-    /// other stays in its register, which a `var` receiver takes as an owned
+    /// memory-only `deinit` receiver's copy owning droppable storage is in a
+    /// call-result slot of its own, passed as a `ref.make` of the slot,
+    /// which the call consumes; any other stays in its register, which a `var` receiver takes as an owned
     /// argument does, so no slot outlives the call to be destroyed again.
     fn consumed_copy(
         &mut self,
@@ -3638,11 +3638,12 @@ impl<'a> Flatten<'a> {
         ty: Ty,
         deinit: bool,
     ) -> (Reg, Option<MirPlace>) {
-        if !deinit || !calls::owns_droppable_storage(&ty) {
+        if !deinit || receiver.register_passable_consume() || !calls::owns_droppable_storage(&ty) {
             return (copied, None);
         }
         let slot = self.call_result_slot(copied, ty, true);
-        self.read_c(receiver, call_results::CValue::Slot(slot))
+        let lowered = self.read_c(receiver, call_results::CValue::Slot(slot));
+        self.consume_receiver(receiver.location(), lowered, false)
     }
 
     /// Peel container slots that themselves store reference handles until one

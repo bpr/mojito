@@ -181,7 +181,7 @@ fn count_slot_mentions(block: &MirBlock, addresses: &OperandAddresses) -> HashMa
             .into_iter()
             .map(|(var, _)| var)
             .chain(var_def(instruction))
-            .chain(vars_moved(instruction))
+            .chain(vars_moved(instruction, addresses))
         {
             *mentions.entry(var).or_default() += 1;
         }
@@ -738,7 +738,7 @@ fn names(instruction: &MirInstr, var: VarId, addresses: &OperandAddresses) -> bo
         instruction,
         MirInstr::DropVar { var: named, .. } | MirInstr::DeclareVar { var: named } if *named == var
     ) || var_def(instruction) == Some(var)
-        || vars_moved(instruction).contains(&var)
+        || vars_moved(instruction, addresses).contains(&var)
         || var_uses(instruction, addresses)
             .iter()
             .any(|(named, _)| *named == var)

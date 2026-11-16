@@ -484,10 +484,10 @@ fn effects(
         instr,
         MirInstr::MovePlace { .. } | MirInstr::DropPlace { .. } | MirInstr::MarkDestroyed { .. }
     );
-    // A `deinit`-receiver call consumes its receiver place alone, not the
-    // places of its other operands. Its receiver is no `ref.make` (R2191),
-    // so the access is the very `recv_place`.
-    let receiver = instr.consumed_receiver();
+    // A `deinit`-receiver call consumes the storage its receiver operand
+    // addresses alone, not the places of its other operands. Both that
+    // place and the access come from the same `addresses` entry.
+    let receiver = instr.consumed_receiver(addresses);
     let consumes = |place: &MirPlace| consuming || receiver.is_some_and(|r| std::ptr::eq(r, place));
     for (used, _) in &accesses {
         if stored(used).is_some() {
@@ -516,7 +516,7 @@ fn effects(
         effects.mark(values.mark_ref(live, values.whole(v)));
         effects.moved.push(v);
     }
-    effects.moved.extend(vars_moved(instr));
+    effects.moved.extend(vars_moved(instr, addresses));
     effects.moved.extend(&uses.ended);
     for part in uses.retained.iter().chain(&uses.loaded) {
         effects.marked.push(values.mark_ref(live, *part));

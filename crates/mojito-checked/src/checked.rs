@@ -984,6 +984,12 @@ pub enum SemanticAdjustment {
     /// callee's declared parameter takes the argument by address is
     /// [`CheckedArgumentConvention::by_address`].
     RegisterPassableRead,
+    /// A `deinit` receiver whose type is proven register-passable, which
+    /// upstream passes as an owned value taken out of its storage. Any
+    /// other `deinit` receiver is memory-only and passed by address, a
+    /// `!lit.ref` with the `DeinitMem` convention, so the call consumes the
+    /// referenced storage.
+    RegisterPassableConsume,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's
     /// signature synthesizes a `ByRefResult` argument: the callee's declared
@@ -7287,6 +7293,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.register_passable_read {
         adjustments.push(SemanticAdjustment::RegisterPassableRead);
     }
+    if facts.register_passable_consume {
+        adjustments.push(SemanticAdjustment::RegisterPassableConsume);
+    }
     if facts.indirect_result
         && matches!(
             expression.kind,
@@ -7644,6 +7653,10 @@ node_facts! {
         /// register-passable type passes by value
         /// ([`SemanticAdjustment::RegisterPassableRead`]).
         read_place_receiver,
+        /// A receiver whose declared convention is `deinit`, which a
+        /// register-passable type passes by value
+        /// ([`SemanticAdjustment::RegisterPassableConsume`]).
+        consumed_receiver,
         implicitly_copied_consuming_receiver,
         /// See [`SemanticAdjustment::ReflectedOperator`].
         reflected_operator,
@@ -7651,6 +7664,8 @@ node_facts! {
         register_passable_result,
         /// See [`SemanticAdjustment::RegisterPassableRead`].
         register_passable_read,
+        /// See [`SemanticAdjustment::RegisterPassableConsume`].
+        register_passable_consume,
         /// See [`SemanticAdjustment::IndirectResult`].
         indirect_result,
         /// See [`SemanticAdjustment::ConversionIndirectResult`].

@@ -429,7 +429,7 @@ pub(super) fn place_uses(
         // A `deinit`-receiver call consuming a part of its receiver reads
         // that part, as upstream's `checkConsume` requires it live.
         MirInstr::MethodCall { recv, .. } => i
-            .consumed_receiver()
+            .consumed_receiver(&context.addresses)
             .filter(|place| !place.is_whole_root())
             .map(|place| (place.root, place_path(place), Touch::Read, *recv))
             .into_iter()
@@ -547,7 +547,7 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
         // A `deinit`-receiver call consumes its receiver place, as
         // upstream's call consumes its `DeinitMem` operand.
         MirInstr::MethodCall { .. } => {
-            if let Some(place) = i.consumed_receiver() {
+            if let Some(place) = i.consumed_receiver(&context.addresses) {
                 state[place.root as usize].do_move(&place_path(place));
             }
         }
@@ -723,7 +723,13 @@ impl ForwardScan for LifetimeScan<'_> {
     fn transfer(&self, state: &mut LifetimeState, instr: &MirInstr) {
         apply_effects(&mut state.moves, instr, &self.context);
         if !self.interior.is_empty() {
-            transfer_interior_instruction(&mut state.interior, instr, &self.interior, self.f);
+            transfer_interior_instruction(
+                &mut state.interior,
+                instr,
+                &self.interior,
+                self.f,
+                &self.context.addresses,
+            );
         }
     }
 
@@ -750,7 +756,7 @@ fn check_instruction_uses(
         instr,
         MirInstr::MovePlace { .. } | MirInstr::DropPlace { .. } | MirInstr::MarkDestroyed { .. }
     ) || instr
-        .consumed_receiver()
+        .consumed_receiver(&context.addresses)
         .is_some_and(|place| !place.is_whole_root());
     for (root, path, touch, reg) in place_uses(instr, context) {
         let node = &state[root as usize];
@@ -966,12 +972,13 @@ fn partial_move_span(
     path: &[Key],
 ) -> mojito_common::token::SourceSpan {
     let mut reg = None;
+    let addresses = mojito_mir::mir::operand_addresses(&f.body, &f.reg_types);
     for_each_instr_deep(&f.body, &mut |instr| {
         let moved = match instr {
             MirInstr::MovePlace { dest, place } => Some((*dest, place)),
-            MirInstr::MethodCall { recv, .. } => {
-                instr.consumed_receiver().map(|place| (*recv, place))
-            }
+            MirInstr::MethodCall { recv, .. } => instr
+                .consumed_receiver(&addresses)
+                .map(|place| (*recv, place)),
             _ => None,
         };
         if reg.is_none()

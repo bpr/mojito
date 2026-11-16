@@ -2055,6 +2055,13 @@ impl<'a> Flatten<'a> {
         if copied {
             return self.copy_consuming_receiver(receiver, value, place.as_ref(), deinit);
         }
+        if deinit {
+            return self.consume_receiver(
+                receiver.location(),
+                (value, place),
+                receiver.register_passable_consume(),
+            );
+        }
         // A register-passable receiver the method reads is passed by
         // value, as upstream passes a `read self` whose type is not
         // memory-only: it retains no place, so its owner may die at the
@@ -2083,6 +2090,55 @@ impl<'a> Flatten<'a> {
             Some(contract) => self.address_receiver(&contract, receiver, (value, place)),
             None => (value, place),
         }
+    }
+
+    /// Pass a `deinit` receiver, lowered to `lowered`, as upstream's call
+    /// takes it: a memory-only one as a mutable `ref.make` of the storage
+    /// it consumes, its `DeinitMem` operand, and a `register_passable` one
+    /// as the owned value moved out of that storage, the read defining it
+    /// becoming the move ([`MirInstr::take_place`]). A receiver with no
+    /// place is already the owned value the call takes.
+    pub(super) fn consume_receiver(
+        &mut self,
+        location: SourceSpan,
+        lowered: (Reg, Option<MirPlace>),
+        register_passable: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        let (register, Some(place)) = lowered else {
+            return lowered;
+        };
+        if !register_passable {
+            let (address, place) = self.address_lowered_operand(
+                location,
+                (register, Some(place)),
+                mojito_types::origin::Mutability::Mutable,
+            );
+            let addressed = matches!(
+                self.f.reg_types.get(&address.0).map(Ty::kind),
+                Some(TyKind::Ref(_))
+            );
+            return (address, place.filter(|_| !addressed));
+        }
+        let found = self.operand_definition(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::LoadPlace { dest, place: read }
+                    if *dest == register
+                        && crate::mir::call_addresses::same_storage(read, &place)
+                        && read.through == place.through
+            )
+        });
+        if let Some((instructions, index)) = found {
+            instructions[index] = MirInstr::take_place(register, place);
+            return (register, None);
+        }
+        let ty = self.f.reg_types.get(&register.0).cloned();
+        let taken = match ty {
+            Some(ty) => self.fresh_typed(location, Some(place.root), ty),
+            None => self.fresh(location, Some(place.root)),
+        };
+        self.emit(MirInstr::take_place(taken, place));
+        (taken, None)
     }
 
     /// Pass `receiver`, lowered to `lowered`, as the call bound by

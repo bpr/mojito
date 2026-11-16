@@ -594,10 +594,12 @@ places. Nominal prelude collections and user-defined structs share this checked
 method instruction; only genuine scalar/runtime intrinsics take a separate
 dispatch path.
 
-A call whose `receiver_convention` is `deinit` consumes its receiver place, as upstream's call consumes a `DeinitMem`
+A call whose `receiver_convention` is `deinit` consumes the storage its
+receiver reference addresses, as upstream's call consumes a `DeinitMem`
 operand: the callee owns the receiver and destroys its fields, and the VM
-stores its ended-place tombstone into the place at the call, as a move
-leaves one. No marker after the call ends the receiver.
+writes its ended-place tombstone through the reference at the call, as a
+move leaves one. A register-passable `deinit` receiver arrives as the
+owned value already moved out of its storage. No marker after the call ends the receiver.
 
 Calls made by a structured `try` region use a temporary mirror with the caller's
 real frame identity. This preserves the same handles, including nested projected

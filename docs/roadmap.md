@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2272**.
+Next free ID: **R2275**.
 
 ## Ordered Work
 
@@ -9677,31 +9677,57 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2267 A memory-only `deinit` receiver names the storage its call
-  consumes only in `recv_place`**
+- [ ] **R2272 An instance's register-passable `deinit` receiver stays a
+  reference**
 
-  Upstream passes a memory-only `deinit` receiver as a `!lit.ref` with the
-  `DeinitMem` convention, and the call consumes the referenced memory.
-  Mojito passes a loaded value and names the consumed storage in the
-  call's `recv_place`.
-  - Readers: `MirInstr::consumed_receiver` (`ir.rs`) feeds
-    `analysis/drops.rs`, `interior.rs`, `sroa.rs`, `moves.rs` and
-    `verify/drops.rs`.
-  - The VM tombstones `recv_place` (`vm/frames.rs`
-    `prepare_method_call`, `vm/invoke.rs` `method_call`).
-  - Pliron's `lower_method_call` passes `recv_place`'s address, and
-    `borrowed_operands`' `receiver_borrows` reads its presence.
-  - Probe: `assets/ok/abort_ends_out_self_initializer.mojo`,
-    `list_subscript_field_store_drop.mojo`, and
-    `allocation_tracked_unsafe_ptr.mojo` (`Allocation.unsafe_leak`).
-  - Fix: `drop_calls.rs` and the explicit-`deinit` receiver lowering emit
-    a `ref.make` of the consumed place; `consumed_receiver` reads
-    `OperandAddresses::made`; the VM and Pliron consume through the
-    reference.
-  - MIR text bump whose upgrade turns an older `deinit` call's
-    `recv_place` into a `ref.make` operand.
+  Upstream's `LowerArgConventions` passes a `deinit` receiver an instance
+  proves register-passable as an owned value taken from its storage.
+  Mojito lowers a template's `deinit` receiver of a memory-only type
+  (`Optional[T]`) as a `ref.make`, and the elaborator keeps that reference
+  at an instance where the type is register-passable (`T = Int`).
+  - Probe: `def pick[T: Copyable & ImplicitlyCopyable & Movable &
+    Deinitable](var o: Optional[T], d: T) -> T: return o^.or_else(d)`
+    called as `pick[Int](Optional(4), 7)`.
+  - Fix: `mir::load_register_passable_operands` (`call_addresses.rs`)
+    splices a `MirInstr::take_place` of the made place ahead of a
+    `Deinit` contract's call whose `ref.make` receiver is register-passable
+    at the instance, and passes that register.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2274 The inliner does not inline a call whose `deinit` receiver
+  is passed by address**
+
+  Upstream's inliner substitutes a `DeinitMem` operand's address for the
+  callee's `deinit self`. `inline_parametric.rs`'s `argument_binding`
+  binds a `deinit` parameter only from a forwarded slot or a loaded place,
+  so a call whose receiver is a `ref.make` (R2267's form) stays a call.
+  - Probe: `tests/mir_passes/inline-parametric/field_destructor_place`,
+    whose `S.__deinit__` keeps `D.__deinit__` as a call where it used to
+    inline it.
+  - A first attempt bound the made place as a `Binding::Slot` or
+    `Binding::Part`; it broke the store drops through a `mut` parameter in
+    `assets/ok/mut_parameter_reassignment_drop_shapes.mojo` (`twice`
+    printed `del 0`), so the binding of a by-address part needs the
+    store-drop shape understood first.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2273 A dying memory-only slot is forwarded to its destructor
+  rather than addressed**
+
+  Upstream's destructor call takes the dead variable's address as its
+  `DeinitMem` operand. `mir::lower_drops` (`drop_calls.rs`) lowers a
+  named `drop.var` to a forwarding `var.use` of the slot and the call on
+  that value, whatever the slot's type.
+  - Probe: `var s = String("a")` dying at the end of `main` lowers to
+    `var.use … forward` and `String.__del__` on the value.
+  - `verify/drops.rs`'s `RegisterDestroys` keeps a `forwarded` exception
+    for this shape.
+  - Fix: a mutable `ref.make` of the whole slot for a memory-only type,
+    a forward for a register-passable one; then delete the exception.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2268 A by-value operand still carries a place-table entry**
 

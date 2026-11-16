@@ -296,8 +296,7 @@ const fn subscript_reg(argument: &MirSubscriptArg) -> Reg {
 /// The place-table entry of an operand that is no `ref.make`, the shapes
 /// whose call still names its storage only in the table:
 ///
-/// - a `var`/`deinit` receiver's `recv_place`, the storage the call
-///   consumes;
+/// - a `var` receiver's `recv_place`;
 /// - a `call.indirect`'s `callee_place`, whose callee is a function value
 ///   passed by value;
 /// - an operand that is already a reference without being a `ref.make` of

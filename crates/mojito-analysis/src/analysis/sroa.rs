@@ -66,9 +66,9 @@ use mojito_mir::mir::verify::{
     instruction_operand_regs, instruction_places, instruction_places_mut, instruction_result_regs,
 };
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, Proj, Reg, UseMode,
-    count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
-    instruction_slots, retire_slots, terminator_regs,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, OperandAddresses, Proj,
+    Reg, UseMode, count_register_reads, fresh_register, instruction_regions,
+    instruction_regions_mut, instruction_slots, operand_addresses, retire_slots, terminator_regs,
 };
 use mojito_types::types::{GenericConstraint, Ty, TyKind};
 use std::borrow::Cow;
@@ -367,7 +367,8 @@ fn unkept_census(
         return HashMap::new();
     }
     let mut census = HashMap::new();
-    take_census(&function.body, fields, &mut census);
+    let addresses = operand_addresses(&function.body, &function.reg_types);
+    take_census(&function.body, fields, &addresses, &mut census);
     let collectors: Vec<VarId> = census
         .keys()
         .copied()
@@ -491,11 +492,26 @@ fn keep_address_users(
 fn take_census(
     block: &MirBlock,
     fields: &HashMap<VarId, Judged<'_>>,
+    addresses: &OperandAddresses,
     census: &mut HashMap<VarId, Census>,
 ) {
     for instruction in &block.instrs {
         for region in instruction_regions(instruction) {
-            take_census(region, fields, census);
+            take_census(region, fields, addresses, census);
+        }
+        if let Some(place) = ended_places(instruction, addresses)
+            && let Some((declared, _)) = fields.get(&place.root)
+            && place
+                .proj
+                .get(1..)
+                .is_some_and(|rest| rest.iter().all(|step| matches!(step, Proj::Rebind)))
+            && let Some(field) = first_field(place, declared)
+        {
+            census
+                .entry(place.root)
+                .or_default()
+                .ended
+                .insert(field.to_string());
         }
         let slots = instruction_slots(instruction);
         if let Some((var, whole)) = whole_mention(instruction)
@@ -523,28 +539,20 @@ fn take_census(
                 .count();
             let entry = census.entry(var).or_default();
             entry.kept |= mentions != projected;
-            entry.ended.extend(
-                ended_places(instruction)
-                    .filter(|place| {
-                        place.root == var
-                            && place.proj.get(1..).is_some_and(|rest| {
-                                rest.iter().all(|step| matches!(step, Proj::Rebind))
-                            })
-                    })
-                    .and_then(|place| first_field(place, declared))
-                    .map(String::from),
-            );
         }
     }
 }
 
-/// The places `instruction` ends: a place move or drop, and the receiver
-/// place of a call whose `deinit` receiver consumes it in place, as
-/// upstream's call consumes a `deinit` operand's address.
-fn ended_places(instruction: &MirInstr) -> Option<&MirPlace> {
+/// The places `instruction` ends: a place move or drop, and the storage
+/// a call's `deinit` receiver operand addresses (`addresses`), which the
+/// call consumes, as upstream's call consumes a `deinit` operand's address.
+fn ended_places<'a>(
+    instruction: &'a MirInstr,
+    addresses: &'a OperandAddresses,
+) -> Option<&'a MirPlace> {
     match instruction {
         MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. } => Some(place),
-        MirInstr::MethodCall { .. } => instruction.consumed_receiver(),
+        MirInstr::MethodCall { .. } => instruction.consumed_receiver(addresses),
         _ => None,
     }
 }

@@ -34,7 +34,8 @@ impl Checker {
     /// collector gathers bind the same way, and so does a temporary
     /// receiver whose declared convention is a read
     /// ([`read_temporary_receiver`]); such a place receiver is marked so a
-    /// register-passable one is passed by value ([`read_place_receiver`]).
+    /// register-passable one is passed by value ([`read_place_receiver`]),
+    /// as is a register-passable `deinit` receiver.
     pub(super) fn record_argument_borrows(
         &self,
         slots: &[ArgSlot],
@@ -100,6 +101,16 @@ impl Checker {
         }
         if let Some(span) = read_place_receiver(receiver, designates_place) {
             self.record_at(span).read_place_receiver = true;
+        }
+        // A `^` receiver is lowered as its operand, which takes the verdict
+        // too.
+        if let Some((receiver, _)) =
+            receiver.filter(|(_, convention)| *convention == Some(ArgConvention::Deinit))
+        {
+            self.record_at(receiver.source_span()).consumed_receiver = true;
+            if let ExprKind::Transfer(operand) = &receiver.kind {
+                self.record_at(operand.source_span()).consumed_receiver = true;
+            }
         }
     }
 

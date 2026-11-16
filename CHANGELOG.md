@@ -1030,6 +1030,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `deinit` receiver is passed as upstream's call takes it: a memory-only
+  one as a mutable reference to the storage the call consumes (its
+  `DeinitMem` operand), and a register-passable one as the owned value
+  moved out of that storage, rather than as a loaded value beside the
+  consumed place in `recv_place`. This holds for explicit calls
+  (`x^.finish()`, `p.a^.finish()`), implicitly copied receivers, and
+  field destructor calls. Analyses, the VM, and Pliron read the consumed
+  storage from the receiver's `ref.make`. MIR text moves to schema 1.200,
+  which upgrades an older `deinit` call as it loads, and the package
+  format to `mojito-package 225`. No program output changes. (R2267)
+
 - The inliner reads the storage of a call inside a body it just spliced
   from that call's `ref.make` operands, as upstream's inliner reads every
   `!lit.ref` operand, rather than from the call's place table: the

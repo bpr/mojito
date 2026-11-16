@@ -35,11 +35,15 @@ pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclaratio
         declarations,
     );
     name_teardown_destructors(function, declarations);
-    lower_drops(function, &|destructor| {
-        declarations
-            .function(destructor)
-            .is_none_or(|declaration| declaration.availability.is_empty())
-    });
+    lower_drops(
+        function,
+        &|destructor| {
+            declarations
+                .function(destructor)
+                .is_none_or(|declaration| declaration.availability.is_empty())
+        },
+        &|ty| declarations.register_passable(ty),
+    );
 }
 
 fn name_in_blocks(
