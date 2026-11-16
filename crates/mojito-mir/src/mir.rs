@@ -68,7 +68,8 @@ pub use call_addresses::{
 };
 mod call_operands;
 pub use call_operands::{
-    AddressedOperands, CallOperand, OperandAddresses, OperandSlot, call_operands, operand_addresses,
+    AddressedOperands, CallOperand, OperandAddresses, OperandSlot, call_operands, callee_slots,
+    operand_addresses, upgrade_callee_places,
 };
 mod call_defaults;
 pub use call_defaults::fill_omitted_arguments;

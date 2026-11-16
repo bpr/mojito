@@ -1081,7 +1081,7 @@ fn instruction_families_reprint_byte_identically() {
             raises: None,
             args: vec![Reg(1)],
             kwargs: Vec::new(),
-            callee_place: Some(Box::new(place(3))),
+            callee_place: None,
             arg_places: vec![None],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
@@ -4897,5 +4897,48 @@ fn an_artifact_older_than_1_200_passes_a_deinit_receiver_as_its_operand() {
             ]
         ),
         "{register_passable:#?}"
+    );
+}
+
+/// A `call.indirect` older than schema 1.201 names the slot it read its
+/// callee from; it loads naming none, as upstream's indirect call takes the
+/// callee as the operand alone.
+#[test]
+fn older_indirect_call_loads_with_no_callee_place() {
+    let calling = function_with(
+        vec![Ty::int(), Ty::int()],
+        vec![MirInstr::CallIndirect {
+            dest: Reg(1),
+            callee: Reg(0),
+            resolved: None,
+            raises: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            callee_place: Some(Box::new(MirPlace::root(0, Some(Ty::int())))),
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_contract: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        }],
+    );
+    let program = program_with(vec![("f".into(), calling)]);
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let text = write::program(&program).replacen(&current, "mojito-mir 1.200", 1);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, f) = &parsed.program.functions[0];
+    assert!(
+        matches!(
+            f.body.instrs.as_slice(),
+            [MirInstr::CallIndirect {
+                callee_place: None,
+                ..
+            }]
+        ),
+        "{:?}",
+        f.body.instrs
     );
 }

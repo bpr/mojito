@@ -177,7 +177,6 @@ impl<'f> RegisterEnds<'f> {
                 instantiated_contract,
                 ..
             } => {
-                let callee_place = operands.callee;
                 let arguments = CallArguments::new(args, kwargs, operands, *spread);
                 if let Some(function) = instantiated_contract
                     .as_ref()
@@ -189,11 +188,11 @@ impl<'f> RegisterEnds<'f> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(callee_place, *callee, &self.function.reg_types),
+                        receiver_ty(None, *callee, &self.function.reg_types),
                         None,
                     )
                 }) {
-                    if callee_place.is_none() && owned_convention(target.receiver_convention()) {
+                    if owned_convention(target.receiver_convention()) {
                         out.push(*callee);
                     }
                     arguments.consumed(&target.contract(), collectors, out);

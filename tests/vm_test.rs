@@ -979,7 +979,7 @@ fn nested_origin_specialized_function_values_load_their_closure() {
 }
 
 #[test]
-fn structured_nominal_callable_mut_self_uses_its_callee_place() {
+fn structured_nominal_callable_mut_self_is_its_call_method_receiver() {
     let src = "@fieldwise_init\nstruct Counter:\n    var value: Int\n\n    def __call__(mut self) raises -> Int:\n        self.value += 1\n        if self.value == 2:\n            raise Error(\"two\")\n        return self.value\n\ndef main():\n    var counter = Counter(0)\n    try:\n        print(counter())\n        print(counter())\n    except:\n        print(\"caught\")\n    print(counter.value)\n";
     assert_eq!(vm(src), "1\ncaught\n2\n");
 }

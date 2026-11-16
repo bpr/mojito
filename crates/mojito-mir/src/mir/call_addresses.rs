@@ -227,10 +227,6 @@ pub enum OperandTable<'r> {
     Owned(&'r mut Option<MirPlace>),
     /// A receiver's entry, which the load clears.
     OwnedBoxed(&'r mut Option<Box<MirPlace>>),
-    /// An entry the call keeps beside the loaded value: a `call.indirect`'s
-    /// `callee_place`, by which the inliner resolves the closure a slot
-    /// holds.
-    Kept(Option<&'r MirPlace>),
 }
 
 impl OperandTable<'_> {
@@ -238,7 +234,6 @@ impl OperandTable<'_> {
         match self {
             Self::Owned(place) => place.as_ref(),
             Self::OwnedBoxed(place) => place.as_deref(),
-            Self::Kept(place) => *place,
         }
     }
 
@@ -246,7 +241,6 @@ impl OperandTable<'_> {
         match self {
             Self::Owned(place) => *place = None,
             Self::OwnedBoxed(place) => *place = None,
-            Self::Kept(_) => {}
         }
     }
 }
@@ -603,7 +597,6 @@ fn bound_call<'i>(
         }
         MirInstr::CallIndirect {
             callee,
-            callee_place,
             args,
             kwargs,
             arg_places,
@@ -615,7 +608,6 @@ fn bound_call<'i>(
             let signature = function_signature(
                 instantiated_contract
                     .as_ref()
-                    .or_else(|| callee_place.as_ref().and_then(|place| place.ty.as_ref()))
                     .or_else(|| reg_types.get(&callee.0))?,
             )?;
             let contract = Contract::Signature(signature);

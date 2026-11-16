@@ -1790,6 +1790,56 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
 }
 
 #[test]
+fn verifier_rejects_an_indirect_call_naming_a_callee_place() {
+    let callable: Ty = TyKind::Func(Box::new(FuncTy {
+        environment: mojito::CallableEnvironment::Thin,
+        params: Vec::new(),
+        names: Vec::new(),
+        ret: Ty::none(),
+        required: Vec::new(),
+        variadic: None,
+        kw_variadic: None,
+        positional_only: None,
+        keyword_only: None,
+        raises: false,
+        error: None,
+        conventions: Vec::new(),
+        ref_params: Vec::new(),
+        ref_return: None,
+        transfers: TransferSet::default(),
+    }))
+    .into();
+    let f = function(
+        block(
+            vec![MirInstr::CallIndirect {
+                dest: Reg(1),
+                callee: Reg(0),
+                resolved: None,
+                raises: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                callee_place: Some(Box::new(MirPlace::root(0, Some(callable.clone())))),
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                param_decls: Vec::new(),
+                instantiated_contract: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            }],
+            MirTerm::Return(None),
+        ),
+        2,
+        &[(0, callable), (1, Ty::none())],
+    );
+    expect_finding(
+        &program(f),
+        "an indirect call names no callee place; its callee is the operand",
+    );
+}
+
+#[test]
 fn verifier_substitutes_retained_dependent_callable_arguments() {
     let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
@@ -3378,7 +3428,6 @@ fn verifier_checks_a_def_bound_requirement_call() {
         resolved,
         args,
         arg_places,
-        recv_place,
         ..
     } = call.clone()
     {
@@ -3389,7 +3438,7 @@ fn verifier_checks_a_def_bound_requirement_call() {
             raises: None,
             args,
             kwargs: Vec::new(),
-            callee_place: recv_place,
+            callee_place: None,
             arg_places,
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
@@ -3458,7 +3507,6 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
         recv,
         args,
         arg_places,
-        recv_place,
         param_arg_regs,
         param_decls,
         ..
@@ -3471,7 +3519,7 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
             raises: None,
             args,
             kwargs: Vec::new(),
-            callee_place: recv_place,
+            callee_place: None,
             arg_places,
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),

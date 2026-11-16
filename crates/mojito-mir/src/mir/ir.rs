@@ -2412,8 +2412,11 @@ pub enum MirInstr {
         raises: Option<Raises>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
-        /// The callable value's caller place, when it has one. This is needed
-        /// for a callable struct whose `__call__` receiver is `mut`/`ref`.
+        /// Always `None`: the callee is the operand alone, as upstream's
+        /// indirect call takes the closure or function value, and a pass
+        /// wanting its storage follows the operand's defining load
+        /// ([`crate::mir::callee_slots`]). The verifier rejects one; MIR
+        /// text before 1.201 loads with it cleared.
         callee_place: Option<Box<MirPlace>>,
         /// Like `Call::arg_places`: the retained caller place for each
         /// positional argument selected for a `mut`/`ref` parameter.

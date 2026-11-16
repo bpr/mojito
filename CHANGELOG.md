@@ -1030,6 +1030,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `call.indirect` takes its callee as the operand alone, as upstream's
+  indirect call takes the closure or function value, rather than also
+  naming the slot it read the callee from in `callee_place`. The inliner,
+  `mem2reg`, and the loan check find a closure's slot through the
+  callee's defining load (`mir::callee_slots`), so a call through a
+  binder's closure inlined into a nested body now resolves and inlines
+  too; the callee type comes from its register, and the verifier rejects
+  a callee place, and a `call.indirect` through a `def(...)` bound's
+  address. MIR text moves to schema 1.201, which clears the field as an
+  older artifact loads, and the package format to `mojito-package 226`.
+  No program output changes. (R2269)
+
 - A register-passable `read` operand is passed by value with no place-table
   entry, as upstream passes it naming no storage: a builtin `Pointer`
   method's receiver (`free`, `unsafe_free`, `__int__`), a pointer

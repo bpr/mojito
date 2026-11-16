@@ -128,6 +128,11 @@ impl Decoder {
         if self.minor < 200 {
             crate::mir::upgrade_deinit_receivers(&mut functions, &declarations);
         }
+        // Schema 1.201 takes a `call.indirect`'s callee as the operand
+        // alone; an older call names the slot it read the callee from.
+        if self.minor < 201 {
+            crate::mir::upgrade_callee_places(&mut functions);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

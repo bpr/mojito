@@ -1057,21 +1057,33 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         param_decls,
         instantiated_contract,
         instantiated_args,
+        callee_place,
         ..
     } = instruction
     else {
         return;
     };
     verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+    if callee_place.is_some() {
+        errors.push(format!(
+            "{prefix}: an indirect call names no callee place; its callee is the operand"
+        ));
+    }
     if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
         errors.push(format!(
             "{prefix}: indirect-call place metadata is not aligned with its arguments"
         ));
     }
+    // A bound's callee, its value or the address its requirement call
+    // passes, is called through the bound's `__call__`.
+    let callee_ty = cx.reg_ty(*callee).map(|ty| match ty.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => ty,
+    });
     if let Some(TyKind::Param {
         callable_bound: Some(bound),
         ..
-    }) = cx.reg_ty(*callee).map(Ty::kind)
+    }) = callee_ty.map(Ty::kind)
         && matches!(bound.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
     {
         errors.push(format!(

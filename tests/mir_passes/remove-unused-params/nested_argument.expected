@@ -23,7 +23,7 @@
               const { dest: %r1, value: int_literal(4) },
               literal.materialize { dest: %r4, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r4] },
-              call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: present(place { root: $v0, root_type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), projections: [], type: present(func { environment: thin, param_decls: [], params: [Int], names: [arg0], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }), through: absent }), arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
+              call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r3) }
           }

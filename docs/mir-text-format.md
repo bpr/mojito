@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.199
+mojito-mir 1.201
 ```
 
-The writer emits 1.199. The reader accepts 1.0 through 1.199; *Schema 1.0*
+The writer emits 1.201. The reader accepts 1.0 through 1.201; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1212,6 +1212,15 @@ of its receiver place becomes that `ref.make`, retyped as the reference,
 or the move. The package format moves to `mojito-package 225` with it,
 when the check records `SemanticAdjustment::RegisterPassableConsume` on a
 register-passable `deinit` receiver (R2267).
+
+Schema 1.201 takes a `call.indirect`'s callee as the operand alone, as
+upstream's indirect call takes the closure or function value: the
+instruction's `callee_place` is always `absent`, and the verifier rejects
+one that names a place. A pass wanting the storage the callee was read
+from follows its defining load (`mir::callee_slots`). The syntax is
+unchanged. An older artifact's `call.indirect` loads with the field
+cleared (`mir::upgrade_callee_places`). The package format moves to
+`mojito-package 226` with it (R2269).
 
 Schema 1.199 passes a `def(...)` bound's callee to its `__call__`
 requirement call as an immutable `ref.make` of the callee's place (the

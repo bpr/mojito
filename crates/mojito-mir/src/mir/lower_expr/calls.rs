@@ -139,7 +139,7 @@ impl<'a> Flatten<'a> {
                 raises: raises.clone(),
                 args: arg_regs,
                 kwargs: kw_regs,
-                callee_place: callee_place.map(Box::new),
+                callee_place: None,
                 arg_places,
                 kwarg_places,
                 capture_accesses,
@@ -149,6 +149,7 @@ impl<'a> Flatten<'a> {
                 instantiated_args,
                 spread: Self::spread_position(args),
             },
+            callee_place,
             callee_ty.as_ref(),
             call.reference_result(),
         ));
@@ -308,10 +309,6 @@ impl<'a> Flatten<'a> {
         let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let transfer_arg_places = arg_places.clone();
-        let callee_place = self
-            .owner_vars
-            .contains_key(&info.binding)
-            .then(|| self.binding_place(info.binding, name));
         let capture_accesses = self.call_capture_accesses(call);
         // A generic nested `def` called by name binds its own parameters
         // from the call's solved arguments, as a module `def` does: the call
@@ -347,7 +344,7 @@ impl<'a> Flatten<'a> {
             raises: raises.clone(),
             args: arg_regs,
             kwargs: kw_regs,
-            callee_place: callee_place.map(Box::new),
+            callee_place: None,
             arg_places,
             kwarg_places,
             capture_accesses,

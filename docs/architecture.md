@@ -7088,7 +7088,7 @@ point where a slot declared in a loop is uninitialized again.
   `CallIndirectOp::canonicalize`: a `call.indirect` whose callee register
   is defined once by `const function(f)` (an inlined callable binder's
   read) or by a capture-free `closure.make` of `f` becomes `call f`,
-  dropping `callee_place`, the abstract `resolved`, `param_decls`, and
+  dropping the abstract `resolved`, `param_decls`, and
   `instantiated_contract`, when `f` declares no compile-time parameters
   or collectors and its signature is the callee's function type
   (`tests/mir_passes/canonicalize/indirect_known_callee.mir`). So round
@@ -7366,7 +7366,9 @@ point where a slot declared in a loop is uninitialized again.
   parameter is composed, so the caller's index registers in that place
   stay the caller's. A `call.indirect` through a closure the caller makes
   (the private `Closures` table: a `closure.make` register, or a slot
-  stored once from one) calls the nested `def` the closure lifts. Its
+  stored once from one that the callee's defining load reads,
+  `mir::callee_slots`, as the call names no slot beside its callee
+  operand) calls the nested `def` the closure lifts. Its
   leading parameters, the captures, bind to the places the closure
   captures by reference, as a `mut` parameter binds the caller's place,
   and a read of an enclosing declaration's value binder, which the lifted

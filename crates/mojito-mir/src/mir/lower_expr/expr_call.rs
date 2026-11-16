@@ -352,7 +352,7 @@ impl<'a> Flatten<'a> {
                     raises: None,
                     args: Vec::new(),
                     kwargs: Vec::new(),
-                    callee_place: callee_place.map(Box::new),
+                    callee_place: None,
                     arg_places: Vec::new(),
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
@@ -362,6 +362,7 @@ impl<'a> Flatten<'a> {
                     instantiated_args: Vec::new(),
                     spread: None,
                 },
+                callee_place,
                 factory_ty.as_ref(),
                 None,
             ));
@@ -607,7 +608,7 @@ impl<'a> Flatten<'a> {
                 raises: raises.clone(),
                 args: regs,
                 kwargs: kw,
-                callee_place: callee_place.map(Box::new),
+                callee_place: None,
                 arg_places,
                 kwarg_places,
                 capture_accesses,
@@ -617,6 +618,7 @@ impl<'a> Flatten<'a> {
                 instantiated_args,
                 spread: Self::spread_position(args),
             },
+            callee_place,
             callable_ty.as_ref(),
             call.reference_result(),
         ));

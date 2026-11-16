@@ -195,7 +195,7 @@ use mojito_mir::mir::{
     MirBlock, MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall,
     MirTerm, OperandAddresses, Proj, Raises, Reg, RegionFrame, RegisterEnds, RegisterTable,
-    TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
+    TypeConstructionError, UseMode, callable_targets, callee_slots, construct_type_parameters,
     count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
     has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
     instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
@@ -627,10 +627,12 @@ struct BindingSite<'a> {
 }
 
 /// The closures a caller makes: each register a `closure.make` defines,
-/// and each slot whose one store is such a register.
+/// each slot whose one store is such a register, and the slot each
+/// register was read from whole ([`callee_slots`]).
 struct Closures {
     made: HashMap<u32, Closure>,
     slots: HashMap<VarId, u32>,
+    loads: HashMap<u32, VarId>,
 }
 
 impl Closures {
@@ -639,6 +641,7 @@ impl Closures {
         let mut closures = Self {
             made: HashMap::new(),
             slots: HashMap::new(),
+            loads: callee_slots(block),
         };
         let mut stored = HashMap::new();
         closures.collect(block, &mut stored);
@@ -685,14 +688,12 @@ impl Closures {
         }
     }
 
-    /// The closure a call through `callee`, the value of the place `place`
-    /// if it has one, calls: one the register holds, or the one its slot
-    /// was stored once.
-    fn called(&self, callee: Reg, place: Option<&MirPlace>) -> Option<&Closure> {
-        self.made.get(&callee.0).or_else(|| {
-            let place = place.filter(|place| place.is_whole_root() && place.through.is_none())?;
-            self.made.get(self.slots.get(&place.root)?)
-        })
+    /// The closure a call through `callee` calls: one the register holds,
+    /// or the one stored once in the slot its defining load reads.
+    fn called(&self, callee: Reg) -> Option<&Closure> {
+        self.made
+            .get(&callee.0)
+            .or_else(|| self.made.get(self.slots.get(self.loads.get(&callee.0)?)?))
     }
 }
 
@@ -1271,13 +1272,12 @@ impl<'c> Inliner<'_, 'c> {
                 callee,
                 args,
                 kwargs,
-                callee_place,
                 param_arg_regs,
                 instantiated_args,
                 spread,
                 ..
             } => {
-                let closure = self.closures.called(*callee, callee_place.as_deref())?;
+                let closure = self.closures.called(*callee)?;
                 (
                     *dest,
                     Cow::Borrowed(closure.function.as_str()),
@@ -2142,8 +2142,10 @@ impl<'c> Inliner<'_, 'c> {
             self.closures.slots.insert(var, closure.0);
         }
         // The body's `ref.make`s are the operands of the calls it holds,
-        // which the scan reaches next.
+        // and its whole-slot reads their callees' defining loads, which the
+        // scan reaches next.
         self.addresses.extend(&blocks, &function.reg_types);
+        self.closures.loads.extend(callee_slots(&blocks));
         splice_region(function, caller, blocks, resumed, &exit)
     }
 }
@@ -2307,7 +2309,7 @@ fn raises_into(callee: &MirFunction, raises: &Raises) -> bool {
 
 /// Retype each read of `var`, a callable slot bound to a caller's closure,
 /// in `block` and their regions to the closure's type `ty`: a `var.use`'s
-/// register in `reg_types`, and a call through the slot's place.
+/// register in `reg_types`.
 fn retype_closure_slot(
     block: &mut MirBlock,
     var: VarId,
@@ -2323,13 +2325,6 @@ fn retype_closure_slot(
                 dest, var: read, ..
             } if *read == var => {
                 reg_types.insert(dest.0, ty.clone());
-            }
-            MirInstr::CallIndirect {
-                callee_place: Some(place),
-                ..
-            } if place.root == var && place.is_whole_root() => {
-                place.root_ty = Some(ty.clone());
-                place.ty = Some(ty.clone());
             }
             _ => {}
         }
@@ -5126,11 +5121,11 @@ impl ConstructionTypes for Instantiation<'_> {
 
 /// Rewrite each read of the callable binder `binder` in `block`, its
 /// parameter constant, into a read of the slot `slot` the inlined entry
-/// stores its closure into, and a call through such a read into a call
-/// through the slot; `None` when a parameter site names the binder
+/// stores its closure into, which a call through it reaches as its
+/// callee's defining load; `None` when a parameter site names the binder
 /// otherwise.
 fn read_binder(block: &mut MirBlock, binder: &ParamRef, slot: VarId) -> Option<()> {
-    read_binder_constants(block, binder, slot, &mut HashSet::new());
+    read_binder_constants(block, binder, slot);
     let mut names = NamesBinder {
         binder,
         named: false,
@@ -5139,39 +5134,24 @@ fn read_binder(block: &mut MirBlock, binder: &ParamRef, slot: VarId) -> Option<(
     (!names.named).then_some(())
 }
 
-/// [`read_binder`]'s rewrite of `blocks`, its regions included, where
-/// `reads` collects the registers read so far.
-fn read_binder_constants(
-    block: &mut MirBlock,
-    binder: &ParamRef,
-    slot: VarId,
-    reads: &mut HashSet<u32>,
-) {
+/// [`read_binder`]'s rewrite of `blocks`, its regions included.
+fn read_binder_constants(block: &mut MirBlock, binder: &ParamRef, slot: VarId) {
     for instruction in &mut block.instrs {
-        match instruction {
-            MirInstr::Const {
-                dest,
-                k: Const::Param(value),
-            } if value.as_decl_ref().is_some_and(|read| read.id == binder.id) => {
-                reads.insert(dest.0);
-                *instruction = MirInstr::UseVar {
-                    dest: *dest,
-                    var: slot,
-                    mode: UseMode::Copy,
-                    constructor: None,
-                };
-            }
-            MirInstr::CallIndirect {
-                callee,
-                callee_place,
-                ..
-            } if callee_place.is_none() && reads.contains(&callee.0) => {
-                *callee_place = Some(Box::new(MirPlace::root(slot, None)));
-            }
-            _ => {}
+        if let MirInstr::Const {
+            dest,
+            k: Const::Param(value),
+        } = instruction
+            && value.as_decl_ref().is_some_and(|read| read.id == binder.id)
+        {
+            *instruction = MirInstr::UseVar {
+                dest: *dest,
+                var: slot,
+                mode: UseMode::Copy,
+                constructor: None,
+            };
         }
         for region in instruction_regions_mut(instruction) {
-            read_binder_constants(region, binder, slot, reads);
+            read_binder_constants(region, binder, slot);
         }
     }
 }

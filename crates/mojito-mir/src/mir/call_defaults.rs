@@ -673,7 +673,6 @@ fn collect_through_contract(
     let MirInstr::CallIndirect {
         dest,
         callee,
-        callee_place,
         args,
         kwargs,
         arg_places,
@@ -684,12 +683,7 @@ fn collect_through_contract(
     else {
         return;
     };
-    let Some(TyKind::Func(contract)) = function
-        .reg_types
-        .get(&callee.0)
-        .or_else(|| callee_place.as_ref()?.ty.as_ref())
-        .map(Ty::kind)
-    else {
+    let Some(TyKind::Func(contract)) = function.reg_types.get(&callee.0).map(Ty::kind) else {
         return;
     };
     if contract.kw_variadic.is_none() {

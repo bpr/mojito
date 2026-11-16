@@ -9729,24 +9729,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2269 A `call.indirect`'s callee is found through its
-  `callee_place` slot**
-
-  Upstream's indirect call takes the callee as an SSA operand. The inliner
-  (`ClosureValues::called`, `read_binder_constants`) and `mem2reg`
-  (`Mention::CalleePlace`) find a closure through the slot
-  `callee_place` names.
-  - Probe: `__trait_dispatch.__call__` over a callable value
-    (`assets/ok/instance_method_value.mojo`,
-    `bracket_function_application.mojo`).
-  - Fix: resolve the closure through the callee register's defining
-    load; lower a callable struct's `mut`/`ref self` `__call__` as a
-    `call.method` with a `ref.make` receiver, as `bound_calls.rs` does
-    for a bound.
-  - `call_defaults.rs` takes the callee type from the register.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2270 Passes and the verifier take a type, owner, or requirement
   from a place table rather than the operand**
 
@@ -9754,8 +9736,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   only. Several Mojito readers bypass `OperandAddresses` and read the
   table directly.
   - Type sources: `call_defaults.rs` (`collect_subscript_store`,
-    `collect_through_contract`, `Site::of`), `call_addresses.rs`
-    `bound_call`, `param_uses.rs` `member_receiver_ty`,
+    `Site::of`), `call_addresses.rs` `bound_call` (its `call.method`
+    arm's `recv_place`), `param_uses.rs` `member_receiver_ty`,
     `register_ends.rs` `receiver_ty`.
   - Owners: `call_defaults.rs` `element_owners`, `callable_values.rs`
     `rebound_variables`.

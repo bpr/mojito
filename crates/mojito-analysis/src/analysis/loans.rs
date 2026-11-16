@@ -235,6 +235,7 @@ pub(super) fn analyze_loans(
         return Ok(());
     }
     let addresses = mojito_mir::mir::operand_addresses(&f.body, &f.reg_types);
+    let callee_slots = mojito_mir::mir::callee_slots(&f.body);
     // The references live just before each instruction, in declaration
     // order, so a conflict names the same one on every run; keyed by the
     // instruction's address, which is stable while `f` is borrowed.
@@ -270,7 +271,14 @@ pub(super) fn analyze_loans(
         let active = live_references
             .get(&std::ptr::from_ref(instr))
             .map_or(&[][..], Vec::as_slice);
-        check_loans_at(f, (callees, &addresses), &generations, state, active, instr)
+        check_loans_at(
+            f,
+            (callees, &addresses, &callee_slots),
+            &generations,
+            state,
+            active,
+            instr,
+        )
     };
     walk_forward(&scan, LoanGenerationState::default(), &f.body, &mut check).map(|_| ())
 }
@@ -350,7 +358,7 @@ pub(super) fn loan_accesses(
     f: &MirFunction,
     instr: &MirInstr,
     callees: &CalleeRefParams<'_>,
-    addresses: &OperandAddresses,
+    (addresses, callee_slots): (&OperandAddresses, &HashMap<u32, VarId>),
 ) -> Vec<(MirPlace, LoanAccess, mojito_common::token::SourceSpan)> {
     // A call reads the storage each by-address operand's `ref.make`
     // addresses, as upstream's checking reads the `!lit.ref` operand.
@@ -587,9 +595,9 @@ pub(super) fn loan_accesses(
             ..
         } => {
             // A retained positional place is classified by the convention
-            // the callee's function type declares at that slot; the callee's
-            // own place, a keyword place, and a slot the type does not
-            // declare stay exclusive.
+            // the callee's function type declares at that slot; a keyword
+            // place and a slot the type does not declare stay exclusive. The
+            // callee is a closure or function value, passed by value.
             let conventions = f
                 .reg_types
                 .get(&callee.0)
@@ -602,9 +610,10 @@ pub(super) fn loan_accesses(
             };
             let mut accesses =
                 operands
-                    .callee
-                    .into_iter()
-                    .chain(operands.keyword.iter().copied().flatten())
+                    .keyword
+                    .iter()
+                    .copied()
+                    .flatten()
                     .cloned()
                     .map(|place| (place, LoanAccess::Write, span_for(*dest)))
                     .chain(operands.positional.iter().enumerate().filter_map(
@@ -615,7 +624,9 @@ pub(super) fn loan_accesses(
                         },
                     ))
                     .collect::<Vec<_>>();
-            let storage = operands.callee.map(|place| place.root);
+            // The closure's storage is the slot its callee's defining load
+            // reads.
+            let storage = callee_slots.get(&callee.0).copied();
             accesses.extend(
                 capture_accesses
                     .iter()
@@ -803,7 +814,11 @@ fn recorded_access(
 /// excludes, conflicts.
 fn check_loans_at(
     f: &MirFunction,
-    (callees, addresses): (&CalleeRefParams<'_>, &OperandAddresses),
+    (callees, addresses, callee_slots): (
+        &CalleeRefParams<'_>,
+        &OperandAddresses,
+        &HashMap<u32, VarId>,
+    ),
     generations: &BTreeMap<u32, Vec<Loan>>,
     state: &LoanGenerationState,
     active: &[VarId],
@@ -840,7 +855,7 @@ fn check_loans_at(
         }
         return Ok(());
     }
-    for (place, access, span) in loan_accesses(f, instr, callees, addresses) {
+    for (place, access, span) in loan_accesses(f, instr, callees, (addresses, callee_slots)) {
         // An access through a shared pointer alias (a stable-pointer
         // dereference substitutes the owner place) never competes with
         // another shared alias of the same storage.

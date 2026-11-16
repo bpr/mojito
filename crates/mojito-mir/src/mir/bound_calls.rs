@@ -9,7 +9,7 @@
 //! function value, which has no witness table, to its own
 //! [`MirInstr::CallIndirect`].
 
-use super::{MirFunction, MirInstr};
+use super::{MirFunction, MirInstr, MirPlace};
 use mojito_symbol::symbol::{
     callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
 };
@@ -68,8 +68,8 @@ pub fn bound_call_contract<'t, S: BuildHasher>(
 /// rewritten call reads it through that reference (a `ref.read` among the
 /// returned loads), as upstream's `LowerArgConventions` loads a
 /// register-passable `read` operand. The rewritten call names
-/// the receiver's own contract and keeps every operand, place, and capture
-/// access. A generic bound's call keeps the bound's compile-time parameter
+/// the receiver's own contract and keeps every argument, argument place,
+/// and capture access; its callee is the operand alone, naming no place. A generic bound's call keeps the bound's compile-time parameter
 /// declarations, which its parameter arguments name, so the bound's
 /// binders and defaults, not the value's own, bind them.
 pub fn indirect_from_bound_call(
@@ -109,10 +109,7 @@ pub fn indirect_from_bound_call(
     let mut callee = *recv;
     let loads = super::read_addressed_operands(
         function,
-        [(
-            &mut callee,
-            super::OperandTable::Kept(recv_place.as_deref()),
-        )],
+        [(&mut callee, super::OperandTable::OwnedBoxed(recv_place))],
     );
     *instruction = MirInstr::CallIndirect {
         dest: *dest,
@@ -121,7 +118,7 @@ pub fn indirect_from_bound_call(
         raises: raises.take(),
         args: std::mem::take(args),
         kwargs: std::mem::take(kwargs),
-        callee_place: recv_place.take(),
+        callee_place: None,
         arg_places: std::mem::take(arg_places),
         kwarg_places: std::mem::take(kwarg_places),
         capture_accesses: std::mem::take(capture_accesses),
@@ -172,11 +169,12 @@ pub(super) fn is_callable_bound(ty: &Ty) -> bool {
 /// The requirement call a lowered indirect call through a `def(...)`
 /// bound is, `instruction` itself for any other call: the bound's
 /// `__call__` on its read receiver, `callee`, the callee's address
-/// (`Flatten::address_bound_callee`) whose place is the callee's,
+/// (`Flatten::address_bound_callee`) whose place is `callee_place`,
 /// keeping a generic bound's compile-time parameters and the arguments the
 /// call applies. `reference_result` is the call's checked reference result.
 pub(super) fn bound_call_from_indirect(
     instruction: MirInstr,
+    callee_place: Option<MirPlace>,
     callee_ty: Option<&Ty>,
     reference_result: Option<RefTy>,
 ) -> MirInstr {
@@ -198,7 +196,6 @@ pub(super) fn bound_call_from_indirect(
             raises,
             args,
             kwargs,
-            callee_place,
             arg_places,
             kwarg_places,
             capture_accesses,
@@ -218,7 +215,7 @@ pub(super) fn bound_call_from_indirect(
             result_adapter: None,
             args,
             kwargs,
-            recv_place: callee_place,
+            recv_place: callee_place.map(Box::new),
             recv_writes: false,
             receiver_convention: None,
             arg_places,

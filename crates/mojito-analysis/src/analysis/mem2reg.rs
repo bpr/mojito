@@ -23,10 +23,10 @@
 //! function type, or every store of which is a closure, is one too: a
 //! closure is a struct of pointers, trivially register-passable as
 //! upstream's is, and a call through it needs no stable storage, nor
-//! through a thin function's, so a `call.indirect` naming such a slot as
-//! its `callee_place` leaves it, and a shared borrow of it read only as
-//! such a call's callee is a read of its value, as upstream's call of a
-//! promoted closure reads the value.
+//! through a thin function's, so a call through such a slot reads the value
+//! its load or shared borrow defines the callee from, and a shared borrow
+//! read only as a `call.indirect`'s callee is a read of its value, as
+//! upstream's call of a promoted closure reads the value.
 //!
 //! A structured body is promoted as upstream's `processRegion` promotes
 //! `hlcf`: one scoped walk, each region a scope, in which a store binds the
@@ -266,9 +266,6 @@ enum Mention {
     /// A shared borrow into the register, read only as the callee of a
     /// `call.indirect`: a read of a slot holding a closure.
     CalleeRead { dest: Reg },
-    /// A `call.indirect` naming the whole slot as its `callee_place`, and
-    /// no other place, which a closure value does not need.
-    CalleePlace,
 }
 
 /// The facts [`slot_use`] reads mentions by: the registers each holding a
@@ -389,7 +386,6 @@ impl Facts {
                 Mention::CalleeRead { dest } => {
                     callable_value && function.reg_types.get(&dest.0) == typed
                 }
-                Mention::CalleePlace => callable_value,
                 Mention::Declare | Mention::Kill | Mention::Address => true,
             })
     }
@@ -630,13 +626,6 @@ impl Promoter<'_> {
                     // `StackAllocLifetimeEndOp` does, and so does naming
                     // the address.
                     Mention::Kill | Mention::Address => {}
-                    Mention::CalleePlace => {
-                        if let MirInstr::CallIndirect { callee_place, .. } = &mut instruction {
-                            *callee_place = None;
-                        }
-                        out.push(instruction);
-                        continue;
-                    }
                 }
                 let mut results = Vec::new();
                 instruction_result_regs(&instruction, &mut results);
@@ -1003,15 +992,6 @@ fn slot_use(instruction: &MirInstr, uses: &Uses) -> Option<(VarId, Mention)> {
             }
             UseMode::BorrowShared | UseMode::BorrowMut => None,
         },
-        MirInstr::CallIndirect {
-            callee_place: Some(place),
-            ..
-        } if place.is_whole_root()
-            && place.through.is_none()
-            && instruction_slots(instruction).len() == 1 =>
-        {
-            Some((place.root, Mention::CalleePlace))
-        }
         MirInstr::LoadPlace { dest, place } if place.proj.is_empty() && place.through.is_none() => {
             Some((place.root, Mention::Read { dest: *dest }))
         }
