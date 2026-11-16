@@ -707,6 +707,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic function, a method, and a static method now bind their own
+  origin binders from their arguments' types, as a concrete free function
+  already did, so `first(Span(l))` over `def first[T: …, o: Origin](s:
+  Span[T, o]) -> T` runs, and a `ref[o]` result names the storage the call
+  bound `o` to: `read(Pointer(to=x))` keeps `x` alive until the result is
+  read, and over a mut-parametric `o` the result may be assigned through
+  when the source is mutable, as at the pin (R1100).
+
 - A keyword argument at a `read` slot (`g(x=a)`) beside a live view of
   `a` is no longer rejected as a loan conflict. MIR `call` and `call.method` now
   carry the effective convention the checker bound each argument by, as

@@ -495,6 +495,7 @@ assets/ok/generic_display_argument_infers_parameter.mojo	main	exe-differential	s
 assets/ok/generic_display_argument_typed_by_parameter.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_field_pointer_deref_in_place.mojo	main	exe-differential	sanitized
+assets/ok/generic_function_origin_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_iterable_explicit_iter.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
@@ -695,6 +696,7 @@ assets/ok/method_call_callee_binder_spelling.mojo	main	exe-differential	sanitize
 assets/ok/method_capturing_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
+assets/ok/method_origin_binder_argument.mojo	main	exe-differential	sanitized
 assets/ok/method_overload_parameter_pack.mojo	main	exe-differential	sanitized
 assets/ok/method_recursion_pushed_frames.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
@@ -820,6 +822,8 @@ assets/ok/optional_string_from_stringify.mojo	main	exe-differential	sanitized
 assets/ok/optional_value_protocols.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
+assets/ok/origin_binder_mutable_ref_result.mojo	main	exe-differential	sanitized
+assets/ok/origin_binder_ref_result_keeps_pointer_source.mojo	main	exe-differential	sanitized
 assets/ok/origin_binder_result_keeps_argument.mojo	main	exe-differential	sanitized
 assets/ok/origin_comptime_alias.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_call_arguments_run.mojo	main	exe-differential	sanitized

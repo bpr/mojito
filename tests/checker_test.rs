@@ -10559,3 +10559,30 @@ fn struct_param_list_declares_origin_binders_in_place() {
         .collect();
     assert_eq!(arguments, ["n"]);
 }
+
+#[test]
+fn a_callee_origin_binder_bound_from_an_argument_roots_its_reference_result() {
+    // A generic function's and a method's own binder, bound from a pointer
+    // argument, make the `ref[o]` result borrow the pointee's storage, not
+    // an unsolved binder.
+    let source = "struct S:\n    def __init__(out self):\n        pass\n    def read[o: ImmOrigin](self, r: Pointer[Int, o]) -> ref[o] Int:\n        return r[]\n\ndef read[T: ImplicitlyCopyable & Movable, o: ImmOrigin](r: Pointer[T, o]) -> ref[o] T:\n    return r[]\n\ndef main():\n    var x = 222\n    ref generic = read(Pointer(to=x))\n    ref method = S().read(Pointer(to=x))\n    print(generic, method)\n";
+    let checked = checked_with_std(source).expect("check origin-binder reference results");
+    for name in ["generic", "method"] {
+        let binding = checked
+            .declarations()
+            .iter()
+            .find(|declaration| {
+                declaration.name == name && !from_library(declaration.location.source.as_deref())
+            })
+            .unwrap_or_else(|| panic!("binding '{name}'"));
+        assert!(
+            matches!(
+                binding.ty.as_ref().map(Ty::kind),
+                Some(mojito::TyKind::Ref(reference))
+                    if matches!(reference.origin, mojito::origin::Origin::Place(_))
+            ),
+            "'{name}' has type {:?}",
+            binding.ty
+        );
+    }
+}

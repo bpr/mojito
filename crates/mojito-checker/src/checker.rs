@@ -2983,6 +2983,12 @@ impl StructInfo {
         struct_origin_slots(&self.source_params)
     }
 
+    /// The first origin binder id a method of this struct declares itself:
+    /// a method's signature resolves its binders past the struct's.
+    const fn method_origin_binders(&self) -> u32 {
+        self.source_params.len() as u32
+    }
+
     /// The arguments of the struct's own `Self` type: each declared parameter
     /// as itself, then each origin slot as its own binder.
     fn self_arguments(&self) -> Vec<TyArg> {
@@ -3819,17 +3825,48 @@ struct StructDeclaration<'a> {
     enum_cases: Option<&'a [mojito_ast::ast::EnumCase]>,
 }
 
-/// A method's own parameters instantiated at one call: its parameter,
-/// collector, and keyword-collector types, the substitution, its own
-/// arguments, and what each of the call's bracket arguments bound to.
-type MethodInstantiation = (
-    Vec<Ty>,
-    Option<Ty>,
-    Option<Ty>,
-    TySubst,
-    Vec<TyArg>,
-    DeclaredAttributes,
-);
+/// A method's own parameters instantiated at one call.
+struct MethodInstantiation {
+    /// The parameter types, every own binder bound and solved.
+    params: Vec<Ty>,
+    variadic: Option<Ty>,
+    kw_variadic: Option<Ty>,
+    subst: TySubst,
+    /// The method's own type and value arguments.
+    arguments: Vec<TyArg>,
+    /// What each of the call's bracket arguments bound to.
+    attributes: DeclaredAttributes,
+    /// The method's own origin binders, bound from the arguments' types.
+    origin_bindings: Option<origins::ConstructorOriginBindings>,
+}
+
+impl MethodInstantiation {
+    /// The declared result with the method's bound origin binders
+    /// substituted.
+    fn bound_result(&self, ty: Ty) -> Ty {
+        match &self.origin_bindings {
+            Some(bindings) => bindings.substitute(&ty),
+            None => ty,
+        }
+    }
+
+    /// The declared `ref` result contract with the method's bound origin
+    /// binders substituted.
+    fn bound_ref_return(
+        &self,
+        checker: &Checker,
+        reference: &mojito_types::origin::RefSig,
+    ) -> mojito_types::origin::RefSig {
+        self.origin_bindings.as_ref().map_or_else(
+            || reference.clone(),
+            |bindings| {
+                bindings.substitute_ref_sig(reference, &|owner| {
+                    checker.owner_reference_mutability(owner)
+                })
+            },
+        )
+    }
+}
 
 struct MethodCallScore {
     rank: usize,

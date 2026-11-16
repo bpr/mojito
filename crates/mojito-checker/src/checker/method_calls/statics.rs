@@ -361,6 +361,7 @@ impl Checker {
                             param_args,
                             args,
                             kwargs,
+                            info.method_origin_binders(),
                         ) {
                             Err(dynamic @ TypeError::DynamicParameterValue) => dynamic,
                             _ => error,
@@ -389,21 +390,35 @@ impl Checker {
             let at_receiver = self.method_decls_at_receiver(sig, info, tyargs);
             // The sole candidate's failed instantiation is the call's
             // diagnostic, as at the pin.
-            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
-                match self.instantiate_method_generics(
-                    &format!("{sname}.{method}"),
-                    at_receiver.as_ref().unwrap_or(sig),
-                    &receiver_params,
-                    receiver_variadic.as_ref(),
-                    receiver_kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                ) {
-                    Ok(instantiation) => instantiation,
-                    Err(error) if single_candidate => return Err(error),
-                    Err(_) => continue,
-                };
+            let instantiated = match self.instantiate_method_generics(
+                &format!("{sname}.{method}"),
+                at_receiver.as_ref().unwrap_or(sig),
+                &receiver_params,
+                receiver_variadic.as_ref(),
+                receiver_kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+                info.method_origin_binders(),
+            ) {
+                Ok(instantiation) => instantiation,
+                Err(error) if single_candidate => return Err(error),
+                Err(_) => continue,
+            };
+            let ref_return = sig
+                .ref_return
+                .as_ref()
+                .map(|reference| instantiated.bound_ref_return(self, reference));
+            let declared_ret = instantiated.bound_result(substitute_at(&sig.ret, info, tyargs));
+            let MethodInstantiation {
+                params,
+                variadic,
+                kw_variadic,
+                subst: method_subst,
+                arguments: method_arguments,
+                attributes: bracket_attributes,
+                ..
+            } = instantiated;
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), tyargs)
@@ -449,7 +464,7 @@ impl Checker {
                     return_type: self.close_method_values(
                         &substitute(
                             &super::super::generics::expand_solved_packs(
-                                &substitute_at(&sig.ret, info, tyargs),
+                                &declared_ret,
                                 &sig.decls,
                                 &method_arguments,
                             ),
@@ -478,7 +493,7 @@ impl Checker {
                         None
                     },
                     ref_params: sig.ref_params.clone(),
-                    ref_return: sig.ref_return.clone(),
+                    ref_return,
                     param_types: params,
                     param_decls: sig.decls.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),

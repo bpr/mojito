@@ -447,11 +447,19 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Whether a method call's reference result has an origin rooted at one
-    /// of the call's own arguments — a place, or the hidden slot a
-    /// temporary argument materialized into — rather than at its receiver.
+    /// Whether a method call's reference result has an origin rooted at
+    /// storage other than its receiver's — one of the call's own arguments
+    /// (a place, or the hidden slot a temporary argument materialized into)
+    /// or the storage an argument's type names through a binder the call
+    /// bound (`read[o: ImmOrigin](self, p: Pointer[Int, o]) -> ref[o] Int`).
     fn reference_result_borrows_argument(&self, expression: Node<'a>) -> bool {
-        let CheckedOp::MethodCall { args, kwargs, .. } = expression.op() else {
+        let CheckedOp::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } = expression.op()
+        else {
             return false;
         };
         let Some(reference) = expression.reference_result() else {
@@ -459,16 +467,19 @@ impl<'a> Flatten<'a> {
         };
         let mut roots = Vec::new();
         origin_place_roots(&reference.origin, &mut roots);
-        args.iter()
-            .chain(kwargs.iter().map(|keyword| &keyword.value))
-            .filter_map(|argument| {
-                self.place_root_binding(*argument).or_else(|| {
-                    self.checked.expression(*argument).and_then(|node| {
-                        mojito_checked::checked::materialized_borrow_owner(&node.adjustments)
-                    })
+        let owner = |node| {
+            self.place_root_binding(node).or_else(|| {
+                self.checked.expression(node).and_then(|node| {
+                    mojito_checked::checked::materialized_borrow_owner(&node.adjustments)
                 })
             })
+        };
+        let receiver = owner(*object);
+        args.iter()
+            .chain(kwargs.iter().map(|keyword| &keyword.value))
+            .filter_map(|argument| owner(*argument))
             .any(|owner| roots.contains(&owner))
+            || roots.iter().any(|root| Some(*root) != receiver)
     }
 
     /// The binding place node `place` is rooted at: through every field

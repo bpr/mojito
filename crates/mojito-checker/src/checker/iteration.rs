@@ -733,7 +733,13 @@ impl Checker {
             .kw_variadic
             .as_ref()
             .map(|ty| substitute(ty, &receiver_subst));
-        let (_, variadic, kw_variadic, method_subst, method_arguments, _) = self
+        let MethodInstantiation {
+            variadic,
+            kw_variadic,
+            subst: method_subst,
+            arguments: method_arguments,
+            ..
+        } = self
             .instantiate_method_generics(
                 &format!("{owner} iterator protocol"),
                 signature,
@@ -743,6 +749,7 @@ impl Checker {
                 &[],
                 &[],
                 &[],
+                info.method_origin_binders(),
             )
             .ok()?;
         // Iterator dunders have no explicit runtime arguments. A variadic or

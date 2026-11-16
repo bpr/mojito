@@ -3214,14 +3214,14 @@ impl Checker {
                     // instantiates them from the arguments like any generic
                     // method; the resolved arguments feed per-call
                     // specialization.
-                    let Ok((
+                    let Ok(MethodInstantiation {
                         params,
                         variadic,
                         kw_variadic,
-                        _,
-                        method_arguments,
-                        bracket_attributes,
-                    )) = self.instantiate_method_generics(
+                        arguments: method_arguments,
+                        attributes: bracket_attributes,
+                        ..
+                    }) = self.instantiate_method_generics(
                         &format!("{name}.__init__"),
                         sig,
                         &sig.params,
@@ -3230,6 +3230,7 @@ impl Checker {
                         &own_args,
                         args,
                         kwargs,
+                        info.method_origin_binders(),
                     )
                     else {
                         continue;

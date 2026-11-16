@@ -19,6 +19,9 @@ use mojito_types::types::TyKind;
 pub(in crate::checker) struct ConstructorOriginBindings {
     pub(in crate::checker) pointers: HashMap<OriginParamId, PointerOrigin>,
     pub(in crate::checker) origins: HashMap<OriginParamId, Origin>,
+    /// The first binder this binding binds: a method's own binders follow
+    /// its struct's, which its receiver or construction binds instead.
+    own_from: u32,
 }
 
 impl ConstructorOriginBindings {
@@ -34,6 +37,41 @@ impl ConstructorOriginBindings {
     /// [`Self::substitute`] over a parameter list.
     pub(in crate::checker) fn substitute_all(&self, tys: &[Ty]) -> Vec<Ty> {
         tys.iter().map(|ty| self.substitute(ty)).collect()
+    }
+
+    /// Whether the call bound no binder.
+    pub(in crate::checker) fn is_empty(&self) -> bool {
+        self.pointers.is_empty() && self.origins.is_empty()
+    }
+
+    /// Substitute the bound binders into a `ref` result contract: each
+    /// `SigOrigin::Bound` naming a solved binder becomes the origin the call
+    /// bound it to, as the declaration's result is its signature with every
+    /// inferred parameter substituted. A result over exactly one
+    /// mut-parametric binder takes that binding's mutability, as upstream
+    /// infers the binder's `mut` with its origin: a pointer's from its
+    /// provenance, a struct tail's from its owner (`owner_mutability`).
+    pub(in crate::checker) fn substitute_ref_sig(
+        &self,
+        signature: &mojito_types::origin::RefSig,
+        owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
+    ) -> mojito_types::origin::RefSig {
+        use mojito_types::origin::{SigMutability, SigOrigin};
+        let mutability = match (&signature.mutability, &signature.origin) {
+            (
+                SigMutability::Infer | SigMutability::BoolParam(_),
+                SigOrigin::Bound(Origin::Param(id)),
+            ) => match self.bound_mutability(*id, owner_mutability) {
+                Some(Mutability::Mutable) => SigMutability::Mutable,
+                Some(Mutability::Immutable) => SigMutability::Immutable,
+                Some(Mutability::Param(_)) | None => signature.mutability.clone(),
+            },
+            _ => signature.mutability.clone(),
+        };
+        mojito_types::origin::RefSig {
+            origin: self.substitute_sig_origin(&signature.origin),
+            mutability,
+        }
     }
 
     /// The constructed value's origin tail: each slot's explicit origin where
@@ -54,12 +92,61 @@ impl ConstructorOriginBindings {
             .collect()
     }
 
+    /// The mutability binder `id` was bound with: a pointer's provenance,
+    /// else the storage its origin names.
+    fn bound_mutability(
+        &self,
+        id: OriginParamId,
+        owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
+    ) -> Option<Mutability> {
+        if let Some(provenance) = self.pointers.get(&id) {
+            return match (provenance.statically_mutable(), provenance) {
+                (Some(true), _) => Some(Mutability::Mutable),
+                (Some(false), _) => Some(Mutability::Immutable),
+                (
+                    None,
+                    PointerOrigin::Param { mutability, .. }
+                    | PointerOrigin::SelfPlace { mutability, .. },
+                ) => Some(*mutability),
+                (None, _) => None,
+            };
+        }
+        origin_mutability(self.origins.get(&id)?, owner_mutability)
+    }
+
+    fn substitute_sig_origin(
+        &self,
+        origin: &mojito_types::origin::SigOrigin,
+    ) -> mojito_types::origin::SigOrigin {
+        use mojito_types::origin::SigOrigin;
+        match origin {
+            SigOrigin::Bound(bound) => {
+                SigOrigin::Bound(super::substitute_origin_params(bound.clone(), &|id| {
+                    self.origins.get(&id).cloned()
+                }))
+            }
+            SigOrigin::Projected(base, path) => {
+                SigOrigin::Projected(Box::new(self.substitute_sig_origin(base)), path.clone())
+            }
+            SigOrigin::Union(members) => SigOrigin::Union(
+                members
+                    .iter()
+                    .map(|member| self.substitute_sig_origin(member))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
     fn bind_pointer(
         &mut self,
         id: OriginParamId,
         provenance: &PointerOrigin,
         conflict: impl Fn() -> TypeError,
     ) -> Result<(), TypeError> {
+        if id.0 < self.own_from {
+            return Ok(());
+        }
         match self.pointers.get(&id) {
             None => {
                 self.pointers.insert(id, provenance.clone());
@@ -86,7 +173,7 @@ impl ConstructorOriginBindings {
         origin: &Origin,
         conflict: impl Fn() -> TypeError,
     ) -> Result<(), TypeError> {
-        if matches!(origin, Origin::Unbound) {
+        if matches!(origin, Origin::Unbound) || id.0 < self.own_from {
             return Ok(());
         }
         let origin = tail_origin(origin.clone());
@@ -290,10 +377,12 @@ impl Checker {
         names: &[String],
         params: &[Ty],
         bound: &[(usize, &Ty)],
+        own_from: u32,
     ) -> Result<ConstructorOriginBindings, TypeError> {
         let mut bindings = ConstructorOriginBindings {
-            pointers: Self::bind_callable_pointer_origins(callee, names, params, bound)?,
+            pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, own_from)?,
             origins: HashMap::new(),
+            own_from,
         };
         for (id, provenance) in &bindings.pointers {
             if let Some(origin) = provenance
@@ -321,12 +410,14 @@ impl Checker {
     /// (`def peek[o: Origin](p: Pointer[Int, o])` called with `Pointer(to=x)`
     /// binds `o` to `x`'s provenance). A `MutOrigin` binder rejects an
     /// immutable-origin actual; a projected binder is checked by coercion,
-    /// not bound. `bound` pairs a parameter index with the actual type.
+    /// not bound. `bound` pairs a parameter index with the actual type; a
+    /// binder below `own_from` is an enclosing struct's, left alone.
     pub(in crate::checker) fn bind_callable_pointer_origins(
         callee: &str,
         names: &[String],
         params: &[Ty],
         bound: &[(usize, &Ty)],
+        own_from: u32,
     ) -> Result<HashMap<OriginParamId, PointerOrigin>, TypeError> {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
@@ -350,6 +441,9 @@ impl Checker {
             else {
                 continue;
             };
+            if id.0 < own_from {
+                continue;
+            }
             let parameter = names.get(*index).map_or("?", String::as_str);
             if mutability == Mutability::Mutable
                 && actual_origin.statically_mutable() == Some(false)
@@ -656,6 +750,36 @@ fn tail_origin(origin: Origin) -> Origin {
         Origin::Place(place) => Origin::Place(place.without_subtree()),
         Origin::Union(members) => Origin::union(members.into_iter().map(tail_origin)),
         other => other,
+    }
+}
+
+/// The mutability of a reference over `origin`: its owner's for a place,
+/// mutable for a union only when every member is.
+fn origin_mutability(
+    origin: &Origin,
+    owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
+) -> Option<Mutability> {
+    match origin {
+        Origin::Place(place) => Some(owner_mutability(place.root)),
+        Origin::Untracked { mutable } => Some(if *mutable {
+            Mutability::Mutable
+        } else {
+            Mutability::Immutable
+        }),
+        Origin::Static => Some(Mutability::Immutable),
+        Origin::Union(members) if !members.is_empty() => {
+            let mut all = members
+                .iter()
+                .map(|member| origin_mutability(member, owner_mutability));
+            Some(
+                if all.all(|mutability| mutability == Some(Mutability::Mutable)) {
+                    Mutability::Mutable
+                } else {
+                    Mutability::Immutable
+                },
+            )
+        }
+        _ => None,
     }
 }
 

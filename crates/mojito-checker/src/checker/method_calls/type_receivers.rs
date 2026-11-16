@@ -488,25 +488,39 @@ impl Checker {
         // message replaces `NoMatch` only when this is the sole callable shape.
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
-            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
-                match self.instantiate_method_generics(
-                    &format!("{sname}.{method}"),
-                    sig,
-                    &sig.params,
-                    sig.variadic.as_ref(),
-                    sig.kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                ) {
-                    Ok(instantiation) => instantiation,
-                    Err(error) => {
-                        if single_candidate {
-                            rejection = Some(error);
-                        }
-                        continue;
+            let instantiated = match self.instantiate_method_generics(
+                &format!("{sname}.{method}"),
+                sig,
+                &sig.params,
+                sig.variadic.as_ref(),
+                sig.kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+                info.method_origin_binders(),
+            ) {
+                Ok(instantiation) => instantiation,
+                Err(error) => {
+                    if single_candidate {
+                        rejection = Some(error);
                     }
-                };
+                    continue;
+                }
+            };
+            let ref_return = sig
+                .ref_return
+                .as_ref()
+                .map(|reference| instantiated.bound_ref_return(self, reference));
+            let declared_ret = instantiated.bound_result(sig.ret.clone());
+            let MethodInstantiation {
+                params,
+                variadic,
+                kw_variadic,
+                subst: method_subst,
+                arguments: method_arguments,
+                attributes: bracket_attributes,
+                ..
+            } = instantiated;
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), &[])
             {
@@ -551,7 +565,7 @@ impl Checker {
                     return_type: self.close_method_values(
                         &substitute(
                             &super::super::generics::expand_solved_packs(
-                                &sig.ret,
+                                &declared_ret,
                                 &sig.decls,
                                 &method_arguments,
                             ),
@@ -581,7 +595,7 @@ impl Checker {
                         None
                     },
                     ref_params: sig.ref_params.clone(),
-                    ref_return: sig.ref_return.clone(),
+                    ref_return,
                     param_types: params,
                     param_decls: sig.decls.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),

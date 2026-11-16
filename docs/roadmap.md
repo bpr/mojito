@@ -1697,6 +1697,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     gap is the hidden handle slot a call's reference result binds through
     (`Lower::materialize_reference_result_place`, `mir/calls.rs`): the
     moves analysis does not see `a`'s later use as a use of `p`.
+  - Probe: `ref y = read(x)` over `def read(ref x: String) -> ref[x]
+    String`, then `take(x^)` and `print(y)`, fails at run time with
+    `invalid reference projection Field("data") on <moved>`, where the pin
+    reports "use of uninitialized value 'x'". The binder form
+    (`read[o: ImmOrigin](r: Pointer[String, o])` over `Pointer(to=x)`)
+    does the same.
   - The program is rejected either way; the phase and the message are
     wrong.
   - Probe: the same with `ref a = reflect[P].field_ref[0](p)` and `a = 5`
@@ -1719,6 +1725,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The temporary `Span(xs)` argument's anchor slot (`$arg_loan_r`) holds
     an exclusive loan on `xs` to the statement's end, so the later `mut`
     argument conflicts with it even before the read's placement matters.
+  - Probe: `at(Span(l)) = 5` over `def at[o: MutOrigin](s: Span[Int, o])
+    -> ref[o] Int` is rejected with "access to 'l' conflicts with live
+    reference '$arg_loan_r12'" (pin: stores, `print(l[0])` prints `5`):
+    the write through the result, which borrows `l`, collides with the
+    anchor's loan. The same with `o: Origin`. A named span (`var s =
+    Span(l); at(s) = 5`) runs.
   - Found while landing R685 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7772,40 +7784,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1100 A free function with an origin binder over `Span[T, o]`
-  is rejected at its call**
-
-  Problem: `def first[T: ImplicitlyCopyable & Movable, o: Origin](s:
-  Span[T, o]) -> T` called as `first(Span(l))` stops with "type mismatch
-  for argument to 'first': expected Span[Int], found Span[Int]", where the
-  pin prints the element.
-  - The two spellings differ only in their origin argument, the binder `o`
-    against the span's inferred origin, which the call should bind.
-  - Probe: `/tmp`-style program of the two lines above over
-    `var l = List[Int]()` with two elements, printing `first(Span(l))`.
-  - The cause is that no call solves a declared origin binder from an
-    argument's type. `substitute_sig_origin` (`origins/solve.rs`) fills
-    only a `ref` parameter's origin slot, and the concrete free-call path
-    (`call_inference.rs`) passes the result's `SigOrigin::Bound` through
-    unsolved, so `origin_param(0)` reaches the caller's MIR.
-  - Probe: over `def read[o: ImmOrigin](r: Pointer[Int, o]) -> ref[o]
-    Int` returning `r[]`, `var x = 222` then `print(read(Pointer(to=x)))`
-    prints `0` where the pin prints `222`: the result names no origin, so
-    nothing keeps `x` alive past the call.
-  - Probe: the same over `r: Pointer[Int, o]._mlir_lit_ref` returning
-    `__get_litref_as_mvalue(r)`, called as
-    `read(__get_mvalue_as_litref(x))`, prints `0` (pin: `222`).
-  - Probe: the same over `Pointer[String, o]` and `var x =
-    String("hello!")` fails with `invalid reference projection
-    Field("data") on <moved>` (pin: `hello!`).
-  - Fix: solve each origin binder from the argument types, as
-    `bind_constructor_pointer_params` does for a struct's binders, in the
-    free-call and method paths. `materialize_call_reference_place`
-    then roots the result's loans.
-  - Found while planning R1078 (2026-10-16).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R606 A diagnostic names an entry declaration by its linked name**
 
   Problem: an error about the entry's own `struct List` says
@@ -9678,7 +9656,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Flatten::materialize_call_reference_place` already does for a
     reference result, then stop retaining the place and delete the
     `arg_places` seeding.
-  - Depends on R1100 (the result type must name the argument's origin).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R2257 A spread pack and `external_call` operands keep a place-table
@@ -10524,6 +10502,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`borrow[Int, origin_of(x)]`) have no declared slot, so
     `CallableSpecialization::declared` (`checker/type_resolution.rs`)
     appends their attributes after the declared ones.
+  - The one solver should absorb `substitute_callee_pointer_origins`
+    (`checker/call_inference.rs`): every call path runs it as a pre-pass
+    that binds the callee's own origin binders before the type-parameter
+    solve, where upstream infers them together.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

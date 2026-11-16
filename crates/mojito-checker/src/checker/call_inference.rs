@@ -1781,6 +1781,7 @@ impl Checker {
             overflow: &overflow,
             args,
             kwargs,
+            own_binders: 0,
         };
         let (params, declared, bound_variadic, bindings) = self.substitute_callee_pointer_origins(
             name,
@@ -1789,10 +1790,8 @@ impl Checker {
             variadic.as_ref(),
             &origin_arguments,
         )?;
-        let ret = match bindings {
-            Some(bindings) => bindings.substitute(&ret),
-            None => ret,
-        };
+        let (ret, ref_return) =
+            self.bound_callee_result(bindings.as_ref(), &ret, ref_return.as_deref());
         let mut score = 0;
         let mut existentials = mojito_types::types::TySubst::new();
         for (i, slot) in slots.iter().enumerate() {
@@ -1972,10 +1971,8 @@ impl Checker {
         let Some(GenericFuncTy {
             decls,
             func:
-                FuncTy {
-                    params,
+                func @ FuncTy {
                     names,
-                    ret,
                     required,
                     variadic,
                     kw_variadic,
@@ -1985,7 +1982,6 @@ impl Checker {
                     error,
                     conventions,
                     ref_params,
-                    ref_return,
                     ..
                 },
         }) = generic.as_generic_func()
@@ -2031,6 +2027,20 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
+        // The callee's own origin binders bind from the arguments before the
+        // type-parameter solve, as on the concrete path.
+        let (params, variadic, ret, ref_return) = self.bind_generic_callee_origins(
+            name,
+            func,
+            &CalleeOriginArguments {
+                slots: &slots,
+                overflow: &overflow,
+                args,
+                kwargs,
+                own_binders: 0,
+            },
+        )?;
+        let params = &params;
         let explicit = self.explicit_type_args(name, decls, param_args)?;
         let mut use_params = Vec::new();
         let mut arg_tys = Vec::new();
@@ -2214,7 +2224,7 @@ impl Checker {
         let gathered = self.gathered_arguments(name, &overflow);
         self.record_call_conventions(span, &slots, &effective_conventions, &by_address, gathered);
         self.record_argument_borrows(&slots, &effective_conventions, gathered, args, kwargs, None);
-        let mut referent = resolve(ret)?;
+        let mut referent = resolve(&ret)?;
         if forwarded_pack.is_some() {
             // A result naming the callee's pack elements (`Us[i]`) closes
             // over the caller's own pack.
@@ -2247,7 +2257,8 @@ impl Checker {
                 Some(mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
                     parameter_names: names.clone(),
-                    parameter_types: params
+                    parameter_types: func
+                        .params
                         .iter()
                         .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
                         .collect(),
@@ -2507,7 +2518,7 @@ impl Checker {
     /// spellings (type parameters left abstract, for the exclusivity rule),
     /// the bound element type, and the bindings, which the result carries
     /// too.
-    fn substitute_callee_pointer_origins(
+    pub(super) fn substitute_callee_pointer_origins(
         &self,
         name: &str,
         names: &[String],
@@ -2561,7 +2572,17 @@ impl Checker {
             .iter()
             .map(|(index, ty)| (*index, ty))
             .collect();
-        let bindings = Self::bind_callee_origins(name, &pattern_names, &patterns, &bound)?;
+        let bindings = Self::bind_callee_origins(
+            name,
+            &pattern_names,
+            &patterns,
+            &bound,
+            arguments.own_binders,
+        )?;
+        if bindings.is_empty() {
+            let declared = params.clone();
+            return Ok((params, declared, None, None));
+        }
         let bound_variadic = variadic.map(|element| bindings.substitute(element));
         let bound = bindings.substitute_all(&params);
         Ok((bound.clone(), bound, bound_variadic, Some(bindings)))
@@ -2728,6 +2749,56 @@ impl Checker {
             ty: struct_name.to_string(),
         }
     }
+
+    /// A generic callee's parameters, `*args` element, result, and `ref`
+    /// result contract with its own origin binders bound from the arguments,
+    /// its type parameters still abstract.
+    fn bind_generic_callee_origins(
+        &self,
+        name: &str,
+        func: &FuncTy,
+        arguments: &CalleeOriginArguments<'_>,
+    ) -> Result<GenericCalleeOrigins, TypeError> {
+        let (params, _, bound_variadic, bindings) = self.substitute_callee_pointer_origins(
+            name,
+            &func.names,
+            func.params.clone(),
+            func.variadic.as_ref(),
+            arguments,
+        )?;
+        let (ret, ref_return) =
+            self.bound_callee_result(bindings.as_ref(), &func.ret, func.ref_return.as_deref());
+        Ok((
+            params,
+            bound_variadic.or_else(|| func.variadic.clone()),
+            ret,
+            ref_return,
+        ))
+    }
+
+    /// A callee's result and `ref` result contract with the origin binders
+    /// its call bound substituted
+    /// ([`ConstructorOriginBindings::substitute_ref_sig`]).
+    fn bound_callee_result(
+        &self,
+        bindings: Option<&super::origins::ConstructorOriginBindings>,
+        ret: &Ty,
+        ref_return: Option<&mojito_types::origin::RefSig>,
+    ) -> (Ty, Option<Box<mojito_types::origin::RefSig>>) {
+        let Some(bindings) = bindings else {
+            return (ret.clone(), ref_return.cloned().map(Box::new));
+        };
+        (
+            bindings.substitute(ret),
+            ref_return.map(|reference| {
+                Box::new(
+                    bindings.substitute_ref_sig(reference, &|owner| {
+                        self.owner_reference_mutability(owner)
+                    }),
+                )
+            }),
+        )
+    }
 }
 
 /// The attributes of the bracket arguments `param_args` supplies to a
@@ -2772,28 +2843,40 @@ pub(super) fn folded_parameter_attributes(
     folded
 }
 
+/// The arguments of a call whose callee's origin binders bind: the regular
+/// slots and the positions its `*args` collector gathers.
+pub(super) struct CalleeOriginArguments<'a> {
+    pub(super) slots: &'a [ArgSlot],
+    pub(super) overflow: &'a [usize],
+    pub(super) args: &'a [Expr],
+    pub(super) kwargs: &'a [mojito_ast::ast::KwArg],
+    /// The first origin binder the callee declares itself: a method's
+    /// binders follow its struct's, which the receiver binds.
+    pub(super) own_binders: u32,
+}
+
 /// A call's origin-bound parameters, their declared spellings for the
 /// exclusivity rule, its bound `*args` element type, and the bindings, when
 /// any parameter or collected argument names a binder.
-type CalleeOriginSubstitution = (
+pub(super) type CalleeOriginSubstitution = (
     Vec<Ty>,
     Vec<Ty>,
     Option<Ty>,
     Option<super::origins::ConstructorOriginBindings>,
 );
 
+/// A generic callee's origin-bound parameters, `*args` element, result,
+/// and `ref` result contract.
+type GenericCalleeOrigins = (
+    Vec<Ty>,
+    Option<Ty>,
+    Ty,
+    Option<Box<mojito_types::origin::RefSig>>,
+);
+
 /// The arguments a `*args` collector gathers, each with its declared and
 /// found element types.
 type CollectedElements<'a> = Vec<(&'a Expr, Vec<Ty>)>;
-
-/// The arguments of a call whose callee's origin binders bind: the regular
-/// slots and the positions its `*args` collector gathers.
-struct CalleeOriginArguments<'a> {
-    slots: &'a [ArgSlot],
-    overflow: &'a [usize],
-    args: &'a [Expr],
-    kwargs: &'a [mojito_ast::ast::KwArg],
-}
 
 /// A free call whose callee is an overload set, as each candidate is
 /// checked against it.

@@ -226,41 +226,53 @@ impl Checker {
             // `def[index: Int](var element: Self.Ts[index])`) is judged at
             // the receiver's elements.
             let at_receiver = self.method_decls_at_receiver(sig, info, targs);
-            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
-                match self.instantiate_method_generics(
-                    &format!("{sname}.{method}"),
-                    at_receiver.as_ref().unwrap_or(sig),
-                    &receiver_params,
-                    receiver_variadic.as_ref(),
-                    receiver_kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                ) {
-                    Ok(instantiated) => instantiated,
-                    // A runtime value where a subscript accessor takes a
-                    // compile-time `Int` (`t[i]` over a runtime `i`) is the
-                    // reason the call reports, as at the pin.
-                    Err(TypeError::NotComptime(_) | TypeError::DynamicParameterValue)
-                        if !overloaded
-                            && matches!(method, "__getitem__" | "__getitem_param__")
-                            && matches!(sig.decls.as_slice(),
+            let instantiated = match self.instantiate_method_generics(
+                &format!("{sname}.{method}"),
+                at_receiver.as_ref().unwrap_or(sig),
+                &receiver_params,
+                receiver_variadic.as_ref(),
+                receiver_kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+                info.method_origin_binders(),
+            ) {
+                Ok(instantiated) => instantiated,
+                // A runtime value where a subscript accessor takes a
+                // compile-time `Int` (`t[i]` over a runtime `i`) is the
+                // reason the call reports, as at the pin.
+                Err(TypeError::NotComptime(_) | TypeError::DynamicParameterValue)
+                    if !overloaded
+                        && matches!(method, "__getitem__" | "__getitem_param__")
+                        && matches!(sig.decls.as_slice(),
                             [decl @ ParamDecl::Value { .. }]
                                 if decl.value_element_ty().is_some_and(|ty| ty.is_int())) =>
-                    {
-                        availability_failure
-                            .get_or_insert_with(|| TypeError::DynamicParameterValue.to_string());
-                        continue;
+                {
+                    availability_failure
+                        .get_or_insert_with(|| TypeError::DynamicParameterValue.to_string());
+                    continue;
+                }
+                Err(failure) => {
+                    if !overloaded && let Some(reason) = collector_element_failure(sig, &failure) {
+                        availability_failure.get_or_insert(reason);
                     }
-                    Err(failure) => {
-                        if !overloaded
-                            && let Some(reason) = collector_element_failure(sig, &failure)
-                        {
-                            availability_failure.get_or_insert(reason);
-                        }
-                        continue;
-                    }
-                };
+                    continue;
+                }
+            };
+            let ref_return = sig
+                .ref_return
+                .as_ref()
+                .map(|reference| instantiated.bound_ref_return(self, reference));
+            let declared_ret = instantiated.bound_result(substitute_at(&sig.ret, info, targs));
+            let MethodInstantiation {
+                params,
+                variadic,
+                kw_variadic,
+                subst: method_subst,
+                arguments: method_arguments,
+                attributes: bracket_attributes,
+                ..
+            } = instantiated;
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), targs)
@@ -314,7 +326,7 @@ impl Checker {
                         &self.close_pack_elements(
                             substitute(
                                 &super::super::generics::expand_solved_packs(
-                                    &substitute_at(&sig.ret, info, targs),
+                                    &declared_ret,
                                     &sig.decls,
                                     &method_arguments,
                                 ),
@@ -361,7 +373,7 @@ impl Checker {
                         None
                     },
                     ref_params: sig.ref_params.clone(),
-                    ref_return: sig.ref_return.clone(),
+                    ref_return,
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     parameter_names: sig.names.clone(),
@@ -440,27 +452,42 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| self.substitute_self_members(ty, obj_ty));
-            let (params, variadic, kw_variadic, method_subst, method_arguments, bracket_attributes) =
-                match self.instantiate_method_generics(
-                    &format!("{obj_ty}.{method}"),
-                    &sig,
-                    &receiver_params,
-                    receiver_variadic.as_ref(),
-                    receiver_kw_variadic.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                ) {
-                    Ok(instantiated) => instantiated,
-                    Err(failure) => {
-                        if single_candidate
-                            && let Some(reason) = collector_element_failure(&sig, &failure)
-                        {
-                            availability_failure.get_or_insert(reason);
-                        }
-                        continue;
+            let instantiated = match self.instantiate_method_generics(
+                &format!("{obj_ty}.{method}"),
+                &sig,
+                &receiver_params,
+                receiver_variadic.as_ref(),
+                receiver_kw_variadic.as_ref(),
+                param_args,
+                args,
+                kwargs,
+                0,
+            ) {
+                Ok(instantiated) => instantiated,
+                Err(failure) => {
+                    if single_candidate
+                        && let Some(reason) = collector_element_failure(&sig, &failure)
+                    {
+                        availability_failure.get_or_insert(reason);
                     }
-                };
+                    continue;
+                }
+            };
+            let ref_return = sig
+                .ref_return
+                .as_ref()
+                .map(|reference| instantiated.bound_ref_return(self, reference));
+            let declared_ret =
+                instantiated.bound_result(self.substitute_self_members(&sig.ret, obj_ty));
+            let MethodInstantiation {
+                params,
+                variadic,
+                kw_variadic,
+                subst: method_subst,
+                arguments: method_arguments,
+                attributes: bracket_attributes,
+                ..
+            } = instantiated;
             if let Err(failure) = self.method_constraint_result(&sig, &method_arguments, &[], &[]) {
                 if single_candidate
                     && availability_failure.is_none()
@@ -490,10 +517,7 @@ impl Checker {
                 continue;
             };
             let return_type = self.close_method_values(
-                &substitute(
-                    &self.substitute_self_members(&sig.ret, obj_ty),
-                    &method_subst,
-                ),
+                &substitute(&declared_ret, &method_subst),
                 &sig.decls,
                 &method_arguments,
             );
@@ -542,7 +566,7 @@ impl Checker {
                 // prefix once the concrete type is known.
                 lowered_name: Some(method_lowered_name("__trait_dispatch", method, &sig, None)),
                 ref_params: sig.ref_params.clone(),
-                ref_return: sig.ref_return.clone(),
+                ref_return,
                 param_types: params,
                 param_decls: sig.decls.clone(),
                 parametric_origin_writes: sig.parametric_origin_writes.clone(),
