@@ -56,6 +56,8 @@ impl<'a> Flatten<'a> {
             _ => return None,
         };
         let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, receiver_place) =
+            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let indices = index_nodes
             .into_iter()
             .enumerate()
@@ -175,14 +177,15 @@ impl<'a> Flatten<'a> {
             indices,
         } = pending;
         let setter = &plan.setter;
-        let setter_receiver = self.reload_augmented_source(
+        let setter_receiver = self.setter_receiver(
+            setter,
+            object,
             receiver,
-            &receiver_place,
+            receiver_place.as_ref(),
             matches!(
                 plan.getter.receiver_convention,
                 Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
             ),
-            object.location(),
         );
         let mut args = Vec::with_capacity(indices.len());
         let mut arg_places = Vec::with_capacity(indices.len());

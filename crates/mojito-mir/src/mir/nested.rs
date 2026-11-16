@@ -1035,11 +1035,26 @@ fn lower_storage_call_witness(
     };
     let root = |var: usize, ty: &Ty| MirPlace::root(var as VarId, Some(ty.clone()));
     let mut instrs = Vec::new();
-    let recv = register(&storage.ty);
-    instrs.push(MirInstr::LoadPlace {
-        dest: recv,
-        place: root(0, &storage.ty),
-    });
+    // The method takes the storage `read self`: by address when it is
+    // memory-only, as upstream's lifted closure method binds it.
+    let recv = if storage.declared.register_passable() {
+        let recv = register(&storage.ty);
+        instrs.push(MirInstr::LoadPlace {
+            dest: recv,
+            place: root(0, &storage.ty),
+        });
+        recv
+    } else {
+        let place = root(0, &storage.ty);
+        let handle = crate::mir::mir_place_handle_ty(
+            &place,
+            Some(mojito_types::origin::Mutability::Immutable),
+        )
+        .unwrap_or_else(Ty::error);
+        let recv = register(&handle);
+        instrs.push(MirInstr::MakeRef { dest: recv, place });
+        recv
+    };
     let mut args = Vec::new();
     let mut arg_places = Vec::new();
     let mut kwargs = Vec::new();

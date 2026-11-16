@@ -9527,27 +9527,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Model: Opus, Not Planned.
 
 
-- [ ] **R2246 Receivers lowered outside `lower_receiver_value` get their
-  address from `mir::address_call_operands`**
-
-  Lowering addresses a method or accessor receiver where
-  `Flatten::lower_receiver_value` lowers it (`receiver_by_address`), and an
-  in-place dunder's and a `for` loop's. Receivers that call
-  `lower_call_receiver` directly still wait for the pass.
-  - Probe: a subscript store's base and a `read` stored value
-    (`index.multi_set`, `lower_stmt.rs` store paths), 90 rows over std.
-  - Probe: an augmented subscript's getter base (`index.get`,
-    `write_back.rs`, `lower_stmt.rs` ~743/866/1018/1099), where getter and
-    setter share one receiver register (`subscript_write_back.mojo`): the
-    setter needs its own `place_address`, as upstream's `SubscriptDLValue`
-    store does.
-  - Probe: `t[0]` on a `Tuple` through its element accessor
-    (`Tuple.__getitem_param__`, `materialize_reference_result_place`).
-  - Probe: a closure storage's `__call__`/method receiver
-    (`_write_int$process_digits$__storage.process_digits`).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2247 `address_call_operands` still runs in both lowering
   pipelines**
 
@@ -9567,13 +9546,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     address it in lowering.
   - Probe: `List(copy=…)`, `Dict.copy`, `Set.copy`, `String.copy`, and the
     other library `Self(copy=self)` constructions (36 operands over std).
+  - Probe: a named-local element call `objs[0](3)` (`call_expr`'s
+    `element_invocation` arm) loads the local with no receiver node, so the
+    getter's receiver verdict (`Flatten::address_receiver`) cannot read a
+    checked `RegisterPassableRead` for it; the check should record the
+    callee local as the getter's receiver node. No std or corpus row
+    reaches it today.
   - Then remove the two calls and repoint every doc comment naming
     `address_call_operands` as the producer.
   - Probe: a throwaway audit in `address_call_operands`'s `collect`,
     printing each operand `by_address_operands` lists whose register is
     not yet a `Ref` (run with a fresh `MOJITO_CACHE_DIR`, so all of std
     lowers), lists none; `--backend pliron` on `subscript_write_back.mojo`.
-  - Depends on R2245, R2246.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R2186 A memory-only `read` argument with no retained place is

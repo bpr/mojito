@@ -2435,13 +2435,23 @@ way where `Flatten::lower_receiver_value` lowers it: a declared `mut` or
 did not prove register-passable (`RegisterPassableRead`) immutably. So
 are an in-place dunder's `mut self` (`Flatten::emit_in_place_dunder`), a
 `for` loop's `__next__` iterator, and its borrowed `__iter__` source as
-the checked `IterationProtocol::prepare_receiver` says. A destructured tuple place is addressed per element
+the checked `IterationProtocol::prepare_receiver` says. A `Tuple` element
+accessor's receiver (`t[0]`, `type_keyed_accessor_read`) goes through
+`lower_receiver_value` too. A subscript store's, an augmented store's, a
+write-back's, and an element call's getter receiver is addressed by the
+getter's own checked contract (`Flatten::address_receiver`), and the
+setter takes a fresh `ref.make` of the base (`Flatten::setter_receiver`),
+as upstream's `SubscriptDLValue` store forms its own `!lit.ref`, so a
+getter's reference never reaches a by-value setter; an augmented setter's
+`read` stored value is addressed by its `OperandBinding`. A closure
+storage's `read self` is passed by address when the storage is
+memory-only (`Flatten::lower_direct_nested_call`, the synthesized
+`__call__` witness). A destructured tuple place is addressed per element
 extraction (`Flatten::destructured_base`, `mir/lower_stmt.rs`). Once the
 omitted arguments are written, `mir::address_call_operands`
 (`mir/call_addresses.rs`, R1425) addresses every other by-address operand
-of a direct `call` or resolved `call.method` (receivers outside
-`lower_receiver_value`, a subscript store's value, `call.indirect`, a
-`copy=` source, and filled defaults), as upstream's `lit.call` takes a `!lit.ref`
+of a direct `call` or resolved `call.method` (`call.indirect`, a
+`copy=` source, filled defaults, and a named element call's receiver), as upstream's `lit.call` takes a `!lit.ref`
 operand and loads nothing: a `mut`/`ref` parameter, or a `read` one of a
 memory-only declared type (`mir::by_address_parameter`), whose operand is
 a whole load of the place the call's `arg_places` entry retains (or a

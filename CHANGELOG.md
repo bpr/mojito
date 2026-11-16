@@ -1008,6 +1008,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering now addresses the receivers it left to
+  `mir::address_call_operands`: a `Tuple` element accessor's (`t[0]`), a
+  subscript store's, augmented store's, write-back's, and element call's
+  getter base by the getter's checked contract, with the setter taking a
+  fresh `ref.make` of the base as upstream's `SubscriptDLValue` store
+  does, an augmented setter's `read` stored value, and a memory-only
+  closure storage's `read self`. Output is unchanged (R2246).
 - MIR lowering now forms a memory-only `read` argument's `ref.make` itself,
   as upstream emits the `!lit.ref` while lowering the operand: the check
   records, per bound argument, whether its callee's declared parameter

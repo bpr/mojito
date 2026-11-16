@@ -472,6 +472,7 @@ impl<'a> Flatten<'a> {
         if let Some(plan) = call.element_invocation() {
             let indices = element_indices(call);
             let receiver = self.lower_call_receiver(callee);
+            let receiver = self.address_receiver(&plan.getter, callee, receiver);
             return self.lower_element_invocation(call, receiver, plan, &indices, args, kwargs);
         }
         if parameterized_method_decls(node).is_some() {

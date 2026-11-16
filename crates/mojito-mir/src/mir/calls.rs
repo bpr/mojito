@@ -1860,10 +1860,54 @@ impl<'a> Flatten<'a> {
             }
             return (value, None);
         }
-        match receiver_by_address(call, receiver, place.as_ref()) {
-            Some(wanted) => self.address_operand(receiver, (value, place), wanted),
+        match call.call_contract() {
+            Some(contract) => self.address_receiver(&contract, receiver, (value, place)),
             None => (value, place),
         }
+    }
+
+    /// Pass `receiver`, lowered to `lowered`, as the call bound by
+    /// `contract` takes it: by address when [`receiver_by_address`] says
+    /// so, as upstream's `lit.call` takes a `!lit.ref` of the receiver's
+    /// storage. A subscript's getter, a write-back's getter, and an
+    /// element call's getter address their receiver here, keyed by the
+    /// accessor's own contract rather than the subscript node's.
+    pub(super) fn address_receiver(
+        &mut self,
+        contract: &mojito_checked::checked::CheckedCallContract,
+        receiver: Node<'a>,
+        lowered: (Reg, Option<MirPlace>),
+    ) -> (Reg, Option<MirPlace>) {
+        match receiver_by_address(contract, receiver, lowered.1.as_ref()) {
+            Some(wanted) => self.address_operand(receiver, lowered, wanted),
+            None => lowered,
+        }
+    }
+
+    /// The receiver a subscript store's `setter` takes after its getter
+    /// read `raw` from `place`: a fresh `ref.make` of the base when the
+    /// setter takes it by address, as upstream's `SubscriptDLValue` store
+    /// forms its own `!lit.ref` of the base; otherwise the base read again
+    /// when the getter may have written it (`getter_mutates`) or took it by
+    /// address, so a getter's reference never reaches a by-value setter.
+    pub(super) fn setter_receiver(
+        &mut self,
+        setter: &mojito_checked::checked::CheckedCallContract,
+        receiver: Node<'a>,
+        raw: Reg,
+        place: Option<&MirPlace>,
+        getter_mutates: bool,
+    ) -> Reg {
+        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
+        if let Some(place) = place
+            && place.ty.is_some()
+            && !is_reference(place.ty.as_ref())
+            && let Some(wanted) = receiver_by_address(setter, receiver, Some(place))
+        {
+            return self.place_address(receiver.location(), place, wanted);
+        }
+        let reload = getter_mutates || is_reference(self.f.reg_types.get(&raw.0));
+        self.reload_augmented_source(raw, &place.cloned(), reload, receiver.location())
     }
 
     /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
@@ -2723,22 +2767,22 @@ impl<'a> Flatten<'a> {
     }
 }
 
-/// How method call (or subscript accessor) `call` receives `receiver`,
-/// which kept `place`, by address: a declared `mut` or `ref` receiver
-/// (`receiver_requires_place`, whatever its effective access) as a mutable
+/// How the method call (or subscript accessor) bound by `contract`
+/// receives `receiver`, which kept `place`, by address: a declared `mut` or
+/// `ref` receiver (`receiver_requires_place`, whatever its effective
+/// access) as a mutable
 /// reference, which [`Flatten::place_handle_ty`] narrows to the place's own
 /// mutability, a `read` one the check did not prove register-passable as an
 /// immutable one, as upstream's `lit.call` takes a `!lit.ref` of the
 /// receiver's storage. An owned receiver, an elided one, and a `def(...)`
 /// bound's callee, which is the value it is, are `None`.
 fn receiver_by_address(
-    call: Node<'_>,
+    contract: &mojito_checked::checked::CheckedCallContract,
     receiver: Node<'_>,
     place: Option<&MirPlace>,
 ) -> Option<mojito_types::origin::Mutability> {
     use mojito_ast::ast::ArgConvention;
     use mojito_types::origin::Mutability;
-    let contract = call.call_contract()?;
     let callable_bound = place.and_then(|place| place.ty.as_ref()).is_some_and(|ty| {
         crate::mir::bound_calls::callable_bound_requirement(ty, &contract.target).is_some()
     });

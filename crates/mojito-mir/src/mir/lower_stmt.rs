@@ -47,11 +47,13 @@ enum LeafStore<'a> {
 }
 
 /// A nominal subscript store's operands, lowered before its value: the
-/// `target` and its index argument nodes, the receiver with the place a
-/// `mut self` setter writes back, the index arguments, the keyword the
-/// value is passed under, and the selected `__setitem__`.
+/// `target`, its receiver `object`, and its index argument nodes, the
+/// receiver with the place a `mut self` setter writes back, the index
+/// arguments, the keyword the value is passed under, and the selected
+/// `__setitem__`.
 struct SubscriptSetter<'a> {
     target: Node<'a>,
+    object: Node<'a>,
     indices: Vec<Node<'a>>,
     receiver: Reg,
     receiver_place: Option<MirPlace>,
@@ -741,6 +743,8 @@ impl<'a> Flatten<'a> {
             return false;
         };
         let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, receiver_place) =
+            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
         let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source);
         let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
@@ -864,6 +868,8 @@ impl<'a> Flatten<'a> {
             rhs: rhs_expression,
         } = *store;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, receiver_place) =
+            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
         let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source)
             || plan.setter.as_ref().is_some_and(|setter| {
@@ -953,8 +959,12 @@ impl<'a> Flatten<'a> {
             .setter
             .as_ref()
             .expect("value-returning augmented getter has a setter");
-        let setter_receiver =
-            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let setter_receiver = self.reload_augmented_receiver(
+            setter,
+            (receiver, receiver_place.as_ref()),
+            &plan.getter,
+            object,
+        );
         let setter_raw_index = self.reload_augmented_source(
             raw_index,
             &index_place,
@@ -1016,6 +1026,8 @@ impl<'a> Flatten<'a> {
             rhs: rhs_expression,
         } = *store;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, receiver_place) =
+            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let (argument, argument_place) = self.slice_set_argument(target, descriptor, bounds);
         let mut getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
@@ -1053,8 +1065,12 @@ impl<'a> Flatten<'a> {
             .setter
             .as_ref()
             .expect("value-returning augmented getter has a setter");
-        let setter_receiver =
-            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let setter_receiver = self.reload_augmented_receiver(
+            setter,
+            (receiver, receiver_place.as_ref()),
+            &plan.getter,
+            object,
+        );
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
@@ -1097,6 +1113,8 @@ impl<'a> Flatten<'a> {
             rhs: rhs_expression,
         } = *store;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, receiver_place) =
+            self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let mut source_places = Vec::with_capacity(source.len());
         let mut source_spans = Vec::with_capacity(source.len());
         let raw_args = source
@@ -1218,8 +1236,12 @@ impl<'a> Flatten<'a> {
             .setter
             .as_ref()
             .expect("value-returning augmented getter has a setter");
-        let setter_receiver =
-            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let setter_receiver = self.reload_augmented_receiver(
+            setter,
+            (receiver, receiver_place.as_ref()),
+            &plan.getter,
+            object,
+        );
         let setter_args = raw_args
             .iter()
             .enumerate()
@@ -1493,7 +1515,8 @@ impl<'a> Flatten<'a> {
     /// The augmented store's updated `result` passed to `setter`'s value
     /// parameter by its convention: taken by an owned (`var`/`deinit`)
     /// parameter or one the checker adapts, and read in place, with its
-    /// place, by a `read` one.
+    /// place, by a `read` one, which takes its address when the setter's
+    /// declared parameter does.
     pub(super) fn augmented_setter_value(
         &mut self,
         target: Node<'a>,
@@ -1516,7 +1539,17 @@ impl<'a> Flatten<'a> {
                 )
         });
         if !adapted && !owned {
-            return self.read_c(target, result);
+            let read = self.read_c(target, result);
+            if OperandBinding::of_argument(setter, value_argument)
+                == Some(OperandBinding::Read { by_address: true })
+            {
+                return self.address_operand(
+                    target,
+                    read,
+                    mojito_types::origin::Mutability::Immutable,
+                );
+            }
+            return read;
         }
         let value = self.take_c(target, result);
         let value = self.apply_checked_call_value_adjustments(
@@ -1528,23 +1561,26 @@ impl<'a> Flatten<'a> {
         (value, None)
     }
 
-    /// The augmented store's receiver as its setter sees it: reloaded from
-    /// its place when the getter's `mut`/`ref` receiver may have rebound it.
+    /// The augmented store's receiver as its `setter` sees it
+    /// ([`Self::setter_receiver`]): addressed afresh when the setter takes
+    /// it by address, otherwise reloaded from its place when the getter's
+    /// `mut`/`ref` receiver may have rebound it.
     fn reload_augmented_receiver(
         &mut self,
-        receiver: Reg,
-        receiver_place: Option<&MirPlace>,
-        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        setter: &mojito_checked::checked::CheckedCallContract,
+        receiver: (Reg, Option<&MirPlace>),
+        getter: &mojito_checked::checked::CheckedCallContract,
         object: Node<'a>,
     ) -> Reg {
-        self.reload_augmented_source(
-            receiver,
-            &receiver_place.cloned(),
+        self.setter_receiver(
+            setter,
+            object,
+            receiver.0,
+            receiver.1,
             matches!(
-                plan.getter.receiver_convention,
+                getter.receiver_convention,
                 Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
             ),
-            object.location(),
         )
     }
 
@@ -1834,8 +1870,9 @@ impl<'a> Flatten<'a> {
             }
             _ => return None,
         };
-        let (receiver, receiver_place) =
-            self.lower_setup_receiver_with(target, object, |this| this.lower_call_receiver(object));
+        let (receiver, receiver_place) = self.lower_setup_receiver_with(target, object, |this| {
+            this.lower_receiver_value(target, object, false)
+        });
         let mut indices = Vec::new();
         let mut arg_places = Vec::with_capacity(descriptors.len());
         let mut evaluated = Vec::new();
@@ -1902,6 +1939,7 @@ impl<'a> Flatten<'a> {
         Some((
             SubscriptSetter {
                 target,
+                object,
                 indices,
                 receiver,
                 receiver_place,
@@ -3288,14 +3326,24 @@ impl<'a> Flatten<'a> {
                             self.emit(MirInstr::Store { place, src: elem });
                         }
                         // An earlier leaf's setter may have written the
-                        // receiver back, so it is read again for this one.
+                        // receiver back, so it is read again, or addressed
+                        // afresh, for this one.
                         (None, Some(LeafStore::Setter(mut setter))) => {
-                            setter.receiver = self.reload_augmented_source(
-                                setter.receiver,
-                                &setter.receiver_place,
-                                true,
-                                place_node.location(),
-                            );
+                            setter.receiver = match place_node.call_contract() {
+                                Some(contract) => self.setter_receiver(
+                                    &contract,
+                                    setter.object,
+                                    setter.receiver,
+                                    setter.receiver_place.as_ref(),
+                                    true,
+                                ),
+                                None => self.reload_augmented_source(
+                                    setter.receiver,
+                                    &setter.receiver_place,
+                                    true,
+                                    place_node.location(),
+                                ),
+                            };
                             let (value, value_place) =
                                 self.converted_store_value(place_node, (elem, None));
                             self.emit_subscript_set(*setter, value, value_place, None);

@@ -297,14 +297,15 @@ impl<'a> Flatten<'a> {
 
     /// Read type-keyed subscript node `e`, `object[T]`: the accessor call
     /// `contract` selected (`v.__getitem_param__[T]()`) on `object`, with no
-    /// run-time arguments.
+    /// run-time arguments; the receiver is passed as the accessor binds it
+    /// ([`Self::lower_receiver_value`]).
     pub(super) fn type_keyed_accessor_read(
         &mut self,
         e: Node<'a>,
         object: Node<'a>,
         contract: mojito_checked::checked::CheckedCallContract,
     ) -> Reg {
-        let (recv, recv_place) = self.lower_method_receiver(e, object);
+        let (recv, recv_place) = self.lower_receiver_value(e, object, false);
         let dest = self.fresh(e.location(), None);
         self.emit_interior_invalidations(object, None);
         let raises = self.call_raises(e, e.raises());

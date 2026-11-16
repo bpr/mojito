@@ -397,10 +397,11 @@ impl<'a> Flatten<'a> {
 
     /// The direct call of the lifted body of `info`, called by name or
     /// invoked where its lambda stands: the storage this frame holds, as
-    /// upstream passes a closure's `self`, retained as the call's place
-    /// when it is memory-only (by address), else its captured places,
-    /// loaded in capture order and retained as the call's places for the
-    /// body's leading reference parameters, lead the explicit arguments.
+    /// upstream passes a closure's `read self` (by address, retained as the
+    /// call's place, when it is memory-only, else by value), or its
+    /// captured places, loaded in capture order and retained as the call's
+    /// places for the body's leading reference parameters, lead the
+    /// explicit arguments.
     pub(in crate::mir) fn lower_direct_nested_call(
         &mut self,
         call: Node<'a>,
@@ -424,15 +425,19 @@ impl<'a> Flatten<'a> {
                     .storage
                     .as_ref()
                     .expect("a storage place has a storage");
-                let dest = self.fresh_typed(call.location(), Some(place.root), storage.ty.clone());
-                self.emit(MirInstr::LoadPlace {
-                    dest,
-                    place: place.clone(),
-                });
-                vec![(
-                    dest,
-                    (!storage.declared.register_passable()).then_some(place),
-                )]
+                if storage.declared.register_passable() {
+                    let dest =
+                        self.fresh_typed(call.location(), Some(place.root), storage.ty.clone());
+                    self.emit(MirInstr::LoadPlace { dest, place });
+                    vec![(dest, None)]
+                } else {
+                    let dest = self.place_address(
+                        call.location(),
+                        &place,
+                        mojito_types::origin::Mutability::Immutable,
+                    );
+                    vec![(dest, Some(place))]
+                }
             }
             None => info
                 .captures
