@@ -1100,11 +1100,13 @@ fn lower_storage_call_witness(
             });
             Some(place)
         } else {
+            // A register-passable `read` parameter (the forwarded collector
+            // among them) forwards its value, as upstream's witness passes it.
             instrs.push(MirInstr::LoadPlace {
                 dest,
                 place: root(var, ty),
             });
-            Some(root(var, ty))
+            None
         };
         // A keyword-only parameter forwards by its name, the `**kwargs`
         // collector as the forwarded collector.

@@ -2513,8 +2513,7 @@ lists a call-shaped instruction's operands, and
 `OperandAddresses::address` gives the storage an operand addresses,
 falling back to the place table only for an operand that is no such
 `ref.make` (a register-passable `read` a result borrows, a consumed
-receiver, a spread pack, `external_call`'s retained places, a closure
-call's callee). The loan check (`loans.rs` `loan_accesses`), the drop
+receiver, a closure call's callee). The loan check (`loans.rs` `loan_accesses`), the drop
 facts' by-value loads and reference-result owners (`register_loans.rs`
 `ArgumentPassing::by_value`, `RegisterLoanStep::new`'s receiver seeds),
 `RegisterEnds`' consumed operands (`CallArguments`,

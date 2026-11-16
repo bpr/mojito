@@ -1384,8 +1384,10 @@ impl<'a> Flatten<'a> {
     }
 
     /// A whole pack spread into a callee's collector (`show(*args)`,
-    /// `show(*args^)`): the caller's collector, read in place and retained
-    /// as the argument's place, or moved out of its slot when transferred.
+    /// `show(*args^)`): the caller's collector, loaded as its value, as
+    /// upstream passes a register-passable `read` (its elements borrowed
+    /// through the pack type's origin), or moved out of its slot when
+    /// transferred.
     /// The call records the position (`MirInstr::Call::spread`) and the
     /// elaborator expands it into the bound pack's element places. Any other
     /// operand is the unexpanded spread the expression lowering rejects.
@@ -1412,11 +1414,8 @@ impl<'a> Flatten<'a> {
             Some(place.root),
             place.ty.clone().unwrap_or_else(Ty::error),
         );
-        self.emit(MirInstr::LoadPlace {
-            dest: value,
-            place: place.clone(),
-        });
-        (value, Some(place))
+        self.emit(MirInstr::LoadPlace { dest: value, place });
+        (value, None)
     }
 
     pub(super) fn lower_call_arguments(

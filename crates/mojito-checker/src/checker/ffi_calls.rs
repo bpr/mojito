@@ -111,8 +111,6 @@ impl Checker {
         for (index, arg) in args.iter().enumerate() {
             let kind = row.param(index).expect("arity checked above");
             let ty = self.infer(arg)?;
-            self.borrow_reference_result_argument(arg);
-            self.borrow_nominal_place_argument(arg, &ty);
             if kind.is_integer() {
                 let runtime_ty = default_literal(&ty);
                 if runtime_ty != ty {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2260**.
+Next free ID: **R2262**.
 
 ## Ordered Work
 
@@ -9664,24 +9664,44 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2257 A spread pack and `external_call` operands keep a place-table
-  entry with no reference operand**
+- [ ] **R2260 A read builtin's operand keeps a place-table entry beside
+  its value**
 
-  Upstream's call builds a `VariadicPack` from its operand, and an
-  `external_call`'s operands are values whose pointer origins keep their
-  owners alive. Mojito's spread argument is a `place.load` beside its
-  `arg_places` entry (`lower_pack_spread_argument`, `mir/calls.rs`), and
-  `external_call` retains its operands' places so the loan check reads
-  them.
-  - The elaborator reads the spread's place (`native/mono/spread.rs`,
-    `specializer.rs`).
-  - Both are shapes `OperandAddresses::address` falls back to the table
-    for (`table_fallback`, `mir/call_operands.rs`).
-  - Fix: pass the spread pack as a `ref.make` of its slot, and root
-    `external_call`'s owners in its operands' pointer origins, so R2191
-    can delete the tables.
+  Upstream's `abort(message: String)`, `print`, `input`, and `Error`
+  take a memory-only `read` as a `!lit.ref`, and a register-passable one
+  by value. Mojito's `bind_read_builtin_argument`
+  (`checker/builtins.rs`) passes the operand as a value and retains its
+  named or parameter place, so the call reaches `table_fallback`
+  (`mir/call_operands.rs`).
+  - Probe: `_mojito_abort`'s `String` at `RawFileDescriptor.write_bytes`,
+    `write_string`, `_debug_assert_msg`, `std.os.abort`, and
+    `String.resize` (about 26k verifications over std and the corpus).
+  - Fix: pass a memory-only operand as a `ref.make` of its place, and a
+    register-passable one as a value with no place, then drop the
+    `borrow_*` calls the binding keeps only for the table.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2261 An instance's by-address `read` operand loaded to a value
+  keeps its place-table entry**
+
+  Upstream's `LowerArgConventions` loads a register-passable argument at
+  the call and passes the value alone. Mojito's
+  `load_register_passable_operands` and `read_addressed_operands`
+  (`mir/call_addresses.rs`) turn a template's `ref.make` operand into a
+  `ref.read` value once the instance proves its type register-passable,
+  but leave the table entry, which `table_fallback` then answers.
+  - Probe: `divmod[T](a, b)` instantiated at `UInt8`/`UInt64`/`UInt`
+    (`_write_int`'s `process_digits` and `ceil_div`,
+    `SIMD.__ceildiv__`).
+  - Probe: `FastMathFlag.__eq__` in `FastMathFlag._mlir_attr`, and
+    `_find_index`'s positional 1.
+  - Probe, cause to confirm first: `StringSpan(StringLiteral)` in
+    `Bool.write_to`, an `index.multi_set`'s `value_place`, and an
+    `index.get`'s `index_place` over an `Int`.
+  - Fix: clear the operand's table entry where the pass loads it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2191 Every call-shaped instruction carries place tables beside
   its reference operands**
@@ -9714,7 +9734,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2257, R2259.
+  - Depends on R2188, R2189, R2190, R2254, R2259, R2260, R2261.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

@@ -290,8 +290,6 @@ const fn subscript_reg(argument: &MirSubscriptArg) -> Reg {
 ///   value (R2259);
 /// - a `var`/`deinit` receiver's `recv_place`, the storage the call
 ///   consumes;
-/// - a spread pack's `arg_places` entry and an `external_call`'s retained
-///   operand places, which keep their owners alive across the call;
 /// - a `call.indirect`'s `callee_place`, whose callee is a function value
 ///   passed by value;
 /// - an operand that is already a reference without being a `ref.make` of

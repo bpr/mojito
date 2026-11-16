@@ -1740,12 +1740,8 @@ fn method_call_spread_passes_the_bound_pack_itself() {
         None,
         vec![Reg(2), Reg(0)],
     );
-    if let MirInstr::MethodCall {
-        spread, arg_places, ..
-    } = &mut call
-    {
+    if let MirInstr::MethodCall { spread, .. } = &mut call {
         *spread = Some(1);
-        arg_places[1] = Some(collector.clone());
     }
     let mut function = MirFunction {
         body: MirBlock {

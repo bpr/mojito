@@ -1025,6 +1025,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A spread pack (`show(*args)`), a closure storage's `__call__` witness's
+  forwarded register-passable `read` parameters, and `external_call`'s
+  operands are passed as values with no place-table entry, as upstream
+  passes a register-passable `read` and hands `pop.external_call` its
+  loaded pack. The loan check's `external_call` special case is gone. No
+  program output changes. (R2257)
+
 - A call through a `def(...)` bound passes its callee's storage as an
   immutable reference, as upstream's requirement call takes a `!lit.ref`
   of its `read self`, so a closure storage whose body writes a `var`

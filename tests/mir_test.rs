@@ -6981,3 +6981,42 @@ def main():
     );
     assert!(mojito::mir::verify::verify(mir).is_empty());
 }
+
+#[test]
+fn spread_pack_and_external_call_operands_are_values() {
+    // Upstream passes a register-passable `read` pack by value, its
+    // elements borrowed through the pack type's origin, and
+    // `external_call` hands the C function its loaded operands: neither
+    // keeps a place-table entry.
+    let src = "from std.ffi import c_size_t, external_call\n\ndef show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        print(args[i])\n\ndef fwd[*Ts: Writable](*args: *Ts):\n    show(*args)\n\ndef main():\n    fwd(1, \"two\")\n    var text = String(\"hello\")\n    var view = text.as_c_string_slice()\n    print(external_call[\"strlen\", c_size_t](view))\n";
+    let compiled = Compiler::default()
+        .compile_source(src, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let mir = compiled.mir();
+    let spreads = nested_instructions(&mir_function(mir, "fwd").body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                spread: Some(spread),
+                arg_places,
+                ..
+            } if func.0 == "show" => Some(arg_places.get(*spread).cloned().flatten()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(spreads.as_slice(), [None]),
+        "fwd's spread of show: {spreads:?}"
+    );
+    let external = nested_instructions(&mir_function(mir, "main").body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "external_call" => Some(arg_places.clone()),
+            _ => None,
+        })
+        .expect("external_call");
+    assert!(external.iter().all(Option::is_none), "{external:?}");
+}

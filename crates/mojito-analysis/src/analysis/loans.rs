@@ -535,13 +535,10 @@ pub(super) fn loan_accesses(
             spread,
             ..
         } => {
-            // `external_call` borrows its retained caller places only to
-            // keep pointer-backed values alive through the call. Other
-            // retained places are classified by the convention the call
+            // A retained place is classified by the convention the call
             // records its argument bound by, a slot it records none for by
             // the callee's declaration at that slot; a keyword place it
             // records none for stays exclusive.
-            let intrinsic_read = func.0 == "external_call";
             let access = |source: CheckedCallArgumentSource| {
                 let declared = || match source {
                     CheckedCallArgumentSource::Positional(parameter) => {
@@ -549,11 +546,7 @@ pub(super) fn loan_accesses(
                     }
                     _ => LoanAccess::Unclassified,
                 };
-                if intrinsic_read {
-                    LoanAccess::Read
-                } else {
-                    recorded_access(conventions, source, *spread, declared)
-                }
+                recorded_access(conventions, source, *spread, declared)
             };
             let mut accesses = operands
                 .positional
