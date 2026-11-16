@@ -660,19 +660,19 @@ impl<'a> Flatten<'a> {
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
         self.close_call_setup(Some(call));
-        // A fieldwise construction passes its keywords positionally, which
-        // no source the checker bound names.
-        let mut conventions = call.argument_conventions();
-        let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
-            Some(TyKind::Struct(constructed, _)) if *constructed == *name => {
-                conventions = crate::mir::MirArgConventions::default();
-                self.fieldwise_keywords_positional(
-                    constructed,
-                    (regs, arg_places, kw, kwarg_places),
-                )
-            }
-            _ => (regs, arg_places, kw, kwarg_places),
-        };
+        // A fieldwise construction passes its keywords positionally, its
+        // record renumbered to match.
+        let conventions = call.argument_conventions();
+        let ((regs, arg_places, kw, kwarg_places), conventions) =
+            match node.ty.clone().as_ref().map(Ty::kind) {
+                Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
+                    .fieldwise_keywords_positional(
+                        constructed,
+                        (regs, arg_places, kw, kwarg_places),
+                        conventions,
+                    ),
+                _ => ((regs, arg_places, kw, kwarg_places), conventions),
+            };
         let target = callable_target(&node.adjustments)
             .unwrap_or_else(|| self.overloaded_name(name, args.len()));
         let d = self.fresh(call.location(), None);

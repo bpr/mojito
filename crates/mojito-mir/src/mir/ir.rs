@@ -1934,6 +1934,23 @@ impl MirArgConventions {
             .map(|argument| argument.convention)
     }
 
+    /// The record with each source moved to the position `position`
+    /// returns for it, for a call that passes its keywords positionally;
+    /// a source `position` places nowhere is dropped.
+    #[must_use]
+    pub fn remap(
+        self,
+        position: impl Fn(mojito_checked::checked::CheckedCallArgumentSource) -> Option<usize>,
+    ) -> Self {
+        Self::new(self.iter().filter_map(|argument| {
+            let mut argument = *argument;
+            argument.source = mojito_checked::checked::CheckedCallArgumentSource::Positional(
+                position(argument.source)?,
+            );
+            Some(argument)
+        }))
+    }
+
     /// The record with each positional source moved `offset` operands
     /// later, for a call whose leading operands no source names.
     #[must_use]

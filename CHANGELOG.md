@@ -1008,6 +1008,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `read` argument the check judged by address now reaches its call as a
+  reference whatever its own type, as upstream's `lit.call` takes the
+  `!lit.ref`: a template's `read x: T` passed an `Int` (read back through
+  once elaborated), a field chain (`len(self.items)`, a `mut self`'s
+  included), a pointer dereference (`show(p[])`), a raising call's result
+  slot, and a filled default (`show()` over `b: Big = Big(7)`, `String(x)`'s
+  `sep`/`end`) pass their storage's address, and an owned temporary with
+  no storage (a literal, a call result) is materialized in a hidden slot
+  first. A filled default's convention and a construction's checked record
+  are now kept on the call. Output is unchanged. Reads through a reference
+  or payload (R2248), forwarded slots (R2249), and function values (R2250)
+  still pass values, so the verifier's by-address `read` rule waits
+  (R2251) (R2186).
 - MIR lowering now forms every by-address call operand itself, and
   `mir::address_call_operands` no longer runs after lowering; it remains
   only for the MIR text reader's upgrade of old artifacts. The new sites

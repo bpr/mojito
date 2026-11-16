@@ -2472,14 +2472,27 @@ addressed per element extraction (`Flatten::destructured_base`,
 lowering finishes, as upstream's `lit.call` takes a `!lit.ref` operand
 and loads nothing, and no pass after lowering rereads a call to address
 one (`mir/call_addresses.rs` keeps that rewrite,
-`address_call_operands`, only for the MIR text reader's upgrade). The
-verifier (`verify_direct_call`) rejects a value at a
-`mut`/`ref` slot of a `call` or `call.method` that binds by its callee's
-declaration, except where the retained place holds a reference (a `ref`
-field or `ref` binding), whose operand is still the load through the
-stored handle (R2187). A memory-only `read` operand with no retained place
-(a reference result's referent, a generic `read x: T` before elaboration)
-is still a value (R2186). A MIR text artifact older than 1.192 is upgraded
+`address_call_operands`, only for the MIR text reader's upgrade). A `read`
+operand the check judged by address (`Flatten::read_by_address_binding`)
+is addressed whatever its own type, a template's `read x: T` passed an
+`Int` included: a place read where written keeps its place, a load the
+operand's lowering just emitted (`p[]`) names its storage, and an operand
+with no storage is materialized in a hidden `$mat_r` slot
+(`Flatten::materialize_in_slot`), upstream's anonymous temporary. The fill
+of an omitted argument (`fill_omitted_arguments`) passes a by-address
+default as its call-result slot's `ref.make` (`Omitted::by_address`, by
+`by_address_parameter` on the callee's declared parameter) and adds the
+filled argument's row to the call's convention record; a construction
+keeps its record, renumbered by `MirArgConventions::remap` when a
+fieldwise one passes its keywords positionally. A borrowed read (a
+`ref.read` through a pointer or a `ref`-returning getter, a variant
+payload), a forwarded slot, and a function value are not materialized and
+still pass a value (R2248, R2249, R2250). The verifier
+(`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
+or `call.method` binding by its callee's declaration, except where the
+retained place holds a reference (a `ref` field or `ref` binding), whose
+operand is still the load through the stored handle (R2187); the same
+rule at a by-address `read` slot waits on those shapes (R2251). A MIR text artifact older than 1.192 is upgraded
 as it loads (`mir::upgrade_call_operands`). `mir::call_operand_parameters` maps each operand
 to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a

@@ -32,17 +32,19 @@ use crate::mir::variadics::{
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    CALL_RESULT_SLOT, Const, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Proj, Reg, UseMode,
-    callable_targets, calls::literal_materializes_to, fresh_register, instruction_regions,
-    instruction_regions_mut, instruction_regs_mut, instruction_slots, terminator_regs_mut,
+    CALL_RESULT_SLOT, Const, FuncRef, LoweredCall, MirArgConventions, MirBlock, MirDeclarations,
+    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Proj, Reg, UseMode,
+    by_address_parameter, callable_targets, calls::literal_materializes_to, fresh_register,
+    instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
+    mir_place_handle_ty, terminator_regs_mut,
 };
 use mojito_ast::ast::{ArgConvention, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
-use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
+use mojito_checked::checked::{CheckedArgumentConvention, CheckedCallArgumentSource, CheckedConst};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::{LiftedOwner, lifted_owner};
+use mojito_types::origin::Mutability;
 use mojito_types::param_expr::{MetaTy, ParamBindings, ParamContext, ParamExpr, ParamKind};
 use mojito_types::types::{
     ParamDecl, Ty, TyArg, TyKind, default_literal, names_binder, replace_argument_parameters,
@@ -214,6 +216,11 @@ struct Omitted {
     name: String,
     ty: Ty,
     owned: bool,
+    /// The callee's declared parameter takes the argument's storage
+    /// ([`by_address_parameter`]), so the call passes the address of the
+    /// temporary the default is bound to.
+    by_address: bool,
+    convention: Option<ArgConvention>,
     default: OmittedDefault,
 }
 
@@ -356,7 +363,9 @@ fn fill_call(
         .min(callee.param_names.len());
     site.arg_places.resize(site.args.len(), None);
     site.kwarg_places.resize(site.kwargs.len(), None);
+    let passes_operands = !(site.args.is_empty() && site.kwargs.is_empty());
     let mut sources = Vec::new();
+    let mut conventions = Vec::new();
     for default in omitted {
         let positional = default.slot == leading + site.args.len()
             && default.slot < positional_limit
@@ -364,27 +373,32 @@ fn fill_call(
                 .variadic_index
                 .is_none_or(|collector| default.slot < collector);
         let value = evaluate_default(function, &default, location.as_ref(), prelude);
-        let argument = if declarations.register_passable(&default.ty) {
-            value
+        let (argument, place) =
+            if declarations.register_passable(&default.ty) && !default.by_address {
+                (value, None)
+            } else {
+                bind_temporary(function, value, &default, location.as_ref(), prelude)
+            };
+        let source = if positional {
+            CheckedCallArgumentSource::Positional(site.args.len())
         } else {
-            bind_temporary(function, value, &default, location.as_ref(), prelude)
+            CheckedCallArgumentSource::Keyword(site.kwargs.len())
         };
+        sources.push((default.slot, source));
+        conventions.push(CheckedArgumentConvention {
+            source,
+            convention: default.convention,
+            by_address: default.by_address,
+        });
         if positional {
-            sources.push((
-                default.slot,
-                CheckedCallArgumentSource::Positional(site.args.len()),
-            ));
             site.args.push(argument);
-            site.arg_places.push(None);
+            site.arg_places.push(place);
         } else {
-            sources.push((
-                default.slot,
-                CheckedCallArgumentSource::Keyword(site.kwargs.len()),
-            ));
             site.kwargs.push((default.name, argument));
-            site.kwarg_places.push(None);
+            site.kwarg_places.push(place);
         }
     }
+    record_filled_conventions(&mut instruction, conventions, passes_operands);
     if !matches!(instruction, MirInstr::MultiIndex { .. })
         && let Err(error) = build_keyword_collector(
             &mut site,
@@ -2159,6 +2173,8 @@ fn omitted_argument(
         name,
         ty,
         owned: matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit)),
+        by_address: by_address_parameter(callee, declarations, slot).is_some(),
+        convention,
         default,
     })
 }
@@ -2354,16 +2370,38 @@ fn materialize(
     dest
 }
 
-/// Bind `value`, the default's result, to its call-result slot: a borrowed parameter reads the slot,
-/// which the caller destroys once the call returns, and an owned one takes
-/// it.
+/// Add the convention rows of the arguments a call's fill passed to
+/// `instruction`'s record, as the check records a written argument's: to
+/// the record the call carries, or as the whole record of a call that
+/// passed no operand of its own.
+fn record_filled_conventions(
+    instruction: &mut MirInstr,
+    filled: Vec<CheckedArgumentConvention>,
+    passes_operands: bool,
+) {
+    let (MirInstr::Call { conventions, .. } | MirInstr::MethodCall { conventions, .. }) =
+        instruction
+    else {
+        return;
+    };
+    if filled.is_empty() || (passes_operands && conventions.iter().next().is_none()) {
+        return;
+    }
+    *conventions = MirArgConventions::new(conventions.iter().copied().chain(filled));
+}
+
+/// Bind `value`, the default's result, to its call-result slot: a borrowed
+/// parameter reads the slot, which the caller destroys once the call
+/// returns, by its address when the parameter takes the argument's storage
+/// (`by_address`), and an owned one takes it. Returns the operand and the
+/// place an address names.
 fn bind_temporary(
     function: &mut MirFunction,
     value: Reg,
     default: &Omitted,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
-) -> Reg {
+) -> (Reg, Option<MirPlace>) {
     let variable = u32::try_from(function.n_vars).expect("variable count fits a VarId");
     function.n_vars += 1;
     function
@@ -2378,21 +2416,30 @@ fn bind_temporary(
         // materialized compile-time value is bound as a written one is.
         in_place: !matches!(default.default, OmittedDefault::Applied(_)),
     });
-    let read = fresh_register(function, default.ty.clone(), location);
-    prelude.push(if default.owned {
-        MirInstr::UseVar {
+    let place = MirPlace::root(variable, Some(default.ty.clone()));
+    if default.owned {
+        let read = fresh_register(function, default.ty.clone(), location);
+        prelude.push(MirInstr::UseVar {
             dest: read,
             var: variable,
             mode: UseMode::Forward,
             constructor: None,
-        }
-    } else {
-        MirInstr::LoadPlace {
-            dest: read,
-            place: MirPlace::root(variable, Some(default.ty.clone())),
-        }
-    });
-    read
+        });
+        return (read, None);
+    }
+    if default.by_address {
+        let handle =
+            mir_place_handle_ty(&place, Some(Mutability::Immutable)).unwrap_or_else(Ty::error);
+        let address = fresh_register(function, handle, location);
+        prelude.push(MirInstr::MakeRef {
+            dest: address,
+            place: place.clone(),
+        });
+        return (address, Some(place));
+    }
+    let read = fresh_register(function, default.ty.clone(), location);
+    prelude.push(MirInstr::LoadPlace { dest: read, place });
+    (read, None)
 }
 
 /// The registers `instruction` reads, as [`crate::mir::count_register_reads`]
@@ -2416,7 +2463,7 @@ fn register_operands(instruction: &mut MirInstr) -> Vec<u32> {
 enum Producer {
     /// The compile-time application of a lifted default (`$default$f$x`).
     Default,
-    /// A whole load of a read temporary.
+    /// A whole load, or the address, of a read temporary.
     Temporary(VarId),
 }
 
@@ -2441,7 +2488,7 @@ fn collect_producers(
             {
                 producers.insert(dest.0, Producer::Default);
             }
-            MirInstr::LoadPlace { dest, place }
+            MirInstr::LoadPlace { dest, place } | MirInstr::MakeRef { dest, place }
                 if place.proj.is_empty()
                     && place.through.is_none()
                     && function

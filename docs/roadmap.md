@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2248**.
+Next free ID: **R2253**.
 
 ## Ordered Work
 
@@ -9329,6 +9329,21 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R2252 A concrete register-passable `read` argument is lowered by
+  value, not as a `!lit.ref` that a later pass loads**
+
+  Upstream's IR generation passes every `read` argument as a `!lit.ref`,
+  and `LowerArgConventions` loads the ones the signature proves
+  register-passable. Mojito lowers a concrete callee's register-passable
+  `read` (`Int`, `Bool`) by value from the start (R677's arrangement);
+  only a template slot's operand is addressed and read back after
+  elaboration (`load_register_passable_operands`).
+  - Probe: `inc(n)` over `def inc(x: Int)` passes `%r = var.use n copy`.
+  - Fix: address every `read` operand in lowering and let
+    `lower-arg-conventions` load the register-passable ones.
+  - Depends on R2251.
+  - Model: Fable, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -9526,37 +9541,79 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2186 A memory-only `read` argument with no retained place is
-  passed as a value**
+- [ ] **R2248 A by-address `read` argument read through a reference or a
+  variant payload passes the referent's value**
 
-  Upstream passes every `read` argument of a memory-only type as a
-  `!lit.ref`, materializing a temporary when the operand has no storage.
-  Mojito passes some such operands as a loaded value with no place, so the
-  verifier can require a reference only at `mut`/`ref` slots
-  (`verify_direct_call`).
-  - Probe: `show(p[])` over `var p = Pointer(to=b)` and `show(b: Big)`
-    passes a `Big` value.
-  - Probe: a template's `read x: T` slot passed a register-passable
-    argument (`Bool.__init__$ov$T$Boolable` from `FloatLiteral.__eq__`,
-    `floor`/`abs` over `SIMD[dtype, width]`, `len$ov$T$Sized` over
-    `Array[T, length]`) passes a value, where the declared type is
-    memory-only until an instance substitutes it.
-  - Probe: `StringSpan.__eq__$ov$String` from `_assert_enabled`,
-    `repr$ov$T$Writable` from `Array.write_repr_to`, and
-    `Tuple.__contains__` from a `comptime` thunk pass values.
-  - Probe: a filled memory-only default (`show()` over `def show(b: Big =
-    Big(7))`) is bound to its call-result slot by `bind_temporary`
-    (`call_defaults.rs`) but passed as a load with no retained place.
-  - Probe: `T(copy=f())` over a memory-only `T` passes the temporary as a
-    value. Recording it as a read temporary, as the concrete `S(copy=…)`
-    path does, makes the body own a `T` its bounds do not prove
-    destructible, which the linear check rejects (`'(expression
-    temporary)' abandoned without being explicitly destroyed`).
-  - Fix: decide a template slot's convention as upstream does for a
-    parametric `read` (by address until `LowerArgConventions` sees the
-    instance), materialize an addressless operand, then make the verifier
-    require a reference at every by-address slot.
-  - Depends on R2247.
+  Upstream's `lit.call` takes the `!lit.ref` a dereference, a
+  `ref`-returning getter, or a payload access yields. Mojito lowers the
+  operand to a `ref.read` (or the getter's `index.get`, or `variant.get`)
+  and passes the value, since materializing a borrowed read in a slot
+  would destroy what it borrows (`Flatten::materialize_operand` leaves it).
+  - Probe: `len(self.src[])` over a `Pointer` field (`_DictEntryIter`,
+    `_SetIter`, `_VariadicListIter.__next__`): a `ref.read` of the pointer.
+  - Probe: `repr(self.data[i])` in `Array`/`List`/`Optional.write_repr_to`,
+    and `self[i] != other[i]` in `Array.__eq__`/`Span.__eq__`: an
+    `index.get` whose getter returns a reference.
+  - Probe: `self._storage.unsafe_get[T]()` at `repr`, `update`, and
+    `__eq__` in `Variant`: a `variant.get` of a dependent payload.
+  - Probe: `String.write(x)` in `_atof_to_integer`, a reference result's
+    copy deferred to call setup.
+  - Fix: pass the reference the read consumed (a pointer's `!lit.ref`, the
+    getter's handle, a `Proj::Variant` place's `ref.make`) instead of its
+    referent.
+  - Depends on R2187.
+  - Model: Fable, Planned.
+
+- [ ] **R2249 A forwarded slot at a by-address `read` slot passes the
+  slot's value**
+
+  Upstream passes the `!lit.ref` of the storage a by-address `read`
+  argument lives in. An operand whose lowering ends in a `var.use …
+  forward` (a `comptime` thunk's parameter, a taken call-result slot)
+  is deferred to call setup's transfers (`Flatten::defer_to_setup`) and
+  passed as the forwarded value.
+  - Probe: `len(Self.Ts)` in the `$comptime$Tuple.__eq__$c0` thunks (and
+    `__ne__`, `__lt__`, `__hash__`, `write_to`, `__contains__`) passes a
+    `TypeList` value.
+  - Probe: the implicit `Total.__init__(out self, c: C)` conversion of an
+    augmented subscript store's getter result, before `__setitem__(…,
+    value: Total)` (`assets/ok/augmented_store_copies_nothing.mojo`),
+    passes the forwarded `C`.
+  - Fix: pass the forwarded slot's `ref.make` at a `read` binding and
+    leave the slot to the caller's destruction.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2250 A function value at a callable-bound `read` parameter is
+  judged by address**
+
+  The check records a `read f: F` over `F: def(...)` (and a lambda at
+  `Tuple(init_with=…)`) as by address, since `Checker::memory_only` does
+  not prove a callable bound register-passable. Lowering cannot
+  materialize the value (its slot keeps the symbolic function type through
+  elaboration), so it stays a value at a by-address slot.
+  - Probe: `Tuple.__init__$ov$F$Callable…$kw$init_with` from `Tuple()`
+    over `Defaultable` elements passes a `MakeClosure` value.
+  - Probe: `apply(f)` over `def apply[F: def(Int) -> Int](f: F)`.
+  - Fix: confirm against the pin whether a `def(...)` value is
+    register-passable, and decide the bound's verdict in
+    `Checker::memory_only` accordingly; materialize only if it is not.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2251 The verifier accepts a value at a by-address `read` slot**
+
+  Upstream's `lit.call` verifier rejects a value where the callee's
+  signature takes a `!lit.ref`. `verify_direct_call` still requires a
+  reference only at a `mut`/`ref` slot, because R2187, R2248, R2249, and
+  R2250's operands pass values.
+  - Fix: require a reference wherever `by_address_parameter` takes the
+    slot by address. On elaborated MIR the instance's declaration names
+    its substituted types, so a `read` the instance proves
+    register-passable may pass the value `load_register_passable_operands`
+    reads, which needs no row rewrite.
+  - Stop when std packages and `scripts/smoke` is clean with the rule on.
+  - Depends on R2187, R2248, R2249, R2250.
   - Model: Fable, Planned.
 
 - [ ] **R2187 An argument whose place holds a reference passes the load

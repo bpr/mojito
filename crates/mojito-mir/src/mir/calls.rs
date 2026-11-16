@@ -428,7 +428,19 @@ impl<'a> Flatten<'a> {
     /// that are values rather than reads (callables, closures, pointer
     /// handles, folded constants, materialized borrow slots).
     fn setup_read(&mut self, expression: Node<'a>) -> bool {
-        if expression.resolved_callable().is_some()
+        self.reads_value(expression)
+            && self.simple_place(expression).is_some_and(|place| {
+                place.through.is_none()
+                    && !self.aliases.contains_key(&place.root)
+                    && !self.runtime_aliases.contains(&place.root)
+            })
+    }
+
+    /// Whether `expression` is none of the identifier lowerings that are
+    /// values rather than reads of its place: a callable, a closure, a
+    /// pointer handle, a folded constant, or a materialized borrow slot.
+    fn reads_value(&self, expression: Node<'a>) -> bool {
+        !(expression.resolved_callable().is_some()
             || self.nested_info(expression).is_some()
             || expression.is_origin_bearing_pointer()
             || expression.constant_param_value()
@@ -444,15 +456,7 @@ impl<'a> Flatten<'a> {
                             ..
                         }
                 )
-            )
-        {
-            return false;
-        }
-        self.simple_place(expression).is_some_and(|place| {
-            place.through.is_none()
-                && !self.aliases.contains_key(&place.root)
-                && !self.runtime_aliases.contains(&place.root)
-        })
+            ))
     }
 
     /// Whether `expression` is a collection display, which a bound position
@@ -518,10 +522,114 @@ impl<'a> Flatten<'a> {
         if by_reference {
             return self.address_operand(expression, lowered, Mutability::Mutable);
         }
-        if self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true }) {
+        if self.read_by_address_binding(expression) {
+            let lowered = match lowered {
+                (value, None) => self.materialize_operand(expression, value),
+                lowered => lowered,
+            };
             return self.address_operand(expression, lowered, Mutability::Immutable);
         }
         lowered
+    }
+
+    /// The storage of `value`, by-address `read` operand `expression` that
+    /// lowering returned with no place: the place its load or slot copy just
+    /// read (a dereference, `p[]`, or a materialized constant's slot), or
+    /// else, for a temporary the operand owns, a hidden slot it is
+    /// materialized in ([`Self::materialize_in_slot`]) holding the
+    /// operand's loans, as upstream passes the `!lit.ref` of an anonymous
+    /// temporary. A value read through a reference, and a function value,
+    /// stay values.
+    fn materialize_operand(&mut self, expression: Node<'a>, value: Reg) -> (Reg, Option<MirPlace>) {
+        match self.f.body.instrs.last() {
+            Some(MirInstr::LoadPlace { dest, place }) if *dest == value => {
+                return (value, Some(place.clone()));
+            }
+            Some(MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Copy,
+                ..
+            }) if *dest == value => {
+                let var = *var;
+                let ty = self.var_types.get(&var).cloned();
+                if !ty
+                    .as_ref()
+                    .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+                {
+                    return (value, Some(MirPlace::root(var, ty)));
+                }
+            }
+            _ => {}
+        }
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| expression.ty())
+        else {
+            return (value, None);
+        };
+        if matches!(
+            ty.kind(),
+            TyKind::Ref(_)
+                | TyKind::Func(_)
+                | TyKind::GenericFunc(_)
+                | TyKind::Overload(_)
+                | TyKind::Param {
+                    callable_bound: Some(_),
+                    ..
+                }
+        ) || !self.owned_temporary(value)
+        {
+            return (value, None);
+        }
+        let loans = self.aggregate_borrows(expression);
+        let materialized = self.materialize_in_slot(expression.location(), value, ty);
+        if let Some(place) = &materialized.1 {
+            self.establish_storage_loans(expression, place.root, loans);
+        }
+        materialized
+    }
+
+    /// Whether the body defines `value` as a fresh value of its own: a call
+    /// or getter result not returned by reference, a copy, a construction,
+    /// or a constant. A slot's forward or move is not: its loans stay with
+    /// the slot.
+    fn owned_temporary(&self, value: Reg) -> bool {
+        self.f
+            .body
+            .instrs
+            .iter()
+            .rev()
+            .any(|instruction| match instruction {
+                MirInstr::Call { dest, .. }
+                | MirInstr::CallIndirect { dest, .. }
+                | MirInstr::CopyValue { dest, .. }
+                | MirInstr::MakeClosure { dest, .. }
+                | MirInstr::Const { dest, .. }
+                | MirInstr::ConstructType { dest, .. }
+                | MirInstr::ConstructTypeParam { dest, .. }
+                | MirInstr::MaterializeLiteral { dest, .. }
+                | MirInstr::MakeStruct { dest, .. }
+                | MirInstr::MakeTuple { dest, .. }
+                | MirInstr::MakeArray { dest, .. }
+                | MirInstr::MakeVariant { dest, .. } => *dest == value,
+                MirInstr::MethodCall {
+                    dest,
+                    reference_result,
+                    ..
+                } => *dest == value && reference_result.is_none(),
+                MirInstr::Index { dest, call, .. } => {
+                    *dest == value
+                        && call
+                            .as_ref()
+                            .is_some_and(|call| call.reference_result.is_none())
+                }
+                MirInstr::UseVar { dest, mode, .. } => *dest == value && *mode == UseMode::Copy,
+                _ => false,
+            })
     }
 
     /// Pass the operand `lowered`, a value read from its place, as the
@@ -733,7 +841,10 @@ impl<'a> Flatten<'a> {
                 // register-passable read is passed by value and retains no
                 // place unless the call's result borrows it, so a view's
                 // reference fields root in caller storage.
-                if lends_reads || !expression.register_passable_read() {
+                if lends_reads
+                    || self.read_by_address_binding(expression)
+                    || !expression.register_passable_read()
+                {
                     return (
                         register,
                         reference_place.or_else(|| self.simple_place(expression)),
@@ -747,12 +858,23 @@ impl<'a> Flatten<'a> {
                 && !(converted && expression.indirect_result())
                 && self.setup_read(expression)
             {
-                return (
-                    self.defer_to_setup(expression, Some(source), true, |this| {
-                        this.expr(expression)
-                    }),
-                    None,
-                );
+                let read = self
+                    .defer_to_setup(expression, Some(source), true, |this| this.expr(expression));
+                let place = self
+                    .read_by_address_binding(expression)
+                    .then(|| self.simple_place(expression))
+                    .flatten();
+                return (read, place);
+            }
+            // A by-address `read` of a place no setup frame defers (one
+            // through a reference, or an operand of a call with no frame)
+            // is the place's address where written.
+            if !converted
+                && self.read_by_address_binding(expression)
+                && self.reads_value(expression)
+                && let Some(place) = self.simple_place(expression)
+            {
+                return (self.expr(expression), Some(place));
             }
             // A reference result's read, and the temporary binding of its
             // copy, are setup work too.
@@ -1319,16 +1441,19 @@ impl<'a> Flatten<'a> {
 
     /// Fold a keyword `@fieldwise_init` construction into its positional form:
     /// the arguments were evaluated in source order, and the call lists their
-    /// registers in field order, so no backend binds keywords to fields. A
-    /// call on any other target is returned unchanged.
+    /// registers in field order, so no backend binds keywords to fields;
+    /// `conventions`, the call's checked record, is renumbered to the
+    /// operands' new positions. A call on any other target is returned
+    /// unchanged.
     pub(super) fn fieldwise_keywords_positional(
         &self,
         constructed: &str,
         call: FieldwiseCallArguments,
-    ) -> FieldwiseCallArguments {
+        conventions: crate::mir::MirArgConventions,
+    ) -> (FieldwiseCallArguments, crate::mir::MirArgConventions) {
         let (regs, places, keywords, keyword_places) = call;
         if keywords.is_empty() {
-            return (regs, places, keywords, keyword_places);
+            return ((regs, places, keywords, keyword_places), conventions);
         }
         let keyword_names: Vec<&str> = keywords.iter().map(|(name, _)| name.as_str()).collect();
         let Some(slots) = self
@@ -1338,8 +1463,16 @@ impl<'a> Flatten<'a> {
                 mojito_ast::call::match_fieldwise_slots(&names, regs.len(), &keyword_names).ok()
             })
         else {
-            return (regs, places, keywords, keyword_places);
+            return ((regs, places, keywords, keyword_places), conventions);
         };
+        let conventions = conventions.remap(|source| {
+            use mojito_ast::call::ArgSlot;
+            slots.iter().position(|slot| match (slot, source) {
+                (ArgSlot::Positional(index), CheckedCallArgumentSource::Positional(at))
+                | (ArgSlot::Keyword(index), CheckedCallArgumentSource::Keyword(at)) => *index == at,
+                _ => false,
+            })
+        });
         let (ordered_regs, ordered_places) = slots
             .into_iter()
             .filter_map(|slot| match slot {
@@ -1352,7 +1485,10 @@ impl<'a> Flatten<'a> {
                 mojito_ast::call::ArgSlot::Default => None,
             })
             .unzip();
-        (ordered_regs, ordered_places, Vec::new(), Vec::new())
+        (
+            (ordered_regs, ordered_places, Vec::new(), Vec::new()),
+            conventions,
+        )
     }
 
     /// Anchor `src`, a value of type `ty` a lifted compile-time evaluation
@@ -2742,7 +2878,10 @@ impl<'a> Flatten<'a> {
         converted: bool,
         reads: bool,
     ) -> (Reg, Option<MirPlace>) {
-        let by_address = self.read_by_address(expression);
+        let by_address = match self.operand_binding(expression) {
+            Some(OperandBinding::Read { by_address }) => by_address,
+            _ => self.read_by_address(expression),
+        };
         let value = match self.operand_expr_c(expression) {
             CValue::Value(value) => {
                 if let Some((read, place)) = self.anchor_temporary_argument(
@@ -2765,6 +2904,15 @@ impl<'a> Flatten<'a> {
         (read, place.filter(|_| by_address))
     }
 
+    /// Whether call operand `expression` binds a `read` parameter the check
+    /// judged by address on the callee's declared type
+    /// ([`OperandBinding::Read`]), a template's `read x: T` included, as
+    /// upstream's `lit.call` takes a `!lit.ref` of every such argument
+    /// whatever the actual's own type.
+    fn read_by_address_binding(&self, expression: Node<'a>) -> bool {
+        self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true })
+    }
+
     /// Whether call operand `expression` is a `read` temporary upstream
     /// passes by address: its call reads it ([`Self::operand_reads`]), and
     /// the check did not prove its type register-passable
@@ -2781,16 +2929,29 @@ impl<'a> Flatten<'a> {
     /// an rvalue `anonymous` storage when an lvalue is required. A value
     /// owning no droppable storage stays in its register.
     fn materialize_receiver(&mut self, receiver: Node<'a>, value: Reg) -> (Reg, Option<MirPlace>) {
-        let Some(ty) = self
+        match self
             .f
             .reg_types
             .get(&value.0)
             .cloned()
             .or_else(|| receiver.ty())
             .filter(owns_droppable_storage)
-        else {
-            return (value, None);
-        };
+        {
+            Some(ty) => self.materialize_in_slot(receiver.location(), value, ty),
+            None => (value, None),
+        }
+    }
+
+    /// Bind `value`, of type `ty`, a temporary no storage holds, to a
+    /// hidden `$mat_r` slot and read it back with the slot's place, as
+    /// upstream's IR generation gives an rvalue `anonymous` storage where a
+    /// `!lit.ref` is wanted. The slot is destroyed at its last use.
+    fn materialize_in_slot(
+        &mut self,
+        location: SourceSpan,
+        value: Reg,
+        ty: Ty,
+    ) -> (Reg, Option<MirPlace>) {
         let variable = self.var(&format!("$mat_r{}", value.0));
         self.var_types.insert(variable, ty.clone());
         self.emit(MirInstr::DefVar {
@@ -2800,7 +2961,7 @@ impl<'a> Flatten<'a> {
             in_place: false,
         });
         let place = MirPlace::root(variable, Some(ty.clone()));
-        let loaded = self.fresh_typed(receiver.location(), Some(variable), ty);
+        let loaded = self.fresh_typed(location, Some(variable), ty);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place: place.clone(),
