@@ -102,7 +102,8 @@ impl<'a> Flatten<'a> {
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
         let call = Some(Box::new(getter_call));
-        let base_place = receiver_place.clone().map(Box::new);
+        let base_place = Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref())
+            .map(Box::new);
         self.emit(match (target.op(), args.as_slice()) {
             (CheckedOp::Index { .. }, [MirSubscriptArg::Index(index)]) => MirInstr::Index {
                 dest: current,

@@ -2493,6 +2493,8 @@ impl Checker {
     /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]),
     /// and so is a `deinit` receiver whose type is not memory-only
     /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableConsume`]).
+    /// Sugar the checker spells as a construction (`Self()`) is lowered as
+    /// that construction, which takes the sugar's by-value verdict.
     fn record_result_conventions(&self) {
         let memory_only = |ty: &Ty| self.memory_only(ty);
         // An initializer's declared result is its `out self`, the struct at
@@ -2562,6 +2564,23 @@ impl Checker {
                 })
                 .collect()
         };
+        let spelled: Vec<SourceSpan> = {
+            let records = self.node_facts.borrow();
+            judged
+                .iter()
+                .filter(|(_, _, _, by_value, _, _)| *by_value)
+                .filter_map(
+                    |(span, ..)| match records.get(span)?.adjustment.as_deref() {
+                        Some(
+                            mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
+                                construction,
+                            },
+                        ) => Some(construction.0.source_span()),
+                        _ => None,
+                    },
+                )
+                .collect()
+        };
         let mut records = self.node_facts.borrow_mut();
         for (span, indirect, converted, by_value, consumed_by_value, reads_source) in judged {
             if let Some(facts) = records.get_mut(&span) {
@@ -2570,6 +2589,11 @@ impl Checker {
                 facts.register_passable_read = by_value;
                 facts.register_passable_consume = consumed_by_value;
                 facts.conversion_reads_source = reads_source;
+            }
+        }
+        for span in spelled {
+            if let Some(facts) = records.get_mut(&span) {
+                facts.register_passable_read = true;
             }
         }
     }

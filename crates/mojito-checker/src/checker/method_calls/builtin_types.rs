@@ -148,6 +148,7 @@ impl Checker {
             // `pop.pointer_to_index`.
             "__int__" => {
                 no_arguments(method, args)?;
+                self.record_builtin_read_receiver(object);
                 Ok(Ty::int())
             }
             "unsafe_offset" => {
@@ -317,6 +318,7 @@ impl Checker {
                     )));
                 }
                 no_arguments(method, args)?;
+                self.record_builtin_read_receiver(object);
                 Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {

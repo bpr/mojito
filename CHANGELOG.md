@@ -1030,6 +1030,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A register-passable `read` operand is passed by value with no place-table
+  entry, as upstream passes it naming no storage: a builtin `Pointer`
+  method's receiver (`free`, `unsafe_free`, `__int__`), a pointer
+  subscript's base, a by-value closure capture, a register-passable copy
+  source (`C(copy=c)`), a value getter's receiver in an augmented store or
+  subscript write-back (`v[2] += 5` over a `SIMD`), and the updated value
+  handed to the setter. Sugar the checker spells as a construction
+  (`Self()`, an alias construction) now carries the by-value verdict onto
+  that construction, so a lifted compile-time `StringSpan(Self())` no
+  longer stores its literal in a `ref` slot. Only a `var` receiver, a
+  `call.indirect` callee, and a forwarded reference parameter still reach
+  the place-table fallback. No program output changes. (R2268)
+
 - A `deinit` receiver is passed as upstream's call takes it: a memory-only
   one as a mutable reference to the storage the call consumes (its
   `DeinitMem` operand), and a register-passable one as the owned value

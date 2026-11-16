@@ -725,8 +725,9 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::ReadRef { dest: d, reference });
             return (d, None);
         }
+        // The pointer is read by value: the subscript accesses its
+        // pointee, not the storage holding it.
         let base = self.expr(object);
-        let base_place = self.simple_place(object);
         let (idx, index_place) = self.lower_call_argument(index);
         let idx = self.materialize_register(idx, &Ty::int(), index.location());
         let d = self.fresh(e.location(), None);
@@ -736,7 +737,7 @@ impl<'a> Flatten<'a> {
             dest: d,
             base,
             index: idx,
-            base_place: base_place.map(Box::new),
+            base_place: None,
             index_place: index_place.map(Box::new),
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::Pointer),

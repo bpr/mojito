@@ -9729,30 +9729,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2268 A by-value operand still carries a place-table entry**
-
-  Upstream passes a register-passable receiver, subscript base, or stored
-  value by value, naming no storage. Mojito keeps a table entry beside
-  some such operands, and `table_fallback` answers for them.
-  - Probe: the contract-less VM-builtin `Pointer` methods `unsafe_free`,
-    `free`, `__int__` keep a `recv_place`
-    (`assets/ok/allocation_tracked_unsafe_ptr.mojo`).
-  - Probe: an intrinsic `index.get` (`call: absent`, `pointer` and
-    `tuple_storage` subscripts) keeps `base_place`
-    (`string_literal_slice_members.mojo`,
-    `template_method_pack_struct.mojo`).
-  - Probe: closure `__storage.__init__` captures and a register-passable
-    `__copyinit__`'s `copy` keep `arg_places`
-    (`struct_callable_parameter.mojo`,
-    `register_passable_one_field_lifecycle.mojo`).
-  - Probe: an augmented `index.multi_set` keeps `value_place` on an `Int`
-    (`dunder_setitem.mojo`), and `SIMD.__getitem__` records no receiver
-    convention (`simd_lane_write.mojo`).
-  - Fix: drop the entry where the operand is by value; a memory-only
-    `Tuple` storage base becomes a `ref.make`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2269 A `call.indirect`'s callee is found through its
   `callee_place` slot**
 

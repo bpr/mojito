@@ -114,6 +114,17 @@ impl Checker {
         }
     }
 
+    /// Mark the place receiver of a contract-less builtin method upstream
+    /// declares with a `read self`, so a register-passable one is passed by
+    /// value ([`read_place_receiver`]), as for a declared `read` receiver.
+    pub(super) fn record_builtin_read_receiver(&self, receiver: &Expr) {
+        if let Some(span) = read_place_receiver(Some((receiver, Some(ArgConvention::Imm))), |arg| {
+            self.designates_place(arg)
+        }) {
+            self.record_at(span).read_place_receiver = true;
+        }
+    }
+
     /// Record the conventions `site`, a call that records no contract,
     /// binds its arguments by: each bound slot's effective convention, and
     /// a gathering collector's for each element it gathers

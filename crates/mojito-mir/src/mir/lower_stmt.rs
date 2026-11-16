@@ -943,7 +943,8 @@ impl<'a> Flatten<'a> {
             dest: current,
             base: receiver,
             index: getter_index,
-            base_place: receiver_place.clone().map(Box::new),
+            base_place: Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref())
+                .map(Box::new),
             index_place: (Self::checked_call_source_place(
                 &plan.getter,
                 index_source,
@@ -1066,7 +1067,7 @@ impl<'a> Flatten<'a> {
             current,
             receiver,
             (getter_argument, argument_place.clone()),
-            receiver_place.clone(),
+            Self::getter_receiver_place(&plan.getter, object, receiver_place.as_ref()),
             Some(getter_call),
         );
         let result = self.apply_augmented_operator(target, current, plan, op, rhs);
@@ -1259,7 +1260,12 @@ impl<'a> Flatten<'a> {
             dest: current,
             object: receiver,
             args: getter_args,
-            object_place: receiver_place.clone().map(Box::new),
+            object_place: Self::getter_receiver_place(
+                &plan.getter,
+                object,
+                receiver_place.as_ref(),
+            )
+            .map(Box::new),
             arg_places: getter_places,
             kwargs: Vec::new(),
             kwarg_places: Vec::new(),
@@ -1554,9 +1560,9 @@ impl<'a> Flatten<'a> {
 
     /// The augmented store's updated `result` passed to `setter`'s value
     /// parameter by its convention: taken by an owned (`var`/`deinit`)
-    /// parameter or one the checker adapts, and read in place, with its
-    /// place, by a `read` one, which takes its address when the setter's
-    /// declared parameter does.
+    /// parameter or one the checker adapts, and read by a `read` one,
+    /// which takes its address when the setter's declared parameter does
+    /// and is otherwise passed the value, naming no storage.
     pub(super) fn augmented_setter_value(
         &mut self,
         target: Node<'a>,
@@ -1589,7 +1595,7 @@ impl<'a> Flatten<'a> {
                     mojito_types::origin::Mutability::Immutable,
                 );
             }
-            return read;
+            return (read.0, None);
         }
         let value = self.take_c(target, result);
         let value = self.apply_checked_call_value_adjustments(
@@ -2481,10 +2487,9 @@ impl<'a> Flatten<'a> {
 
     /// The storage struct `storage` of the closure `info` at `at`, as
     /// upstream's `ClosureEmitter::emitClosure` calls the storage's
-    /// `__init__` with the captures: a `var` capture's place is read,
-    /// passed as its address where the check judged its `read` parameter
-    /// memory-only, a
-    /// moved capture's storage is handed to its `var` parameter, as an
+    /// `__init__` with the captures: a `var` capture's place is read, and
+    /// the value passed, or its address where the check judged its `read`
+    /// parameter memory-only, a moved capture's storage is handed to its `var` parameter, as an
     /// owned argument's is, and a reference capture's place, a captured
     /// sibling's storage slot included, is lent: passed as its address, as
     /// upstream passes the `!lit.ref` its storage field holds.
@@ -2537,11 +2542,8 @@ impl<'a> Flatten<'a> {
                 arg_places.push(place);
                 continue;
             } else {
-                self.emit(MirInstr::LoadPlace {
-                    dest,
-                    place: place.clone(),
-                });
-                arg_places.push(Some(place));
+                self.emit(MirInstr::LoadPlace { dest, place });
+                arg_places.push(None);
             }
             args.push(dest);
         }

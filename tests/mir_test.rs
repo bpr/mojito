@@ -5070,12 +5070,95 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
 }
 
 #[test]
+fn by_value_operands_name_no_storage() {
+    // Upstream passes a register-passable `read` operand as a value naming
+    // no storage: a builtin `Pointer` method's receiver, a pointer
+    // subscript's base, a register-passable copy source, a value getter's
+    // `SIMD` receiver, and the setter's updated value.
+    let source = "from std.memory.alloc import unsafe_alloc\n\nstruct C(Copyable, RegisterPassable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 1\n\ndef main():\n    var p: UnsafePointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](2)\n    p[0] = 1\n    print(p[0], p.__int__() != 0)\n    p.free()\n    var c = C(1)\n    var d = C(copy=c)\n    print(c.v, d.v)\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    v[2] += 5\n    print(v[2])\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile by-value operands");
+    let mir = compiled.mir().clone();
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let instructions = nested_instructions(&main.body);
+    let receivers: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, recv_place, ..
+            } if method == "free" || method == "__int__" => Some(recv_place),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(receivers.len(), 2, "{instructions:#?}");
+    assert!(
+        receivers.iter().all(|place| place.is_none()),
+        "{receivers:#?}"
+    );
+    let pointer_reads: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Index {
+                base_place,
+                intrinsic: Some(mojito::mir::MirIntrinsicSubscript::Pointer),
+                ..
+            } => Some(base_place),
+            _ => None,
+        })
+        .collect();
+    assert!(!pointer_reads.is_empty(), "{instructions:#?}");
+    assert!(pointer_reads.iter().all(|place| place.is_none()));
+    let copies: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                kwargs,
+                kwarg_places,
+                ..
+            } if kwargs.iter().any(|(name, _)| name == "copy") => Some(kwarg_places),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copies.len(), 1, "{instructions:#?}");
+    assert!(copies[0].iter().all(Option::is_none));
+    let getters: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Index {
+                base_place,
+                call: Some(call),
+                ..
+            } if call.target.contains("__getitem__") => Some(base_place),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(getters.len(), 2, "{instructions:#?}");
+    assert!(getters.iter().all(|place| place.is_none()), "{getters:#?}");
+    let stored: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MultiSet { value_place, .. } => Some(value_place),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stored.len(), 1, "{instructions:#?}");
+    assert!(stored[0].is_none());
+}
+
+#[test]
 fn nested_def_statement_materializes_explicit_capture_modes_once() {
     use mojito::mir::UseMode;
 
     // Each declaration builds its closure's storage struct once, by its
-    // captures' modes (`{var copied}` read in place by the storage's
-    // `__init__`, `{var moved^}` moved into it), and a call of the nested
+    // captures' modes (`{var copied}` read once from its slot and passed to
+    // the storage's `__init__` by value, naming no storage, `{var moved^}`
+    // moved into it), and a call of the nested
     // `def` by name calls the storage's method on it: by value when it is
     // register-passable, by address when it is memory-only.
     let src = "def main():\n    var copied = 40\n    var moved: List[Int] = [40]\n    def snapshot() {var copied} -> Int:\n        return copied\n    def take() {var moved^} -> Int:\n        return moved[0]\n    print(snapshot(), take())\n";
@@ -5109,10 +5192,18 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
         assert_eq!(calls.len(), 1, "one call of {callee}");
         calls[0]
     };
-    let (_, init_places) = call("main$snapshot$__storage.__init__");
-    assert_eq!(
-        init_places[0].as_ref().map(|place| place.root),
-        Some(slot("copied"))
+    let (init_args, init_places) = call("main$snapshot$__storage.__init__");
+    assert!(
+        init_places[0].is_none(),
+        "a by-value capture names no storage"
+    );
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::LoadPlace { dest, place }
+                if *dest == init_args[0] && place.root == slot("copied")
+        )),
+        "the capture is read from its slot"
     );
     assert_eq!(
         instructions

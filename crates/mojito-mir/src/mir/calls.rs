@@ -1456,9 +1456,10 @@ impl<'a> Flatten<'a> {
 
     /// The keyword of a copy construction (`Name(copy=place)`,
     /// `T(copy=place)`), which binds the copy initializer's borrowed
-    /// `copy: Self` parameter: a place source is passed as the check bound
-    /// it, as its address when memory-only, and retained,
-    /// so the copy initializer runs on the live source exactly once, where an
+    /// `copy: Self` parameter: a place source is read once and passed as
+    /// the check bound it, as its address when memory-only and otherwise as
+    /// the value, naming no storage, so the copy initializer runs on the
+    /// live source exactly once, where an
     /// ordinary value read would run a user's copy initializer a second time
     /// for the argument itself — observable through its side effects. `None`
     /// for any other keyword list, a source that is not a simple place, or a
@@ -1495,7 +1496,7 @@ impl<'a> Flatten<'a> {
                     mojito_types::origin::Mutability::Immutable,
                 )
             } else {
-                (source, Some(place))
+                (source, None)
             };
         Some((vec![("copy".to_string(), source)], vec![place]))
     }
@@ -2064,13 +2065,14 @@ impl<'a> Flatten<'a> {
         }
         // A register-passable receiver the method reads is passed by
         // value, as upstream passes a `read self` whose type is not
-        // memory-only: it retains no place, so its owner may die at the
+        // memory-only, a contract-less builtin's included: it retains no
+        // place, so its owner may die at the
         // read, before the call runs, even when the call's result borrows
         // it — a result's loans come from the origin its type names, as for
         // an argument. The register then carries the receiver's type, which
         // the call's binding reads its struct's binders from.
         if place.is_some()
-            && call.call_contract().is_some_and(|contract| {
+            && call.call_contract().is_none_or(|contract| {
                 matches!(
                     contract.receiver_convention,
                     None | Some(mojito_ast::ast::ArgConvention::Imm)
@@ -2159,6 +2161,21 @@ impl<'a> Flatten<'a> {
             receiver.location(),
             lowered,
         )
+    }
+
+    /// The place table entry of a value getter's receiver `receiver`,
+    /// whose storage is `place`: the place when the getter's `contract`
+    /// takes the receiver by address ([`Self::address_receiver`]), else
+    /// `None`, as upstream passes a register-passable `read self` by value,
+    /// naming no storage. The setter keeps the place to re-address the
+    /// receiver.
+    pub(super) fn getter_receiver_place(
+        contract: &mojito_checked::checked::CheckedCallContract,
+        receiver: Node<'a>,
+        place: Option<&MirPlace>,
+    ) -> Option<MirPlace> {
+        receiver_by_address(contract, receiver.register_passable_read())
+            .and_then(|_| place.cloned())
     }
 
     /// [`Self::address_receiver`] of a receiver no checked node spells, as
