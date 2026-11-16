@@ -724,8 +724,9 @@ fn collect_through_contract(
 /// `**kwargs` takes: the collector's empty constructor
 /// (`StringDict[V]()`, typed as [`keyword_collector_type`] closes it) bound
 /// to a call-result slot, then one `_insert` per keyword no named parameter
-/// claims, in call order, each keyed by the keyword's literal and taking
-/// its operand, and the slot forwarded to the call. Return whether it built
+/// claims, in call order, each passed the slot's address as its `mut self`,
+/// keyed by the keyword's literal, and taking its operand, and the slot
+/// forwarded to the call. Return whether it built
 /// one: a call forwarding a `**kwargs^` passes that collector already, and
 /// a callee without one takes none. An error says why the call's operands
 /// do not bind or type the collector.
@@ -817,8 +818,13 @@ fn build_keyword_collector(
             dest: key,
             k: Const::Str(keyword),
         });
-        let receiver = fresh_register(function, ty.clone(), location);
-        prelude.push(MirInstr::LoadPlace {
+        let handle = crate::mir::mir_place_handle_ty(
+            &place,
+            Some(mojito_types::origin::Mutability::Mutable),
+        )
+        .unwrap_or_else(Ty::error);
+        let receiver = fresh_register(function, handle, location);
+        prelude.push(MirInstr::MakeRef {
             dest: receiver,
             place: place.clone(),
         });

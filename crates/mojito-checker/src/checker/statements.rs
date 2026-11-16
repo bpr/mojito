@@ -3684,6 +3684,17 @@ impl Checker {
                         convention: params[index].convention,
                     }
                 });
+                let parameters_by_address = params
+                    .iter()
+                    .zip(&param_tys)
+                    .filter(|(param, _)| {
+                        !matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Out))
+                    })
+                    .map(|(param, ty)| {
+                        param.kind == mojito_ast::ast::ParamKind::Regular
+                            && self.declared_by_address(param.convention, ty)
+                    })
+                    .collect();
                 let storage = self.closure_storage(
                     &captures,
                     collector,
@@ -3691,6 +3702,7 @@ impl Checker {
                         fn_ty,
                         mojito_types::origin::CallableEnvironment::Capturing(concrete),
                     ),
+                    parameters_by_address,
                 );
                 self.record_at(stmt.source_span()).closure_storage = Some(Box::new(storage));
                 self.register_closure_storage(&stmt.source_span())
@@ -3768,12 +3780,14 @@ impl Checker {
     /// referent, which is a captured sibling closure's own storage, written
     /// through when the sibling's call writes it. Its copyability and
     /// passabilities meet its captures', a reference capture contributing
-    /// its referent's. It conforms to `contract`, the closure trait.
+    /// its referent's. It conforms to `contract`, the closure trait, and its
+    /// `__call__` witness forwards each parameter by `parameters_by_address`.
     fn closure_storage(
         &self,
         captures: &[mojito_checked::checked::CheckedCapture],
         collector: Option<mojito_checked::checked::CheckedCollector>,
         contract: Ty,
+        parameters_by_address: Vec<bool>,
     ) -> mojito_checked::checked::CheckedClosureStorage {
         use mojito_ast::ast::CaptureKind;
         use mojito_checked::checked::{StoragePassability, StorageReference};
@@ -3806,6 +3820,7 @@ impl Checker {
                 };
                 mojito_checked::checked::CheckedStorageField {
                     name: capture.name.clone(),
+                    by_address: capture.kind == CaptureKind::Copy && self.memory_only(&ty),
                     ty,
                     reference,
                 }
@@ -3838,6 +3853,7 @@ impl Checker {
             contract,
             collector,
             uses: None,
+            parameters_by_address,
         }
     }
 

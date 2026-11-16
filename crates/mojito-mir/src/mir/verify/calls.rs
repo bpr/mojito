@@ -386,7 +386,7 @@ pub(super) fn verify_direct_call(
     }
     for (index, (argument, expected)) in args.iter().zip(&declaration.param_types).enumerate() {
         // A parameter received by address takes a reference to the
-        // caller's storage (`crate::mir::address_call_operands`); an owned
+        // caller's storage (`Flatten::address_operand`); an owned
         // or `deinit` one takes the value itself.
         let borrowed = !matches!(
             declaration.param_conventions.get(index).copied().flatten(),

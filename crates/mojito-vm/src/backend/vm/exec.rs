@@ -2506,7 +2506,8 @@ fn array_index(index: &Const) -> Option<usize> {
 }
 
 /// Whether a call operand of type `operand` passes `place` by address: a
-/// reference to the place's own storage (`mojito_mir::mir::address_call_operands`).
+/// reference to the place's own storage, the `ref.make` MIR lowering forms
+/// for it (`Flatten::address_operand`, `mir/calls.rs`).
 fn addressed_by(operand: Option<&Ty>, place: &MirPlace) -> bool {
     match (operand.map(Ty::kind), place.ty.as_ref()) {
         (Some(TyKind::Ref(reference)), Some(stored)) => {

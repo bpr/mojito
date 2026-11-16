@@ -106,7 +106,8 @@ impl FnLowering<'_> {
     }
 
     /// Whether `reg` passes `place` by address: a reference to the place's
-    /// own storage (`mojito_mir::mir::address_call_operands`).
+    /// own storage, the `ref.make` MIR lowering forms for it
+    /// (`Flatten::address_operand`).
     pub(super) fn addresses_place(&self, reg: Reg, place: &MirPlace) -> bool {
         match (
             self.func.reg_types.get(&reg.0).map(Ty::kind),

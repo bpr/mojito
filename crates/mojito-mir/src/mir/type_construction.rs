@@ -42,10 +42,32 @@ pub struct RegisterTable<'a> {
 }
 
 impl RegisterTable<'_> {
+    /// `copy` as the instructions that run it: a [`MirInstr::CopyValue`]
+    /// of an addressed `copy=` source, which lowering passes as the
+    /// reference its copy initializer's `read copy: Self` takes, copies the
+    /// value a `ref.read` of it reads; any other instruction stands alone.
+    pub fn read_through(&mut self, copy: MirInstr) -> Vec<MirInstr> {
+        let MirInstr::CopyValue {
+            dest,
+            value,
+            constructor,
+        } = copy
+        else {
+            return vec![copy];
+        };
+        let (value, read) = self.value_of(value);
+        read.into_iter()
+            .chain([MirInstr::CopyValue {
+                dest,
+                value,
+                constructor,
+            }])
+            .collect()
+    }
+
     /// Read `source` through, where the construction's operand is a
-    /// reference ([`crate::mir::address_call_operands`]) and its copy
-    /// reads a value: the fresh register and the `ref.read` defining it,
-    /// or `source` alone when it is no reference.
+    /// reference and its copy reads a value: the fresh register and the
+    /// `ref.read` defining it, or `source` alone when it is no reference.
     fn value_of(&mut self, source: Reg) -> (Reg, Option<MirInstr>) {
         let Some(TyKind::Ref(reference)) = self.reg_types.get(&source.0).map(Ty::kind) else {
             return (source, None);
@@ -312,24 +334,7 @@ fn copy_construction<C: ConstructionTypes>(
         TyKind::Struct(..) => struct_copy(*dest, bound, (*source, place), declarations),
         _ => return None,
     };
-    let MirInstr::CopyValue {
-        dest,
-        value,
-        constructor,
-    } = copy
-    else {
-        return Some(vec![copy]);
-    };
-    let (value, read) = registers.value_of(value);
-    Some(
-        read.into_iter()
-            .chain([MirInstr::CopyValue {
-                dest,
-                value,
-                constructor,
-            }])
-            .collect(),
-    )
+    Some(registers.read_through(copy))
 }
 
 /// The compile-time arguments a call of the struct `ty`'s initializer

@@ -2421,10 +2421,18 @@ source is addressed where `Flatten::apply_conversion` emits the
 constructor call (mutably for a view constructor's `ref [origin]`
 parameter, `BorrowConversionSource`, immutably for a memory-only `read`
 one, `ConversionReadsSource`), and a closure storage's reference capture
-where `Flatten::build_closure_storage` emits its `__init__`. A builtin
-intrinsic (`input`, `_mojito_abort`) takes its operand by value, and a
-concrete `S(copy=x)` source stays a value until `name_constructors`
-decides whether it calls a declared copy initializer. The read that lowered it
+where `Flatten::build_closure_storage` emits its `__init__`, as is a
+`var` capture's value there when the check judged the `__init__`'s `read`
+parameter by address (`CheckedStorageField::by_address`). A builtin
+intrinsic (`input`, `_mojito_abort`) takes its operand by value. A copy
+construction's source (`S(copy=x)`, `T(copy=x)`) is passed as the check
+bound it (`Flatten::copy_construction_keywords`), and where
+`name_constructors` folds `S(copy=x)` to a value copy
+(`struct_named_copy`), the copy reads the addressed source through a
+`ref.read` (`RegisterTable::read_through`), as `construct_type_parameters`
+does for `T(copy=x)`. A materialized conversion source is addressed in its
+slot where the converting constructor reads it by address
+(`ConversionMaterialization::by_address`). The read that lowered it
 becomes the `ref.make`, or a fresh one follows it, as mutable as a `read`
 parameter's storage or an immutable reference the place is reached
 through allows, and, rooted at the function's own bare `ref` parameter,
@@ -2446,19 +2454,26 @@ getter's reference never reaches a by-value setter; an augmented setter's
 `read` stored value is addressed by its `OperandBinding`. A closure
 storage's `read self` is passed by address when the storage is
 memory-only (`Flatten::lower_direct_nested_call`, the synthesized
-`__call__` witness). A destructured tuple place is addressed per element
-extraction (`Flatten::destructured_base`, `mir/lower_stmt.rs`). Once the
-omitted arguments are written, `mir::address_call_operands`
-(`mir/call_addresses.rs`, R1425) addresses every other by-address operand
-of a direct `call` or resolved `call.method` (`call.indirect`, a
-`copy=` source, filled defaults, and a named element call's receiver), as upstream's `lit.call` takes a `!lit.ref`
-operand and loads nothing: a `mut`/`ref` parameter, or a `read` one of a
-memory-only declared type (`mir::by_address_parameter`), whose operand is
-a whole load of the place the call's `arg_places` entry retains (or a
-`ref.read` of a `ref.make` of it) becomes a `ref.make` of that place,
-typed a reference to it, and one whose read another use shares, or that
-is no whole read of the place, is passed as a fresh `ref.make` of it just
-before its call. The verifier (`verify_direct_call`) rejects a value at a
+`__call__` witness), and the witness forwards each parameter the check
+judged by address (`CheckedClosureStorage::parameters_by_address`) as its
+own slot's address. A named local's element call (`objs[0](3)`) addresses
+its getter's receiver by the check's verdict on the local's type
+(`CheckedElementInvocation::receiver_register_passable`,
+`Flatten::address_receiver_with`). A comprehension's insertion
+(`Flatten::insert_nominal_collection`) and a `**kwargs` collector's
+`_insert` (`build_keyword_collector`) pass their collection slot's
+address as the `mut self` receiver. A slice literal operand of a subscript
+store is addressed by the setter's binding, and an augmented store's by
+the getter's and the setter's, one address shared when both take it by
+address, a fresh one for the call that does when only one does
+(`Flatten::share_augmented_slice`). A destructured tuple place is
+addressed per element extraction (`Flatten::destructured_base`,
+`mir/lower_stmt.rs`). So every by-address operand is a reference when
+lowering finishes, as upstream's `lit.call` takes a `!lit.ref` operand
+and loads nothing, and no pass after lowering rereads a call to address
+one (`mir/call_addresses.rs` keeps that rewrite,
+`address_call_operands`, only for the MIR text reader's upgrade). The
+verifier (`verify_direct_call`) rejects a value at a
 `mut`/`ref` slot of a `call` or `call.method` that binds by its callee's
 declaration, except where the retained place holds a reference (a `ref`
 field or `ref` binding), whose operand is still the load through the
@@ -2475,7 +2490,7 @@ to parameters past the receiver. A checked subscript (`index.get`,
 upstream emits `__getitem__`/`__setitem__`: its base is the receiver and
 its index operands, and a store's value, bind the accessor's parameters by
 its declaration, so `b[k]` over a memory-only `b` and `k` passes two
-addresses. The package's unit lowering runs the same rewrite. The
+addresses. The
 elaborator infers from a by-address operand's referent, the move check
 reads the addressed storage at the `ref.make`, copy elision reads a
 `ref.make` copy operand as it reads the load, and `lower-arg-conventions`
@@ -2492,11 +2507,11 @@ its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
 its call-result slot, argument-anchor slot, or a capturing lambda's
-storage slot (`Flatten::temporary_operand`), so the rewrite passes that
+storage slot (`Flatten::temporary_operand`), so lowering passes that
 slot's address, and copy elision's read lend renames the retained place
 to the dying source with the load. A reference result at such a parameter
 retains its hidden handle slot's place, `through` that handle
-(`Flatten::lower_borrowed_read_operand`), so the rewrite passes the
+(`Flatten::lower_borrowed_read_operand`), so lowering passes the
 reference the call returned, as upstream passes the `!lit.ref` itself. A
 method call through a trait bound binds its operands by the requirement
 the bound declares (`MirDeclarations::bound_requirement`), its receiver
@@ -5408,7 +5423,7 @@ result whose contributing arguments all carry one binder). A write through it
 is refused as through any function-own binder (`require_writable_reference`),
 and `automatic-inline`'s splice binds it to the call's mutability (R1339).
 MIR spells it the same way: the `ref.make` that lowering
-(`Flatten::place_handle_ty`) or `address_call_operands` forms for an operand
+(`Flatten::place_handle_ty`) forms for an operand
 rooted at the function's own bare `ref` parameter carries that parameter's
 binder, so `inline-parametric` and
 `always-inline` bind it to the argument's mutability where the body is spliced

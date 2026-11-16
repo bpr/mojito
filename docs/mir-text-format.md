@@ -1245,7 +1245,7 @@ caller's storage, a `ref.make` of the place the call retains, as upstream's
 `lit.call` takes a `!lit.ref` operand; the verifier rejects a value there
 (R1920). The syntax is unchanged. An older artifact's calls are upgraded as
 it loads (`mir::upgrade_call_operands`): each by-address operand its
-contract binds becomes a reference (`mir::address_call_operands`), and an
+contract binds becomes a reference, as lowering forms it, and an
 argument no contract binds (a requirement call over a pack element's
 receiver) becomes one where it reads back a `ref.make` of its retained
 place or loads a memory-only one.

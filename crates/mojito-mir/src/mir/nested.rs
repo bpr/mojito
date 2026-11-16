@@ -1010,8 +1010,10 @@ fn lower_closure_storage(
 /// it devirtualizes to the witness. `parameters` are the method's own
 /// parameter slots, its receiver aside, in slot order, each with its name,
 /// slot type, and convention: a `*args` or `**kwargs` collector forwards
-/// whole as the collector of the method's call, and a reference result is
-/// returned as the reference the call produces. A generic closure's
+/// whole as the collector of the method's call, a parameter the check
+/// judged by-address (`CheckedClosureStorage::parameters_by_address`)
+/// forwards its slot's address, and a reference result is returned as the
+/// reference the call produces. A generic closure's
 /// witness takes the method's parameters and forwards them as its own.
 fn lower_storage_call_witness(
     storage: &ClosureStorage,
@@ -1062,7 +1064,24 @@ fn lower_storage_call_witness(
     let mut spread = None;
     for (index, (name, ty, convention)) in parameters.iter().enumerate() {
         let var = index + 1;
-        let dest = register(ty);
+        let by_address = storage
+            .declared
+            .parameters_by_address
+            .get(index)
+            .copied()
+            .unwrap_or(false)
+            && !matches!(ty.kind(), TyKind::Ref(_));
+        let mutability = if matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref)) {
+            mojito_types::origin::Mutability::Mutable
+        } else {
+            mojito_types::origin::Mutability::Immutable
+        };
+        let dest = register(&if by_address {
+            crate::mir::mir_place_handle_ty(&root(var, ty), Some(mutability))
+                .unwrap_or_else(Ty::error)
+        } else {
+            ty.clone()
+        });
         // An owned parameter hands its storage on, as the method's owned
         // argument binds it, and runs no move initializer.
         let place = if is_owned(convention) {
@@ -1073,6 +1092,15 @@ fn lower_storage_call_witness(
                 constructor: None,
             });
             None
+        } else if by_address {
+            // A by-address parameter forwards its own slot's address, as
+            // upstream's witness passes the `!lit.ref` it received.
+            let place = root(var, ty);
+            instrs.push(MirInstr::MakeRef {
+                dest,
+                place: place.clone(),
+            });
+            Some(place)
         } else {
             instrs.push(MirInstr::LoadPlace {
                 dest,

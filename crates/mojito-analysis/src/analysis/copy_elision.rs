@@ -449,8 +449,8 @@ fn lending_use(
     })
 }
 
-/// The places a call retains for its by-address operands, which
-/// [`mojito_mir::mir::address_call_operands`] passes as `ref.make`s: a
+/// The places a call retains for its by-address operands, which MIR
+/// lowering passes as `ref.make`s (`Flatten::address_operand`): a
 /// direct call's, and the receiver's place of a method whose declared
 /// receiver is `read`; any other receiver's place, which a `ref self`
 /// binds, is not one.

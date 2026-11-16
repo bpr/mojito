@@ -304,6 +304,11 @@ pub struct CheckedElementInvocation {
     /// The `__call__` contract's checked error type; the getter's raising
     /// effect stays on its own contract.
     pub raises: Option<Ty>,
+    /// Whether the getter's receiver, the subscripted value, is of a type
+    /// proven register-passable, so a `read self` getter takes it by value
+    /// ([`SemanticAdjustment::RegisterPassableRead`] on a receiver node).
+    #[serde(default)]
+    pub receiver_register_passable: bool,
 }
 
 /// Ownership mode selected for a checked iteration expression.
@@ -662,6 +667,10 @@ pub struct ConversionMaterialization {
     pub ty: Ty,
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
     pub reads: bool,
+    /// Whether the constructor that reads the value takes it by address:
+    /// it `reads` it, and the value's type is not proven register-passable.
+    #[serde(default)]
+    pub by_address: bool,
 }
 
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`
@@ -3997,6 +4006,14 @@ pub struct CheckedClosureStorage {
     /// enclosing declaration binds, or one no lowering unit reaches, which
     /// lowering reports as a broken invariant.
     pub uses: Option<CheckedClosureUses>,
+    /// Whether its `__call__` witness passes each parameter of the
+    /// closure's method, its receiver and any `out` result aside, by
+    /// address: a `mut` or `ref` one, and a `read` one of a type not
+    /// proven register-passable as declared
+    /// ([`CheckedArgumentConvention::by_address`]); a collector forwards
+    /// whole.
+    #[serde(default)]
+    pub parameters_by_address: Vec<bool>,
 }
 
 impl CheckedClosureStorage {
@@ -4050,6 +4067,11 @@ pub struct CheckedStorageField {
     /// A reference capture's field, `None` for an owned one (`var` or
     /// moved).
     pub reference: Option<StorageReference>,
+    /// Whether the storage's `__init__` receives a `var` capture's value
+    /// by address: its `read` parameter's type is not proven
+    /// register-passable. False for a reference or moved capture.
+    #[serde(default)]
+    pub by_address: bool,
 }
 
 /// A reference field of a [`CheckedClosureStorage`]: `ref[origin]` over

@@ -59,7 +59,7 @@ mod bound_calls;
 pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
 mod call_addresses;
 pub use call_addresses::{
-    address_call_operands, by_address_parameter, by_address_receiver, call_operand_parameters,
+    by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, operand_value_ty, read_addressed_operands,
     upgrade_call_operands,
 };
@@ -1237,7 +1237,6 @@ pub fn lower_package_unit(
         &mut invariant_errors,
     );
     fill_omitted_arguments(&mut functions, declarations, &mut invariant_errors);
-    address_call_operands(&mut functions, declarations);
     for (name, function) in &mut functions {
         close_register_types(name, function, declarations, &mut invariant_errors);
         name_constructors(function, declarations);
@@ -1409,7 +1408,6 @@ fn lower_program(
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
     record_lifecycle_members(&mut declarations);
     fill_omitted_arguments(&mut functions, &declarations, &mut invariant_errors);
-    address_call_operands(&mut functions, &declarations);
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {

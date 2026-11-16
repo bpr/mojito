@@ -580,8 +580,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Execute one checked append/add/setitem operation on a synthetic nominal
-    /// collection slot.  Borrowing the receiver avoids invoking its copy
-    /// constructor; a `mut self` implementation commits through `recv_place`.
+    /// collection slot, whose `mut self` receiver is the slot's address, as
+    /// upstream's call passes it.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the callee needs the Vec; `&[Reg]` would add an allocation"
@@ -597,13 +597,12 @@ impl<'a> Flatten<'a> {
         let method = mojito_symbol::symbol::split_method_symbol(resolved)
             .map_or(resolved, |(_, method)| method)
             .to_string();
-        let recv = self.fresh_typed(expression.location(), Some(collection), target.clone());
-        self.emit(MirInstr::UseVar {
-            dest: recv,
-            var: collection,
-            mode: UseMode::BorrowMut,
-            constructor: None,
-        });
+        let recv_place = MirPlace::root(collection, Some(target.clone()));
+        let recv = self.place_address(
+            expression.location(),
+            &recv_place,
+            mojito_types::origin::Mutability::Mutable,
+        );
         let dest = self.fresh_typed(expression.location(), None, Ty::none());
         self.emit(MirInstr::MethodCall {
             conventions: crate::mir::MirArgConventions::default(),
@@ -616,7 +615,7 @@ impl<'a> Flatten<'a> {
             result_adapter: None,
             args: args.clone(),
             kwargs: Vec::new(),
-            recv_place: Some(Box::new(MirPlace::root(collection, Some(target.clone())))),
+            recv_place: Some(Box::new(recv_place)),
             recv_writes: true,
             receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
             arg_places: vec![None; args.len()],

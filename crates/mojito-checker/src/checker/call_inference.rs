@@ -739,6 +739,14 @@ impl Checker {
                 context: format!("argument 'copy' of '{name}'"),
             });
         }
+        // The source binds the bound's `read copy: Self`, judged at the
+        // parameter as the requirement's signature declares it.
+        self.record_operand_convention(
+            &span,
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
+            None,
+            self.memory_only(ty),
+        );
         self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                 param: binder.clone(),
@@ -1623,6 +1631,7 @@ impl Checker {
                     callable,
                     target,
                     raises: error.clone(),
+                    receiver_register_passable: !self.memory_only(receiver_ty),
                 },
             )),
         ));

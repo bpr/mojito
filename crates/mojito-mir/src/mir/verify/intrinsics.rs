@@ -299,7 +299,7 @@ pub(super) fn verify_callable_contract_call(
         } else {
             for (index, (argument, expected)) in args.iter().zip(params).enumerate() {
                 // A parameter received by address takes a reference to the
-                // caller's storage (`crate::mir::address_call_operands`); an
+                // caller's storage (`Flatten::address_operand`); an
                 // owned or `deinit` one takes the value itself.
                 let borrowed = !matches!(
                     conventions.get(index).copied().flatten(),

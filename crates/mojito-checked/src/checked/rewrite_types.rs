@@ -231,6 +231,7 @@ impl RewriteTypes for ConversionMaterialization {
             ty,
             instantiated_args,
             reads: _,
+            by_address: _,
         } = self;
         ty.rewrite_types(rewrite);
         instantiated_args.rewrite_types(rewrite);
@@ -324,6 +325,7 @@ impl RewriteTypes for CheckedElementInvocation {
             callable,
             target: _,
             raises,
+            receiver_register_passable: _,
         } = self;
         getter.rewrite_types(rewrite);
         callable.rewrite_types(rewrite);
@@ -1262,6 +1264,7 @@ impl RewriteTypes for CheckedClosureStorage {
             copyable: _,
             passability: _,
             uses,
+            parameters_by_address: _,
         } = self;
         fields.rewrite_types(rewrite);
         contract.rewrite_types(rewrite);
@@ -1286,6 +1289,7 @@ impl RewriteTypes for CheckedStorageField {
             name: _,
             ty,
             reference: _,
+            by_address: _,
         } = self;
         ty.rewrite_types(rewrite);
     }

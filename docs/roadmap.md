@@ -9526,41 +9526,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-
-- [ ] **R2247 `address_call_operands` still runs in both lowering
-  pipelines**
-
-  Once lowering addresses every operand, the pass should leave
-  `lower_program` and `lower_package_unit` and survive only as
-  `mir::upgrade_call_operands`' body for old artifacts.
-  - First address the shapes nothing else owns: a `call.indirect`'s and a
-    `def(...)` bound `__call__`'s operands (conventions from the function
-    type), `T(copy=x)`'s source, and the operands `fill_omitted_arguments`
-    writes (memory-only defaults, `**kwargs` `_insert` receivers).
-  - A concrete `S(copy=x)` source is lowered as a value
-    (`expr_call.rs` rebinds it unaddressed), because `name_constructors`
-    decides after lowering whether it calls a declared copy initializer or
-    folds to a `value.copy` (`struct_named_copy`), which needs a value.
-    Fold it with a `ref.read` of an addressed source, as
-    `construct_type_parameters` does through its `RegisterTable`, then
-    address it in lowering.
-  - Probe: `List(copy=…)`, `Dict.copy`, `Set.copy`, `String.copy`, and the
-    other library `Self(copy=self)` constructions (36 operands over std).
-  - Probe: a named-local element call `objs[0](3)` (`call_expr`'s
-    `element_invocation` arm) loads the local with no receiver node, so the
-    getter's receiver verdict (`Flatten::address_receiver`) cannot read a
-    checked `RegisterPassableRead` for it; the check should record the
-    callee local as the getter's receiver node. No std or corpus row
-    reaches it today.
-  - Then remove the two calls and repoint every doc comment naming
-    `address_call_operands` as the producer.
-  - Probe: a throwaway audit in `address_call_operands`'s `collect`,
-    printing each operand `by_address_operands` lists whose register is
-    not yet a `Ref` (run with a fresh `MOJITO_CACHE_DIR`, so all of std
-    lowers), lists none; `--backend pliron` on `subscript_write_back.mojo`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2186 A memory-only `read` argument with no retained place is
   passed as a value**
 
@@ -9579,6 +9544,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `StringSpan.__eq__$ov$String` from `_assert_enabled`,
     `repr$ov$T$Writable` from `Array.write_repr_to`, and
     `Tuple.__contains__` from a `comptime` thunk pass values.
+  - Probe: a filled memory-only default (`show()` over `def show(b: Big =
+    Big(7))`) is bound to its call-result slot by `bind_temporary`
+    (`call_defaults.rs`) but passed as a load with no retained place.
+  - Probe: `T(copy=f())` over a memory-only `T` passes the temporary as a
+    value. Recording it as a read temporary, as the concrete `S(copy=…)`
+    path does, makes the body own a `T` its bounds do not prove
+    destructible, which the linear check rejects (`'(expression
+    temporary)' abandoned without being explicitly destroyed`).
   - Fix: decide a template slot's convention as upstream does for a
     parametric `read` (by address until `LowerArgConventions` sees the
     instance), materialize an addressless operand, then make the verifier
@@ -9591,8 +9564,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   Upstream passes a `ref` field's or `ref` binding's `!lit.ref` value as
   the operand of a by-address parameter. Mojito loads through the stored
-  handle and keeps the place beside the value, so `address_call_operands`
-  and `Flatten::address_operand` skip it and the verifier exempts it.
+  handle and keeps the place beside the value, so
+  `Flatten::address_operand` skips it and the verifier exempts it.
   - Probe: `joined_path += cur_path` in `os.path.join`, over a `ref`
     binding of a `*paths` element, passes a `String` value to
     `StringSpan.__init__$ov$String`'s `ref` parameter.

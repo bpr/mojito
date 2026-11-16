@@ -375,7 +375,7 @@ pub(super) fn verify_subscript_call(
             ));
         }
         // A parameter received by address takes a reference to the caller's
-        // storage (`crate::mir::address_call_operands`); an owned or
+        // storage (`Flatten::address_operand`); an owned or
         // `deinit` one takes the value itself.
         let borrowed = !matches!(
             argument.convention,

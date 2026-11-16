@@ -2,23 +2,27 @@
 //!
 //! Upstream's `lit.call` takes an argument its callee receives by address —
 //! a `mut` or `ref` parameter, or a `read` one of a memory-only type — as a
-//! `!lit.ref` of the caller's storage, and loads nothing. A direct `call`,
-//! a resolved `call.method`, and a checked subscript, its accessor's call on
-//! the base, pass such an operand as a `ref.make` of its retained place
-//! ([`address_call_operands`]), and the instruction's place table names the
-//! same storage. A method call through a trait bound binds its operands by
-//! the requirement the bound declares, as upstream's call of a requirement
-//! reads the requirement's signature. A call through a function value
-//! (`call.indirect`) and a `def(...)` bound's `__call__` bind theirs by the
-//! value's or the bound's function type, as upstream's indirect `lit.call`
-//! reads the callee's `!lit.fn` signature. A type parameter's copy
-//! construction (`T(copy=x)`) passes its source as its copy initializer's
-//! `read copy: Self` operand.
+//! `!lit.ref` of the caller's storage, and loads nothing. MIR lowering
+//! forms that `ref.make` of the operand's retained place where it lowers
+//! the call (`Flatten::address_operand`), by the check's verdict, and the
+//! instruction's place table names the same storage. This module reads the
+//! contract each call binds its operands by, for the phases after lowering:
+//! a direct call's, a resolved `call.method`'s, and a checked subscript's
+//! accessor's declaration; a method call through a trait bound's
+//! requirement, as upstream's call of a requirement reads the
+//! requirement's signature; a call through a function value
+//! (`call.indirect`) and a `def(...)` bound's `__call__`, the value's or
+//! the bound's function type, as upstream's indirect `lit.call` reads the
+//! callee's `!lit.fn` signature; and a type parameter's copy construction
+//! (`T(copy=x)`), its copy initializer's `read copy: Self`.
 //!
 //! A register-passable `read` argument is passed by value, as upstream's
 //! `LowerArgConventions` caller half passes it: one an instance's
 //! substitution makes register-passable (a `read x: T` at `T = Int`) is read
 //! through its reference once elaborated ([`load_register_passable_operands`]).
+//! An artifact written before lowering passed by-address operands as
+//! references has its calls addressed by that contract as it loads
+//! ([`upgrade_call_operands`]).
 
 use crate::mir::bound_calls::callable_bound_requirement;
 use crate::mir::{
@@ -102,38 +106,11 @@ pub fn operand_value_ty(ty: &Ty) -> &Ty {
     }
 }
 
-/// Pass each by-address call operand in `functions` as a `ref.make` of its
-/// retained place, rather than a whole load of it.
-///
-/// The calls are every direct call, call through a function value,
-/// resolved method call, checked subscript, and type parameter's copy
-/// construction.
-///
-/// The operand's definition is rewritten when its one reader is the call
-/// and it reads the storage the call's place table names: a `place.load`
-/// of it, or a `ref.read` of a `ref.make` of it, which goes too when
-/// nothing else reads it. Any other by-address operand, one whose read
-/// another use shares or that is no whole read of the place, is passed as
-/// a fresh `ref.make` of the place just before its call. A place ending in
-/// a `ref` field, whose load reads through the stored handle, keeps its
-/// load.
-pub fn address_call_operands(
-    functions: &mut [(String, MirFunction)],
-    declarations: &MirDeclarations,
-) {
-    let callees = Callees::of(declarations);
-    for (name, function) in functions.iter_mut() {
-        let parameters = ParameterKinds::of(function, declarations.function(name));
-        address_function_operands(function, declarations, &callees, &parameters);
-        address_remaining_operands(function, declarations, &callees, &parameters);
-    }
-}
-
 /// Upgrade the calls of `functions`, read from an artifact written before
 /// lowering passed by-address operands as references.
 ///
-/// The calls are addressed as lowering's are
-/// ([`address_call_operands`]), then every operand
+/// Each by-address operand its contract binds is addressed as lowering
+/// addresses it ([`address_call_operands`]), then every operand
 /// a call's place table names that no contract binds (a requirement call
 /// over a pack element's receiver) and that is by address whatever its
 /// convention: a read back through a `ref.make` of that same place, the
@@ -190,8 +167,8 @@ pub fn load_register_passable_operands(
 /// The elaborator answers a requirement call itself when an instance's
 /// receiver is a compiler-modelled type with no witness (`len` of a
 /// `Tuple` through `Sized`), and the template passed the receiver and
-/// each memory-only `read` operand as a `ref.make` of its place
-/// ([`address_call_operands`]). Each `(register, place)` whose register is
+/// each memory-only `read` operand as a `ref.make` of its place, as
+/// lowering forms it. Each `(register, place)` whose register is
 /// a reference to its place's type becomes a `ref.read` of it, returned
 /// for the caller to splice ahead of the call, as upstream's
 /// `LowerArgConventions` loads a by-value argument at the call.
@@ -853,6 +830,30 @@ struct Rewrite {
     mutability: Mutability,
     /// The `ref.make` a rewritten `ref.read` read, which goes with it.
     retired: Option<Reg>,
+}
+
+/// Pass each by-address call operand in `functions` as a `ref.make` of its
+/// retained place, rather than a whole load of it.
+///
+/// The calls are every direct call, call through a function value,
+/// resolved method call, checked subscript, and type parameter's copy
+/// construction of an artifact [`upgrade_call_operands`] loads.
+///
+/// The operand's definition is rewritten when its one reader is the call
+/// and it reads the storage the call's place table names: a `place.load`
+/// of it, or a `ref.read` of a `ref.make` of it, which goes too when
+/// nothing else reads it. Any other by-address operand, one whose read
+/// another use shares or that is no whole read of the place, is passed as
+/// a fresh `ref.make` of the place just before its call. A place ending in
+/// a `ref` field, whose load reads through the stored handle, keeps its
+/// load.
+fn address_call_operands(functions: &mut [(String, MirFunction)], declarations: &MirDeclarations) {
+    let callees = Callees::of(declarations);
+    for (name, function) in functions.iter_mut() {
+        let parameters = ParameterKinds::of(function, declarations.function(name));
+        address_function_operands(function, declarations, &callees, &parameters);
+        address_remaining_operands(function, declarations, &callees, &parameters);
+    }
 }
 
 fn address_function_operands(

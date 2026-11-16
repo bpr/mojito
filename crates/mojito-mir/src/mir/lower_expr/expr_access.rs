@@ -486,7 +486,7 @@ impl<'a> Flatten<'a> {
     /// accessor's argument `source`, as the accessor binds it: the address
     /// of the slot it is read from when the check judged the parameter by
     /// address, as upstream passes the temporary's `!lit.ref`.
-    fn address_subscript_argument(
+    pub(in crate::mir) fn address_subscript_argument(
         &mut self,
         subscript: Node<'a>,
         source: CheckedCallArgumentSource,

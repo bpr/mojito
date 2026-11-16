@@ -328,11 +328,15 @@ impl<'a> Flatten<'a> {
             Some(parameter) => self.materialize_literal(argument, &parameter, e.location()),
             None => argument,
         };
+        // A materialized source is passed from its slot, by address when
+        // the converting constructor reads it there.
+        let mut materialized = None;
         let argument = match e.conversion_materialization() {
             Some(materialization) => {
                 let (read, place) =
                     self.materialize_conversion_source(argument, &materialization, e.location());
-                read_place = read_place.or(place);
+                read_place = read_place.or_else(|| place.clone());
+                materialized = materialization.by_address.then_some(place).flatten();
                 read
             }
             None => argument,
@@ -390,9 +394,9 @@ impl<'a> Flatten<'a> {
         let wanted = if borrows_source {
             Some(Mutability::Mutable)
         } else {
-            e.conversion_reads_source().then_some(Mutability::Immutable)
+            (e.conversion_reads_source() || materialized.is_some()).then_some(Mutability::Immutable)
         };
-        let place = source_place.clone().or(read_place);
+        let place = materialized.or_else(|| source_place.clone()).or(read_place);
         let (argument, argument_place) = match wanted {
             Some(wanted) => self.address_operand(e, (argument, place), wanted),
             None => (argument, place),

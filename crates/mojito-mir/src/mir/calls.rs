@@ -539,6 +539,17 @@ impl<'a> Flatten<'a> {
         lowered: (Reg, Option<MirPlace>),
         wanted: mojito_types::origin::Mutability,
     ) -> (Reg, Option<MirPlace>) {
+        self.address_lowered_operand(expression.location(), lowered, wanted)
+    }
+
+    /// [`Self::address_operand`] of an operand lowering synthesized at
+    /// `location`, which no checked node spells.
+    pub(super) fn address_lowered_operand(
+        &mut self,
+        location: SourceSpan,
+        lowered: (Reg, Option<MirPlace>),
+        wanted: mojito_types::origin::Mutability,
+    ) -> (Reg, Option<MirPlace>) {
         let (register, Some(place)) = &lowered else {
             return lowered;
         };
@@ -555,7 +566,7 @@ impl<'a> Flatten<'a> {
             self.f.reg_types.insert(register.0, handle);
             return (register, Some(place));
         }
-        let address = self.place_address(expression.location(), &place, wanted);
+        let address = self.place_address(location, &place, wanted);
         (address, Some(place))
     }
 
@@ -1262,7 +1273,8 @@ impl<'a> Flatten<'a> {
 
     /// The keyword of a copy construction (`Name(copy=place)`,
     /// `T(copy=place)`), which binds the copy initializer's borrowed
-    /// `copy: Self` parameter: a place source is read shallowly and retained,
+    /// `copy: Self` parameter: a place source is passed as the check bound
+    /// it, as its address when memory-only, and retained,
     /// so the copy initializer runs on the live source exactly once, where an
     /// ordinary value read would run a user's copy initializer a second time
     /// for the argument itself — observable through its side effects. `None`
@@ -1292,7 +1304,17 @@ impl<'a> Flatten<'a> {
             dest: source,
             place: place.clone(),
         });
-        Some((vec![("copy".to_string(), source)], vec![Some(place)]))
+        let (source, place) =
+            if self.operand_binding(*value) == Some(OperandBinding::Read { by_address: true }) {
+                self.address_operand(
+                    *value,
+                    (source, Some(place)),
+                    mojito_types::origin::Mutability::Immutable,
+                )
+            } else {
+                (source, Some(place))
+            };
+        Some((vec![("copy".to_string(), source)], vec![place]))
     }
 
     /// Fold a keyword `@fieldwise_init` construction into its positional form:
@@ -1878,8 +1900,27 @@ impl<'a> Flatten<'a> {
         receiver: Node<'a>,
         lowered: (Reg, Option<MirPlace>),
     ) -> (Reg, Option<MirPlace>) {
-        match receiver_by_address(contract, receiver, lowered.1.as_ref()) {
-            Some(wanted) => self.address_operand(receiver, lowered, wanted),
+        self.address_receiver_with(
+            contract,
+            receiver.register_passable_read(),
+            receiver.location(),
+            lowered,
+        )
+    }
+
+    /// [`Self::address_receiver`] of a receiver no checked node spells, as
+    /// a named local's element call (`objs[0](3)`) reads it, the check's
+    /// verdict on its register-passability given as
+    /// `register_passable_read`.
+    pub(super) fn address_receiver_with(
+        &mut self,
+        contract: &mojito_checked::checked::CheckedCallContract,
+        register_passable_read: bool,
+        location: SourceSpan,
+        lowered: (Reg, Option<MirPlace>),
+    ) -> (Reg, Option<MirPlace>) {
+        match receiver_by_address(contract, register_passable_read, lowered.1.as_ref()) {
+            Some(wanted) => self.address_lowered_operand(location, lowered, wanted),
             None => lowered,
         }
     }
@@ -1902,7 +1943,8 @@ impl<'a> Flatten<'a> {
         if let Some(place) = place
             && place.ty.is_some()
             && !is_reference(place.ty.as_ref())
-            && let Some(wanted) = receiver_by_address(setter, receiver, Some(place))
+            && let Some(wanted) =
+                receiver_by_address(setter, receiver.register_passable_read(), Some(place))
         {
             return self.place_address(receiver.location(), place, wanted);
         }
@@ -2768,7 +2810,8 @@ impl<'a> Flatten<'a> {
 }
 
 /// How the method call (or subscript accessor) bound by `contract`
-/// receives `receiver`, which kept `place`, by address: a declared `mut` or
+/// receives its receiver, which kept `place` and is register-passable as
+/// `register_passable_read` records, by address: a declared `mut` or
 /// `ref` receiver (`receiver_requires_place`, whatever its effective
 /// access) as a mutable
 /// reference, which [`Flatten::place_handle_ty`] narrows to the place's own
@@ -2778,7 +2821,7 @@ impl<'a> Flatten<'a> {
 /// bound's callee, which is the value it is, are `None`.
 fn receiver_by_address(
     contract: &mojito_checked::checked::CheckedCallContract,
-    receiver: Node<'_>,
+    register_passable_read: bool,
     place: Option<&MirPlace>,
 ) -> Option<mojito_types::origin::Mutability> {
     use mojito_ast::ast::ArgConvention;
@@ -2793,9 +2836,7 @@ fn receiver_by_address(
         return Some(Mutability::Mutable);
     }
     match contract.receiver_convention {
-        None | Some(ArgConvention::Imm) if !receiver.register_passable_read() => {
-            Some(Mutability::Immutable)
-        }
+        None | Some(ArgConvention::Imm) if !register_passable_read => Some(Mutability::Immutable),
         _ => None,
     }
 }

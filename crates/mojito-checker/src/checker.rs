@@ -1431,6 +1431,7 @@ impl Checker {
             constructor: selected.target,
             ty: to.clone(),
             reads: !selected.consumes_source,
+            by_address: !selected.consumes_source && self.memory_only(from),
         }))
     }
 
@@ -2007,6 +2008,7 @@ impl Checker {
         Ok(Some(SelectedConversion {
             materialization: Some(mojito_checked::checked::ConversionMaterialization {
                 constructor: materialize.target,
+                by_address: !selected.consumes_source && self.memory_only(&target),
                 ty: target,
                 instantiated_args,
                 reads: !selected.consumes_source,

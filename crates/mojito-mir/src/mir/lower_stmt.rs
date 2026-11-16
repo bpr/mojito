@@ -1028,7 +1028,16 @@ impl<'a> Flatten<'a> {
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let (receiver, receiver_place) =
             self.address_receiver(&plan.getter, object, (receiver, receiver_place));
-        let (argument, argument_place) = self.slice_set_argument(target, descriptor, bounds);
+        let sliced = self.slice_set_argument(target, descriptor, bounds);
+        let slice_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
+        let (argument, argument_place) =
+            self.share_augmented_slice(target.location(), plan, slice_source, sliced);
+        let getter_argument = self.augmented_slice_operand(
+            &plan.getter,
+            slice_source,
+            target.location(),
+            (&argument, argument_place.as_ref()),
+        );
         let mut getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
         self.convert_raised(
@@ -1042,7 +1051,7 @@ impl<'a> Flatten<'a> {
             self.emit_slice_read(
                 handle,
                 receiver,
-                (argument, argument_place),
+                (getter_argument, argument_place),
                 receiver_place,
                 Some(getter_call),
             );
@@ -1056,7 +1065,7 @@ impl<'a> Flatten<'a> {
         self.emit_slice_read(
             current,
             receiver,
-            (argument.clone(), argument_place.clone()),
+            (getter_argument, argument_place.clone()),
             receiver_place.clone(),
             Some(getter_call),
         );
@@ -1081,11 +1090,17 @@ impl<'a> Flatten<'a> {
             target.raise_conversion(),
             target.location(),
         );
+        let setter_argument = self.augmented_slice_operand(
+            setter,
+            slice_source,
+            target.location(),
+            (&argument, argument_place.as_ref()),
+        );
         self.emit_checked_call_boundary(setter, &target.location());
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
             receiver_place: receiver_place.map(Box::new),
-            args: vec![argument],
+            args: vec![setter_argument],
             arg_places: vec![argument_place],
             value,
             value_place: value_place.map(Box::new),
@@ -1116,6 +1131,7 @@ impl<'a> Flatten<'a> {
         let (receiver, receiver_place) =
             self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let mut source_places = Vec::with_capacity(source.len());
+        let mut slices = Vec::new();
         let mut source_spans = Vec::with_capacity(source.len());
         let raw_args = source
             .iter()
@@ -1141,11 +1157,18 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::CheckedSubscriptArg::Slice {
                     lower, upper, step, ..
                 } => {
-                    let (argument, place) = self.slice_set_argument(
+                    let sliced = self.slice_set_argument(
                         target,
                         descriptor.clone(),
                         [*lower, *upper, *step],
                     );
+                    let (argument, place) = self.share_augmented_slice(
+                        target.location(),
+                        plan,
+                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                        sliced,
+                    );
+                    slices.push(position);
                     source_places.push(place);
                     source_spans.push(None);
                     argument
@@ -1165,17 +1188,28 @@ impl<'a> Flatten<'a> {
         let getter_args = raw_args
             .iter()
             .enumerate()
-            .map(|(position, argument)| match argument {
-                MirSubscriptArg::Index(register) => MirSubscriptArg::Index(
+            .map(|(position, argument)| {
+                let source =
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
+                if slices.contains(&position) {
+                    return self.augmented_slice_operand(
+                        &plan.getter,
+                        source,
+                        target.location(),
+                        (argument, source_places[position].as_ref()),
+                    );
+                }
+                let MirSubscriptArg::Index(register) = argument;
+                MirSubscriptArg::Index(
                     self.apply_checked_call_value_adjustments(
                         &plan.getter,
-                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                        source,
                         *register,
                         source_spans[position]
                             .clone()
                             .unwrap_or_else(|| target.location()),
                     ),
-                ),
+                )
             })
             .collect::<Vec<_>>();
         let getter_places = source_places
@@ -1246,6 +1280,12 @@ impl<'a> Flatten<'a> {
             .iter()
             .enumerate()
             .map(|(position, argument)| match argument {
+                _ if slices.contains(&position) => self.augmented_slice_operand(
+                    setter,
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                    target.location(),
+                    (argument, source_places[position].as_ref()),
+                ),
                 MirSubscriptArg::Index(register) => {
                     let source_kind =
                         mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
@@ -1909,10 +1949,17 @@ impl<'a> Flatten<'a> {
                             step,
                             ..
                         } => {
-                            let (argument, place) = self.slice_set_argument(
+                            let sliced = self.slice_set_argument(
                                 target,
                                 descriptor,
                                 [*lower, *upper, *step],
+                            );
+                            let (argument, place) = self.address_subscript_argument(
+                                target,
+                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
+                                    arg_places.len(),
+                                ),
+                                sliced,
                             );
                             arg_places.push(place);
                             argument
@@ -1922,10 +1969,17 @@ impl<'a> Flatten<'a> {
                     .collect()
             }
             SetArguments::Slice([lower, upper, step]) => {
-                let (argument, place) = self.slice_set_argument(
+                let sliced = self.slice_set_argument(
                     target,
                     descriptors.first().cloned().flatten(),
                     [lower, upper, step],
+                );
+                let (argument, place) = self.address_subscript_argument(
+                    target,
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(
+                        arg_places.len(),
+                    ),
+                    sliced,
                 );
                 arg_places.push(place);
                 vec![argument]
@@ -2006,6 +2060,69 @@ impl<'a> Flatten<'a> {
         self.outside_call_setup(|this| {
             this.slice_literal_argument(subscript, &descriptor, operands)
         })
+    }
+
+    /// The slice literal argument `sliced` an augmented store's getter and
+    /// setter in `plan` both bind at `source`, passed as the address of the
+    /// slot it is read from when each call that takes it takes it by
+    /// address, as upstream passes the one temporary's `!lit.ref` to both.
+    fn share_augmented_slice(
+        &mut self,
+        location: SourceSpan,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+        (argument, place): (MirSubscriptArg, Option<MirPlace>),
+    ) -> (MirSubscriptArg, Option<MirPlace>) {
+        let by_address = |contract| {
+            OperandBinding::of_argument(contract, source)
+                == Some(OperandBinding::Read { by_address: true })
+        };
+        if !by_address(&plan.getter)
+            || plan
+                .setter
+                .as_ref()
+                .is_some_and(|setter| !by_address(setter))
+        {
+            return (argument, place);
+        }
+        let MirSubscriptArg::Index(register) = argument;
+        let (register, place) = self.address_lowered_operand(
+            location,
+            (register, place),
+            mojito_types::origin::Mutability::Immutable,
+        );
+        (MirSubscriptArg::Index(register), place)
+    }
+
+    /// The operand an augmented store's getter or setter, bound by
+    /// `contract`, passes for the slice literal `argument` at `source`
+    /// ([`Self::share_augmented_slice`]): a fresh address of its slot when
+    /// the call takes it by address and the other call took its value.
+    fn augmented_slice_operand(
+        &mut self,
+        contract: &mojito_checked::checked::CheckedCallContract,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+        location: SourceSpan,
+        (argument, place): (&MirSubscriptArg, Option<&MirPlace>),
+    ) -> MirSubscriptArg {
+        let MirSubscriptArg::Index(register) = argument;
+        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
+        match place {
+            Some(place)
+                if OperandBinding::of_argument(contract, source)
+                    == Some(OperandBinding::Read { by_address: true })
+                    && place.ty.is_some()
+                    && !is_reference(place.ty.as_ref())
+                    && !is_reference(self.f.reg_types.get(&register.0)) =>
+            {
+                MirSubscriptArg::Index(self.place_address(
+                    location,
+                    place,
+                    mojito_types::origin::Mutability::Immutable,
+                ))
+            }
+            _ => argument.clone(),
+        }
     }
 
     /// The value of slice bound node `id` of subscript `subscript`.
@@ -2364,7 +2481,9 @@ impl<'a> Flatten<'a> {
 
     /// The storage struct `storage` of the closure `info` at `at`, as
     /// upstream's `ClosureEmitter::emitClosure` calls the storage's
-    /// `__init__` with the captures: a `var` capture's place is read, a
+    /// `__init__` with the captures: a `var` capture's place is read,
+    /// passed as its address where the check judged its `read` parameter
+    /// memory-only, a
     /// moved capture's storage is handed to its `var` parameter, as an
     /// owned argument's is, and a reference capture's place, a captured
     /// sibling's storage slot included, is lent: passed as its address, as
@@ -2377,7 +2496,12 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let mut args = Vec::new();
         let mut arg_places = Vec::new();
-        for (capture, (_, field)) in info.captures.iter().zip(&storage.fields) {
+        for ((capture, (_, field)), declared) in info
+            .captures
+            .iter()
+            .zip(&storage.fields)
+            .zip(&storage.declared.fields)
+        {
             let place = self.capture_place(capture);
             if capture.kind != mojito_ast::ast::CaptureKind::Move
                 && let TyKind::Ref(reference) = field.kind()
@@ -2399,6 +2523,19 @@ impl<'a> Flatten<'a> {
                     constructor: None,
                 });
                 arg_places.push(None);
+            } else if declared.by_address {
+                self.emit(MirInstr::LoadPlace {
+                    dest,
+                    place: place.clone(),
+                });
+                let (address, place) = self.address_lowered_operand(
+                    at.clone(),
+                    (dest, Some(place)),
+                    mojito_types::origin::Mutability::Immutable,
+                );
+                args.push(address);
+                arg_places.push(place);
+                continue;
             } else {
                 self.emit(MirInstr::LoadPlace {
                     dest,

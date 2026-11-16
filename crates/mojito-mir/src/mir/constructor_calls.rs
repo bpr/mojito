@@ -7,7 +7,9 @@
 //! (`result_adapter`) names the constructor its value's struct records as
 //! its `constructor` operand, and each call naming a struct over one `copy=` keyword
 //! (`S(copy=x)` at a struct whose copy initializer is synthesized) becomes
-//! that struct's copy ([`crate::mir::struct_copy`]), so the symbol walk, the elaborator's respell, and
+//! that struct's copy ([`crate::mir::struct_copy`]), a value copy reading
+//! the addressed source lowering passed through a `ref.read`
+//! ([`RegisterTable::read_through`]), so the symbol walk, the elaborator's respell, and
 //! `eliminate-dead-symbols` follow it as they follow a call's callee, and no
 //! backend looks the constructor up from the value's type again. A site
 //! whose type the member table names no such member for, a symbolic one
@@ -17,7 +19,8 @@
 //! rerunning this walk.
 
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, UseMode, instruction_regions_mut,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, RegisterTable, UseMode,
+    instruction_regions_mut,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind, VariantIndex, struct_template};
@@ -29,7 +32,10 @@ pub fn name_constructors(function: &mut MirFunction, declarations: &MirDeclarati
     name_in_blocks(
         &mut function.body,
         &function.var_tys,
-        &function.reg_types,
+        &mut RegisterTable {
+            n_regs: &mut function.n_regs,
+            reg_types: &mut function.reg_types,
+        },
         declarations,
     );
 }
@@ -76,7 +82,7 @@ pub fn variant_place_alternatives<'a, S: std::hash::BuildHasher>(
 fn name_in_blocks(
     block: &mut MirBlock,
     var_tys: &HashMap<VarId, Ty>,
-    reg_types: &HashMap<u32, Ty>,
+    registers: &mut RegisterTable<'_>,
     declarations: &MirDeclarations,
 ) {
     let named = |ty: Option<&Ty>, member: Option<&str>| {
@@ -88,13 +94,22 @@ fn name_in_blocks(
     let moved = |ty: Option<&Ty>| named(ty, Some("__moveinit__"));
     // A copy that is no call leaves its binding no longer in place.
     let mut copied_values = HashSet::new();
-    for instruction in &mut block.instrs {
-        if let Some(copy) = struct_named_copy(instruction, reg_types, declarations) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        if let Some(copy) =
+            struct_named_copy(&block.instrs[index], registers.reg_types, declarations)
+        {
             if let MirInstr::CopyValue { dest, .. } = &copy {
                 copied_values.insert(dest.0);
             }
-            *instruction = copy;
+            let copy = registers.read_through(copy);
+            let count = copy.len();
+            block.instrs.splice(index..=index, copy);
+            index += count - 1;
         }
+        let reg_types = &*registers.reg_types;
+        let instruction = &mut block.instrs[index];
+        index += 1;
         match instruction {
             MirInstr::UseVar {
                 var,
@@ -134,7 +149,7 @@ fn name_in_blocks(
             _ => {}
         }
         for region in instruction_regions_mut(instruction) {
-            name_in_blocks(region, var_tys, reg_types, declarations);
+            name_in_blocks(region, var_tys, registers, declarations);
         }
     }
 }

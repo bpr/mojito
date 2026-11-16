@@ -1008,6 +1008,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering now forms every by-address call operand itself, and
+  `mir::address_call_operands` no longer runs after lowering; it remains
+  only for the MIR text reader's upgrade of old artifacts. The new sites
+  are a copy construction's source (`S(copy=x)`, whose value-copy fold
+  reads the addressed source through, and `T(copy=x)`, whose convention
+  the check now records), a comprehension's and a `**kwargs` collector's
+  insertion receiver, a closure storage's memory-only `var` capture and
+  its `__call__` witness's by-address parameters, a named local's
+  element-call receiver, a subscript or augmented store's slice literal
+  operand, and a materialized conversion source, each by a verdict the
+  check records (`mojito-package 222`). Output is unchanged (R2247).
 - MIR lowering now addresses the receivers it left to
   `mir::address_call_operands`: a `Tuple` element accessor's (`t[0]`), a
   subscript store's, augmented store's, write-back's, and element call's

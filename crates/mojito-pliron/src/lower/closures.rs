@@ -218,7 +218,7 @@ impl FnLowering<'_> {
     }
 
     /// The value an indirect call passes for a by-value slot: one the call
-    /// passes by address (`mojito_mir::mir::address_call_operands`) is
+    /// passes by address (a `ref.make` MIR lowering forms) is
     /// read from, or bound to, its place.
     fn contract_arg_value(
         &mut self,

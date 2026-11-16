@@ -32,14 +32,13 @@ impl<'a> Flatten<'a> {
                 dest: value,
                 place: place.clone(),
             });
-            return self.lower_element_invocation(
-                call,
+            let receiver = self.address_receiver_with(
+                &plan.getter,
+                plan.receiver_register_passable,
+                call.location(),
                 (value, Some(place)),
-                plan,
-                &indices,
-                args,
-                kwargs,
             );
+            return self.lower_element_invocation(call, receiver, plan, &indices, args, kwargs);
         }
         // A call of a nested `def` by name: a direct call of its lifted
         // body passing its storage or the captured places as leading
@@ -656,16 +655,6 @@ impl<'a> Flatten<'a> {
             && node.ty.as_ref().is_some_and(
                 |ty| matches!(ty.kind(), TyKind::Struct(constructed, _) if *constructed == *name),
             );
-        // A copy construction's source stays a value read here: whether
-        // `S(copy=x)` calls a declared copy initializer, which takes it by
-        // address, or folds to a value copy is decided after lowering
-        // (`name_constructors`).
-        if copy_construction
-            && let [("copy", source)] = kwargs
-            && self.operand_binding(*source) == Some(OperandBinding::Read { by_address: true })
-        {
-            self.bind_operand(*source, Some(OperandBinding::Read { by_address: false }));
-        }
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
