@@ -435,8 +435,8 @@ struct Inliner<'f, 'c> {
     /// The closures the caller makes, which a call through one calls.
     closures: Closures,
     /// The storage each of the caller's `ref.make`s addresses: what a
-    /// by-address operand binds its parameter to. A spliced body's operands
-    /// are not in it, and bind the place their call's table retains.
+    /// by-address operand binds its parameter to, the ones of every body
+    /// spliced since included.
     addresses: OperandAddresses,
     /// The function each register of the caller statically holds, beside
     /// whether its value captures nothing: what a callable binder's
@@ -2141,6 +2141,9 @@ impl<'c> Inliner<'_, 'c> {
             });
             self.closures.slots.insert(var, closure.0);
         }
+        // The body's `ref.make`s are the operands of the calls it holds,
+        // which the scan reaches next.
+        self.addresses.extend(&blocks, &function.reg_types);
         splice_region(function, caller, blocks, resumed, &exit)
     }
 }

@@ -65,6 +65,17 @@ impl OperandAddresses {
         self.0.get(&reg.0)
     }
 
+    /// Add every `ref.make` of `body` that forms a reference handle, as
+    /// [`operand_addresses`] collects them: the ones a pass introduced
+    /// after the map was built, such as a body the inliner spliced.
+    pub fn extend<S: BuildHasher>(
+        &mut self,
+        body: &MirBlock,
+        register_types: &HashMap<u32, Ty, S>,
+    ) {
+        collect(body, register_types, &mut self.0);
+    }
+
     /// The storage each operand of `instruction` addresses, by slot.
     #[must_use]
     pub fn operands<'a>(&'a self, instruction: &'a MirInstr) -> AddressedOperands<'a> {
@@ -108,7 +119,7 @@ pub fn operand_addresses<S: BuildHasher>(
     register_types: &HashMap<u32, Ty, S>,
 ) -> OperandAddresses {
     let mut addresses = OperandAddresses::default();
-    collect(body, register_types, &mut addresses.0);
+    addresses.extend(body, register_types);
     addresses
 }
 

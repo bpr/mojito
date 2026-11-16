@@ -9677,28 +9677,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2265 The inliner answers a spliced call's operands from its
-  place table**
-
-  Upstream's inliner reads every `lit.call`'s `!lit.ref` operand, the
-  ones a splice just introduced included. `inline_calls`
-  (`analysis/inline_parametric.rs`) builds `Inliner::addresses` once,
-  before splicing, so a call inside a body it spliced in that round has
-  `ref.make` operands the map never saw, and `Inliner::inlinable` reads
-  their storage through `table_fallback` (`mir/call_operands.rs`).
-  - Probe: `abort(s)` over a named `String` (the spliced `std.os.abort`'s
-    `_mojito_abort` operand), and the spliced receivers and positional
-    `read` operands `input(prompt)` and `print` reach (a dozen per
-    program; count calls where `made` is `None` but the register is a
-    `ref`).
-  - Probe: `ceildiv(UInt8(7), UInt8(2))`, whose spliced
-    `__trait_dispatch.__ceildiv__` receiver and operand are `ref.make`s
-    the map never saw.
-  - Fix: extend the map with each spliced body's `ref.make`s as the
-    splice renumbers them.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2266 A materialized temporary at a register-passable `read`
   parameter keeps its slot's place-table entry**
 

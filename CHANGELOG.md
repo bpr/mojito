@@ -1025,6 +1025,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The inliner reads the storage of a call inside a body it just spliced
+  from that call's `ref.make` operands, as upstream's inliner reads every
+  `!lit.ref` operand, rather than from the call's place table: the
+  spliced `std.os.abort`'s `_mojito_abort` operand, the receivers and
+  `read` operands `print` and `input` reach, and `ceildiv`'s dispatched
+  `__ceildiv__` no longer reach the place-table fallback. No program
+  output changes. (R2265)
+
 - A `read` operand an instance's substitution makes register-passable
   (`divmod[T](a, b)` at `T = UInt8`, a subscript's `Int` index), and one
   the elaborator loads where a builtin answers a requirement call, now
