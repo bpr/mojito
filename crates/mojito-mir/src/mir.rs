@@ -63,6 +63,10 @@ pub use call_addresses::{
     load_register_passable_operands, operand_value_ty, read_addressed_operands,
     upgrade_call_operands, upgrade_stored_handles,
 };
+mod call_operands;
+pub use call_operands::{
+    AddressedOperands, CallOperand, OperandAddresses, OperandSlot, call_operands, operand_addresses,
+};
 mod call_defaults;
 pub use call_defaults::fill_omitted_arguments;
 mod call_results;

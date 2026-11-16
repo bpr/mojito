@@ -1008,6 +1008,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The loan check, the drop facts, `RegisterEnds`, and the inliner read
+  the storage a by-address call operand addresses from its `ref.make`, as
+  upstream's checks read a `lit.call`'s `!lit.ref` operand, through the
+  new `mir::operand_addresses` and `mir::call_operands`, falling back to
+  the place table only for operands that are no such reference. The
+  verifier requires a `ref.make` operand and its table entry to agree. The
+  inliner reads a reference receiver's referent type, so a `Tuple` or
+  struct method called on a `ref.make` receiver (`__getitem_param__`,
+  `__len__`, `get`) inlines again. The liveness scan and three more
+  readers remain (R2255). (R2190)
+
 - The Pliron backend passes a by-address argument or receiver as the
   pointer its reference operand is, as upstream's LLVM lowering passes a
   `!lit.ref`, loading it where the lowered signature takes a scalar,

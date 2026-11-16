@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2255**.
+Next free ID: **R2259**.
 
 ## Ordered Work
 
@@ -7783,9 +7783,28 @@ retained on purpose and re-probed rather than fixed; they are listed in
     against the span's inferred origin, which the call should bind.
   - Probe: `/tmp`-style program of the two lines above over
     `var l = List[Int]()` with two elements, printing `first(Span(l))`.
+  - The cause is that no call solves a declared origin binder from an
+    argument's type. `substitute_sig_origin` (`origins/solve.rs`) fills
+    only a `ref` parameter's origin slot, and the concrete free-call path
+    (`call_inference.rs`) passes the result's `SigOrigin::Bound` through
+    unsolved, so `origin_param(0)` reaches the caller's MIR.
+  - Probe: over `def read[o: ImmOrigin](r: Pointer[Int, o]) -> ref[o]
+    Int` returning `r[]`, `var x = 222` then `print(read(Pointer(to=x)))`
+    prints `0` where the pin prints `222`: the result names no origin, so
+    nothing keeps `x` alive past the call.
+  - Probe: the same over `r: Pointer[Int, o]._mlir_lit_ref` returning
+    `__get_litref_as_mvalue(r)`, called as
+    `read(__get_mvalue_as_litref(x))`, prints `0` (pin: `222`).
+  - Probe: the same over `Pointer[String, o]` and `var x =
+    String("hello!")` fails with `invalid reference projection
+    Field("data") on <moved>` (pin: `hello!`).
+  - Fix: solve each origin binder from the argument types, as
+    `bind_constructor_pointer_params` does for a struct's binders, in the
+    free-call and method paths. `materialize_call_reference_place`
+    then roots the result's loans.
   - Found while planning R1078 (2026-10-16).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Planned.
 
 - [ ] **R606 A diagnostic names an entry declaration by its linked name**
 
@@ -9561,6 +9580,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fix: pass the reference the read consumed (a pointer's `!lit.ref`, the
     getter's handle, a `Proj::Variant` place's `ref.make`) instead of its
     referent.
+  - Then the inliner's `read_through_register` (`argument_binding`,
+    `inline_parametric.rs`), which recovers these operands' storage from
+    the read, has nothing left to bind and goes.
   - Depends on R2187.
   - Model: Fable, Planned.
 
@@ -9581,6 +9603,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     passes the forwarded `C`.
   - Fix: pass the forwarded slot's `ref.make` at a `read` binding and
     leave the slot to the caller's destruction.
+  - Then the inliner's `loaded_place` and `loaded_slot_across_regions`
+    fallbacks for a `read` slot with no address (`argument_binding`,
+    `inline_parametric.rs`) lose these operands.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9655,41 +9680,74 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`twice(lambda {var s^} -> Int: (s.__iadd__("!"), ...)[1])` prints
     `34`; without the write-back the second call double-frees the string).
   - Probe: `assets/ok/closure_storage_method_binders.mojo`.
+  - A `call.indirect`'s `callee_place` and `canonicalize`'s closure
+    `recv_place` over a loaded callee (`direct_call`) are the same
+    by-value context: `OperandAddresses::address` falls back to the place
+    table for both, and the inliner finds the called closure by
+    `callee_place` (`Closures::called`).
   - Fix: lower such a receiver as a mutable `ref.make` of the callee's
     place, then delete `mut_self_methods` from the VM's `StructDef` and the
     write-back.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2190 The loan analysis and the inliner read a call's place table
-  rather than its reference operands**
+- [ ] **R2255 The liveness scan, the interior check, copy elision, and
+  unused-parameter removal read a call's place table rather than its
+  reference operands**
 
-  Upstream's origin and exclusivity checking read the `!lit.ref` operand
-  and derive a result's loans from the origin its result type names.
-  `loans.rs`, `register_loans.rs`, `scan.rs`, `interior.rs`,
-  `copy_elision.rs`, `canonicalize.rs`, `unused_params.rs`,
-  `register_ends.rs`, and `verify/places.rs` read `arg_places` and its
-  siblings.
-  - The inliner's `read` binding still reverse-engineers a place with
-    `loaded_place` and `read_through_register` (`inline_parametric.rs`).
-  - Probe: `tests/mir_passes/inline-parametric/tuple_reverse_closed.mir`
-    no longer inlines `Tuple.__getitem_param__` or `Tuple.__len__` once
-    their `Tuple` receiver is a `ref.make`, the shape every fresh compile
-    has.
-  - A register-passable `read` the result borrows
-    (`Flatten::lends_read_arguments`) keeps a place only to root the
-    result's loans: derive those from the result type's origin instead.
-  - Probe: over `def read[o: ImmOrigin](r: Pointer[Int, o]._mlir_lit_ref)
-    -> ref[o] Int` returning `__get_litref_as_mvalue(r)`, `var x = 222`
-    then `print(read(__get_mvalue_as_litref(x)))` with no later use of `x`
-    prints `0` where the pin prints `222`: `x` is dropped after the call,
-    before the read through its result, since the in-place `ref.make`
-    operand has no `arg_places` entry. Binding the `!lit.ref` first (`var
-    r = ...; print(read(r))`) fails the same way.
-  - Fix: one helper finds the `ref.make` defining an operand, and every
-    reader uses it.
-  - Depends on R2247, R2186, R2187.
+  Upstream's liveness and checks read the `!lit.ref` operand of a
+  `lit.call`. The loan check, the drop facts, `RegisterEnds`, and the
+  inliner already read `mir::OperandAddresses`, but four readers still
+  take `arg_places` and its siblings.
+  - `scan.rs` `instruction_uses`, a per-instruction function with eleven
+    callers in the move check and drop elaboration, needs the function's
+    `OperandAddresses` threaded through its walkers.
+  - `interior.rs` `add_subscript_call_places` and the subscript arms of
+    its call invalidation.
+  - `copy_elision.rs` `retained_operand_places` (a reader); `lend`
+    rewrites the table beside the `ref.make` until R2191.
+  - `unused_params.rs` `SelfCall::of` and its receiver types.
+  - Stop when `cargo run -- check` reports the same diagnostic as before on
+    every `assets/ownership_error` and `assets/ownership_ok` fixture.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2256 A register-passable `read` a reference result borrows keeps a
+  place only to root the result's loans**
+
+  Upstream passes a register-passable `read` by value, and the result's
+  loans come from the origin its result type names. Mojito retains the
+  argument's place (`Flatten::lends_read_arguments`,
+  `lower_call_operand_value` in `mir/calls.rs`) so that the drop facts
+  seed a free call's tracked-pointer result from `arg_places`
+  (`register_loans.rs`, `RegisterLoanStep::new`).
+  - It is the first shape `OperandAddresses::address` falls back to the
+    place table for (`table_fallback`, `mir/call_operands.rs`).
+  - Fix: derive the result's loans from its type's origin, as
+    `Flatten::materialize_call_reference_place` already does for a
+    reference result, then stop retaining the place and delete the
+    `arg_places` seeding.
+  - Depends on R1100 (the result type must name the argument's origin).
   - Model: Fable, Planned.
+
+- [ ] **R2257 A spread pack and `external_call` operands keep a place-table
+  entry with no reference operand**
+
+  Upstream's call builds a `VariadicPack` from its operand, and an
+  `external_call`'s operands are values whose pointer origins keep their
+  owners alive. Mojito's spread argument is a `place.load` beside its
+  `arg_places` entry (`lower_pack_spread_argument`, `mir/calls.rs`), and
+  `external_call` retains its operands' places so the loan check reads
+  them.
+  - The elaborator reads the spread's place (`native/mono/spread.rs`,
+    `specializer.rs`).
+  - Both are shapes `OperandAddresses::address` falls back to the table
+    for (`table_fallback`, `mir/call_operands.rs`).
+  - Fix: pass the spread pack as a `ref.make` of its slot, and root
+    `external_call`'s owners in its operands' pointer origins, so R2191
+    can delete the tables.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R2191 Every call-shaped instruction carries place tables beside
   its reference operands**
@@ -9709,6 +9767,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     reads the place's presence for a `Deinit` receiver.
   - Fix: delete the tables, constructors and text fields included, with a
     MIR text bump whose upgrade runs `mir::upgrade_call_operands` first.
+  - The last place-table reader is `table_fallback` in
+    `OperandAddresses::address` (`mir/call_operands.rs`), with the
+    verifier's `verify_operand_tables`.
   - The owner approved the `tests/mir_passes` re-bless in advance
     (2026-11-15). The session may run `UPDATE_EXPECT=1 cargo nextest run
     --test mir_pass_test` and re-canonicalize the case inputs to the new
@@ -9719,7 +9780,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190.
+  - Depends on R2188, R2189, R2190, R2254, R2255, R2256, R2257.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

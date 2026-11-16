@@ -191,15 +191,16 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
 };
 use mojito_mir::mir::{
-    CleanSplice, Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel, MirBlock,
-    MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
-    MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg,
-    RegionFrame, RegisterEnds, RegisterTable, TypeConstructionError, UseMode, callable_targets,
-    construct_type_parameters, count_register_reads, dunder_method_call, erase_removed_operands,
-    fresh_register, has_no_destructor, instruction_regions, instruction_regions_mut,
-    instruction_regs_mut, instruction_slots, instruction_subscript_call,
-    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
-    member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
+    AddressedOperands, CleanSplice, Const, ConstructionTypes, FreshSplices, FuncRef, LoopLabel,
+    MirBlock, MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall,
+    MirTerm, OperandAddresses, Proj, Raises, Reg, RegionFrame, RegisterEnds, RegisterTable,
+    TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
+    count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
+    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
+    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors,
+    operand_addresses, operator_method, region_exit, removed_argument_operands,
     renumber_block_slots, storage_construction, subscript_store_call, terminator_regs,
     terminator_regs_mut, with_removed_argument_forwards_erased, without_removed_arguments,
 };
@@ -358,11 +359,13 @@ pub fn inline_calls(
         .collect();
     let mut blocks = std::mem::take(&mut function.body);
     let closures = Closures::of(&blocks);
+    let addresses = operand_addresses(&blocks, &function.reg_types);
     let mut inliner = Inliner {
         function,
         declarations,
         callees,
         closures,
+        addresses,
         function_values,
         caller: name,
         admission,
@@ -431,6 +434,10 @@ struct Inliner<'f, 'c> {
     callees: &'c Callees<'c>,
     /// The closures the caller makes, which a call through one calls.
     closures: Closures,
+    /// The storage each of the caller's `ref.make`s addresses: what a
+    /// by-address operand binds its parameter to. A spliced body's operands
+    /// are not in it, and bind the place their call's table retains.
+    addresses: OperandAddresses,
     /// The function each register of the caller statically holds, beside
     /// whether its value captures nothing: what a callable binder's
     /// argument register names.
@@ -567,7 +574,7 @@ impl HandleSource {
 }
 
 /// The runtime arguments a call passes, positionally and by keyword, with
-/// the caller's places each retains.
+/// the storage each by-address one addresses.
 struct CallArguments<'a> {
     args: &'a [Reg],
     arg_places: &'a [Option<MirPlace>],
@@ -1030,8 +1037,9 @@ impl<'c> Inliner<'_, 'c> {
 
     /// The type of the owner a call's `receiver` binds, so declared: the
     /// constructed result's, `dest`'s, for an `out self` constructor, and
-    /// the receiver argument's for a method; `None` when a constructor's
-    /// receiver is not `out` or the type is unknown.
+    /// the receiver argument's referent for a method, whose by-address
+    /// receiver is a reference; `None` when a constructor's receiver is not
+    /// `out` or the type is unknown.
     fn owner_ty(
         &self,
         receiver: Receiver,
@@ -1042,7 +1050,7 @@ impl<'c> Inliner<'_, 'c> {
             Receiver::Constructed => (declaration.receiver_convention == Some(ArgConvention::Out))
                 .then(|| self.function.reg_types.get(&dest.0))
                 .flatten(),
-            Receiver::Argument(recv) => self.function.reg_types.get(&recv.0),
+            Receiver::Argument(recv) => self.function.reg_types.get(&recv.0).map(peel_refs),
         }
     }
 
@@ -1145,7 +1153,14 @@ impl<'c> Inliner<'_, 'c> {
     /// makes is a call of the nested `def` it lifts, whose captures bind
     /// the places the closure captures.
     fn inlinable(&self, block: &MirBlock, index: usize) -> Option<Inlinable<'c>> {
-        let subscript = subscript_operands(&block.instrs[index]);
+        let addressed = self.addresses.operands(&block.instrs[index]);
+        let reference_parameters = &self.function.ref_params;
+        let arg_places = bound_places(&addressed.positional, reference_parameters);
+        let kwarg_places = bound_places(&addressed.keyword, reference_parameters);
+        let receiver_place = addressed
+            .receiver
+            .map(|address| bound_place(address, reference_parameters));
+        let subscript = subscript_operands(&block.instrs[index], &addressed, reference_parameters);
         let (
             dest,
             target,
@@ -1163,8 +1178,6 @@ impl<'c> Inliner<'_, 'c> {
                 func,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 capture_accesses,
                 param_arg_regs,
                 receiver: None,
@@ -1179,9 +1192,9 @@ impl<'c> Inliner<'_, 'c> {
                     Cow::Borrowed(func.0.as_str()),
                     CallArguments {
                         args,
-                        arg_places,
+                        arg_places: &arg_places,
                         kwargs,
-                        kwarg_places,
+                        kwarg_places: &kwarg_places,
                     },
                     Cow::Borrowed(instantiated_args.as_slice()),
                     param_arg_regs.as_slice(),
@@ -1199,9 +1212,6 @@ impl<'c> Inliner<'_, 'c> {
                 result_adapter: None,
                 args,
                 kwargs,
-                recv_place,
-                arg_places,
-                kwarg_places,
                 capture_accesses,
                 param_arg_regs,
                 instantiated_args,
@@ -1212,14 +1222,14 @@ impl<'c> Inliner<'_, 'c> {
                 Cow::Borrowed(target.as_str()),
                 CallArguments {
                     args,
-                    arg_places,
+                    arg_places: &arg_places,
                     kwargs,
-                    kwarg_places,
+                    kwarg_places: &kwarg_places,
                 },
                 Cow::Borrowed(instantiated_args.as_slice()),
                 param_arg_regs.as_slice(),
                 Some(Receiver::Argument(*recv)),
-                recv_place.as_deref(),
+                receiver_place.as_ref(),
                 &[][..],
                 *spread,
                 capture_accesses.as_slice(),
@@ -1230,7 +1240,6 @@ impl<'c> Inliner<'_, 'c> {
             MirInstr::Index {
                 dest,
                 base,
-                base_place,
                 call: Some(accessor),
                 intrinsic: None,
                 ..
@@ -1238,7 +1247,6 @@ impl<'c> Inliner<'_, 'c> {
             | MirInstr::MultiIndex {
                 dest,
                 object: base,
-                object_place: base_place,
                 call: Some(accessor),
                 ..
             } if accessor.capture_accesses.is_empty() => (
@@ -1253,7 +1261,7 @@ impl<'c> Inliner<'_, 'c> {
                 )?),
                 &[][..],
                 Some(Receiver::Argument(*base)),
-                base_place.as_deref(),
+                receiver_place.as_ref(),
                 &[][..],
                 None,
                 &[][..],
@@ -1264,8 +1272,6 @@ impl<'c> Inliner<'_, 'c> {
                 args,
                 kwargs,
                 callee_place,
-                arg_places,
-                kwarg_places,
                 param_arg_regs,
                 instantiated_args,
                 spread,
@@ -1277,9 +1283,9 @@ impl<'c> Inliner<'_, 'c> {
                     Cow::Borrowed(closure.function.as_str()),
                     CallArguments {
                         args,
-                        arg_places,
+                        arg_places: &arg_places,
                         kwargs,
-                        kwarg_places,
+                        kwarg_places: &kwarg_places,
                     },
                     Cow::Borrowed(instantiated_args.as_slice()),
                     param_arg_regs.as_slice(),
@@ -3358,6 +3364,38 @@ fn existential_arguments(
     Some(existentials)
 }
 
+/// The places a call's by-address operands bind their parameters to
+/// ([`bound_place`]).
+fn bound_places(
+    addresses: &[Option<&MirPlace>],
+    reference_parameters: &[bool],
+) -> Vec<Option<MirPlace>> {
+    addresses
+        .iter()
+        .map(|address| address.map(|address| bound_place(address, reference_parameters)))
+        .collect()
+}
+
+/// The place a by-address operand addressing `address` binds its
+/// parameter to, which names a slot holding a handle directly where the
+/// operand reaches it through itself: a `ref` binding's slot for the
+/// handle it holds, forwarded (`stored_handle`), as a body's places through
+/// a `ref` binding are rebased on the slot, and the caller's `mut` or `ref`
+/// parameter (`reference_parameters`), whose slot is its handle.
+fn bound_place(address: &MirPlace, reference_parameters: &[bool]) -> MirPlace {
+    let mut place = address.clone();
+    let stored_handle =
+        place.is_whole_root() && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+    let reference_parameter = reference_parameters
+        .get(place.root as usize)
+        .copied()
+        .unwrap_or(false);
+    if place.through == Some(place.root) && (stored_handle || reference_parameter) {
+        place.through = None;
+    }
+    place
+}
+
 /// The referent behind any number of reference layers.
 fn peel_refs(ty: &Ty) -> &Ty {
     let mut ty = ty;
@@ -4435,7 +4473,8 @@ fn subscript_parameter_arguments(
         .collect()
 }
 
-/// A subscript read's operands, as the call of its accessor passes them.
+/// A subscript read's operands, as the call of its accessor passes them,
+/// beside the storage each by-address one addresses.
 struct SubscriptOperands {
     args: Vec<Reg>,
     arg_places: Vec<Option<MirPlace>>,
@@ -4461,25 +4500,30 @@ impl SubscriptOperands {
 /// own (`Tuple.__getitem_param__[index: Int]`), which takes them as
 /// constants. `None` for any other instruction, and for a contract taking
 /// only some.
-fn subscript_operands(instruction: &MirInstr) -> Option<SubscriptOperands> {
+fn subscript_operands(
+    instruction: &MirInstr,
+    addressed: &AddressedOperands<'_>,
+    reference_parameters: &[bool],
+) -> Option<SubscriptOperands> {
     let (call, args, arg_places, kwargs, kwarg_places) = match instruction {
         MirInstr::Index {
             index,
-            index_place,
             call: Some(call),
             ..
         } => (
             call,
             vec![*index],
-            vec![index_place.as_deref().cloned()],
+            vec![
+                addressed
+                    .index
+                    .map(|address| bound_place(address, reference_parameters)),
+            ],
             Vec::new(),
             Vec::new(),
         ),
         MirInstr::MultiIndex {
             args,
-            arg_places,
             kwargs,
-            kwarg_places,
             call: Some(call),
             ..
         } => (
@@ -4487,12 +4531,12 @@ fn subscript_operands(instruction: &MirInstr) -> Option<SubscriptOperands> {
             args.iter()
                 .map(|MirSubscriptArg::Index(reg)| *reg)
                 .collect(),
-            arg_places.clone(),
+            bound_places(&addressed.positional, reference_parameters),
             kwargs
                 .iter()
                 .map(|(name, MirSubscriptArg::Index(reg))| (name.clone(), *reg))
                 .collect(),
-            kwarg_places.clone(),
+            bound_places(&addressed.keyword, reference_parameters),
         ),
         _ => return None,
     };

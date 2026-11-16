@@ -824,6 +824,12 @@ pub(super) fn verify_function(
         &context,
         errors,
     );
+    verify_operand_tables(
+        (name, function),
+        &function.body,
+        &crate::mir::operand_addresses(&function.body, &function.reg_types),
+        errors,
+    );
 }
 
 /// `RuntimePack[T0, ...]` distinguishes a specialized heterogeneous `*args`
@@ -1302,4 +1308,59 @@ fn owned_receiver(
             mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit
         )
     })
+}
+
+/// Every call operand that is a `ref.make` addresses the storage its place
+/// table names beside it, when the table names one: the analyses read the
+/// operand's `ref.make` (`OperandAddresses::address`), so the two must not
+/// disagree while the tables remain. A place holding a reference (a `ref`
+/// binding's slot) is passed as the handle it holds, and its table keeps
+/// the holding place; a `mut` or `ref` parameter's slot is its handle,
+/// named directly or through itself alike.
+fn verify_operand_tables(
+    (name, function): (&str, &MirFunction),
+    block: &MirBlock,
+    addresses: &crate::mir::OperandAddresses,
+    errors: &mut Vec<String>,
+) {
+    for instruction in &block.instrs {
+        for operand in crate::mir::call_operands(instruction) {
+            if let (Some(table), Some(made)) = (operand.table, addresses.made(operand.reg))
+                && !addresses_table(function, made, table)
+            {
+                errors.push(format!(
+                    "MIR function '{name}': call operand %r{} ({:?}) is a `ref.make` of {made:?} but its place table names {table:?}",
+                    operand.reg.0, operand.slot
+                ));
+            }
+        }
+        for region in crate::mir::instruction_regions(instruction) {
+            verify_operand_tables((name, function), region, addresses, errors);
+        }
+    }
+}
+
+/// Whether a `ref.make` of `made` addresses `table`: the same storage, or
+/// the reference `table` holds, forwarded (`stored_handle`).
+fn addresses_table(function: &MirFunction, made: &MirPlace, table: &MirPlace) -> bool {
+    let reference_parameter = |root: mojito_hir::hir::VarId| {
+        function
+            .ref_params
+            .get(root as usize)
+            .copied()
+            .unwrap_or(false)
+    };
+    let through = |place: &MirPlace| match place.through {
+        Some(through) if through == place.root && reference_parameter(through) => None,
+        through => through,
+    };
+    let same = |place: &MirPlace| {
+        crate::mir::call_addresses::same_storage(place, made) && through(place) == through(made)
+    };
+    same(table)
+        || crate::mir::call_addresses::stored_handle(
+            table,
+            mojito_types::origin::Mutability::Immutable,
+        )
+        .is_some_and(|(handle, _)| same(&handle))
 }

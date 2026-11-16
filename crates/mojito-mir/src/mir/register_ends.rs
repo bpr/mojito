@@ -14,8 +14,9 @@
 //! analysis reads too.
 
 use super::{
-    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
-    MirSubscriptArg, MirSubscriptCall, MirTerm, Reg, TraitRequirement, instruction_regions,
+    AddressedOperands, Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration,
+    MirInstr, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, OperandAddresses, Reg,
+    TraitRequirement, instruction_regions,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_symbol::symbol::is_trait_dispatch_symbol;
@@ -39,6 +40,7 @@ pub struct RegisterEnds<'f> {
     declarations: &'f MirDeclarations,
     owned: HashSet<u32>,
     borrowed_packs: HashSet<u32>,
+    addresses: OperandAddresses,
 }
 
 impl<'f> RegisterEnds<'f> {
@@ -49,11 +51,18 @@ impl<'f> RegisterEnds<'f> {
             declarations,
             owned: HashSet::new(),
             borrowed_packs: HashSet::new(),
+            addresses: super::operand_addresses(&function.body, &function.reg_types),
         };
         let mut parameters = HashSet::new();
         ends.collect(&function.body, &mut parameters);
         ends.owned.retain(|reg| !parameters.contains(reg));
         ends
+    }
+
+    /// The storage each `ref.make` of the function addresses.
+    #[must_use]
+    pub const fn addresses(&self) -> &OperandAddresses {
+        &self.addresses
     }
 
     /// Whether `reg` holds an owned value whose end matters.
@@ -142,25 +151,21 @@ impl<'f> RegisterEnds<'f> {
     /// `instruction` takes ownership of, with the arguments an owning
     /// collector binds when `collectors` holds.
     fn taken(&self, instruction: &MirInstr, collectors: bool, out: &mut Vec<Reg>) {
+        let operands = self.addresses.operands(instruction);
         match instruction {
             MirInstr::Call {
                 func,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } => {
                 if let Some(callee) = Callee::direct(self.declarations, &func.0) {
-                    CallArguments {
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        spread: *spread,
-                    }
-                    .consumed(&callee.contract(), collectors, out);
+                    CallArguments::new(args, kwargs, operands, *spread).consumed(
+                        &callee.contract(),
+                        collectors,
+                        out,
+                    );
                 }
             }
             MirInstr::CallIndirect {
@@ -168,20 +173,12 @@ impl<'f> RegisterEnds<'f> {
                 resolved,
                 args,
                 kwargs,
-                callee_place,
-                arg_places,
-                kwarg_places,
                 spread,
                 instantiated_contract,
                 ..
             } => {
-                let arguments = CallArguments {
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    spread: *spread,
-                };
+                let callee_place = operands.callee;
+                let arguments = CallArguments::new(args, kwargs, operands, *spread);
                 if let Some(function) = instantiated_contract
                     .as_ref()
                     .or_else(|| self.function.reg_types.get(&callee.0))
@@ -192,7 +189,7 @@ impl<'f> RegisterEnds<'f> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(callee_place.as_deref(), *callee, &self.function.reg_types),
+                        receiver_ty(callee_place, *callee, &self.function.reg_types),
                         None,
                     )
                 }) {
@@ -207,14 +204,12 @@ impl<'f> RegisterEnds<'f> {
                 resolved,
                 args,
                 kwargs,
-                recv_place,
                 receiver_convention,
-                arg_places,
-                kwarg_places,
                 spread,
                 refined_bound,
                 ..
             } => {
+                let recv_place = operands.receiver;
                 if recv_place.is_none() && owned_convention(*receiver_convention) {
                     out.push(*recv);
                 }
@@ -222,20 +217,17 @@ impl<'f> RegisterEnds<'f> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(recv_place.as_deref(), *recv, &self.function.reg_types),
+                        receiver_ty(recv_place, *recv, &self.function.reg_types),
                         refined_bound
                             .as_deref()
                             .map(|bound| bound.traits.as_slice()),
                     )
                 }) {
-                    CallArguments {
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        spread: *spread,
-                    }
-                    .consumed(&callee.contract(), collectors, out);
+                    CallArguments::new(args, kwargs, operands, *spread).consumed(
+                        &callee.contract(),
+                        collectors,
+                        out,
+                    );
                 }
             }
             MirInstr::BinOp {
@@ -264,16 +256,14 @@ impl<'f> RegisterEnds<'f> {
             MirInstr::Index {
                 base,
                 index,
-                base_place,
-                index_place,
                 call: Some(call),
                 ..
             } => self.subscript_consumed(
                 call,
-                (*base, base_place.as_deref()),
-                SubscriptArguments {
+                (*base, operands.receiver),
+                &SubscriptArguments {
                     args: &[MirSubscriptArg::Index(*index)],
-                    arg_places: &[index_place.as_deref().cloned()],
+                    arg_places: vec![operands.index],
                     ..SubscriptArguments::default()
                 },
                 collectors,
@@ -282,47 +272,39 @@ impl<'f> RegisterEnds<'f> {
             MirInstr::MultiIndex {
                 object,
                 args,
-                object_place,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 call: Some(call),
                 ..
             } => self.subscript_consumed(
                 call,
-                (*object, object_place.as_deref()),
-                SubscriptArguments {
+                (*object, operands.receiver),
+                &SubscriptArguments {
                     args,
-                    arg_places,
+                    arg_places: operands.positional,
                     kwargs,
-                    kwarg_places,
+                    kwarg_places: operands.keyword,
                 },
                 collectors,
                 out,
             ),
             MirInstr::MultiSet {
                 receiver,
-                receiver_place,
                 args,
-                arg_places,
                 value,
-                value_place,
                 call,
                 ..
             } => {
-                let Some(callee) =
-                    self.subscript_callee(call, *receiver, receiver_place.as_deref())
-                else {
+                let Some(callee) = self.subscript_callee(call, *receiver, operands.receiver) else {
                     return;
                 };
                 let contract = callee.contract();
                 SubscriptArguments {
                     args,
-                    arg_places,
+                    arg_places: operands.positional,
                     ..SubscriptArguments::default()
                 }
                 .consumed(&contract, collectors, out);
-                if value_place.is_none()
+                if operands.value.is_none()
                     && let Some(slot) = contract.names.len().checked_sub(1)
                     && contract.consumes(slot)
                 {
@@ -377,12 +359,12 @@ impl<'f> RegisterEnds<'f> {
     }
 
     /// The callee a subscript `call` over `receiver` binds.
-    fn subscript_callee(
-        &self,
+    fn subscript_callee<'p>(
+        &'p self,
         call: &MirSubscriptCall,
         receiver: Reg,
-        place: Option<&'f MirPlace>,
-    ) -> Option<Callee<'f>> {
+        place: Option<&'p MirPlace>,
+    ) -> Option<Callee<'p>> {
         Callee::resolve(
             self.declarations,
             &call.target,
@@ -399,7 +381,7 @@ impl<'f> RegisterEnds<'f> {
         &self,
         call: &MirSubscriptCall,
         (receiver, place): (Reg, Option<&MirPlace>),
-        arguments: SubscriptArguments<'_>,
+        arguments: &SubscriptArguments<'_>,
         collectors: bool,
         out: &mut Vec<Reg>,
     ) {
@@ -563,24 +545,43 @@ impl ParameterContract<'_> {
     }
 }
 
-/// A call's argument registers and their retained caller places.
+/// A call's argument registers and the storage each by-address one
+/// addresses ([`OperandAddresses::operands`]).
 #[derive(Default)]
 pub struct CallArguments<'c> {
     pub args: &'c [Reg],
     pub kwargs: &'c [(String, Reg)],
-    pub arg_places: &'c [Option<MirPlace>],
-    pub kwarg_places: &'c [Option<MirPlace>],
+    pub arg_places: Vec<Option<&'c MirPlace>>,
+    pub kwarg_places: Vec<Option<&'c MirPlace>>,
     pub spread: Option<usize>,
 }
 
-impl CallArguments<'_> {
+impl<'c> CallArguments<'c> {
+    /// The arguments of a call passing `args` and `kwargs`, whose
+    /// addressed operands are `operands`.
+    #[must_use]
+    pub fn new(
+        args: &'c [Reg],
+        kwargs: &'c [(String, Reg)],
+        operands: AddressedOperands<'c>,
+        spread: Option<usize>,
+    ) -> Self {
+        Self {
+            args,
+            kwargs,
+            arg_places: operands.positional,
+            kwarg_places: operands.keyword,
+            spread,
+        }
+    }
+
     /// Each argument register beside whether a retained caller place
     /// passes it and the parameter `contract` binds it to: a positional
     /// argument its slot before the collector, the collector from there
     /// and for the spread pack, and a keyword argument the slot of its
     /// name.
     pub fn bindings(&self, contract: &ParameterContract<'_>) -> Vec<BoundArgument> {
-        let placed = |places: &[Option<MirPlace>], index: usize| {
+        let placed = |places: &[Option<&MirPlace>], index: usize| {
             places.get(index).is_some_and(Option::is_some)
         };
         let positional = self.args.iter().enumerate().map(|(index, reg)| {
@@ -590,7 +591,7 @@ impl CallArguments<'_> {
                     .is_some_and(|collector| index >= collector);
             BoundArgument {
                 reg: *reg,
-                placed: placed(self.arg_places, index),
+                placed: placed(&self.arg_places, index),
                 binding: if collected {
                     ArgumentBinding::Collector
                 } else {
@@ -604,7 +605,7 @@ impl CallArguments<'_> {
             .enumerate()
             .map(|(index, (name, reg))| BoundArgument {
                 reg: *reg,
-                placed: placed(self.kwarg_places, index),
+                placed: placed(&self.kwarg_places, index),
                 binding: contract
                     .names
                     .iter()
@@ -635,7 +636,8 @@ impl CallArguments<'_> {
 #[derive(Clone, Copy)]
 pub struct BoundArgument {
     pub reg: Reg,
-    /// Whether a retained caller place passes the argument by address.
+    /// Whether the argument is passed by address: a `ref.make` of its
+    /// storage, or a place its call's table retains.
     pub placed: bool,
     pub binding: ArgumentBinding,
 }
@@ -803,13 +805,14 @@ fn callable_contract(ty: &Ty) -> Option<&FuncTy> {
     }
 }
 
-/// A subscript call's actuals beside their retained caller places.
-#[derive(Default, Clone, Copy)]
+/// A subscript call's actuals beside the storage each by-address one
+/// addresses.
+#[derive(Default)]
 struct SubscriptArguments<'c> {
     args: &'c [MirSubscriptArg],
-    arg_places: &'c [Option<MirPlace>],
+    arg_places: Vec<Option<&'c MirPlace>>,
     kwargs: &'c [(String, MirSubscriptArg)],
-    kwarg_places: &'c [Option<MirPlace>],
+    kwarg_places: Vec<Option<&'c MirPlace>>,
 }
 
 impl SubscriptArguments<'_> {
@@ -818,7 +821,7 @@ impl SubscriptArguments<'_> {
     /// and with `collectors`, the collector, and a keyword one the slot of
     /// its name.
     fn consumed(&self, contract: &ParameterContract<'_>, collectors: bool, out: &mut Vec<Reg>) {
-        let placed = |places: &[Option<MirPlace>], index: usize| {
+        let placed = |places: &[Option<&MirPlace>], index: usize| {
             places.get(index).is_some_and(Option::is_some)
         };
         for (index, argument) in self.args.iter().enumerate() {
@@ -831,7 +834,7 @@ impl SubscriptArguments<'_> {
                 ArgumentBinding::Slot(index)
             };
             if let MirSubscriptArg::Index(reg) = argument
-                && !placed(self.arg_places, index)
+                && !placed(&self.arg_places, index)
                 && (collectors || binding != ArgumentBinding::Collector)
                 && contract.consumes_binding(binding)
             {
@@ -840,7 +843,7 @@ impl SubscriptArguments<'_> {
         }
         for (index, (name, argument)) in self.kwargs.iter().enumerate() {
             if let MirSubscriptArg::Index(reg) = argument
-                && !placed(self.kwarg_places, index)
+                && !placed(&self.kwarg_places, index)
                 && contract
                     .names
                     .iter()

@@ -2502,7 +2502,25 @@ the reference, and Pliron passes its pointer as upstream's LLVM lowering
 passes a `!lit.ref`, loading it at a slot its lowered signature takes as a
 scalar (`call_operand_value`, `by_address_operand`, `lower/abi.rs`); only a
 `deinit` receiver's consumed place is still read from the place table
-(R2191). The verifier
+(R2191). So do the analyses that place a call's accesses and the
+inliner: `mir::operand_addresses` maps each `ref.make` of a function
+forming a `ref` handle to the place it addresses (one typed a `!lit.ref`
+is a value the program spells, passed by value), `mir::call_operands`
+lists a call-shaped instruction's operands, and
+`OperandAddresses::address` gives the storage an operand addresses,
+falling back to the place table only for an operand that is no such
+`ref.make` (a register-passable `read` a result borrows, a consumed
+receiver, a spread pack, `external_call`'s retained places, a closure
+call's callee). The loan check (`loans.rs` `loan_accesses`), the drop
+facts' by-value loads and reference-result owners (`register_loans.rs`),
+`RegisterEnds`' consumed operands (`CallArguments`,
+`SubscriptArguments`), and the inliner's parameter bindings
+(`inline_parametric.rs`, whose `owner_ty` reads a reference receiver's
+referent) read it; `verify_operand_tables` (`verify/calls.rs`) requires a
+`ref.make` operand and its table entry to name the same storage, a `ref`
+binding's forwarded handle and a reference parameter's slot reached
+through itself included. The liveness scan, the interior check, copy
+elision, and unused-parameter removal still read the tables (R2255). The verifier
 (`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
 or `call.method` binding by its callee's declaration; the same rule at a
 by-address `read` slot waits on the shapes above (R2251). A MIR text

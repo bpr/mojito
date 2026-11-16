@@ -4,7 +4,8 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::{
-    ArgumentBinding, CallArguments, Callee, ParameterContract, RegisterEnds, receiver_ty,
+    ArgumentBinding, CallArguments, Callee, OperandAddresses, ParameterContract, RegisterEnds,
+    receiver_ty,
 };
 use mojito_types::types::{Ty, TyKind};
 
@@ -151,26 +152,20 @@ impl<'a> ArgumentPassing<'a> {
         &self,
         instruction: &MirInstr,
         register_types: &HashMap<u32, mojito_types::types::Ty>,
+        addresses: &OperandAddresses,
     ) -> Vec<(u32, usize)> {
+        let operands = addresses.operands(instruction);
         match instruction {
             MirInstr::Call {
                 func,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 ..
             } => Callee::direct(self.declarations, &func.0)
                 .map(|callee| {
                     let mut loaded = Vec::new();
-                    let arguments = CallArguments {
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        spread: *spread,
-                    };
+                    let arguments = CallArguments::new(args, kwargs, operands, *spread);
                     arguments_by_value(
                         self.declarations,
                         &arguments,
@@ -184,11 +179,8 @@ impl<'a> ArgumentPassing<'a> {
             MirInstr::MethodCall {
                 recv,
                 resolved,
-                recv_place,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 spread,
                 refined_bound,
                 ..
@@ -198,7 +190,7 @@ impl<'a> ArgumentPassing<'a> {
                     Callee::resolve(
                         self.declarations,
                         name,
-                        receiver_ty(recv_place.as_deref(), *recv, register_types),
+                        receiver_ty(operands.receiver, *recv, register_types),
                         refined_bound
                             .as_deref()
                             .map(|bound| bound.traits.as_slice()),
@@ -206,7 +198,7 @@ impl<'a> ArgumentPassing<'a> {
                 })
                 .map(|callee| {
                     let mut loaded = Vec::new();
-                    if recv_place.is_none() {
+                    if operands.receiver.is_none() {
                         callee_receiver_by_value(
                             self.declarations,
                             callee,
@@ -215,13 +207,7 @@ impl<'a> ArgumentPassing<'a> {
                             &mut loaded,
                         );
                     }
-                    let arguments = CallArguments {
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        spread: *spread,
-                    };
+                    let arguments = CallArguments::new(args, kwargs, operands, *spread);
                     arguments_by_value(
                         self.declarations,
                         &arguments,
@@ -274,19 +260,11 @@ impl<'a> ArgumentPassing<'a> {
                 resolved,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
                 instantiated_contract,
                 spread,
                 ..
             } => {
-                let arguments = CallArguments {
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                    spread: *spread,
-                };
+                let arguments = CallArguments::new(args, kwargs, operands, *spread);
                 let mut loaded = Vec::new();
                 let contract = instantiated_contract
                     .as_ref()
@@ -318,19 +296,17 @@ impl<'a> ArgumentPassing<'a> {
             MirInstr::Index {
                 base,
                 index,
-                base_place,
-                index_place,
                 call: Some(call),
                 ..
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(base_place.as_deref(), *base, register_types),
+                receiver_ty(operands.receiver, *base, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                if base_place.is_none() {
+                if operands.receiver.is_none() {
                     callee_receiver_by_value(
                         self.declarations,
                         callee,
@@ -339,7 +315,7 @@ impl<'a> ArgumentPassing<'a> {
                         &mut loaded,
                     );
                 }
-                if index_place.is_none()
+                if operands.index.is_none()
                     && loads_positional(self.declarations, &callee.contract(), 0)
                 {
                     loaded.push((index.0, 1));
@@ -350,19 +326,17 @@ impl<'a> ArgumentPassing<'a> {
             MirInstr::MultiIndex {
                 object,
                 args,
-                object_place,
-                arg_places,
                 call: Some(call),
                 ..
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(object_place.as_deref(), *object, register_types),
+                receiver_ty(operands.receiver, *object, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                if object_place.is_none() {
+                if operands.receiver.is_none() {
                     callee_receiver_by_value(
                         self.declarations,
                         callee,
@@ -375,7 +349,7 @@ impl<'a> ArgumentPassing<'a> {
                     self.declarations,
                     &callee.contract(),
                     args,
-                    arg_places,
+                    &operands.positional,
                     &mut loaded,
                 );
                 loaded
@@ -386,15 +360,13 @@ impl<'a> ArgumentPassing<'a> {
             // after every index.
             MirInstr::MultiSet {
                 receiver,
-                receiver_place,
                 args,
-                arg_places,
                 call,
                 ..
             } => Callee::resolve(
                 self.declarations,
                 &call.target,
-                receiver_ty(receiver_place.as_deref(), *receiver, register_types),
+                receiver_ty(operands.receiver, *receiver, register_types),
                 call.refined_bound.as_deref(),
             )
             .map(|callee| {
@@ -403,7 +375,7 @@ impl<'a> ArgumentPassing<'a> {
                     self.declarations,
                     &callee.contract(),
                     args,
-                    arg_places,
+                    &operands.positional,
                     &mut loaded,
                 );
                 loaded
@@ -1073,7 +1045,7 @@ fn subscript_indices_loaded(
     declarations: &MirDeclarations,
     contract: &ParameterContract,
     args: &[MirSubscriptArg],
-    arg_places: &[Option<MirPlace>],
+    arg_places: &[Option<&MirPlace>],
     loaded: &mut Vec<(u32, usize)>,
 ) {
     for (index, argument) in args.iter().enumerate() {
@@ -1239,7 +1211,8 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
         let step = self.scan.step(state, instr);
         let retained = step.retained(&state.registers, &mut single_hop);
         let mut uses = split_register_uses(retained, single_hop, || {
-            self.passing.by_value(instr, self.scan.reg_types)
+            self.passing
+                .by_value(instr, self.scan.reg_types, self.scan.ends.addresses())
         });
         (uses.defined, uses.ended) = step.register_effects(instr, self.scan.values);
         if let Some(raises) = instr.raise_edge() {

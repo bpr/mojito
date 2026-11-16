@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::CheckedCallArgumentSource;
+use mojito_mir::mir::OperandAddresses;
 
 #[derive(Clone)]
 pub(super) struct Loan {
@@ -232,6 +233,7 @@ pub(super) fn analyze_loans(
     if generations.is_empty() {
         return Ok(());
     }
+    let addresses = mojito_mir::mir::operand_addresses(&f.body, &f.reg_types);
     // The references live just before each instruction, in declaration
     // order, so a conflict names the same one on every run; keyed by the
     // instruction's address, which is stable while `f` is borrowed.
@@ -263,7 +265,7 @@ pub(super) fn analyze_loans(
         let active = live_references
             .get(&std::ptr::from_ref(instr))
             .map_or(&[][..], Vec::as_slice);
-        check_loans_at(f, callees, &generations, state, active, instr)
+        check_loans_at(f, (callees, &addresses), &generations, state, active, instr)
     };
     walk_forward(&scan, LoanGenerationState::default(), &f.body, &mut check).map(|_| ())
 }
@@ -343,7 +345,11 @@ pub(super) fn loan_accesses(
     f: &MirFunction,
     instr: &MirInstr,
     callees: &CalleeRefParams<'_>,
+    addresses: &OperandAddresses,
 ) -> Vec<(MirPlace, LoanAccess, mojito_common::token::SourceSpan)> {
+    // A call reads the storage each by-address operand's `ref.make`
+    // addresses, as upstream's checking reads the `!lit.ref` operand.
+    let operands = addresses.operands(instr);
     // The access a retained place at positional parameter `parameter` of
     // `callee` performs: a write where the callee's declaration writes
     // through that slot, a shared read elsewhere (`CalleeRefParams`). An
@@ -395,8 +401,8 @@ pub(super) fn loan_accesses(
     let access_for_convention = convention_access;
     let subscript_accesses = |call: &mojito_mir::mir::MirSubscriptCall,
                               receiver_place: Option<&MirPlace>,
-                              positional_places: &[Option<MirPlace>],
-                              keyword_places: &[Option<MirPlace>],
+                              positional_places: &[Option<&MirPlace>],
+                              keyword_places: &[Option<&MirPlace>],
                               marker: Reg| {
         let mut accesses = Vec::new();
         if let Some(place) = receiver_place {
@@ -409,10 +415,10 @@ pub(super) fn loan_accesses(
         for argument in &call.arguments {
             let place = match argument.source {
                 mojito_checked::checked::CheckedCallArgumentSource::Positional(index) => {
-                    positional_places.get(index).and_then(Option::as_ref)
+                    positional_places.get(index).copied().flatten()
                 }
                 mojito_checked::checked::CheckedCallArgumentSource::Keyword(index) => {
-                    keyword_places.get(index).and_then(Option::as_ref)
+                    keyword_places.get(index).copied().flatten()
                 }
                 mojito_checked::checked::CheckedCallArgumentSource::Default => None,
             };
@@ -457,63 +463,34 @@ pub(super) fn loan_accesses(
         MirInstr::StoreRef { place, reference } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*reference))]
         }
-        MirInstr::MultiSet {
-            receiver_place,
-            arg_places,
-            value_place,
+        MirInstr::MultiSet { call, value, .. } => subscript_accesses(
             call,
-            value,
-            ..
-        } => {
-            let positional = arg_places.clone();
-            let keyword = vec![value_place.as_deref().cloned()];
-            subscript_accesses(
-                call,
-                receiver_place.as_deref(),
-                &positional,
-                &keyword,
-                *value,
-            )
-        }
-        MirInstr::Index {
-            dest,
-            base_place,
-            index_place,
-            call,
-            ..
-        } => {
+            operands.receiver,
+            &operands.positional,
+            &[operands.value],
+            *value,
+        ),
+        MirInstr::Index { dest, call, .. } => {
             if let Some(call) = call {
-                subscript_accesses(
-                    call,
-                    base_place.as_deref(),
-                    &[index_place.as_deref().cloned()],
-                    &[],
-                    *dest,
-                )
+                subscript_accesses(call, operands.receiver, &[operands.index], &[], *dest)
             } else {
-                base_place
-                    .as_deref()
+                operands
+                    .receiver
                     .into_iter()
-                    .chain(index_place.as_deref())
+                    .chain(operands.index)
                     .cloned()
                     .map(|place| (place, LoanAccess::Read, span_for(*dest)))
                     .collect()
             }
         }
-        MirInstr::MultiIndex {
-            dest,
-            object_place,
-            arg_places,
-            call,
-            ..
-        } => {
+        MirInstr::MultiIndex { dest, call, .. } => {
             if let Some(call) = call {
-                subscript_accesses(call, object_place.as_deref(), arg_places, &[], *dest)
+                subscript_accesses(call, operands.receiver, &operands.positional, &[], *dest)
             } else {
-                object_place
-                    .as_deref()
+                operands
+                    .receiver
                     .into_iter()
-                    .chain(arg_places.iter().flatten())
+                    .chain(operands.positional.iter().copied().flatten())
                     .cloned()
                     .map(|place| (place, LoanAccess::Read, span_for(*dest)))
                     .collect()
@@ -521,10 +498,10 @@ pub(super) fn loan_accesses(
         }
         // A type parameter's initializer borrows its keyword sources
         // (`copy: Self`).
-        MirInstr::ConstructTypeParam {
-            dest, kwarg_places, ..
-        } => kwarg_places
+        MirInstr::ConstructTypeParam { dest, .. } => operands
+            .keyword
             .iter()
+            .copied()
             .flatten()
             .cloned()
             .map(|place| (place, LoanAccess::Read, span_for(*dest)))
@@ -550,8 +527,6 @@ pub(super) fn loan_accesses(
         MirInstr::Call {
             dest,
             func,
-            arg_places,
-            kwarg_places,
             conventions,
             capture_accesses,
             spread,
@@ -577,21 +552,23 @@ pub(super) fn loan_accesses(
                     recorded_access(conventions, source, *spread, declared)
                 }
             };
-            let mut accesses = arg_places
+            let mut accesses = operands
+                .positional
                 .iter()
                 .enumerate()
                 .filter_map(|(parameter, place)| {
-                    place.clone().map(|place| {
+                    place.cloned().map(|place| {
                         let source = CheckedCallArgumentSource::Positional(parameter);
                         (place, access(source), span_for(*dest))
                     })
                 })
                 .chain(
-                    kwarg_places
+                    operands
+                        .keyword
                         .iter()
                         .enumerate()
                         .filter_map(|(keyword, place)| {
-                            place.clone().map(|place| {
+                            place.cloned().map(|place| {
                                 let source = CheckedCallArgumentSource::Keyword(keyword);
                                 (place, access(source), span_for(*dest))
                             })
@@ -608,9 +585,6 @@ pub(super) fn loan_accesses(
         MirInstr::CallIndirect {
             dest,
             callee,
-            callee_place,
-            arg_places,
-            kwarg_places,
             capture_accesses,
             ..
         } => {
@@ -628,24 +602,22 @@ pub(super) fn loan_accesses(
                     .and_then(|conventions| conventions.get(parameter).copied())
                     .map_or(LoanAccess::Unclassified, access_for_convention)
             };
-            let mut accesses = callee_place
-                .as_deref()
-                .into_iter()
-                .chain(kwarg_places.iter().flatten())
-                .cloned()
-                .map(|place| (place, LoanAccess::Write, span_for(*dest)))
-                .chain(
-                    arg_places
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(parameter, place)| {
+            let mut accesses =
+                operands
+                    .callee
+                    .into_iter()
+                    .chain(operands.keyword.iter().copied().flatten())
+                    .cloned()
+                    .map(|place| (place, LoanAccess::Write, span_for(*dest)))
+                    .chain(operands.positional.iter().enumerate().filter_map(
+                        |(parameter, place)| {
                             place
-                                .clone()
+                                .cloned()
                                 .map(|place| (place, argument_access(parameter), span_for(*dest)))
-                        }),
-                )
-                .collect::<Vec<_>>();
-            let storage = callee_place.as_deref().map(|place| place.root);
+                        },
+                    ))
+                    .collect::<Vec<_>>();
+            let storage = operands.callee.map(|place| place.root);
             accesses.extend(
                 capture_accesses
                     .iter()
@@ -658,10 +630,7 @@ pub(super) fn loan_accesses(
             recv,
             method,
             resolved,
-            recv_place,
             recv_writes,
-            arg_places,
-            kwarg_places,
             conventions,
             capture_accesses,
             spread,
@@ -723,34 +692,33 @@ pub(super) fn loan_accesses(
                 LoanAccess::Unclassified => LoanAccess::Write,
                 access => access,
             };
-            let mut accesses = recv_place
-                .as_deref()
-                .into_iter()
-                .cloned()
-                .map(|place| (place, receiver_access, span_for(*dest)))
-                .chain(
-                    arg_places
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(argument, place)| {
+            let mut accesses =
+                operands
+                    .receiver
+                    .into_iter()
+                    .cloned()
+                    .map(|place| (place, receiver_access, span_for(*dest)))
+                    .chain(operands.positional.iter().enumerate().filter_map(
+                        |(argument, place)| {
                             place
-                                .clone()
+                                .cloned()
                                 .map(|place| (place, argument_access(argument), span_for(*dest)))
-                        }),
-                )
-                .chain(
-                    kwarg_places
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(keyword, place)| {
-                            place
-                                .clone()
-                                .map(|place| (place, keyword_access(keyword), span_for(*dest)))
-                        }),
-                )
-                .collect::<Vec<_>>();
+                        },
+                    ))
+                    .chain(
+                        operands
+                            .keyword
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(keyword, place)| {
+                                place
+                                    .cloned()
+                                    .map(|place| (place, keyword_access(keyword), span_for(*dest)))
+                            }),
+                    )
+                    .collect::<Vec<_>>();
             let storage = (bound.is_some() || calls_closure)
-                .then_some(recv_place.as_deref())
+                .then_some(operands.receiver)
                 .flatten()
                 .map(|place| place.root);
             accesses.extend(
@@ -837,7 +805,7 @@ fn recorded_access(
 /// excludes, conflicts.
 fn check_loans_at(
     f: &MirFunction,
-    callees: &CalleeRefParams<'_>,
+    (callees, addresses): (&CalleeRefParams<'_>, &OperandAddresses),
     generations: &BTreeMap<u32, Vec<Loan>>,
     state: &LoanGenerationState,
     active: &[VarId],
@@ -874,7 +842,7 @@ fn check_loans_at(
         }
         return Ok(());
     }
-    for (place, access, span) in loan_accesses(f, instr, callees) {
+    for (place, access, span) in loan_accesses(f, instr, callees, addresses) {
         // An access through a shared pointer alias (a stable-pointer
         // dereference substitutes the owner place) never competes with
         // another shared alias of the same storage.
