@@ -4,7 +4,7 @@
 # because it is not 'ImplicitlyCopyable'".
 # `enum` is the declaration upstream's enum proposal gives cases without
 # payloads, which the pin declares with `__enum` (`docs/non-goals.md`).
-# expect: value of type 'Explicit' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+# expect: cannot materialize comptime value of type 'Explicit' to runtime because it is not 'ImplicitlyCopyable'
 
 
 enum Explicit(not ImplicitlyCopyable):

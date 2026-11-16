@@ -7201,23 +7201,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2241 Reading a non-`ImplicitlyCopyable` compile-time member at
-  run time reports a copy error, not the pin's materialize error**
-
-  `var s = S.k`, for `comptime k = S(1)` in a `struct S(Movable)`, is
-  rejected with "cannot copy non-Copyable type 'S'", where the pin says
-  "cannot materialize comptime value of type 'S' to runtime because it is
-  not 'ImplicitlyCopyable'".
-  - Cause: `reject_display_crossing` (`checker/comptime_validation.rs`)
-    reports `TypeError::ComptimeCrossing` for a bare identifier only, so a
-    member read crosses unchecked and the copy check reports first.
-  - Probe: `assets/extensions/type_error/enum_not_implicitly_copyable_copy.mojo`
-    (`var e = Explicit.one` over `enum Explicit(not ImplicitlyCopyable)`);
-    its `expect` line should move to the pin's words.
-  - Found while landing R2238 (2026-11-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.

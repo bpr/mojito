@@ -707,6 +707,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Reading a type's compile-time member whose type is not
+  `ImplicitlyCopyable` at run time (`var s = S.k` over `comptime k = S(1)`
+  in a `struct S(Movable)`, or a case of an `enum` that opts out of
+  `ImplicitlyCopyable`) now reports the pin's "cannot materialize comptime
+  value of type 'S' to runtime because it is not 'ImplicitlyCopyable'"
+  instead of a copy error (R2241).
+
 - Checking a run-time scalar operator over nested calls of an overloaded
   function no longer costs time exponential in the nesting depth: with
   four `def f` overloads, `f(f(f(f(f(f(1) + 1) + 1) + 1) + 1) + 1)` and

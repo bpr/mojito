@@ -5687,15 +5687,15 @@ impl Checker {
         }
     }
 
-    /// Reject a run-time read of a field the check folded off a
-    /// compile-time value (`MO.g`) whose type is not `ImplicitlyCopyable`,
-    /// as the pin rejects materializing it. The object of an enclosing
+    /// Reject a run-time read the check compiled to a parameter value — a
+    /// field folded off a compile-time value (`MO.g`) or a type's
+    /// compile-time member (`S.k`, an enum case) — whose type is not
+    /// `ImplicitlyCopyable`, as the pin rejects materializing it. The object of an enclosing
     /// field read (`MO.g` of `MO.g.s`) is a projection and never crosses;
     /// a method's receiver does.
     pub(super) fn reject_field_crossing(&self, expr: &Expr, ty: &Ty) -> Result<(), TypeError> {
         if !self.crosses_to_runtime()
             || self.projected_object.borrow().as_ref() == Some(&expr.source_span())
-            || !self.is_parameter_read(expr)
             || !self.is_parameter_value_read(expr)
         {
             return Ok(());
