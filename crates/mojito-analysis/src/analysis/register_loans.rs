@@ -717,7 +717,8 @@ impl RegisterLoanStep {
 
         // A nominal subscript returning `ref T` establishes a transient handle to
         // the storage its receiver operand addresses, as upstream's call reads
-        // its `!lit.ref` receiver. Unlike `MakeRef`, the handle is produced by
+        // its `!lit.ref` receiver; a by-value receiver carries no storage to
+        // seed. Unlike `MakeRef`, the handle is produced by
         // the callee, so no explicit loan generation exists at this instruction.
         // Seed the destination register with the receiver root directly; subsequent
         // `ReadRef`/call uses then keep that caller slot alive until the handle has

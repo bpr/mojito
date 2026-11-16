@@ -490,15 +490,6 @@ impl<'a> Node<'a> {
         })
     }
 
-    /// Whether this call's result borrows its receiver — a borrowing view
-    /// ([`Self::borrows_view_result`]) or a reference result — so a
-    /// register-passable `read` receiver keeps its place, which the drop
-    /// facts seed the result's loans from (R2259). An argument keeps none:
-    /// a result's loans come from the origin its type names.
-    pub(super) fn lends_read_arguments(self) -> bool {
-        self.borrows_view_result() || self.reference_result().is_some()
-    }
-
     /// Whether a checked method call writes through its receiver place. The
     /// checker's effective receiver convention already collapses a `ref self`
     /// reached through an immutable reference to `Imm`; a call without a

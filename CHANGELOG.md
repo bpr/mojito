@@ -1025,6 +1025,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A register-passable `read` receiver is passed by value with no
+  place-table entry even when the call's reference or view result borrows
+  it (`args[i]` over a read pack, a `Span` slice), as upstream passes a
+  register-passable `read self`; `Node::lends_read_arguments` is gone. No
+  program output changes. (R2259)
+
 - A spread pack (`show(*args)`), a closure storage's `__call__` witness's
   forwarded register-passable `read` parameters, and `external_call`'s
   operands are passed as values with no place-table entry, as upstream

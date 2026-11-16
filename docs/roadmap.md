@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2262**.
+Next free ID: **R2265**.
 
 ## Ordered Work
 
@@ -2570,6 +2570,42 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2262 A method's result type keeps its struct's origin parameter
+  unsubstituted**
+
+  `var p: Pointer[Noisy, origin_of(x)] = v.get()`, over `struct View[mut:
+  Bool, //, o: Origin[mut=mut]]` with `def get(self) -> Pointer[Noisy,
+  Self.o]`, is rejected ("expected Pointer[Noisy, origin@…], found
+  Pointer[Noisy, origin#1]"), where the pin runs it.
+  - The call's result type names the struct's origin parameter, not the
+    receiver type's origin argument, as it does for a type parameter.
+  - The same happens with `ref self` and with a struct that is not
+    register-passable.
+  - Fix in the checker: substitute the receiver type's origin arguments
+    into a method's and a subscript's result type.
+  - Found while landing R2259 (2026-11-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2263 A method's or subscript's pointer result passed straight to a
+  call loses its receiver's owner**
+
+  `print("v", read_ptr(v.get()))`, over `var v = View(Pointer(to=x))` with
+  `struct View[o: ImmOrigin](TrivialRegisterPassable)` and `def get(self)
+  -> Pointer[Noisy, Self.o]`, destroys `x` before the call and stops with
+  "field access on non-struct <moved>", where the pin prints `del 1`, `v 1`.
+  - Probe: `read_first(s.unsafe_ptr())` over a `Span` fails the same way
+    ("vm: use after Pointer deallocation").
+  - A free call's tracked-pointer result inherits the operands whose types
+    name its origin (`RegisterLoanStep::new`'s `origin_operands`,
+    `register_loans.rs`); a method's or subscript's does not.
+  - Fix: extend `origin_operands` from `Call` to `MethodCall`, `Index`, and
+    `MultiIndex` with a tracked-pointer or `Ref` result, over
+    `call_operands`; R2262 gives the result type the origin to match.
+  - Found while landing R2259 (2026-11-16).
+  - Depends on R2262.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1300 A method's origin parameter bound by `ref[o] self` is not
   the receiver's origin inside the body**
@@ -9641,29 +9677,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2259 A register-passable `read` receiver a reference result
-  borrows keeps its place**
-
-  Upstream passes a register-passable `read self` by value, and a
-  subscript's or method's reference result keeps alive only the storage
-  its result type's origin names. Mojito keeps such a receiver's
-  `recv_place` when the call lends its reads (`lower_receiver`'s
-  by-value branch, `mir/calls.rs`, `Node::lends_read_arguments`).
-  - The drop facts seed a reference subscript's, reference method's, and
-    tracked-pointer method's result from that place, through
-    `table_fallback`'s `Receiver` slot (`RegisterLoanStep::new`,
-    `register_loans.rs`).
-  - About 80 std sites and 117 corpus sites, nearly all `VariadicPack` /
-    `ParameterList` subscripts (`args[i].write_to(w)`) and `Span`
-    slices.
-  - Fix: seed those results from the receiver operands whose types name
-    the result's origin, as a free call's tracked-pointer result now is
-    (`origin_operands`, `types::named_origins`), then keep no
-    `recv_place` for a register-passable `read` receiver and delete
-    `Node::lends_read_arguments`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2260 A read builtin's operand keeps a place-table entry beside
   its value**
 
@@ -9734,7 +9747,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2259, R2260, R2261.
+  - Depends on R2188, R2189, R2190, R2254, R2260, R2261.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's
@@ -10093,6 +10106,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `rg 'owned_pack_slot|infer_unbound_pack_construction'` finds
     nothing.
   - Depends on R2197.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2264 A `VariadicPack`'s type drops upstream's `elt_is_mutable`
+  and `origin` arguments**
+
+  `types::variadic_pack_type` and `variadic_pack_over` build
+  `VariadicPack[element_trait, is_owned, *Ts]`, where the pin's is
+  `VariadicPack[elt_is_mutable, origin, element_trait, is_owned, *Ts]`, so
+  `__getitem_param__`'s `ref[Self.origin]` result names the unsubstituted
+  struct parameter `OriginParamId(1)`.
+  - That id can collide with the enclosing function's own origin
+    parameter 1, so no pass can match the result's origin against an
+    operand's.
+  - Probe: `def held(var *args: *Ts): ref r = args[0]; print("before");
+    print(r)` over two `Noisy` arguments prints `before` ahead of the
+    destructors here; the pin ends `args` at the subscript and prints
+    `del 2`, `del 1`, `before`, `Noisy(1)`.
+  - Found while landing R2259 (2026-11-16).
+  - Depends on R2262.
   - Model: Fable, Not Planned.
 
 - [ ] **R1929 A read collector cannot keep alive the owner of an element

@@ -6324,9 +6324,9 @@ current Mojo:
   whose type is proven register-passable `RegisterPassableRead`
   (`Checker::record_result_conventions`), which is passed by value and
   retains no place, as upstream passes a register-passable `read`: a
-  result's loans come from the origin its type names. Only a
-  register-passable `read` *receiver* of a call whose result borrows it
-  still keeps its place (`Node::lends_read_arguments`, R2259).
+  result's loans come from the origin its type names. A register-passable
+  `read` receiver is passed by value the same way, even when the call's
+  reference or view result borrows it.
 - A list, dict, or set display, a tuple display, and a comprehension are
   their construction's result, as upstream emits a collection literal as a
   constructor call into its destination or a temporary, so

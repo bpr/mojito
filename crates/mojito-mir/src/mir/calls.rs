@@ -2052,11 +2052,11 @@ impl<'a> Flatten<'a> {
         // A register-passable receiver the method reads is passed by
         // value, as upstream passes a `read self` whose type is not
         // memory-only: it retains no place, so its owner may die at the
-        // read, before the call runs. A call whose result borrows the
-        // receiver keeps it. The register then carries the receiver's
-        // type, which the call's binding reads its struct's binders from.
+        // read, before the call runs, even when the call's result borrows
+        // it — a result's loans come from the origin its type names, as for
+        // an argument. The register then carries the receiver's type, which
+        // the call's binding reads its struct's binders from.
         if place.is_some()
-            && !call.lends_read_arguments()
             && call.call_contract().is_some_and(|contract| {
                 matches!(
                     contract.receiver_convention,
