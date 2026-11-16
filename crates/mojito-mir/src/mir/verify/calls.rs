@@ -82,7 +82,7 @@ pub(super) fn verify_call_instruction(
                     declaration,
                     args,
                     kwargs,
-                    binds.then_some(arg_places.as_slice()),
+                    binds,
                     errors,
                 );
                 let owner = receiver
@@ -198,15 +198,7 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
-                verify_direct_call(
-                    prefix,
-                    cx.function,
-                    declaration,
-                    args,
-                    kwargs,
-                    Some(arg_places.as_slice()),
-                    errors,
-                );
+                verify_direct_call(prefix, cx.function, declaration, args, kwargs, true, errors);
                 let result_abi_matches =
                     match reference_result {
                         Some(reference) => {
@@ -363,18 +355,18 @@ fn verify_collector_passed(
 /// variadic calls are bound by the runtime matcher, whose slotting the
 /// verifier does not replicate.
 ///
-/// `addressed` holds the call's positional places when it binds its
-/// operands by `declaration` (a direct `call` or a resolved
-/// `call.method`): each operand of a `mut` or `ref` parameter must then be
-/// a reference, as upstream's `lit.call` takes a `!lit.ref` of the
-/// caller's storage for it.
+/// `addressed` says whether the call binds its operands by `declaration`
+/// (a direct `call` or a resolved `call.method`): each operand of a `mut`
+/// or `ref` parameter must then be a reference, as upstream's `lit.call`
+/// takes a `!lit.ref` of the caller's storage for it, the reference a
+/// place holding one stores included.
 pub(super) fn verify_direct_call(
     prefix: &str,
     function: &MirFunction,
     declaration: &MirFunctionDeclaration,
     args: &[Reg],
     kwargs: &[(String, Reg)],
-    addressed: Option<&[Option<MirPlace>]>,
+    addressed: bool,
     errors: &mut Vec<String>,
 ) {
     let plain = kwargs.is_empty()
@@ -411,16 +403,7 @@ pub(super) fn verify_direct_call(
                 declaration.lowered_name
             ));
         }
-        // A place holding a reference (a `ref` field, a `ref` binding) is
-        // still passed as the load through its stored handle.
-        let stored_reference = |places: &[Option<MirPlace>]| {
-            places
-                .get(index)
-                .and_then(Option::as_ref)
-                .and_then(|place| place.ty.as_ref())
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
-        };
-        if addressed.is_some_and(|places| !stored_reference(places))
+        if addressed
             && declaration.ref_params.get(index).copied().unwrap_or(false)
             && !matches!(expected.kind(), TyKind::Ref(_))
             && let Some(found) = function.reg_types.get(&argument.0)
@@ -1202,7 +1185,15 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             ));
         }
         if let Some(declaration) = declared(cx.declarations, target) {
-            verify_direct_call(prefix, cx.function, declaration, args, kwargs, None, errors);
+            verify_direct_call(
+                prefix,
+                cx.function,
+                declaration,
+                args,
+                kwargs,
+                false,
+                errors,
+            );
         }
     }
 }

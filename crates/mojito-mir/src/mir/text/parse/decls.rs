@@ -110,6 +110,11 @@ impl Decoder {
         // value beside the place it reads.
         if self.minor < 192 {
             crate::mir::upgrade_call_operands(&mut functions, &declarations);
+        } else if self.minor < 198 {
+            // Schema 1.198 passes the reference a place holds (a `ref`
+            // field, a `ref` binding's slot) as its by-address operand; an
+            // older call reads the value through it.
+            crate::mir::upgrade_stored_handles(&mut functions, &declarations);
         }
         if self.diagnostics.is_empty() {
             Ok((

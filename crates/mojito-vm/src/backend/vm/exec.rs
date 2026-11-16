@@ -96,7 +96,8 @@ impl VmBackend {
 
     /// The value each by-address operand of a call holds, by its index
     /// among the positional then keyword operands, with the type of its
-    /// place: a by-address operand enters the call as the value its place
+    /// place's referent (a place holding a reference passes the value
+    /// behind it): a by-address operand enters the call as the value its place
     /// holds, and a parameter that binds the caller's storage takes the
     /// place's handle, as every call's does.
     pub(super) fn addressed_operand_values<'p>(
@@ -109,14 +110,13 @@ impl VmBackend {
         let reg_types = &prog.mir.functions[function].1.reg_types;
         let mut values = Vec::new();
         for (operand, (register, place)) in operands.enumerate() {
-            let Some(place) = place
-                .as_ref()
-                .filter(|place| addressed_by(reg_types.get(&register.0), place))
-            else {
+            let Some(place) = place.as_ref().filter(|place| {
+                mojito_mir::mir::addresses_place(reg_types.get(&register.0), place)
+            }) else {
                 continue;
             };
             let value = self.load_place_value(prog, function, frame_id, regs, vars, place)?;
-            values.push((operand, value, place.ty.as_ref()));
+            values.push((operand, value, place.ty.as_ref().map(peel_references)));
         }
         Ok(values)
     }
@@ -131,11 +131,13 @@ impl VmBackend {
         (recv, place): (Reg, Option<&'p MirPlace>),
     ) -> Result<Option<(Value, Option<&'p Ty>)>, RuntimeError> {
         let reg_types = &prog.mir.functions[function].1.reg_types;
-        let Some(place) = place.filter(|place| addressed_by(reg_types.get(&recv.0), place)) else {
+        let Some(place) =
+            place.filter(|place| mojito_mir::mir::addresses_place(reg_types.get(&recv.0), place))
+        else {
             return Ok(None);
         };
         let value = self.load_place_value(prog, function, frame_id, regs, vars, place)?;
-        Ok(Some((value, place.ty.as_ref())))
+        Ok(Some((value, place.ty.as_ref().map(peel_references))))
     }
 
     /// Execute one straight-line MIR instruction against the current frame.
@@ -2503,16 +2505,4 @@ fn array_index(index: &Const) -> Option<usize> {
     index
         .index_attribute()
         .and_then(|index| usize::try_from(index).ok())
-}
-
-/// Whether a call operand of type `operand` passes `place` by address: a
-/// reference to the place's own storage, the `ref.make` MIR lowering forms
-/// for it (`Flatten::address_operand`, `mir/calls.rs`).
-fn addressed_by(operand: Option<&Ty>, place: &MirPlace) -> bool {
-    match (operand.map(Ty::kind), place.ty.as_ref()) {
-        (Some(TyKind::Ref(reference)), Some(stored)) => {
-            !matches!(stored.kind(), TyKind::Ref(_)) && &reference.referent == stored
-        }
-        _ => false,
-    }
 }

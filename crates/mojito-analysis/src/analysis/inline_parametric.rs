@@ -2432,7 +2432,8 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// the call passes with `place` retained: a `mut` or `ref` parameter binds
 /// that place, as the VM binds the parameter's slot to a reference to it,
 /// and so does a `read` one of a callee returning a reference, which may
-/// be to it; a `deinit` parameter binds the caller's slot the argument
+/// be to it, or one the call passes by address; a place holding a `ref`
+/// field binds the handle it stores ([`place_binding`]); a `deinit` parameter binds the caller's slot the argument
 /// forwards or loads whole, which the ownership check proved whole there,
 /// or the place `consumed`, the call's receiver place, when the argument
 /// loads it and it is an owned part or the value a reference reaches (an
@@ -2460,16 +2461,10 @@ fn argument_binding(
     let owned = is_owned_parameter(callee, param);
     let deinit = callee.deinit_params.get(param).copied().unwrap_or(true);
     let reference = is_reference_parameter(callee, param);
-    if reference
-        && let Some(place) = place
-        && stores_handle(place)
-    {
-        return Some(Binding::Handle(HandleSource::Field(place.clone())));
-    }
     if (reference || (callee.returns_reference && !owned && !deinit))
         && let Some(place) = place
     {
-        return Some(Binding::Place(place.clone()));
+        return Some(place_binding(place));
     }
     if deinit && place.is_none() {
         if let Some(slot) = forwarded_slot(block, index, argument) {
@@ -2504,6 +2499,9 @@ fn argument_binding(
     {
         return Some(Binding::Value(argument));
     }
+    if by_address && let Some(place) = place {
+        return Some(place_binding(place));
+    }
     place
         .cloned()
         .or_else(|| loaded_place(block, index, argument))
@@ -2526,6 +2524,17 @@ fn passes_address(caller: &MirFunction, callee: &MirFunction, param: usize, argu
             .param_types
             .get(param)
             .is_some_and(|ty| !is_reference(ty))
+}
+
+/// The binding of a parameter to the caller's `place`: the handle a `ref`
+/// field stores ([`stores_handle`]), as the call forwards it, else the
+/// place itself.
+fn place_binding(place: &MirPlace) -> Binding {
+    if stores_handle(place) {
+        Binding::Handle(HandleSource::Field(place.clone()))
+    } else {
+        Binding::Place(place.clone())
+    }
 }
 
 /// Whether `place` is a `ref` field, a projected place of a `ref` type

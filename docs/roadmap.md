@@ -9616,29 +9616,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2187, R2248, R2249, R2250.
   - Model: Fable, Planned.
 
-- [ ] **R2187 An argument whose place holds a reference passes the load
-  through it, not the stored handle**
-
-  Upstream passes a `ref` field's or `ref` binding's `!lit.ref` value as
-  the operand of a by-address parameter. Mojito loads through the stored
-  handle and keeps the place beside the value, so
-  `Flatten::address_operand` skips it and the verifier exempts it.
-  - Probe: `joined_path += cur_path` in `os.path.join`, over a `ref`
-    binding of a `*paths` element, passes a `String` value to
-    `StringSpan.__init__$ov$String`'s `ref` parameter.
-  - Probe: a `ref` field argument (`lower_call_operand`'s `simple_place`
-    arm retypes the load to the referent).
-  - Fix: pass the place's load typed as the stored reference, and teach
-    the VM's and Pliron's place-based binding to take it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2188 The VM binds a by-address parameter from the call's place
   table, not from its reference operand**
 
   Upstream's callee binds the `!lit.ref` operand itself. The VM loads an
   addressed operand's place back into a value (`addressed_operand_values`,
-  `addressed_operand`, `addressed_by`, `vm/exec.rs`) and rebinds a
+  `addressed_operand`, `vm/exec.rs`, by `mir::addresses_place`) and rebinds a
   `mut`/`ref` parameter from the place (`reference_argument`,
   `bound_argument_place`, `caller_handle_place`).
   - Sites: `prepare_direct_call`, `prepare_method_call` (`vm/frames.rs`),

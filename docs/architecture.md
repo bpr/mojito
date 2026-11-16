@@ -2487,13 +2487,24 @@ keeps its record, renumbered by `MirArgConventions::remap` when a
 fieldwise one passes its keywords positionally. A borrowed read (a
 `ref.read` through a pointer or a `ref`-returning getter, a variant
 payload), a forwarded slot, and a function value are not materialized and
-still pass a value (R2248, R2249, R2250). The verifier
+still pass a value (R2248, R2249, R2250). A retained place that holds a
+reference (a `ref` field, a `ref` binding's slot) passes the reference it
+holds, as upstream passes the `!lit.ref` the field or binding is
+(`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`):
+the read through it becomes a forwarding `ref.make` of the `ref` field's
+place, typed as the stored reference, or a `ref.make` of the binding's
+slot through itself, and a subscript store's setter takes the same
+reference of its base. The place stays beside it, and `mir::addresses_place`
+(shared by the elaborator's `read_addressed_operands`, the VM, and Pliron)
+counts such an operand as addressing it; the inliner binds a parameter
+passed a `ref` field to the handle it stores (`place_binding`). The verifier
 (`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
-or `call.method` binding by its callee's declaration, except where the
-retained place holds a reference (a `ref` field or `ref` binding), whose
-operand is still the load through the stored handle (R2187); the same
-rule at a by-address `read` slot waits on those shapes (R2251). A MIR text artifact older than 1.192 is upgraded
-as it loads (`mir::upgrade_call_operands`). `mir::call_operand_parameters` maps each operand
+or `call.method` binding by its callee's declaration; the same rule at a
+by-address `read` slot waits on the shapes above (R2251). A MIR text
+artifact older than 1.192 is upgraded as it loads
+(`mir::upgrade_call_operands`), and one older than 1.198 has its
+operands over a place holding a reference forwarded
+(`mir::upgrade_stored_handles`). `mir::call_operand_parameters` maps each operand
 to its parameter. A method call's receiver is one more such operand
 (`mir::by_address_receiver`): a `mut`/`ref` receiver, or a `read` one of a
 memory-only type, with a retained `recv_place` becomes a `ref.make` of it,

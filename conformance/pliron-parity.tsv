@@ -1095,6 +1095,7 @@ assets/ok/rebind_var_forget_deinit.mojo	main	exe-differential	sanitized
 assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/receiver_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/recursive_argument_instances.mojo	main	exe-differential	sanitized
+assets/ok/ref_binding_operand_passes_stored_handle.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_owned_subscript_result.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
@@ -1814,6 +1815,7 @@ assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	main	exe-differ
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_parametric_mut_element_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	main	exe-differential	sanitized

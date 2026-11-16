@@ -1008,6 +1008,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `ref` field or `ref` binding passed where its callee takes the
+  operand by address now passes the reference it holds, as upstream's
+  `lit.call` takes the `!lit.ref`, instead of a load through it: at a
+  `mut`/`ref` or memory-only `read` parameter, as a receiver, and as a
+  subscript store's base (`bump(h.r)`, `for ref p in parts: bump(p)`,
+  `joined_path += cur_path` in `os.path.join`). The verifier no longer
+  exempts these operands, and the inliner binds a parameter passed a `ref`
+  field to its stored handle, which also fixes a natively inlined
+  `show(h.r)` printing the wrong string. MIR text moves to 1.198, and an
+  older artifact's such operands are forwarded as it loads (R2187).
+
 - A `read` argument the check judged by address now reaches its call as a
   reference whatever its own type, as upstream's `lit.call` takes the
   `!lit.ref`: a template's `read x: T` passed an `Int` (read back through

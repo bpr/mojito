@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
+use mojito_types::types::{SimdDtype, SimdWidth};
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -105,19 +105,11 @@ impl FnLowering<'_> {
         self.arg_value(ctx, reg, expected, owned, dest)
     }
 
-    /// Whether `reg` passes `place` by address: a reference to the place's
-    /// own storage, the `ref.make` MIR lowering forms for it
-    /// (`Flatten::address_operand`).
+    /// Whether `reg` passes `place` by address ([`mojito_mir::mir::addresses_place`]):
+    /// a reference to the place's own storage, or the reference a place
+    /// holding one stores.
     pub(super) fn addresses_place(&self, reg: Reg, place: &MirPlace) -> bool {
-        match (
-            self.func.reg_types.get(&reg.0).map(Ty::kind),
-            place.ty.as_ref(),
-        ) {
-            (Some(TyKind::Ref(reference)), Some(stored)) => {
-                !matches!(stored.kind(), TyKind::Ref(_)) && &reference.referent == stored
-            }
-            _ => false,
-        }
+        mojito_mir::mir::addresses_place(self.func.reg_types.get(&reg.0), place)
     }
 
     /// Transfer an owning `{data, len}` Array temporary into the List

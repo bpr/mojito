@@ -120,11 +120,25 @@ pub fn upgrade_call_operands(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
 ) {
-    address_call_operands(functions, declarations);
+    address_call_operands(functions, declarations, Operands::All);
     for (name, function) in functions.iter_mut() {
         let parameters = ParameterKinds::of(function, declarations.function(name));
         forward_read_addresses(function, declarations, &parameters);
     }
+}
+
+/// Upgrade the calls of `functions`, read from an artifact written before
+/// lowering forwarded the reference a place holds.
+///
+/// A place holding a reference is a `ref` field or a `ref` binding's slot,
+/// and an older call passed the value read through it as a by-address
+/// operand: each such operand its contract binds forwards the stored
+/// handle, as lowering forwards it ([`stored_handle`]).
+pub fn upgrade_stored_handles(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    address_call_operands(functions, declarations, Operands::StoredHandles);
 }
 
 /// Read a call's by-address operand through its reference where the
@@ -168,8 +182,8 @@ pub fn load_register_passable_operands(
 /// receiver is a compiler-modelled type with no witness (`len` of a
 /// `Tuple` through `Sized`), and the template passed the receiver and
 /// each memory-only `read` operand as a `ref.make` of its place, as
-/// lowering forms it. Each `(register, place)` whose register is
-/// a reference to its place's type becomes a `ref.read` of it, returned
+/// lowering forms it. Each `(register, place)` whose register addresses
+/// its place ([`addresses_place`]) becomes a `ref.read` of it, returned
 /// for the caller to splice ahead of the call, as upstream's
 /// `LowerArgConventions` loads a by-value argument at the call.
 pub fn read_addressed_operands<'r>(
@@ -181,7 +195,7 @@ pub fn read_addressed_operands<'r>(
         let Some(TyKind::Ref(reference)) = function.reg_types.get(&register.0).map(Ty::kind) else {
             continue;
         };
-        if place.and_then(|place| place.ty.as_ref()) != Some(&reference.referent) {
+        if !place.is_some_and(|place| addresses_referent(&reference.referent, place)) {
             continue;
         }
         let referent = reference.referent.clone();
@@ -200,6 +214,20 @@ pub fn read_addressed_operands<'r>(
     loads
 }
 
+/// Whether a call operand of type `operand` passes `place` by address.
+///
+/// The operand is a reference to the place's own storage, or, where the
+/// place holds a reference (a `ref` field, a `ref` binding's slot), that
+/// stored reference itself, as upstream passes the `!lit.ref` the place
+/// holds (`Flatten::address_operand`).
+#[must_use]
+pub fn addresses_place(operand: Option<&Ty>, place: &MirPlace) -> bool {
+    matches!(
+        operand.map(Ty::kind),
+        Some(TyKind::Ref(reference)) if addresses_referent(&reference.referent, place)
+    )
+}
+
 /// Whether two places name the same storage, whatever local reference
 /// either is reached through.
 pub fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
@@ -215,6 +243,36 @@ pub fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
             (Proj::UninitPayload, Proj::UninitPayload) | (Proj::Rebind, Proj::Rebind) => true,
             _ => false,
         })
+}
+
+/// The place whose `ref.make` forwards the reference `place` holds, with
+/// that reference's type, for a callee wanting it as mutable as
+/// `mutability`; `None` when `place` holds no reference.
+///
+/// A `ref` field's own place forwards its stored handle, lent immutably
+/// when `mutability` is; a `ref` binding's slot is reached through itself,
+/// as a runtime alias's read forms it, and lends its own handle.
+pub fn stored_handle(place: &MirPlace, mutability: Mutability) -> Option<(MirPlace, Ty)> {
+    let TyKind::Ref(stored) = place.ty.as_ref()?.kind() else {
+        return None;
+    };
+    if place.proj.is_empty() {
+        let mut handle_place = place.clone();
+        handle_place.through = place.through.or(Some(place.root));
+        let handle = mir_place_handle_ty(&handle_place, Some(mutability))?;
+        return Some((handle_place, handle));
+    }
+    let handle = TyKind::Ref(mojito_types::origin::RefTy {
+        referent: stored.referent.clone(),
+        origin: stored.origin.clone(),
+        mutability: if mutability == Mutability::Immutable {
+            Mutability::Immutable
+        } else {
+            stored.mutability
+        },
+    })
+    .into();
+    Some((place.clone(), handle))
 }
 
 /// The declarations of the functions a program calls, by lowered name:
@@ -827,9 +885,29 @@ enum Definition {
 /// One rewrite of an operand's definition.
 struct Rewrite {
     place: MirPlace,
-    mutability: Mutability,
+    /// The type of the reference the rewritten definition makes.
+    handle: Ty,
     /// The `ref.make` a rewritten `ref.read` read, which goes with it.
     retired: Option<Reg>,
+}
+
+/// Which by-address operands [`address_call_operands`] addresses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Operands {
+    All,
+    /// Only those whose place holds a reference, which forward it.
+    StoredHandles,
+}
+
+/// The place an operand addressing `place` makes its reference of, as
+/// mutable as `mutability`, and that reference's type: the stored handle a
+/// place holding one forwards ([`stored_handle`]), else the place's own
+/// storage.
+fn operand_handle(place: MirPlace, mutability: Mutability) -> (MirPlace, Ty) {
+    stored_handle(&place, mutability).unwrap_or_else(|| {
+        let handle = mir_place_handle_ty(&place, Some(mutability)).unwrap_or_else(Ty::error);
+        (place, handle)
+    })
 }
 
 /// Pass each by-address call operand in `functions` as a `ref.make` of its
@@ -844,32 +922,38 @@ struct Rewrite {
 /// of it, or a `ref.read` of a `ref.make` of it, which goes too when
 /// nothing else reads it. Any other by-address operand, one whose read
 /// another use shares or that is no whole read of the place, is passed as
-/// a fresh `ref.make` of the place just before its call. A place ending in
-/// a `ref` field, whose load reads through the stored handle, keeps its
-/// load.
-fn address_call_operands(functions: &mut [(String, MirFunction)], declarations: &MirDeclarations) {
+/// a fresh `ref.make` of the place just before its call. A place holding a
+/// reference passes the reference it holds ([`operand_handle`]).
+/// `operands` picks which operands are addressed.
+fn address_call_operands(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+    operands: Operands,
+) {
     let callees = Callees::of(declarations);
     for (name, function) in functions.iter_mut() {
         let parameters = ParameterKinds::of(function, declarations.function(name));
-        address_function_operands(function, declarations, &callees, &parameters);
-        address_remaining_operands(function, declarations, &callees, &parameters);
+        let context = RemainingContext {
+            declarations,
+            callees: &callees,
+            parameters: &parameters,
+            operands,
+        };
+        address_function_operands(function, &context);
+        address_remaining_operands(function, &context);
     }
 }
 
-fn address_function_operands(
-    function: &mut MirFunction,
-    declarations: &MirDeclarations,
-    callees: &Callees<'_>,
-    parameters: &ParameterKinds,
-) {
+fn address_function_operands(function: &mut MirFunction, context: &RemainingContext<'_, '_>) {
     let mut definitions = HashMap::new();
     let mut operands = Vec::new();
     collect(
         &function.body,
         &Collector {
-            callees,
-            declarations,
+            callees: context.callees,
+            declarations: context.declarations,
             reg_types: &function.reg_types,
+            operands: context.operands,
         },
         &mut definitions,
         &mut operands,
@@ -885,38 +969,37 @@ fn address_function_operands(
         if !read_once(operand) || rewrites.contains_key(&operand.0) {
             continue;
         }
-        let mutability = parameters.place_mutability(&place, mutability);
-        let rewrite = match definitions.get(&operand.0) {
+        let mutability = context.parameters.place_mutability(&place, mutability);
+        let (addressed, retired) = match definitions.get(&operand.0) {
             Some(Definition::Load(loaded))
                 if same_storage(loaded, &place) && loaded.through == place.through =>
             {
-                Rewrite {
-                    place,
-                    mutability,
-                    retired: None,
-                }
+                (place, None)
             }
             Some(Definition::Read(reference)) => match definitions.get(&reference.0) {
-                Some(Definition::Address(addressed)) if same_storage(addressed, &place) => {
-                    Rewrite {
-                        place: addressed.clone(),
-                        mutability,
-                        retired: read_once(*reference).then_some(*reference),
-                    }
-                }
+                Some(Definition::Address(addressed)) if same_storage(addressed, &place) => (
+                    addressed.clone(),
+                    read_once(*reference).then_some(*reference),
+                ),
                 _ => continue,
             },
             _ => continue,
         };
-        rewrites.insert(operand.0, rewrite);
+        let (place, handle) = operand_handle(addressed, mutability);
+        rewrites.insert(
+            operand.0,
+            Rewrite {
+                place,
+                handle,
+                retired,
+            },
+        );
     }
     if rewrites.is_empty() {
         return;
     }
     for (register, rewrite) in &rewrites {
-        let handle =
-            mir_place_handle_ty(&rewrite.place, Some(rewrite.mutability)).unwrap_or_else(Ty::error);
-        function.reg_types.insert(*register, handle);
+        function.reg_types.insert(*register, rewrite.handle.clone());
     }
     let retired: Vec<u32> = rewrites
         .values()
@@ -1000,6 +1083,7 @@ struct Collector<'c, 'a> {
     callees: &'c Callees<'a>,
     declarations: &'c MirDeclarations,
     reg_types: &'c HashMap<u32, Ty>,
+    operands: Operands,
 }
 
 fn collect(
@@ -1023,7 +1107,7 @@ fn collect(
                 if let Some(bound) = bound_call(instruction, collector.callees, collector.reg_types)
                 {
                     operands.extend(
-                        by_address_operands(&bound, collector.declarations)
+                        by_address_operands(&bound, collector.declarations, collector.operands)
                             .into_iter()
                             .map(|(_, register, place, mutability)| (register, place, mutability)),
                     );
@@ -1038,31 +1122,38 @@ fn collect(
 
 /// The receiver and each operand of a call that its callee receives by
 /// address, with the place it addresses: its position among the
-/// operands [`operand_registers_mut`] lists, `None` for the receiver.
+/// operands [`operand_registers_mut`] lists, `None` for the receiver. A
+/// place holding a reference is judged by its referent, which the operand
+/// passes; `operands` may keep only such places.
 fn by_address_operands(
     bound: &BoundCall<'_>,
     declarations: &MirDeclarations,
+    operands: Operands,
 ) -> Vec<(Option<usize>, Reg, MirPlace, Mutability)> {
-    let mut operands = Vec::new();
-    let addressable = |ty: &Ty| !matches!(ty.kind(), TyKind::Ref(_));
+    let mut addressed = Vec::new();
+    let value_ty = |place: &MirPlace| -> Option<Ty> {
+        let ty = place.ty.as_ref()?;
+        let holds_reference = matches!(ty.kind(), TyKind::Ref(_));
+        (operands == Operands::All || holds_reference).then(|| operand_value_ty(ty).clone())
+    };
     if let Some((register, Some(place))) = bound.receiver
-        && let Some(ty) = place.ty.as_ref().filter(|ty| addressable(ty))
-        && let Some(mutability) = bound.contract.receiver(ty, declarations)
+        && let Some(ty) = value_ty(place)
+        && let Some(mutability) = bound.contract.receiver(&ty, declarations)
     {
-        operands.push((None, register, place.clone(), mutability));
+        addressed.push((None, register, place.clone(), mutability));
     }
     for (position, (register, place, parameter)) in bound.operands.iter().enumerate() {
         let (Some(place), Some(parameter)) = (place, parameter) else {
             continue;
         };
-        let Some(ty) = place.ty.as_ref().filter(|ty| addressable(ty)) else {
+        let Some(ty) = value_ty(place) else {
             continue;
         };
-        if let Some(mutability) = bound.contract.parameter(*parameter, ty, declarations) {
-            operands.push((Some(position), *register, (*place).clone(), mutability));
+        if let Some(mutability) = bound.contract.parameter(*parameter, &ty, declarations) {
+            addressed.push((Some(position), *register, (*place).clone(), mutability));
         }
     }
-    operands
+    addressed
 }
 
 fn rewrite_blocks(block: &mut MirBlock, rewrites: &HashMap<u32, Rewrite>, retired: &[u32]) {
@@ -1090,22 +1181,13 @@ fn rewrite_blocks(block: &mut MirBlock, rewrites: &HashMap<u32, Rewrite>, retire
 
 /// Pass each by-address operand still read as a value as a fresh
 /// `ref.make` of its place, emitted just before its call.
-fn address_remaining_operands(
-    function: &mut MirFunction,
-    declarations: &MirDeclarations,
-    callees: &Callees<'_>,
-    parameters: &ParameterKinds,
-) {
+fn address_remaining_operands(function: &mut MirFunction, context: &RemainingContext<'_, '_>) {
     let mut next = function.n_regs;
     let mut types = Vec::new();
     address_remaining_in(
         &mut function.body,
         &function.reg_types,
-        &RemainingContext {
-            declarations,
-            callees,
-            parameters,
-        },
+        context,
         &mut next,
         &mut types,
     );
@@ -1118,11 +1200,12 @@ fn address_remaining_operands(
     }
 }
 
-/// What [`address_remaining_in`] reads a function's calls by.
+/// What [`address_call_operands`] reads a function's calls by.
 struct RemainingContext<'c, 'a> {
     declarations: &'c MirDeclarations,
     callees: &'c Callees<'a>,
     parameters: &'c ParameterKinds,
+    operands: Operands,
 }
 
 fn address_remaining_in(
@@ -1145,7 +1228,7 @@ fn address_remaining_in(
         };
         let remaining: Vec<(Option<usize>, Reg, MirPlace, Mutability)> =
             bound_call(&block.instrs[index], context.callees, reg_types)
-                .map(|bound| by_address_operands(&bound, context.declarations))
+                .map(|bound| by_address_operands(&bound, context.declarations, context.operands))
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|(_, register, ..)| is_value(*register))
@@ -1163,8 +1246,7 @@ fn address_remaining_in(
                     continue;
                 };
                 let mutability = context.parameters.place_mutability(&place, wanted);
-                let handle =
-                    mir_place_handle_ty(&place, Some(mutability)).unwrap_or_else(Ty::error);
+                let (place, handle) = operand_handle(place, mutability);
                 let address = Reg(*next);
                 *next += 1;
                 types.push((address.0, handle, register.0));
@@ -1223,11 +1305,12 @@ fn forward_read_addresses(
                         .is_some_and(|ty| !declarations.register_passable(ty)) =>
             {
                 let mutability = parameters.place_mutability(&place, Mutability::Mutable);
+                let (place, handle) = operand_handle(place, mutability);
                 rewrites.insert(
                     operand.0,
                     Rewrite {
                         place,
-                        mutability,
+                        handle,
                         retired: None,
                     },
                 );
@@ -1240,9 +1323,7 @@ fn forward_read_addresses(
     }
     if !rewrites.is_empty() {
         for (register, rewrite) in &rewrites {
-            let handle = mir_place_handle_ty(&rewrite.place, Some(rewrite.mutability))
-                .unwrap_or_else(Ty::error);
-            function.reg_types.insert(*register, handle);
+            function.reg_types.insert(*register, rewrite.handle.clone());
         }
         rewrite_blocks(&mut function.body, &rewrites, &[]);
     }
@@ -1453,4 +1534,14 @@ fn read_operand(
         reference: *register,
     });
     *register = loaded;
+}
+
+/// Whether a reference to `referent` addresses `place`: its storage, or
+/// the referent of the reference it stores.
+fn addresses_referent(referent: &Ty, place: &MirPlace) -> bool {
+    match place.ty.as_ref().map(|ty| (ty, ty.kind())) {
+        Some((_, TyKind::Ref(stored))) => &stored.referent == referent,
+        Some((storage, _)) => storage == referent,
+        None => false,
+    }
 }

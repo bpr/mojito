@@ -639,8 +639,8 @@ impl<'a> Flatten<'a> {
     /// `wanted` and the place allow: a `read` parameter's storage, or a
     /// place reached through an immutable reference, lends an immutable
     /// one, as upstream's `ref` binds its operand's own mutability. A place
-    /// ending in a `ref` field, whose load reads through the stored handle,
-    /// keeps its load.
+    /// holding a reference (a `ref` field, a `ref` binding's slot) passes
+    /// the reference it holds instead ([`Self::forward_stored_handle`]).
     pub(super) fn address_operand(
         &mut self,
         expression: Node<'a>,
@@ -662,11 +662,13 @@ impl<'a> Flatten<'a> {
             return lowered;
         };
         let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
-        if place.ty.is_none()
-            || is_reference(place.ty.as_ref())
-            || is_reference(self.f.reg_types.get(&register.0))
-        {
+        if place.ty.is_none() || is_reference(self.f.reg_types.get(&register.0)) {
             return lowered;
+        }
+        if is_reference(place.ty.as_ref()) {
+            let (register, place) = (*register, place.clone());
+            let address = self.forward_stored_handle(location, register, &place, wanted);
+            return (address, Some(place));
         }
         let handle = self.place_handle_ty(place, wanted);
         let (register, place) = (*register, place.clone());
@@ -687,12 +689,7 @@ impl<'a> Flatten<'a> {
         wanted: mojito_types::origin::Mutability,
     ) -> Reg {
         let handle = self.place_handle_ty(place, wanted);
-        let address = self.fresh_typed(location, Some(place.root), handle);
-        self.emit(MirInstr::MakeRef {
-            dest: address,
-            place: place.clone(),
-        });
-        address
+        self.emit_make_ref(location, place.clone(), handle)
     }
 
     /// The type of a reference to `place` as mutable as `wanted` and the
@@ -720,12 +717,43 @@ impl<'a> Flatten<'a> {
         mir_place_handle_ty(place, Some(mutability)).unwrap_or_else(Ty::error)
     }
 
+    /// Pass the reference `place` holds, rather than the value read through
+    /// it into `register`, as upstream passes a `ref` field's or a `ref`
+    /// binding's `!lit.ref` as the operand: the read defining `register`
+    /// becomes a `ref.make` of the stored handle ([`stored_handle`]),
+    /// or, where no read of it is found, a fresh one follows. The retained
+    /// place is unchanged.
+    fn forward_stored_handle(
+        &mut self,
+        location: SourceSpan,
+        register: Reg,
+        place: &MirPlace,
+        wanted: mojito_types::origin::Mutability,
+    ) -> Reg {
+        let (handle_place, handle) = stored_handle(place, wanted);
+        if self.forward_definition(register, place, &handle_place) {
+            self.f.reg_types.insert(register.0, handle);
+            return register;
+        }
+        self.emit_make_ref(location, handle_place, handle)
+    }
+
+    /// Emit a `ref.make` of `place` typed `handle`.
+    fn emit_make_ref(&mut self, location: SourceSpan, place: MirPlace, handle: Ty) -> Reg {
+        let address = self.fresh_typed(location, Some(place.root), handle);
+        self.emit(MirInstr::MakeRef {
+            dest: address,
+            place,
+        });
+        address
+    }
+
     /// Turn the read defining `register`, emitted for an operand of the
     /// call being lowered (in the body or deferred to an open call's
     /// setup), into a `ref.make` of `place` when it reads that storage
     /// whole: a `place.load` of it, or a slot use of a whole root.
     fn address_definition(&mut self, register: Reg, place: &MirPlace) -> bool {
-        let addresses = |instruction: &MirInstr| match instruction {
+        let found = self.operand_definition(|instruction| match instruction {
             MirInstr::LoadPlace { dest, place: read } => {
                 *dest == register
                     && crate::mir::call_addresses::same_storage(read, place)
@@ -738,30 +766,80 @@ impl<'a> Flatten<'a> {
                     && place.through.is_none()
             }
             _ => false,
+        });
+        let Some((instructions, index)) = found else {
+            return false;
         };
+        instructions[index] = MirInstr::MakeRef {
+            dest: register,
+            place: place.clone(),
+        };
+        true
+    }
+
+    /// Turn the read defining `register` through the reference `place`
+    /// holds into a `ref.make` of `handle_place`, the stored handle: a
+    /// `place.load` of that storage, or a runtime alias's `ref.read` through
+    /// a `ref.make` of it, which is left unread.
+    fn forward_definition(
+        &mut self,
+        register: Reg,
+        place: &MirPlace,
+        handle_place: &MirPlace,
+    ) -> bool {
+        let found = self.operand_definition(|instruction| match instruction {
+            MirInstr::LoadPlace { dest, place: read } => {
+                *dest == register
+                    && crate::mir::call_addresses::same_storage(read, place)
+                    && read.through == place.through
+            }
+            MirInstr::ReadRef { dest, .. } => *dest == register,
+            _ => false,
+        });
+        let Some((instructions, index)) = found else {
+            return false;
+        };
+        if let MirInstr::ReadRef { reference, .. } = instructions[index] {
+            let reads_alias = instructions[..index].iter().rev().any(|instruction| {
+                matches!(
+                    instruction,
+                    MirInstr::MakeRef { dest, place: read }
+                        if *dest == reference
+                            && crate::mir::call_addresses::same_storage(read, handle_place)
+                )
+            });
+            if !reads_alias {
+                return false;
+            }
+        }
+        instructions[index] = MirInstr::MakeRef {
+            dest: register,
+            place: handle_place.clone(),
+        };
+        true
+    }
+
+    /// The instruction list and index of the read `defines` picks among
+    /// those emitted for the operands of the call being lowered: the
+    /// body's, latest first, then each open call setup's deferred reads
+    /// and forwards.
+    fn operand_definition(
+        &mut self,
+        defines: impl Fn(&MirInstr) -> bool,
+    ) -> Option<(&mut Vec<MirInstr>, usize)> {
         let setups = self.call_setups.iter_mut().flat_map(|setup| {
             setup
                 .reads
                 .iter_mut()
                 .chain(setup.forwards.iter_mut())
-                .flat_map(|(_, instructions)| instructions.iter_mut())
+                .map(|(_, instructions)| instructions)
         });
-        let found = self
-            .f
-            .body
-            .instrs
-            .iter_mut()
-            .rev()
+        std::iter::once(&mut self.f.body.instrs)
             .chain(setups)
-            .find(|instruction| addresses(instruction));
-        let Some(instruction) = found else {
-            return false;
-        };
-        *instruction = MirInstr::MakeRef {
-            dest: register,
-            place: place.clone(),
-        };
-        true
+            .find_map(|instructions| {
+                let index = instructions.iter().rposition(&defines)?;
+                Some((instructions, index))
+            })
     }
 
     /// The value [`Self::lower_call_operand`] passes, before a by-address
@@ -902,7 +980,9 @@ impl<'a> Flatten<'a> {
         // `__copyinit__` only to discard the result.
         if let Some(place) = self.simple_place(expression) {
             // A `ref` field's place binds the parameter to the field's
-            // referent, which a load of the field reads through to.
+            // referent, which a load of the field reads through to; a
+            // by-address operand forwards the stored handle in its stead
+            // (`Self::forward_stored_handle`).
             if let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind) {
                 let value = self.fresh_typed(
                     expression.location(),
@@ -2064,7 +2144,8 @@ impl<'a> Flatten<'a> {
     /// The receiver a subscript store's `setter` takes after its getter
     /// read `raw` from `place`: a fresh `ref.make` of the base when the
     /// setter takes it by address, as upstream's `SubscriptDLValue` store
-    /// forms its own `!lit.ref` of the base; otherwise the base read again
+    /// forms its own `!lit.ref` of the base (the reference a base holding
+    /// one stores, [`stored_handle`]); otherwise the base read again
     /// when the getter may have written it (`getter_mutates`) or took it by
     /// address, so a getter's reference never reaches a by-value setter.
     pub(super) fn setter_receiver(
@@ -2078,11 +2159,15 @@ impl<'a> Flatten<'a> {
         let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
         if let Some(place) = place
             && place.ty.is_some()
-            && !is_reference(place.ty.as_ref())
             && let Some(wanted) =
                 receiver_by_address(setter, receiver.register_passable_read(), Some(place))
         {
-            return self.place_address(receiver.location(), place, wanted);
+            return if is_reference(place.ty.as_ref()) {
+                let (handle_place, handle) = stored_handle(place, wanted);
+                self.emit_make_ref(receiver.location(), handle_place, handle)
+            } else {
+                self.place_address(receiver.location(), place, wanted)
+            };
         }
         let reload = getter_mutates || is_reference(self.f.reg_types.get(&raw.0));
         self.reload_augmented_source(raw, &place.cloned(), reload, receiver.location())
@@ -2968,6 +3053,13 @@ impl<'a> Flatten<'a> {
         });
         (loaded, Some(place))
     }
+}
+
+/// The place whose `ref.make` forwards the reference `place` holds, with
+/// that reference's type ([`crate::mir::call_addresses::stored_handle`]).
+fn stored_handle(place: &MirPlace, wanted: mojito_types::origin::Mutability) -> (MirPlace, Ty) {
+    crate::mir::call_addresses::stored_handle(place, wanted)
+        .unwrap_or_else(|| (place.clone(), Ty::error()))
 }
 
 /// How the method call (or subscript accessor) bound by `contract`
