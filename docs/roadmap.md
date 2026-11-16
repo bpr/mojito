@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2267**.
+Next free ID: **R2272**.
 
 ## Ordered Work
 
@@ -9677,27 +9677,127 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R2267 A memory-only `deinit` receiver names the storage its call
+  consumes only in `recv_place`**
+
+  Upstream passes a memory-only `deinit` receiver as a `!lit.ref` with the
+  `DeinitMem` convention, and the call consumes the referenced memory.
+  Mojito passes a loaded value and names the consumed storage in the
+  call's `recv_place`.
+  - Readers: `MirInstr::consumed_receiver` (`ir.rs`) feeds
+    `analysis/drops.rs`, `interior.rs`, `sroa.rs`, `moves.rs` and
+    `verify/drops.rs`.
+  - The VM tombstones `recv_place` (`vm/frames.rs`
+    `prepare_method_call`, `vm/invoke.rs` `method_call`).
+  - Pliron's `lower_method_call` passes `recv_place`'s address, and
+    `borrowed_operands`' `receiver_borrows` reads its presence.
+  - Probe: `assets/ok/abort_ends_out_self_initializer.mojo`,
+    `list_subscript_field_store_drop.mojo`, and
+    `allocation_tracked_unsafe_ptr.mojo` (`Allocation.unsafe_leak`).
+  - Fix: `drop_calls.rs` and the explicit-`deinit` receiver lowering emit
+    a `ref.make` of the consumed place; `consumed_receiver` reads
+    `OperandAddresses::made`; the VM and Pliron consume through the
+    reference.
+  - MIR text bump whose upgrade turns an older `deinit` call's
+    `recv_place` into a `ref.make` operand.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2268 A by-value operand still carries a place-table entry**
+
+  Upstream passes a register-passable receiver, subscript base, or stored
+  value by value, naming no storage. Mojito keeps a table entry beside
+  some such operands, and `table_fallback` answers for them.
+  - Probe: the contract-less VM-builtin `Pointer` methods `unsafe_free`,
+    `free`, `__int__` keep a `recv_place`
+    (`assets/ok/allocation_tracked_unsafe_ptr.mojo`).
+  - Probe: an intrinsic `index.get` (`call: absent`, `pointer` and
+    `tuple_storage` subscripts) keeps `base_place`
+    (`string_literal_slice_members.mojo`,
+    `template_method_pack_struct.mojo`).
+  - Probe: closure `__storage.__init__` captures and a register-passable
+    `__copyinit__`'s `copy` keep `arg_places`
+    (`struct_callable_parameter.mojo`,
+    `register_passable_one_field_lifecycle.mojo`).
+  - Probe: an augmented `index.multi_set` keeps `value_place` on an `Int`
+    (`dunder_setitem.mojo`), and `SIMD.__getitem__` records no receiver
+    convention (`simd_lane_write.mojo`).
+  - Fix: drop the entry where the operand is by value; a memory-only
+    `Tuple` storage base becomes a `ref.make`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2269 A `call.indirect`'s callee is found through its
+  `callee_place` slot**
+
+  Upstream's indirect call takes the callee as an SSA operand. The inliner
+  (`ClosureValues::called`, `read_binder_constants`) and `mem2reg`
+  (`Mention::CalleePlace`) find a closure through the slot
+  `callee_place` names.
+  - Probe: `__trait_dispatch.__call__` over a callable value
+    (`assets/ok/instance_method_value.mojo`,
+    `bracket_function_application.mojo`).
+  - Fix: resolve the closure through the callee register's defining
+    load; lower a callable struct's `mut`/`ref self` `__call__` as a
+    `call.method` with a `ref.make` receiver, as `bound_calls.rs` does
+    for a bound.
+  - `call_defaults.rs` takes the callee type from the register.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2270 Passes and the verifier take a type, owner, or requirement
+  from a place table rather than the operand**
+
+  Upstream's passes read a `lit.call` operand's SSA type and defining op
+  only. Several Mojito readers bypass `OperandAddresses` and read the
+  table directly.
+  - Type sources: `call_defaults.rs` (`collect_subscript_store`,
+    `collect_through_contract`, `Site::of`), `call_addresses.rs`
+    `bound_call`, `param_uses.rs` `member_receiver_ty`,
+    `register_ends.rs` `receiver_ty`.
+  - Owners: `call_defaults.rs` `element_owners`, `callable_values.rs`
+    `rebound_variables`.
+  - The elaborator's `read_addressed_operands` call in
+    `native/mono/specializer.rs` decides loads from the tables.
+  - Verifier rules needing an entry: `verify/intrinsics.rs` (a `mut`/`ref`
+    parameter), `verify/subscripts.rs` (`requires_place`), `verify/calls.rs`
+    (a bound `__call__`'s `recv_place`), `verify/drops.rs`
+    `collect_refills`.
+  - Producers: `nested.rs` `lower_storage_call_witness`, and the
+    capture splices in `canonicalize.rs` and `specializer.rs`.
+  - Fix: read the operand's type and `OperandAddresses::made`; restate
+    each verifier rule on the operand, keeping its negative test.
+  - Depends on R2267, R2268, R2269.
+  - Model: Fable, Planned.
+
+- [ ] **R2271 The legacy MIR text upgrades read place tables off the
+  instructions they rewrite**
+
+  `upgrade_call_operands`, `upgrade_stored_handles`,
+  `upgrade_bound_receivers` and `address_call_operands` read the tables
+  from the IR, so the fields cannot leave the IR while the reader accepts
+  older 1.x artifacts.
+  - Fix: the text parser reads the legacy fields into a reader-side
+    `LegacyOperandTables`, paired with call-shaped instructions by a
+    pre-order walk, and the upgrades take that.
+  - Probe: `cargo run -- exec tests/snapshots/mir/exec_print.mir` and a
+    1.170 `tests/mir_passes` input still upgrade.
+  - Depends on R2267, R2268, R2269.
+  - Model: Opus, Planned.
+
 - [ ] **R2191 Every call-shaped instruction carries place tables beside
   its reference operands**
 
   Upstream's `lit.call` has no side table of places. `call`,
-  `call.indirect`, `call.method`, `type.construct`, `index.get`,
-  `index.multi`, and `index.multi_set` carry `arg_places`,
+  `call.indirect`, `call.method`, `type.construct` (`ConstructTypeParam`),
+  `index.get`, `index.multi`, and `index.multi_set` carry `arg_places`,
   `kwarg_places`, `recv_place`, `callee_place`, `base_place`,
   `index_place`, `object_place`, `receiver_place`, and `value_place`.
-  - A `var`/`deinit` receiver's `recv_place` is the place the call
-    consumes, and the inliner forwards an owned argument's slot by
-    `loaded_place`: upstream's call takes ownership of the operand value
-    instead.
-  - Pliron's last place readers are the same `deinit` receiver:
-    `lower_method_call` passes an aggregate `deinit` receiver's
-    `recv_place` address, and `borrowed_operands`' `receiver_borrows`
-    reads the place's presence for a `Deinit` receiver.
-  - Fix: delete the tables, constructors and text fields included, with a
-    MIR text bump whose upgrade runs `mir::upgrade_call_operands` first.
-  - The last place-table reader is `table_fallback` in
-    `OperandAddresses::address` (`mir/call_operands.rs`), with the
-    verifier's `verify_operand_tables`.
+  - The tables still have readers outside `table_fallback` and
+    `verify_operand_tables`: R2267 through R2271 remove them.
+  - Fix: delete the fields, constructors, and text fields, with a MIR
+    text bump; older text parses the fields into R2271's legacy tables
+    for the upgrades only.
   - The owner approved the `tests/mir_passes` re-bless in advance
     (2026-11-15). The session may run `UPDATE_EXPECT=1 cargo nextest run
     --test mir_pass_test` and re-canonicalize the case inputs to the new
@@ -9708,7 +9808,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2260, R2265, R2266.
+  - Depends on R2267, R2268, R2269, R2270, R2271.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's
