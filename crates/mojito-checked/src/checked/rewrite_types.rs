@@ -407,6 +407,7 @@ impl RewriteTypes for IterationProtocol {
             source_retained: _,
             prepare: _,
             prepare_raises,
+            prepare_receiver: _,
             iterator_ty,
             next,
             exhaustion,

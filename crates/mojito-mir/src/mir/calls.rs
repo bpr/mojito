@@ -529,7 +529,7 @@ impl<'a> Flatten<'a> {
     /// one, as upstream's `ref` binds its operand's own mutability. A place
     /// ending in a `ref` field, whose load reads through the stored handle,
     /// keeps its load.
-    fn address_operand(
+    pub(super) fn address_operand(
         &mut self,
         expression: Node<'a>,
         lowered: (Reg, Option<MirPlace>),
@@ -574,15 +574,23 @@ impl<'a> Flatten<'a> {
 
     /// The type of a reference to `place` as mutable as `wanted` and the
     /// place allow: a `read` parameter's storage, or a place reached
-    /// through an immutable reference, lends an immutable one.
+    /// through an immutable reference, lends an immutable one, and a place
+    /// rooted at the frame's own bare `ref` parameter lends that
+    /// parameter's inferred mutability, which a call binds, as upstream's
+    /// `ref` binds its operand's own mutability.
     fn place_handle_ty(&self, place: &MirPlace, wanted: mojito_types::origin::Mutability) -> Ty {
+        use mojito_types::origin::{Mutability, OriginParamId};
         let immutable_root = matches!(
             place.root_ty.as_ref().map(Ty::kind),
-            Some(TyKind::Ref(reference))
-                if reference.mutability == mojito_types::origin::Mutability::Immutable
+            Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
         );
-        let mutability = if self.read_parameters.contains(&place.root) || immutable_root {
-            mojito_types::origin::Mutability::Immutable
+        let mutability = if self.read_parameters.contains(&place.root)
+            || immutable_root
+            || wanted == Mutability::Immutable
+        {
+            Mutability::Immutable
+        } else if self.reference_binders.contains(&place.root) {
+            Mutability::Param(OriginParamId::reference_binder(place.root))
         } else {
             wanted
         };
@@ -1730,7 +1738,7 @@ impl<'a> Flatten<'a> {
     /// A temporary receiver returned through memory is used in its
     /// call-result slot: a `var`/`deinit` receiver takes it, a declared
     /// `read` receiver reads it, with the slot's place when it is
-    /// memory-only, whose address [`crate::mir::address_call_operands`]
+    /// memory-only, whose address [`Self::lower_receiver_value`]
     /// passes as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
     /// materialized, and any other (a `ref self`) reads it and
     /// binds the slot's place, exactly as a named
@@ -1847,7 +1855,10 @@ impl<'a> Flatten<'a> {
             }
             return (value, None);
         }
-        (value, place)
+        match receiver_by_address(call, receiver, place.as_ref()) {
+            Some(wanted) => self.address_operand(receiver, (value, place), wanted),
+            None => (value, place),
+        }
     }
 
     /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
@@ -2704,6 +2715,39 @@ impl<'a> Flatten<'a> {
             place: place.clone(),
         });
         (loaded, Some(place))
+    }
+}
+
+/// How method call (or subscript accessor) `call` receives `receiver`,
+/// which kept `place`, by address: a declared `mut` or `ref` receiver
+/// (`receiver_requires_place`, whatever its effective access) as a mutable
+/// reference, which [`Flatten::place_handle_ty`] narrows to the place's own
+/// mutability, a `read` one the check did not prove register-passable as an
+/// immutable one, as upstream's `lit.call` takes a `!lit.ref` of the
+/// receiver's storage. An owned receiver, an elided one, and a `def(...)`
+/// bound's callee, which is the value it is, are `None`.
+fn receiver_by_address(
+    call: Node<'_>,
+    receiver: Node<'_>,
+    place: Option<&MirPlace>,
+) -> Option<mojito_types::origin::Mutability> {
+    use mojito_ast::ast::ArgConvention;
+    use mojito_types::origin::Mutability;
+    let contract = call.call_contract()?;
+    let callable_bound = place.and_then(|place| place.ty.as_ref()).is_some_and(|ty| {
+        crate::mir::bound_calls::callable_bound_requirement(ty, &contract.target).is_some()
+    });
+    if contract.receiver_elided || callable_bound {
+        return None;
+    }
+    if contract.receiver_requires_place {
+        return Some(Mutability::Mutable);
+    }
+    match contract.receiver_convention {
+        None | Some(ArgConvention::Imm) if !receiver.register_passable_read() => {
+            Some(Mutability::Immutable)
+        }
+        _ => None,
     }
 }
 

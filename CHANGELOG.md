@@ -1008,6 +1008,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering now forms a by-address receiver's `ref.make` itself, as
+  upstream emits the `!lit.ref` while lowering the operand: a method
+  call's or subscript accessor's declared `mut`/`ref` receiver, or its
+  memory-only `read` one, where `lower_receiver_value` lowers it, an
+  in-place dunder's `mut self`, and a `for` loop's `__next__` and borrowed
+  `__iter__` receivers (the check records the latter's verdict as
+  `IterationProtocol::prepare_receiver`). A reference into a body's own
+  bare `ref` parameter carries that parameter's inferred binder. Output is
+  unchanged; `mir::address_call_operands` still addresses the remaining
+  operands (R2185, with R2245, R2246, and R2247 left).
 - An overloaded `def`, struct method, or trait requirement now types its
   signature once, as upstream does: its binders are owned by a
   declaration-relative owner fixed before typing (`pick@decl1`,

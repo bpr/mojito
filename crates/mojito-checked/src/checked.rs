@@ -471,6 +471,13 @@ pub struct IterationProtocol {
     /// calls that `__iter__` as an ordinary raising method call, as
     /// upstream's `emitForStmt` does, rather than inside the normalization.
     pub prepare_raises: Option<Ty>,
+    /// How `prepare` receives a borrowed source by address: a `ref self`
+    /// `__iter__` as a mutable reference, a `read self` one of a
+    /// memory-only source as an immutable one, as upstream's `lit.call`
+    /// takes a `!lit.ref` of the source's storage. `None` for an owned
+    /// source and a register-passable `read` one.
+    #[serde(default)]
+    pub prepare_receiver: Option<mojito_types::origin::Mutability>,
     /// The type of the iterator `prepare` produces: its `__iter__`
     /// result, resolved at the loop site (`_ListIter[Int,
     /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic

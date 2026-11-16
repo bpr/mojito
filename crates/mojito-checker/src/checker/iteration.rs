@@ -340,6 +340,7 @@ impl Checker {
                     source_retained: true,
                     prepare: None,
                     prepare_raises: None,
+                    prepare_receiver: None,
                     iterator_ty: ty.clone(),
                     next: None,
                     exhaustion: None,
@@ -431,6 +432,8 @@ impl Checker {
                         source_retained: true,
                         prepare: Some(method_lowered_name(TRAIT_DISPATCH, "__iter__", &iter, None)),
                         prepare_raises: None,
+                        prepare_receiver: (!owned && self.memory_only(ty))
+                            .then_some(mojito_types::origin::Mutability::Immutable),
                         iterator_ty,
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: method_lowered_name(TRAIT_DISPATCH, "__next__", &next, None),
@@ -646,6 +649,15 @@ impl Checker {
                 source_retained: reference_result.is_some() || struct_may_refer_elsewhere(iinfo),
                 prepare: Some(prepare_symbol),
                 prepare_raises: iter_error.clone(),
+                prepare_receiver: match iter_sig.self_convention {
+                    Some(
+                        mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref,
+                    ) => Some(mojito_types::origin::Mutability::Mutable),
+                    None | Some(mojito_ast::ast::ArgConvention::Imm) if self.memory_only(c_ty) => {
+                        Some(mojito_types::origin::Mutability::Immutable)
+                    }
+                    _ => None,
+                },
                 iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
                 exhaustion: Some(exhaustion),

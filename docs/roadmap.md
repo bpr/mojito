@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2245**.
+Next free ID: **R2248**.
 
 ## Ordered Work
 
@@ -9526,29 +9526,67 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2185 Receivers, subscript operands, and memory-only `read`
-  arguments get their address from a post-lowering pass, not from lowering**
+- [ ] **R2245 A memory-only `read` argument gets its address from
+  `mir::address_call_operands`, not from `lower_call_operand`**
 
-  Upstream emits a by-address operand's `!lit.ref` while lowering it.
-  Mojito's lowering does so only for a `mut`/`ref` call argument
-  (`Flatten::address_operand`) and a destructured tuple's element
-  extraction. Every other by-address operand is rewritten after lowering by
-  `mir::address_call_operands`, run from `lower_program` and
-  `lower_package_unit`.
-  - Shapes: a method receiver (`lower_receiver_value`,
-    `lower_method_receiver`), a subscript's base, indices, and stored value
-    (`expr_access.rs`, `lower_stmt.rs`, `write_back.rs`), a memory-only
-    `read` argument (`lower_call_operand`'s borrowed-read and temporary
-    arms), a `def(...)` callee's operands, and `T(copy=x)`'s source.
-  - The pass needs `MirDeclarations` to decide each convention, which a
-    body's lowering does not have yet: the checked call contract and
-    `RegisterPassableRead` must carry it to the operand instead.
-  - Augmented subscripts reuse one receiver register for getter and setter
-    (`subscript_write_back.mojo`), which the pass can address only with a
-    fresh `ref.make` before each call.
-  - Fix: emit the address at each site, then drop the pass from both
-    pipelines, keeping it as `mir::upgrade_call_operands`' body.
+  Upstream emits a by-address argument's `!lit.ref` while lowering it.
+  `Flatten::lower_call_operand` addresses only an argument the check bound
+  to `mut`/`ref` (`RetainCallPlace`), so every memory-only `read` argument
+  and some `mut`/`ref` ones still wait for the post-lowering pass.
+  - The check records no by-address verdict per argument. Add one to
+    `CheckedCallArgument`/`CheckedArgumentConvention`, judged on the
+    callee's *declared* parameter type (a template's `read x: T` stays by
+    address), since `RegisterPassableRead` judges the actual's type.
+  - Then address in `lower_call_operand` from that verdict, the
+    borrowed-read and temporary arms included.
+  - Probe: a throwaway audit in `address_call_operands` printing each
+    operand `by_address_operands` lists whose register is not yet a `Ref`
+    (run once with a fresh `MOJITO_CACHE_DIR`, so all of std lowers) shows
+    about 2100 such `read` arguments of `call`, `call.method`, and
+    `index.multi`.
+  - Probe: a view conversion's borrowed source
+    (`Flatten::borrowed_conversion_source`, `StringSpan.__init__$ov$String`)
+    reaches the pass as a `mut` argument.
+  - Probe: a closure storage's by-reference capture passed to
+    `…$__storage.__init__` (std's `_write_int$process_digits`).
   - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2246 Receivers lowered outside `lower_receiver_value` get their
+  address from `mir::address_call_operands`**
+
+  Lowering addresses a method or accessor receiver where
+  `Flatten::lower_receiver_value` lowers it (`receiver_by_address`), and an
+  in-place dunder's and a `for` loop's. Receivers that call
+  `lower_call_receiver` directly still wait for the pass.
+  - Probe: a subscript store's base and a `read` stored value
+    (`index.multi_set`, `lower_stmt.rs` store paths), 90 rows over std.
+  - Probe: an augmented subscript's getter base (`index.get`,
+    `write_back.rs`, `lower_stmt.rs` ~743/866/1018/1099), where getter and
+    setter share one receiver register (`subscript_write_back.mojo`): the
+    setter needs its own `place_address`, as upstream's `SubscriptDLValue`
+    store does.
+  - Probe: `t[0]` on a `Tuple` through its element accessor
+    (`Tuple.__getitem_param__`, `materialize_reference_result_place`).
+  - Probe: a closure storage's `__call__`/method receiver
+    (`_write_int$process_digits$__storage.process_digits`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2247 `address_call_operands` still runs in both lowering
+  pipelines**
+
+  Once lowering addresses every operand, the pass should leave
+  `lower_program` and `lower_package_unit` and survive only as
+  `mir::upgrade_call_operands`' body for old artifacts.
+  - First address the shapes nothing else owns: a `call.indirect`'s and a
+    `def(...)` bound `__call__`'s operands (conventions from the function
+    type), `T(copy=x)`'s source, and the operands `fill_omitted_arguments`
+    writes (memory-only defaults, `**kwargs` `_insert` receivers).
+  - Then remove the two calls and repoint every doc comment naming
+    `address_call_operands` as the producer.
+  - Probe: R2245's audit lists no unaddressed operand over std; `--backend pliron` on `subscript_write_back.mojo`.
+  - Depends on R2245, R2246.
   - Model: Fable, Planned.
 
 - [ ] **R2186 A memory-only `read` argument with no retained place is
@@ -9573,7 +9611,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     parametric `read` (by address until `LowerArgConventions` sees the
     instance), materialize an addressless operand, then make the verifier
     require a reference at every by-address slot.
-  - Depends on R2185.
+  - Depends on R2247.
   - Model: Fable, Planned.
 
 - [ ] **R2187 An argument whose place holds a reference passes the load
@@ -9609,7 +9647,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     receiver.
   - Stop when `rg 'arg_places|recv_place|base_place' crates/mojito-vm`
     finds only the consumed receiver.
-  - Depends on R2185, R2186, R2187.
+  - Depends on R2247, R2186, R2187.
   - Model: Fable, Planned.
 
 - [ ] **R2189 Pliron reads a by-address argument from its place, not from
@@ -9624,7 +9662,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`lower_subscript_call`).
   - Fix: lower a `Ref` operand to its address, loading it for a scalar
     by-value slot, and drop the place parameter.
-  - Depends on R2185, R2186, R2187.
+  - Depends on R2247, R2186, R2187.
   - Model: Fable, Planned.
 
 - [ ] **R2190 The loan analysis and the inliner read a call's place table
@@ -9654,7 +9692,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     r = ...; print(read(r))`) fails the same way.
   - Fix: one helper finds the `ref.make` defining an operand, and every
     reader uses it.
-  - Depends on R2185, R2186, R2187.
+  - Depends on R2247, R2186, R2187.
   - Model: Fable, Planned.
 
 - [ ] **R2191 Every call-shaped instruction carries place tables beside

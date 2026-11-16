@@ -1330,15 +1330,21 @@ impl<'a> Flatten<'a> {
     }
 
     /// Call the in-place dunder `contract` selected for `op` at `site` on
-    /// `receiver`, whose place the `mut self` call writes through.
+    /// `receiver`, whose place the `mut self` call writes through, passed
+    /// as that place's address ([`Self::address_operand`]).
     fn emit_in_place_dunder(
         &mut self,
         site: Node<'a>,
-        (recv, recv_place): (Reg, Option<MirPlace>),
+        receiver: (Reg, Option<MirPlace>),
         contract: &mojito_checked::checked::CheckedCallContract,
         op: InfixOp,
         operand: AugmentedOperand<'a>,
     ) {
+        let (recv, recv_place) = if contract.receiver_requires_place {
+            self.address_operand(site, receiver, mojito_types::origin::Mutability::Mutable)
+        } else {
+            receiver
+        };
         // A dunder dispatched through a bound names no declaration to read
         // the result from; the checker proved it returns `None`.
         let dest = self.fresh_typed(site.location(), None, contract.result_ty.clone());
@@ -3965,7 +3971,9 @@ impl<'a> Flatten<'a> {
     /// call, followed by its error region when `__iter__` raises `error`, as
     /// upstream's `emitForStmt` calls `__iter__`, so a raise leaves through
     /// the call's raise edge. A borrowed source is called on the place its
-    /// handle borrows; an owned one is moved into the consuming receiver.
+    /// handle borrows, passed as that place's address when `__iter__` takes
+    /// it by address (`prepare_receiver`); an owned one is moved into the
+    /// consuming receiver.
     fn call_iter(
         &mut self,
         source: VarId,
@@ -3987,8 +3995,12 @@ impl<'a> Flatten<'a> {
                 },
             )
         });
-        let recv = self.fresh(span.clone(), Some(source));
+        let recv = match (&recv_place, protocol.prepare_receiver) {
+            (Some(place), Some(wanted)) => self.place_address(span.clone(), place, wanted),
+            _ => self.fresh(span.clone(), Some(source)),
+        };
         match &recv_place {
+            Some(_) if protocol.prepare_receiver.is_some() => {}
             Some(place) => self.emit(MirInstr::LoadPlace {
                 dest: recv,
                 place: place.clone(),
@@ -4036,7 +4048,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// `raw = iter.__next__()` over a typed-raising iterator: the call on
-    /// the iterator slot, its error region raising to the enclosing `try`,
+    /// the iterator slot, passed as its `mut self`'s address, its error region raising to the enclosing `try`,
     /// and the element stored into the yield slot `raw`, typed `raw_ty`, as
     /// upstream's `emitCallInTryBlock` stores the call's result into a
     /// temporary inside its `lit.try`.
@@ -4049,11 +4061,11 @@ impl<'a> Flatten<'a> {
     ) {
         let span = SourceSpan::new(None, DUMMY_SPAN);
         let place = MirPlace::root(iter, self.var_types.get(&iter).cloned());
-        let recv = self.fresh(span.clone(), Some(iter));
-        self.emit(MirInstr::LoadPlace {
-            dest: recv,
-            place: place.clone(),
-        });
+        let recv = self.place_address(
+            span.clone(),
+            &place,
+            mojito_types::origin::Mutability::Mutable,
+        );
         let element = self.fresh_typed(span.clone(), Some(iter), call.result_ty.clone());
         self.record_call(element, Some(call.target.clone()), 0);
         let raises = self.raises(Some(error.clone()), span);

@@ -146,6 +146,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         false,
         &[],
         &[],
+        &[],
         &CaptureSlots::default(),
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
@@ -1374,6 +1375,7 @@ fn lower_program(
             false,
             &[],
             &[],
+            &[],
             &CaptureSlots::default(),
             &EnclosingBinders::default(),
             &mut thunks,
@@ -2127,6 +2129,10 @@ fn lower_function(
         .iter()
         .map(|p| is_ref(&p.convention))
         .collect();
+    let inferred = caller_params
+        .iter()
+        .map(|p| p.convention == Some(ArgConvention::Ref))
+        .collect();
     let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
     let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
     let regular: Vec<_> = params
@@ -2230,6 +2236,7 @@ fn lower_function(
             owned_parameters: owned,
             deinit_parameters: deinit,
             reference_parameters: refp,
+            inferred_reference_parameters: inferred,
             returns_reference: effect.returns_reference,
             ret_ty,
             raises: effect.raises,
@@ -2436,7 +2443,9 @@ fn lower_struct_member<P: DeclaredParam>(
     let mut owned: Vec<bool> = Vec::new();
     let mut deinit: Vec<bool> = Vec::new();
     let mut refp: Vec<bool> = Vec::new();
+    let mut inferred: Vec<bool> = Vec::new();
     if m.has_self {
+        inferred.push(m.self_convention == Some(ArgConvention::Ref));
         names.push("self".to_string());
         ptys.push(self_receiver_ty(name, &struct_parameters));
         owned.push(is_owned(&m.self_convention));
@@ -2470,6 +2479,7 @@ fn lower_struct_member<P: DeclaredParam>(
     owned.extend(caller_params().map(|(_, p)| is_owned(&p.convention())));
     deinit.extend(caller_params().map(|(_, p)| is_deinit(&p.convention())));
     refp.extend(caller_params().map(|(_, p)| is_ref(&p.convention())));
+    inferred.extend(caller_params().map(|(_, p)| p.convention() == Some(ArgConvention::Ref)));
     lower_fn_nested(
         FunctionLowering {
             checked,
@@ -2480,6 +2490,7 @@ fn lower_struct_member<P: DeclaredParam>(
             owned_parameters: owned,
             deinit_parameters: deinit,
             reference_parameters: refp,
+            inferred_reference_parameters: inferred,
             returns_reference: effect.returns_reference,
             ret_ty,
             raises: effect.raises,
@@ -2663,6 +2674,7 @@ fn lower_expression_thunk(
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
             reference_parameters: Vec::new(),
+            inferred_reference_parameters: Vec::new(),
             returns_reference: false,
             ret_ty: ty.clone(),
             raises: false,
@@ -3261,6 +3273,10 @@ struct Flatten<'a> {
     /// The frame's `read` parameters, whose storage lends only an
     /// immutable reference.
     read_parameters: std::collections::HashSet<VarId>,
+    /// The frame's bare `ref` parameters, whose storage lends a reference
+    /// as mutable as the binder the frame infers for the parameter
+    /// ([`mojito_types::origin::OriginParamId::reference_binder`]).
+    reference_binders: std::collections::HashSet<VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
@@ -4908,6 +4924,7 @@ fn lower_cfg_nested(
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     returns_reference: bool,
     reference_parameters: &[bool],
+    inferred_reference_parameters: &[bool],
     owned_parameters: &[bool],
     captures: &CaptureSlots,
     enclosing_binders: &EnclosingBinders,
@@ -4988,6 +5005,12 @@ fn lower_cfg_nested(
                 .filter_map(|(slot, (reference, owned))| {
                     (!reference && !owned).then_some(slot as VarId)
                 })
+                .collect(),
+            reference_binders: inferred_reference_parameters
+                .iter()
+                .take(cfg.n_params)
+                .enumerate()
+                .filter_map(|(slot, inferred)| inferred.then_some(slot as VarId))
                 .collect(),
             aggregate_loans: HashMap::new(),
             pointer_addresses: HashMap::new(),

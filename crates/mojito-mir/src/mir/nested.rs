@@ -24,6 +24,10 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) owned_parameters: Vec<bool>,
     pub(super) deinit_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
+    /// Which parameters, the receiver counted, are a bare `ref`, whose
+    /// mutability is the binder the body infers for it
+    /// ([`mojito_types::origin::OriginParamId::reference_binder`]).
+    pub(super) inferred_reference_parameters: Vec<bool>,
     pub(super) returns_reference: bool,
     /// Checked return type and raising contract of the declaration.
     pub(super) ret_ty: Ty,
@@ -62,6 +66,7 @@ pub(super) fn lower_fn_nested(
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
         reference_parameters: ref_params,
+        inferred_reference_parameters,
         returns_reference,
         ret_ty,
         raises,
@@ -103,6 +108,7 @@ pub(super) fn lower_fn_nested(
         overloads,
         returns_reference,
         &ref_params,
+        &inferred_reference_parameters,
         &owned_params,
         &CaptureSlots::default(),
         &enclosing_binders,
@@ -1372,6 +1378,12 @@ fn lower_nested_node(
             .iter()
             .map(|(_, parameter)| is_ref(&parameter.convention)),
     );
+    let mut inferred2: Vec<bool> = vec![false; leading];
+    inferred2.extend(
+        caller_params
+            .iter()
+            .map(|(_, parameter)| parameter.convention == Some(ArgConvention::Ref)),
+    );
     let collector_ty = |index| signature.param(index).cloned();
     let variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::Variadic);
     let kw_variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::KwVariadic);
@@ -1522,6 +1534,7 @@ fn lower_nested_node(
         overloads,
         effect.returns_reference,
         &refp2,
+        &inferred2,
         &owned2,
         &capture_slots,
         enclosing_binders,

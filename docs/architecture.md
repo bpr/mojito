@@ -2412,7 +2412,15 @@ upstream emits the `!lit.ref` while lowering the operand
 (`Flatten::address_operand`, `mir/calls.rs`): the read that lowered it
 becomes the `ref.make`, or a fresh one follows it, as mutable as a `read`
 parameter's storage or an immutable reference the place is reached
-through allows. A destructured tuple place is addressed per element
+through allows, and, rooted at the function's own bare `ref` parameter,
+carrying that parameter's inferred binder (`Flatten::place_handle_ty`).
+A method call's or subscript accessor's receiver is addressed the same
+way where `Flatten::lower_receiver_value` lowers it: a declared `mut` or
+`ref` receiver (`receiver_requires_place`) mutably, a `read` one the check
+did not prove register-passable (`RegisterPassableRead`) immutably. So
+are an in-place dunder's `mut self` (`Flatten::emit_in_place_dunder`), a
+`for` loop's `__next__` iterator, and its borrowed `__iter__` source as
+the checked `IterationProtocol::prepare_receiver` says. A destructured tuple place is addressed per element
 extraction (`Flatten::destructured_base`, `mir/lower_stmt.rs`). Once the
 omitted arguments are written, `mir::address_call_operands`
 (`mir/call_addresses.rs`, R1425) addresses every other by-address operand
@@ -5372,9 +5380,10 @@ binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
 result whose contributing arguments all carry one binder). A write through it
 is refused as through any function-own binder (`require_writable_reference`),
 and `automatic-inline`'s splice binds it to the call's mutability (R1339).
-MIR spells it the same way: the `ref.make` that
-`address_call_operands` forms for an operand rooted at the function's own bare
-`ref` parameter carries that parameter's binder, so `inline-parametric` and
+MIR spells it the same way: the `ref.make` that lowering
+(`Flatten::place_handle_ty`) or `address_call_operands` forms for an operand
+rooted at the function's own bare `ref` parameter carries that parameter's
+binder, so `inline-parametric` and
 `always-inline` bind it to the argument's mutability where the body is spliced
 under an immutable receiver.
 

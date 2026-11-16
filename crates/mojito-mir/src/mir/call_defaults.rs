@@ -1687,12 +1687,16 @@ impl Site {
                     };
                     (
                         callee,
+                        // An addressed receiver is a reference to the
+                        // value whose type binds the callee's parameters.
                         Some(
-                            function
-                                .reg_types
-                                .get(&recv.0)
-                                .or_else(|| recv_place.as_ref()?.ty.as_ref())?
-                                .clone(),
+                            crate::mir::call_addresses::operand_value_ty(
+                                function
+                                    .reg_types
+                                    .get(&recv.0)
+                                    .or_else(|| recv_place.as_ref()?.ty.as_ref())?,
+                            )
+                            .clone(),
                         ),
                         instantiated_args,
                         args.clone(),
