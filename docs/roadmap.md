@@ -2825,6 +2825,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The migration spans the checker, symbol, and MIR layers. This entry's
     session plans it and files the slices as entries chained by Depends
     bullets, replacing this one.
+  - R2209 depends on this entry: repoint its Depends bullet at the last
+    slice, so the slices run before it.
   - Found while landing R2113 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -9661,7 +9663,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     instead.
   - Fix: delete the tables, constructors and text fields included, with a
     MIR text bump whose upgrade runs `mir::upgrade_call_operands` first.
-  - The `tests/mir_passes` expectations need a bless the owner approves.
+  - The owner approved the `tests/mir_passes` re-bless in advance
+    (2026-11-15). The session may run `UPDATE_EXPECT=1 cargo nextest run
+    --test mir_pass_test` and re-canonicalize the case inputs to the new
+    schema with `mojito opt`.
+  - The approval covers only the deleted place-table fields and the
+    schema bump. Any other change in an `.expected` file is a regression
+    to fix, not to bless. That includes a call that is no longer
+    inlined, an instruction added or removed, or a different `ref.make`.
+  - List the cases whose expectations changed in the summary, and say
+    that each one changed only in those fields.
   - Depends on R2188, R2189, R2190.
   - Model: Fable, Planned.
 

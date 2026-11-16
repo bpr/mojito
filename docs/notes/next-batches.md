@@ -1,19 +1,26 @@
-# Next Batches: The Pliron Gate Lanes
+# Next Batches: Toward Mojo's Architecture
 
-The batches to run after the pmir, comptime, and call-op batches, which
-have all landed. Each batch is one `scripts/claude_loop.py` command.
-`--task` runs each named entry after its open prerequisites, so a batch may
-run a few entries it does not name. Preview one with `--list` or
-`--dry-run`. `scripts/run-batches` reads the commands below, one batch
-each, and runs focused and the instantiation ratchet after every batch.
-Delete a batch here once it has landed.
+The batches to run after the Pliron gate repair, which has landed. Each
+batch is one `scripts/claude_loop.py` command. `--task` runs each named entry
+after its open prerequisites, so a batch may run a few entries it does not
+name. Preview one with `--list` or `--dry-run`. `scripts/run-batches` reads
+the commands below, one batch each, and runs focused and the instantiation
+ratchet after every batch. Delete a batch here once it has landed.
 
-The goal is a green `check-pliron` and `check-pliron-heavy` in
-`scripts/run-overnight-gates`. The 2026-11-15 gate run (at 9e4431676)
-passed every other step except the instantiation ratchet, which is left for
-later. A fixture that is red until its entry lands is commented out in
-`tests/focused/list.txt` behind the entry's ID, and the session that lands
-the entry restores the line.
+The goal is structure, not features. Each batch closes one place where
+Mojito's representation departs from Mojo's own and other code works around
+it. They are ordered so that each batch lands on the representation the
+earlier ones leave. Batch 1 finishes the MIR call op, which every phase
+below the check reads. Batches 2 to 4 make origins and `Pointer` the library
+declarations upstream has, which the memory model rests on. Batches 5 to 7
+move the trait, the parser, and the check's handoff closer to upstream's
+shapes.
+
+Four entries are planning entries. Their session writes a plan, files
+the plan's slices as chained entries, and deletes the planning entry
+instead of landing code: R2139 (batch 2), R2211 (batch 4), R769 (batch
+5), and R2137 (batch 6). Their slices run in a later batch, or come back
+as a new batch here.
 
 ## Checking between batches by hand
 
@@ -53,52 +60,142 @@ The overnight gate (`scripts/run-overnight-gates`) remains the full check.
 `scripts/focused --from-gate target/overnight-gates/<stamp>/check-default.log`
 prints the list lines a gate run's new failures add.
 
-## 1. Gate repair: the Pliron lanes (4 entries)
+## 1. Call operands are references, as in upstream's `lit.call` (8 entries)
 
-What `check-pliron` and `check-pliron-heavy` failed on 2026-11-15:
-- R2231: the Pliron capability tables no longer match the MIR instruction
-  and type vocabulary, failing two `mojito-pliron` unit tests. This is
-  `check-pliron`'s only failure. Its bench-smoke step, which the failure
-  skipped, passes.
-- R2232: the parity sweep requires empty native stderr, but
-  `print_library_keywords` prints to stderr as the pin does. The VM must
-  capture fd 2 so that stderr can be compared with it.
-- R2233: `maybe_uninit_deinit_uninitialized` stopped compiling natively
-  ("struct 'Bool' has no MIR declaration to lay out"). The panic in
-  R2232 hides it today.
-- R2234: then run both lanes once. Their runtime-error half, manifest
-  comparison, and coverage ratchets have not run since 2026-11-01. It
-  files anything still red as a new batch 2.
-
-Focused line to restore: `maybe_uninit_deinit_uninitialized` (R2233).
-After the batch, run `scripts/check-pliron` and
-`scripts/check-pliron-heavy` to confirm the goal. The two take about 20
-minutes together, and `run-batches` does not run them.
+This finishes the call-op batch. A by-address operand is the `ref.make` that
+lowering emits, and the VM, Pliron, the loan analysis, and the inliner bind
+that reference. No phase reads it back from a side table of places. Then
+`arg_places`, `recv_place`, and their seven siblings are deleted from every
+call-shaped instruction (R2191, a MIR text bump).
+- R2190 fixes a wrong-output bug on the way. A value whose `!lit.ref` is
+  passed in place is dropped before the read through the call's result.
+- R1931 classifies a loan by the convention recorded on the call, not by
+  a lookup in declaration tables.
+- R2191's `tests/mir_passes` re-bless is approved in advance, within
+  the limits its entry states. Its summary lists the changed cases.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R2231 --task R2232 --task R2233 --task R2234
+  --task R2185 --task R2187 --task R2186 --task R2188 --task R2189 \
+  --task R2190 --task R2191 --task R1931
 ```
 
-## 2. Gate repair: what the 2026-11-15 heavy lane run left red (2 entries)
+## 2. Origin parameters are ordinary declared parameters (6 entries)
 
-R2234 ran both lanes. `check-pliron` failed only on a Clippy lint in
-`tests/heavy/main.rs`, now fixed. The heavy lane's parity sweep showed:
-- 11 `assets/ok` rows that no longer compiled natively. R2234 fixed both
-  causes (native layout refused an instance keyed by a closed application,
-  and `inline-parametric` wrote `None` into a reference to `None`).
-- R2235: a pending error that a `finally` or `__exit__` swallows is freed
-  natively through a poison value. `pliron_finally_overrides` and
-  `tempfile_mkdtemp` stop in Pliron's verifier.
-- R2236: the sweep requires a trap category from
-  `simd_element_list_too_few`, whose read past the element pack is
-  undefined. Its SIGSEGV panics the sweep before the manifest comparison.
-
-Focused lines to restore: `pliron_finally_overrides` and
-`tempfile_mkdtemp` (R2235), and `simd_element_list_too_few` (R2236).
-After the batch, run `scripts/check-pliron-heavy` to confirm the goal.
+Upstream's origin parameter is a value parameter whose type is the library
+`Origin` struct, declared in place in the parameter list. Mojito classifies
+one by its bound's spelling, leaves it out of function and method parameter
+lists, and keeps a struct's origin arguments in a tail after the others.
+- R2139 plans the classification change and files its slices. It
+  repoints R2209 at them, so batch 4 runs them.
+- R2126 and R2127 declare origin binders in place in the check and in
+  MIR. R2128 then gives `mut=` binders a value in the body.
+- R762 orders a struct's arguments by its declared list, with origins in
+  place. R763 then drops the parameter syntax the checker keeps to
+  validate them.
+- This batch comes before the second `Pointer` batch, because
+  `Pointer[mut, T, origin]` is spelled in this order.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R2235 --task R2236
+  --task R2139 --task R2126 --task R2127 --task R2128 --task R762 \
+  --task R763
+```
+
+## 3. `struct Pointer` is declared in the library, part 1 (6 entries)
+
+Upstream's `Pointer` is a library struct over one `!kgen.pointer` field,
+and its members are bodies written in `lit.ref` and `pop` ops. This
+continues the built-ins batch, whose R1681 planned it.
+- R2203 and R2204 make those ops and `AddressSpace` spellable.
+- R2205 declares the struct and its aliases. A member with no checker
+  rule then resolves to its declared body.
+- R2206 moves the casts and conversions into the declared bodies.
+- R1665 and R2196 fix the VM's place pointers, which R2207 needs. A
+  pointer over a place gets an address. A pointer to a place that holds
+  a pointer addresses that place, not its pointee. R2196 is a
+  wrong-output bug on both backends today.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R2203 --task R2204 --task R2205 --task R2206 --task R1665 \
+  --task R2196
+```
+
+## 4. `struct Pointer` is declared in the library, part 2 (6 entries)
+
+The remaining checker rules become declared bodies, and the type becomes
+the struct.
+- R2024 constructs `Tuple(init_with=)` elements in place.
+- R2207 moves the address and memory members into the struct. R2208
+  moves `Pointer(to=)` and `p[]`.
+- R2209 makes a pointer's origin an `Origin` value. It waits on R2139's
+  slices from batch 2, which `--task` runs first.
+- R2210 deletes `TyKind::Pointer`, with schema and package bumps. It may
+  split in two.
+- R2211 plans folding `TyKind::Ref` and `TyKind::LitRef` into one type,
+  as upstream has one.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R2024 --task R2207 --task R2208 --task R2209 --task R2210 \
+  --task R2211
+```
+
+## 5. A trait's members are its methods (6 entries)
+
+Upstream checks a trait default as a method of its trait, binds `_Self` as
+the trait's binder, and keys overloads by resolved signatures. Mojito
+checks a default as a module-scope `def` it builds, and finds requirement
+defaults and forwarding calls by syntax.
+- R2215 and R2216 check a member as its trait's method and make `_Self`
+  the trait's binder.
+- R2217 keys a default by its typed signature and deletes the AST
+  spelling path in `mojito-symbol`.
+- R758 gives a requirement its checked signature. That fixes a
+  convention misread that R1329's register drops would turn into a
+  double destroy.
+- R640 reads the wrapper's call node instead of a span-keyed lookup.
+- R769 plans materializing a requirement's default at the call, which
+  replaces a syntax rewrite and a second check pass.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R2215 --task R2216 --task R2217 --task R758 --task R640 \
+  --task R769
+```
+
+## 6. Annotations are expressions (4 entries)
+
+Upstream parses a type annotation and a parameter bound as an ordinary
+expression, and sema evaluates it in a type context. Mojito has two more
+grammars for them.
+- R2134, R2135, and R2136 parse annotations and bounds with
+  `parse_expression`. The stop condition is a parse dump of `assets/` and
+  `stdlib/` that differs only in `SyntaxId` lines.
+- R2137 plans storing the expression in the AST and deleting `Type` as a
+  parser product. That is about 350 use sites.
+- When syntax changes, `docs/grammar.md` is updated first.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R2134 --task R2135 --task R2136 --task R2137
+```
+
+## 7. The check emits its typed nodes as it checks (5 entries)
+
+Upstream's parser emits typed ops while it checks. Mojito records facts in
+a span-keyed map, then walks the syntax again (`finalize`,
+`ArenaBuilder`) to build `CheckedProgram`. This is the largest structural
+gap left above the waist. The MIR text and the package bytes must not
+change.
+- R764 to R767 cite plan files that are no longer in the tree
+  (`R624-…-plan.md`, `R625-…-plan.md`). `--plan-fable-on-opus` writes a
+  new plan before each Fable session. Expect the first session to do
+  mostly planning.
+- R768 deletes `CheckedDeclaration`, which repeats the statement nodes.
+
+```sh
+scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
+  --task R764 --task R765 --task R766 --task R767 --task R768
 ```
