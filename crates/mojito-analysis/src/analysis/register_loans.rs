@@ -627,8 +627,12 @@ struct RegisterLoanStep {
     owners: BTreeSet<ValueRef>,
     /// The parts a callee-produced handle result carries.
     seeded: BTreeSet<ValueRef>,
-    /// Whether the results are fresh values that inherit only `seeded`.
+    /// Whether the results are fresh values that inherit only `seeded` and
+    /// `origin_operands`' provenance.
     call_result: bool,
+    /// The operands whose types name the result's origin, whose provenance
+    /// the result inherits.
+    origin_operands: Vec<Reg>,
     /// The parts an aggregate place read's result aliases.
     aliased: BTreeSet<ValueRef>,
     /// Whether the instruction is a `value.copy` running a copy initializer,
@@ -753,18 +757,27 @@ impl RegisterLoanStep {
         if let Some(place) = reference_subscript_place {
             seeded.extend(reached(place));
         }
-        // A free call returning a tracked pointer borrows through its retained
-        // argument places, read at the table while a register-passable `read`
-        // goes by value with no `ref.make` (R2256).
-        if let MirInstr::Call {
-            dest, arg_places, ..
-        } = instruction
-            && tracked_pointer_result(register_types, dest)
-        {
-            for place in arg_places.iter().flatten() {
-                seeded.extend(reached(place));
+        // A free call returning a tracked pointer keeps alive the storage its
+        // result type's origin names, which the operands whose types name that
+        // origin carry, as upstream keeps an origin's memory live while a
+        // value whose type names it is.
+        let origin_operands = match instruction {
+            MirInstr::Call {
+                dest, args, kwargs, ..
+            } if tracked_pointer_result(register_types, dest) => {
+                let named = named_storage(register_types.get(&dest.0));
+                args.iter()
+                    .chain(kwargs.iter().map(|(_, reg)| reg))
+                    .filter(|operand| {
+                        named_storage(register_types.get(&operand.0))
+                            .iter()
+                            .any(|storage| named.contains(storage))
+                    })
+                    .copied()
+                    .collect()
             }
-        }
+            _ => Vec::new(),
+        };
         // An element read out of pack storage is the same shallow read as a
         // `LoadPlace`: an aggregate element aliases the pack until its consumer
         // finishes, and a scalar one borrows the pack for that consumer alone.
@@ -829,6 +842,7 @@ impl RegisterLoanStep {
             owners,
             seeded,
             call_result,
+            origin_operands,
             single_hop,
             aliased,
             copies: matches!(
@@ -909,9 +923,15 @@ impl RegisterLoanStep {
             registers.single_hop.insert(*dest, roots.clone());
         }
         let result_owners = if self.call_result {
-            &self.seeded
+            let mut owners = self.seeded.clone();
+            for operand in &self.origin_operands {
+                for map in [&registers.owners, &registers.aliased] {
+                    owners.extend(map.get(&operand.0).into_iter().flatten());
+                }
+            }
+            owners
         } else {
-            &inherited
+            inherited
         };
         for result in &self.results {
             let owned = self.owned.iter().any(|(reg, _)| reg == result);
@@ -1275,4 +1295,36 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
             },
         );
     }
+}
+
+/// The storage identities the origins a register's type names designate: a
+/// place's root, an origin parameter, or the receiver's origin, through
+/// unions.
+fn named_storage(ty: Option<&Ty>) -> Vec<NamedStorage> {
+    fn flatten(origin: &mojito_types::origin::Origin, out: &mut Vec<NamedStorage>) {
+        use mojito_types::origin::Origin;
+        match origin {
+            Origin::Place(place) => out.push(NamedStorage::Root(place.root)),
+            Origin::Param(id) => out.push(NamedStorage::Param(*id)),
+            Origin::SelfParam => out.push(NamedStorage::SelfParam),
+            Origin::Union(members) => members.iter().for_each(|member| flatten(member, out)),
+            Origin::Static | Origin::Untracked { .. } | Origin::Unbound => {}
+        }
+    }
+    let mut storage = Vec::new();
+    for origin in ty
+        .map(mojito_types::types::named_origins)
+        .unwrap_or_default()
+    {
+        flatten(&origin, &mut storage);
+    }
+    storage
+}
+
+/// One storage identity an origin designates ([`named_storage`]).
+#[derive(PartialEq, Eq)]
+enum NamedStorage {
+    Root(mojito_types::origin::OwnerId),
+    Param(mojito_types::origin::OriginParamId),
+    SelfParam,
 }

@@ -180,7 +180,7 @@ impl<'a> Flatten<'a> {
             self.bind_call_operands(call, 0, &[], kwargs);
             let (kwargs, kwarg_places) = self
                 .copy_construction_keywords(kwargs)
-                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs));
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::ConstructTypeParam {
                 dest,
@@ -570,11 +570,10 @@ impl<'a> Flatten<'a> {
         let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (regs, arg_places) = self.lower_call_arguments(args);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
         let callee_place = variable
@@ -650,7 +649,6 @@ impl<'a> Flatten<'a> {
         // aggregate result additionally carries its arguments' loans
         // forward instead (its binding — or its own anchor one call
         // level up — installs them).
-        let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = node
             .ty
@@ -661,7 +659,7 @@ impl<'a> Flatten<'a> {
             && call.call_anchors_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (regs, arg_places) = self.lower_call_arguments(args);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && node.ty.as_ref().is_some_and(
@@ -670,7 +668,7 @@ impl<'a> Flatten<'a> {
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
-            .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
+            .unwrap_or_else(|| self.lower_call_keywords(kwargs));
         self.close_call_setup(Some(call));
         // A fieldwise construction passes its keywords positionally, its
         // record renumbered to match.
@@ -861,12 +859,11 @@ impl<'a> Flatten<'a> {
             };
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
-            let lends_reads = call.lends_read_arguments();
             self.open_call_setup();
             self.bind_call_operands(call, 0, args, kwargs);
-            let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+            let (regs, arg_places) = self.lower_call_arguments(args);
             self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+            let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
             self.close_call_setup(Some(call));
             let dest = self.fresh(call.location(), None);
             let target =
@@ -920,11 +917,10 @@ impl<'a> Flatten<'a> {
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (argument_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (argument_regs, arg_places) = self.lower_call_arguments(args);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
         self.emit_interior_invalidations(receiver_expr, None);

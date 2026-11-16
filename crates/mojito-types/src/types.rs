@@ -4406,6 +4406,20 @@ pub fn erase_value_origins(value: &CtValue) -> CtValue {
     }
 }
 
+/// The loan-tracked origins `ty` names.
+///
+/// They are a pointer's or `!lit.ref`'s tracked provenance, a reference's
+/// origin, and each struct origin argument, through type arguments, tuples,
+/// and referents. A value of the
+/// type keeps the storage these origins name live, as upstream's lifetime
+/// checking keeps an origin's memory live while a value whose type names it
+/// is.
+pub fn named_origins(ty: &Ty) -> Vec<crate::origin::Origin> {
+    let mut origins = Vec::new();
+    collect_named_origins(ty, &mut origins);
+    origins
+}
+
 /// The type with each origin parameter `origins` binds replaced by its
 /// argument.
 ///
@@ -8314,6 +8328,41 @@ fn flatten_constraint<'a>(
             flatten_constraint(right, split, out);
         }
         None => out.push(constraint),
+    }
+}
+
+fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
+    match ty.kind() {
+        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
+            out.extend(origin.as_origin());
+            collect_named_origins(element, out);
+        }
+        TyKind::LitRefPack { elements, origin } => {
+            out.extend(origin.as_origin());
+            for element in elements {
+                collect_named_origins(element, out);
+            }
+        }
+        TyKind::Ref(reference) => {
+            out.push(reference.origin.clone());
+            collect_named_origins(&reference.referent, out);
+        }
+        TyKind::Struct(_, arguments) => {
+            for argument in arguments {
+                match argument {
+                    TyArg::Ty(inner) => collect_named_origins(inner, out),
+                    TyArg::Origin(origin) => out.push(origin.clone()),
+                    TyArg::Val(CtValue::Type(inner)) => collect_named_origins(inner, out),
+                    TyArg::Val(_) => {}
+                }
+            }
+        }
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
+            for element in elements {
+                collect_named_origins(element, out);
+            }
+        }
+        _ => {}
     }
 }
 

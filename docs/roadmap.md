@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2259**.
+Next free ID: **R2260**.
 
 ## Ordered Work
 
@@ -9641,23 +9641,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2256 A register-passable `read` a reference result borrows keeps a
-  place only to root the result's loans**
+- [ ] **R2259 A register-passable `read` receiver a reference result
+  borrows keeps its place**
 
-  Upstream passes a register-passable `read` by value, and the result's
-  loans come from the origin its result type names. Mojito retains the
-  argument's place (`Flatten::lends_read_arguments`,
-  `lower_call_operand_value` in `mir/calls.rs`) so that the drop facts
-  seed a free call's tracked-pointer result from `arg_places`
-  (`register_loans.rs`, `RegisterLoanStep::new`).
-  - It is the first shape `OperandAddresses::address` falls back to the
-    place table for (`table_fallback`, `mir/call_operands.rs`).
-  - Fix: derive the result's loans from its type's origin, as
-    `Flatten::materialize_call_reference_place` already does for a
-    reference result, then stop retaining the place and delete the
-    `arg_places` seeding.
+  Upstream passes a register-passable `read self` by value, and a
+  subscript's or method's reference result keeps alive only the storage
+  its result type's origin names. Mojito keeps such a receiver's
+  `recv_place` when the call lends its reads (`lower_receiver`'s
+  by-value branch, `mir/calls.rs`, `Node::lends_read_arguments`).
+  - The drop facts seed a reference subscript's, reference method's, and
+    tracked-pointer method's result from that place, through
+    `table_fallback`'s `Receiver` slot (`RegisterLoanStep::new`,
+    `register_loans.rs`).
+  - About 80 std sites and 117 corpus sites, nearly all `VariadicPack` /
+    `ParameterList` subscripts (`args[i].write_to(w)`) and `Span`
+    slices.
+  - Fix: seed those results from the receiver operands whose types name
+    the result's origin, as a free call's tracked-pointer result now is
+    (`origin_operands`, `types::named_origins`), then keep no
+    `recv_place` for a register-passable `read` receiver and delete
+    `Node::lends_read_arguments`.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2257 A spread pack and `external_call` operands keep a place-table
   entry with no reference operand**
@@ -9709,7 +9714,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2256, R2257.
+  - Depends on R2188, R2189, R2190, R2254, R2257, R2259.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

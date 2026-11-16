@@ -490,12 +490,11 @@ impl<'a> Node<'a> {
         })
     }
 
-    /// Whether this call's result borrows its read-convention place
-    /// arguments — a borrowing view ([`Self::borrows_view_result`]) or a
-    /// reference result — so each must reach the callee as the caller's
-    /// storage, a register-passable one included: a result rooted in a
-    /// callee-local copy would dangle once the frame unwinds. A memory-only
-    /// read reaches it so at every call, as upstream passes it by address.
+    /// Whether this call's result borrows its receiver — a borrowing view
+    /// ([`Self::borrows_view_result`]) or a reference result — so a
+    /// register-passable `read` receiver keeps its place, which the drop
+    /// facts seed the result's loans from (R2259). An argument keeps none:
+    /// a result's loans come from the origin its type names.
     pub(super) fn lends_read_arguments(self) -> bool {
         self.borrows_view_result() || self.reference_result().is_some()
     }

@@ -707,6 +707,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer an ordinary call returns, passed straight to another call
+  (`read(id(Pointer(to=x)))`), keeps the storage its origin names alive
+  until that call reads it: the result inherits the provenance of the
+  operands whose types name its origin, as the pin keeps an origin's
+  memory live, where it used to read an already destroyed owner. A
+  register-passable `read` argument no longer keeps its place under a
+  view or reference-result call, as upstream passes it by value
+  (`assets/ok/call_result_pointer_argument_keeps_owner.mojo`, R2256).
+
 - A generic function, a method, and a static method now bind their own
   origin binders from their arguments' types, as a concrete free function
   already did, so `first(Span(l))` over `def first[T: …, o: Origin](s:

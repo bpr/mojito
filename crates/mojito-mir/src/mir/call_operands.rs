@@ -285,8 +285,9 @@ const fn subscript_reg(argument: &MirSubscriptArg) -> Reg {
 /// The place-table entry of an operand that is no `ref.make`, the shapes
 /// whose call still names its storage only in the table:
 ///
-/// - a register-passable `read` a reference result borrows
-///   (`Flatten::lends_read_arguments`), passed by value;
+/// - a register-passable `read` receiver's `recv_place` that a reference
+///   or view result borrows (`Flatten::lends_read_arguments`), passed by
+///   value (R2259);
 /// - a `var`/`deinit` receiver's `recv_place`, the storage the call
 ///   consumes;
 /// - a spread pack's `arg_places` entry and an `external_call`'s retained

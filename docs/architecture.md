@@ -2526,8 +2526,10 @@ subscript-set receiver (`moves.rs` `place_uses`), the interior check
 (`interior.rs` `interior_reference_uses`), copy elision
 (`copy_elision.rs` `retained_operand_places`), and unused-parameter
 removal (`unused_params.rs` `SelfCall::of`, `receiver_type`) read it; a
-free call's tracked-pointer result still seeds its owners from
-`arg_places` (`RegisterLoanStep::new`, R2256), and copy elision's `lend`
+free call's tracked-pointer result inherits the provenance of the operands
+whose types name its origin (`RegisterLoanStep`'s `origin_operands`,
+`types::named_origins`), as upstream keeps an origin's memory live while a
+value whose type names it is, and copy elision's `lend`
 re-roots the table beside the `ref.make` until R2191; `verify_operand_tables` (`verify/calls.rs`) requires a
 `ref.make` operand and its table entry to name the same storage, a `ref`
 binding's forwarded handle and a reference parameter's slot reached
@@ -6322,8 +6324,10 @@ current Mojo:
   immutable `ref.make` when the check judged the parameter by address. The checker marks a read argument
   whose type is proven register-passable `RegisterPassableRead`
   (`Checker::record_result_conventions`), which is passed by value and
-  retains its place only when the call's result borrows it
-  (`Node::lends_read_arguments`).
+  retains no place, as upstream passes a register-passable `read`: a
+  result's loans come from the origin its type names. Only a
+  register-passable `read` *receiver* of a call whose result borrows it
+  still keeps its place (`Node::lends_read_arguments`, R2259).
 - A list, dict, or set display, a tuple display, and a comprehension are
   their construction's result, as upstream emits a collection literal as a
   constructor call into its destination or a temporary, so

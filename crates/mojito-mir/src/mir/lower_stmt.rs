@@ -1382,7 +1382,7 @@ impl<'a> Flatten<'a> {
         );
         self.bind_operand(rhs_expression, binding);
         let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
-        let (args, places) = self.lower_call_arguments(&[rhs_expression], false);
+        let (args, places) = self.lower_call_arguments(&[rhs_expression]);
         self.allow_argument_anchors = saved_anchor_permission;
         AugmentedOperand {
             expression: rhs_expression,

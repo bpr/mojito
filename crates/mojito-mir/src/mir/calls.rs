@@ -121,7 +121,7 @@ impl<'a> Flatten<'a> {
     /// nominal accessor-produced reference uses the same hidden handle slot as
     /// a chained method receiver.
     pub(super) fn lower_call_argument(&mut self, expression: Node<'a>) -> (Reg, Option<MirPlace>) {
-        self.lower_call_argument_with(expression, false, CheckedCallArgumentSource::Positional(0))
+        self.lower_call_argument_with(expression, CheckedCallArgumentSource::Positional(0))
     }
 
     /// Lower one operand of a struct operator, prefix or infix: a place the checker
@@ -471,14 +471,10 @@ impl<'a> Flatten<'a> {
         )
     }
 
-    /// `lends_reads`: the enclosing call's result borrows its read
-    /// arguments, so a shared read of a place argument retains that place
-    /// (see [`Self::lends_read_arguments`]). `source` names the argument
-    /// for its setup read's parameter order.
+    /// `source` names the argument for its setup read's parameter order.
     fn lower_call_argument_with(
         &mut self,
         expression: Node<'a>,
-        lends_reads: bool,
         source: CheckedCallArgumentSource,
     ) -> (Reg, Option<MirPlace>) {
         let owns_setup = self
@@ -486,8 +482,7 @@ impl<'a> Flatten<'a> {
             .last()
             .is_some_and(|setup| setup.depth == self.argument_depth);
         self.argument_depth += 1;
-        let lowered =
-            self.lower_call_operand(expression, lends_reads, owns_setup.then_some(source));
+        let lowered = self.lower_call_operand(expression, owns_setup.then_some(source));
         self.argument_depth -= 1;
         lowered
     }
@@ -505,11 +500,10 @@ impl<'a> Flatten<'a> {
     fn lower_call_operand(
         &mut self,
         expression: Node<'a>,
-        lends_reads: bool,
         setup: Option<CheckedCallArgumentSource>,
     ) -> (Reg, Option<MirPlace>) {
         use mojito_types::origin::Mutability;
-        let lowered = self.lower_call_operand_value(expression, lends_reads, setup);
+        let lowered = self.lower_call_operand_value(expression, setup);
         if expression.spread_operand().is_some() {
             return lowered;
         }
@@ -847,7 +841,6 @@ impl<'a> Flatten<'a> {
     fn lower_call_operand_value(
         &mut self,
         expression: Node<'a>,
-        lends_reads: bool,
         setup: Option<CheckedCallArgumentSource>,
     ) -> (Reg, Option<MirPlace>) {
         if let Some(operand) = expression.spread_operand() {
@@ -864,7 +857,7 @@ impl<'a> Flatten<'a> {
                 )
             })
         {
-            return self.lower_call_operand_value(inner, lends_reads, setup);
+            return self.lower_call_operand_value(inner, setup);
         }
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and
@@ -886,12 +879,7 @@ impl<'a> Flatten<'a> {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::RetainCallPlace
-            ) || (lends_reads
-                && !converted
-                && matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
-                ))
+            )
         });
         if !retains_place {
             // An implicit conversion supersedes the shallow-read shortcut:
@@ -904,7 +892,7 @@ impl<'a> Flatten<'a> {
                     mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
                 )
             }) && !converted
-                && let Some((register, reference_place)) = match setup.filter(|_| !lends_reads) {
+                && let Some((register, reference_place)) = match setup {
                     Some(source) => self.defer_to_setup(expression, Some(source), true, |this| {
                         this.lower_borrowed_read_operand(expression)
                     }),
@@ -917,11 +905,9 @@ impl<'a> Flatten<'a> {
                 // callee's declared convention (a non-`mut`/`ref` slot
                 // reads), and the VM binds it as a caller-place handle. A
                 // register-passable read is passed by value and retains no
-                // place unless the call's result borrows it, so a view's
-                // reference fields root in caller storage.
-                if lends_reads
-                    || self.read_by_address_binding(expression)
-                    || !expression.register_passable_read()
+                // place: a result's loans come from the origin its type
+                // names, never from the argument's storage.
+                if self.read_by_address_binding(expression) || !expression.register_passable_read()
                 {
                     return (
                         register,
@@ -1433,40 +1419,30 @@ impl<'a> Flatten<'a> {
         (value, Some(place))
     }
 
-    /// `lends_reads`: see [`Self::lends_read_arguments`].
     pub(super) fn lower_call_arguments(
         &mut self,
         arguments: &[Node<'a>],
-        lends_reads: bool,
     ) -> (Vec<Reg>, Vec<Option<MirPlace>>) {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for (index, &argument) in arguments.iter().enumerate() {
-            let (register, place) = self.lower_call_argument_with(
-                argument,
-                lends_reads,
-                CheckedCallArgumentSource::Positional(index),
-            );
+            let (register, place) = self
+                .lower_call_argument_with(argument, CheckedCallArgumentSource::Positional(index));
             registers.push(register);
             places.push(place);
         }
         (registers, places)
     }
 
-    /// `lends_reads`: see [`Self::lends_read_arguments`].
     pub(super) fn lower_call_keywords(
         &mut self,
         arguments: &[(&str, Node<'a>)],
-        lends_reads: bool,
     ) -> LoweredKeywords {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for (index, &(name, value)) in arguments.iter().enumerate() {
-            let (register, place) = self.lower_call_argument_with(
-                value,
-                lends_reads,
-                CheckedCallArgumentSource::Keyword(index),
-            );
+            let (register, place) =
+                self.lower_call_argument_with(value, CheckedCallArgumentSource::Keyword(index));
             registers.push((name.to_string(), register));
             places.push(place);
         }

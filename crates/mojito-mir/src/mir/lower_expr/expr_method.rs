@@ -136,19 +136,18 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         let (mut regs, mut arg_places) = (Vec::new(), Vec::new());
         self.open_call_setup();
         let first = usize::from(leading.is_some());
         self.bind_call_operands(call, 0, leading.as_slice(), &[]);
         self.bind_call_operands(call, first, args, kwargs);
         for slice in [leading.as_slice(), args] {
-            let (slice_regs, slice_places) = self.lower_call_arguments(slice, lends_reads);
+            let (slice_regs, slice_places) = self.lower_call_arguments(slice);
             regs.extend(slice_regs);
             arg_places.extend(slice_places);
         }
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
         // A leading operand shifts the positional sources off the contract's.
         self.close_call_setup(leading.is_none().then_some(call));
         let dest = self.fresh(call.location(), None);
@@ -218,7 +217,7 @@ impl<'a> Flatten<'a> {
             self.bind_call_operands(call, 0, &[], kwargs);
             let (kwargs, kwarg_places) = self
                 .copy_construction_keywords(kwargs)
-                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs));
             let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::ConstructTypeParam {
                 dest,
@@ -702,13 +701,12 @@ impl<'a> Flatten<'a> {
         (Vec<Reg>, Vec<Option<MirPlace>>),
         crate::mir::calls::LoweredKeywords,
     ) {
-        let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
         self.bind_call_operands(call, 0, args, kwargs);
-        let positional = self.lower_call_arguments(args, lends_reads);
+        let positional = self.lower_call_arguments(args);
         self.allow_argument_anchors = saved_anchor_permission;
-        let keywords = self.lower_call_keywords(kwargs, lends_reads);
+        let keywords = self.lower_call_keywords(kwargs);
         (positional, keywords)
     }
 

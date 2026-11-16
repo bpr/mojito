@@ -41,12 +41,11 @@ impl<'a> Flatten<'a> {
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (regs, arg_places) = self.lower_call_arguments(args);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
@@ -98,11 +97,10 @@ impl<'a> Flatten<'a> {
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (arg_regs, arg_places) = self.lower_call_arguments(args);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
         let dest = self.fresh(call.location(), None);
@@ -301,11 +299,10 @@ impl<'a> Flatten<'a> {
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (arg_regs, arg_places) = self.lower_call_arguments(args);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
         let d = self.fresh(call.location(), None);
@@ -418,11 +415,10 @@ impl<'a> Flatten<'a> {
         let param_arg_regs = self.param_arg_regs(call);
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let lends_reads = call.lends_read_arguments();
         self.open_call_setup();
         self.bind_call_operands(call, 0, args, kwargs);
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        let (arg_regs, arg_places) = self.lower_call_arguments(args);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
         let captured: Vec<(Reg, Option<MirPlace>)> = match self.storage_place(info) {
