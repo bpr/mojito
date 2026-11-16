@@ -1025,6 +1025,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `read` operand an instance's substitution makes register-passable
+  (`divmod[T](a, b)` at `T = UInt8`, a subscript's `Int` index), and one
+  the elaborator loads where a builtin answers a requirement call, now
+  drops its place-table entry when `lower-arg-conventions` reads it
+  through its reference, as upstream passes the loaded value alone, so
+  these calls no longer reach the place-table fallback. No program output
+  changes. (R2261)
+
 - A builtin standing for a library function's `read` parameter
   (`input`'s prompt, `std.os.abort`'s `_mojito_abort` message) receives a
   memory-only `String` as a `ref.make` of its storage, and a

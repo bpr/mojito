@@ -3353,14 +3353,18 @@ impl<'a> Specializer<'a> {
                         param_decls.clear();
                         instantiated_args.clear();
                         param_arg_regs.clear();
-                        let operands = std::iter::once((recv, recv_place.as_deref())).chain(
+                        let operands = std::iter::once((
+                            recv,
+                            mojito_mir::mir::OperandTable::OwnedBoxed(recv_place),
+                        ))
+                        .chain(
                             args.iter_mut()
                                 .chain(kwargs.iter_mut().map(|(_, register)| register))
                                 .zip(
                                     arg_places
-                                        .iter()
-                                        .chain(kwarg_places.iter())
-                                        .map(Option::as_ref),
+                                        .iter_mut()
+                                        .chain(kwarg_places.iter_mut())
+                                        .map(mojito_mir::mir::OperandTable::Owned),
                                 ),
                         );
                         let loads = mojito_mir::mir::read_addressed_operands(function, operands);

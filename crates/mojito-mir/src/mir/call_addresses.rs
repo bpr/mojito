@@ -185,19 +185,25 @@ pub fn load_register_passable_operands(
 /// lowering forms it. Each `(register, place)` whose register addresses
 /// its place (`addresses_referent`) becomes a `ref.read` of it, returned
 /// for the caller to splice ahead of the call, as upstream's
-/// `LowerArgConventions` loads a by-value argument at the call.
+/// `LowerArgConventions` loads a by-value argument at the call, and its
+/// place-table entry is cleared where the table is [`OperandTable::Owned`]:
+/// the loaded argument names no storage.
 pub fn read_addressed_operands<'r>(
     function: &mut MirFunction,
-    operands: impl IntoIterator<Item = (&'r mut Reg, Option<&'r MirPlace>)>,
+    operands: impl IntoIterator<Item = (&'r mut Reg, OperandTable<'r>)>,
 ) -> Vec<MirInstr> {
     let mut loads = Vec::new();
-    for (register, place) in operands {
+    for (register, table) in operands {
         let Some(TyKind::Ref(reference)) = function.reg_types.get(&register.0).map(Ty::kind) else {
             continue;
         };
-        if !place.is_some_and(|place| addresses_referent(&reference.referent, place)) {
+        if !table
+            .place()
+            .is_some_and(|place| addresses_referent(&reference.referent, place))
+        {
             continue;
         }
+        table.clear();
         let referent = reference.referent.clone();
         let loaded = Reg(function.n_regs);
         function.n_regs += 1;
@@ -212,6 +218,37 @@ pub fn read_addressed_operands<'r>(
         *register = loaded;
     }
     loads
+}
+
+/// The place-table entry of an operand [`read_addressed_operands`] may
+/// load.
+pub enum OperandTable<'r> {
+    /// An entry the load clears: a positional or keyword operand's.
+    Owned(&'r mut Option<MirPlace>),
+    /// A receiver's entry, which the load clears.
+    OwnedBoxed(&'r mut Option<Box<MirPlace>>),
+    /// An entry the call keeps beside the loaded value: a `call.indirect`'s
+    /// `callee_place`, by which the inliner resolves the closure a slot
+    /// holds.
+    Kept(Option<&'r MirPlace>),
+}
+
+impl OperandTable<'_> {
+    fn place(&self) -> Option<&MirPlace> {
+        match self {
+            Self::Owned(place) => place.as_ref(),
+            Self::OwnedBoxed(place) => place.as_deref(),
+            Self::Kept(place) => *place,
+        }
+    }
+
+    fn clear(self) {
+        match self {
+            Self::Owned(place) => *place = None,
+            Self::OwnedBoxed(place) => *place = None,
+            Self::Kept(_) => {}
+        }
+    }
 }
 
 /// Whether two places name the same storage, whatever local reference
@@ -1450,14 +1487,23 @@ fn load_in_blocks(
                 Some((receiver, operands))
             });
         if let Some((receiver, operands)) = by_value {
-            let (receiver_register, registers) = operand_registers_mut(&mut block.instrs[index]);
-            if receiver && let Some(register) = receiver_register {
-                read_operand(register, reg_types, context, &mut loads);
+            let instruction = &mut block.instrs[index];
+            let mut loaded = Vec::new();
+            let (receiver_register, registers) = operand_registers_mut(instruction);
+            if receiver
+                && let Some(register) = receiver_register
+                && read_operand(register, reg_types, context, &mut loads)
+            {
+                loaded.push(None);
             }
-            for (register, by_value) in registers.into_iter().zip(operands) {
-                if by_value {
-                    read_operand(register, reg_types, context, &mut loads);
+            for (position, (register, by_value)) in registers.into_iter().zip(operands).enumerate()
+            {
+                if by_value && read_operand(register, reg_types, context, &mut loads) {
+                    loaded.push(Some(position));
                 }
+            }
+            for position in loaded {
+                clear_operand_table(instruction, position);
             }
         }
         let inserted = loads.len();
@@ -1502,15 +1548,15 @@ fn by_value_receiver(
 }
 
 /// Read a reference operand through, the `ref.read` going to `loads` and
-/// the operand becoming the value it reads.
+/// the operand becoming the value it reads; returns whether it was read.
 fn read_operand(
     register: &mut Reg,
     reg_types: &HashMap<u32, Ty>,
     context: &mut LoadContext<'_, '_>,
     loads: &mut Vec<MirInstr>,
-) {
+) -> bool {
     let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind) else {
-        return;
+        return false;
     };
     let loaded = Reg(*context.next);
     *context.next += 1;
@@ -1522,6 +1568,99 @@ fn read_operand(
         reference: *register,
     });
     *register = loaded;
+    true
+}
+
+/// Clear the place-table entry of the operand at `position` among those
+/// [`operand_registers_mut`] lists (`None` for the receiver), once the
+/// operand passes a value: upstream's call of a loaded argument names no
+/// storage for it.
+fn clear_operand_table(instruction: &mut MirInstr, position: Option<usize>) {
+    let clear = |places: &mut Vec<Option<MirPlace>>, position: usize| {
+        if let Some(place) = places.get_mut(position) {
+            *place = None;
+        }
+    };
+    match (instruction, position) {
+        (
+            MirInstr::MethodCall {
+                recv_place: place, ..
+            }
+            | MirInstr::Index {
+                base_place: place, ..
+            }
+            | MirInstr::MultiIndex {
+                object_place: place,
+                ..
+            }
+            | MirInstr::MultiSet {
+                receiver_place: place,
+                ..
+            },
+            None,
+        )
+        | (
+            MirInstr::Index {
+                index_place: place, ..
+            },
+            Some(_),
+        ) => *place = None,
+        (
+            MirInstr::Call {
+                args,
+                arg_places,
+                kwarg_places,
+                ..
+            }
+            | MirInstr::CallIndirect {
+                args,
+                arg_places,
+                kwarg_places,
+                ..
+            }
+            | MirInstr::MethodCall {
+                args,
+                arg_places,
+                kwarg_places,
+                ..
+            },
+            Some(position),
+        ) => match position.checked_sub(args.len()) {
+            None => clear(arg_places, position),
+            Some(keyword) => clear(kwarg_places, keyword),
+        },
+        (
+            MirInstr::MultiIndex {
+                args,
+                arg_places,
+                kwarg_places,
+                ..
+            },
+            Some(position),
+        ) => match position.checked_sub(args.len()) {
+            None => clear(arg_places, position),
+            Some(keyword) => clear(kwarg_places, keyword),
+        },
+        (
+            MirInstr::MultiSet {
+                args,
+                arg_places,
+                value_place,
+                ..
+            },
+            Some(position),
+        ) => {
+            if position < args.len() {
+                clear(arg_places, position);
+            } else {
+                *value_place = None;
+            }
+        }
+        (MirInstr::ConstructTypeParam { kwarg_places, .. }, Some(position)) => {
+            clear(kwarg_places, position);
+        }
+        _ => {}
+    }
 }
 
 /// Whether a reference to `referent` addresses `place`: its storage, or

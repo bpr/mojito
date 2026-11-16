@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2266**.
+Next free ID: **R2267**.
 
 ## Ordered Work
 
@@ -9691,29 +9691,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `read` operands `input(prompt)` and `print` reach (a dozen per
     program; count calls where `made` is `None` but the register is a
     `ref`).
+  - Probe: `ceildiv(UInt8(7), UInt8(2))`, whose spliced
+    `__trait_dispatch.__ceildiv__` receiver and operand are `ref.make`s
+    the map never saw.
   - Fix: extend the map with each spliced body's `ref.make`s as the
     splice renumbers them.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2261 An instance's by-address `read` operand loaded to a value
-  keeps its place-table entry**
+- [ ] **R2266 A materialized temporary at a register-passable `read`
+  parameter keeps its slot's place-table entry**
 
-  Upstream's `LowerArgConventions` loads a register-passable argument at
-  the call and passes the value alone. Mojito's
-  `load_register_passable_operands` and `read_addressed_operands`
-  (`mir/call_addresses.rs`) turn a template's `ref.make` operand into a
-  `ref.read` value once the instance proves its type register-passable,
-  but leave the table entry, which `table_fallback` then answers.
-  - Probe: `divmod[T](a, b)` instantiated at `UInt8`/`UInt64`/`UInt`
-    (`_write_int`'s `process_digits` and `ceil_div`,
-    `SIMD.__ceildiv__`).
-  - Probe: `FastMathFlag.__eq__` in `FastMathFlag._mlir_attr`, and
-    `_find_index`'s positional 1.
-  - Probe, cause to confirm first: `StringSpan(StringLiteral)` in
-    `Bool.write_to`, an `index.multi_set`'s `value_place`, and an
-    `index.get`'s `index_place` over an `Int`.
-  - Fix: clear the operand's table entry where the pass loads it.
+  Upstream passes a register-passable `read` argument by value, a
+  compile-time value as its `kgen.param.constant`, with no storage.
+  `lower_call_operand` (`mir/calls.rs`) returns the `$mat_r` slot's place
+  from its `materialize_borrow_source` branch even when the operand binds
+  by value (`by_address: false`), so `table_fallback` answers it.
+  - The checker's `materialize_parameter_read` mints the
+    `MaterializeBorrowSource` for a compile-time member read as a value.
+  - Probe: `FastMathFlag.__eq__`'s `other` in `FastMathFlag._mlir_attr`
+    (`self == FastMathFlag.NONE`).
+  - Probe: `StringSpan.__init__(StringLiteral)` in `Bool.write_to`, and
+    `StringSpan.__init__$ov$$$KgenString` over a lifted compile-time
+    `$mat_r` slot (`bind_comptime_memory`).
+  - Fix: return no place there for a register-passable `read`, as the
+    `BorrowReadArgument` branch does, and materialize no slot where
+    nothing borrows it.
+  - Find the shapes by logging `OperandAddresses::address` calls whose
+    operand is no `ref.make` but has a table entry, over `print(True)`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9748,7 +9753,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     inlined, an instruction added or removed, or a different `ref.make`.
   - List the cases whose expectations changed in the summary, and say
     that each one changed only in those fields.
-  - Depends on R2188, R2189, R2190, R2254, R2260, R2261, R2265.
+  - Depends on R2188, R2189, R2190, R2254, R2260, R2265, R2266.
   - Model: Fable, Planned.
 
 - [ ] **R2045 Five MIR pass test inputs predate the verifier's

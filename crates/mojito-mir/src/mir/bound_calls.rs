@@ -107,7 +107,13 @@ pub fn indirect_from_bound_call(
         return Vec::new();
     }
     let mut callee = *recv;
-    let loads = super::read_addressed_operands(function, [(&mut callee, recv_place.as_deref())]);
+    let loads = super::read_addressed_operands(
+        function,
+        [(
+            &mut callee,
+            super::OperandTable::Kept(recv_place.as_deref()),
+        )],
+    );
     *instruction = MirInstr::CallIndirect {
         dest: *dest,
         callee,
