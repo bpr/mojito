@@ -8,19 +8,16 @@ impl FnLowering<'_> {
     /// One checker-selected subscript invocation (`Index`/`MultiIndex`/
     /// `MultiSet` nominal dispatch): bind the receiver by its compiled
     /// convention, match the actual index registers against the callee's
-    /// slots, call, and
-    /// write a `mut self` receiver back — the VM's `method_call` over the
-    /// subscript contract. `anchor` is the result register for the get forms
-    /// and a scratch register for `MultiSet` (whose result is discarded).
-    #[allow(clippy::too_many_arguments)]
+    /// slots, and call — the VM's `method_call` over the subscript
+    /// contract. A by-address receiver or argument passes the reference its
+    /// operand is. `anchor` is the result register for the get forms and a
+    /// scratch register for `MultiSet` (whose result is discarded).
     pub(super) fn lower_subscript_call(
         &mut self,
         ctx: &mut Context,
         anchor: Reg,
-        method: &str,
         call: &mojito_mir::mir::MirSubscriptCall,
         recv: Reg,
-        recv_place: Option<&MirPlace>,
         positional: &[SubscriptActual],
         keywords: &[(&str, SubscriptActual)],
     ) -> Result<(), PlironError> {
@@ -75,24 +72,14 @@ impl FnLowering<'_> {
         })?;
         let defaults = decl.defaults.clone();
         let receiver_convention = decl.receiver_convention;
-        let receiver_alias = recv_place.is_some()
-            && matches!(
-                receiver_convention,
-                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
-            );
         let recv_owned = owned.first().copied().unwrap_or(false);
-        let recv_value = if receiver_alias {
-            let place = recv_place.expect("aliased receivers have a place").clone();
-            self.aliased_receiver_address(ctx, &place, anchor)?
+        let recv_value = if matches!(
+            receiver_convention,
+            Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
+        ) {
+            self.by_address_operand(ctx, recv, anchor)?
         } else {
-            self.place_backed_arg_value(
-                ctx,
-                recv,
-                &params[0],
-                recv_owned,
-                recv_place.filter(|place| self.addresses_place(recv, place)),
-                anchor,
-            )?
+            self.call_operand_value(ctx, recv, &params[0], recv_owned, anchor)?
         };
         let rest = &params[1..];
         let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -110,7 +97,7 @@ impl FnLowering<'_> {
         let collector_value = match (collector, matched.positional_overflow.as_slice()) {
             (None, _) => None,
             (Some(_), [built]) => match &positional[*built] {
-                SubscriptActual::Reg(reg, _) => Some(self.reg_value(ctx, *reg, ScalarTy::Ptr)?),
+                SubscriptActual::Reg(reg) => Some(self.reg_value(ctx, *reg, ScalarTy::Ptr)?),
             },
             (Some(_), _) => None,
         };
@@ -147,28 +134,11 @@ impl FnLowering<'_> {
                 ArgSlot::Default => None,
             };
             let value = match actual {
-                Some(SubscriptActual::Reg(reg, place)) => {
-                    if by_ref {
-                        let Some(place) = place else {
-                            return Err(self.unsupported_reg(
-                                format!(
-                                    "`mut`/`ref` subscript argument of `{resolved}` without a place"
-                                ),
-                                anchor,
-                            ));
-                        };
-                        let place = (*place).clone();
-                        self.place_address(ctx, &place, anchor)?.0
-                    } else {
-                        self.place_backed_arg_value(
-                            ctx,
-                            *reg,
-                            &expected,
-                            owned,
-                            place.filter(|place| self.addresses_place(*reg, place)),
-                            anchor,
-                        )?
-                    }
+                Some(SubscriptActual::Reg(reg)) if by_ref => {
+                    self.by_address_operand(ctx, *reg, anchor)?
+                }
+                Some(SubscriptActual::Reg(reg)) => {
+                    self.call_operand_value(ctx, *reg, &expected, owned, anchor)?
                 }
                 None => {
                     if by_ref {
@@ -189,60 +159,22 @@ impl FnLowering<'_> {
             };
             operands.push(value);
         }
-        self.emit_bound_call(ctx, anchor, &resolved, operands)?;
-        // `mut self` receivers without an aliased place write the modified
-        // receiver back — the `lower_method_call` contract.
-        let write_back = !receiver_alias
-            && !self.aliased_load_regs.contains(&recv.0)
-            && match recv_place
-                .filter(|place| self.addresses_place(recv, place))
-                .and_then(|place| place.ty.as_ref())
-                .or_else(|| self.func.reg_types.get(&recv.0))
-                .map(Ty::kind)
-            {
-                Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
-                    self.struct_decls
-                        .get(struct_name.as_str())
-                        .is_some_and(|d| {
-                            d.mut_self_methods.contains(resolved.as_str())
-                                || d.mut_self_methods.contains(method)
-                        })
-                }
-                _ => false,
-            };
-        if write_back && let Some(place) = recv_place {
-            let LowerTy::Aggregate { layout, .. } = &params[0] else {
-                return Err(
-                    self.unsupported_reg("mutating subscript on a scalar receiver".into(), anchor)
-                );
-            };
-            let size = layout.size;
-            let recv_ptr = self.reg_ptr(ctx, recv)?;
-            let place = place.clone();
-            let (address, _) = self.place_address(ctx, &place, anchor)?;
-            self.mem_copy(ctx, address, recv_ptr, size, anchor);
-        }
-        Ok(())
+        self.emit_bound_call(ctx, anchor, &resolved, operands)
     }
 
     /// One `MirSubscriptArg` as a lowered actual: its index register.
-    pub(super) const fn subscript_actual<'p>(
+    pub(super) const fn subscript_actual(
         arg: &mojito_mir::mir::MirSubscriptArg,
-        place: Option<&'p MirPlace>,
-    ) -> SubscriptActual<'p> {
+    ) -> SubscriptActual {
         match arg {
-            mojito_mir::mir::MirSubscriptArg::Index(reg) => SubscriptActual::Reg(*reg, place),
+            mojito_mir::mir::MirSubscriptArg::Index(reg) => SubscriptActual::Reg(*reg),
         }
     }
 
-    pub(super) fn subscript_actuals<'p>(
+    pub(super) fn subscript_actuals(
         args: &[mojito_mir::mir::MirSubscriptArg],
-        places: &'p [Option<MirPlace>],
-    ) -> Vec<SubscriptActual<'p>> {
-        args.iter()
-            .enumerate()
-            .map(|(i, arg)| Self::subscript_actual(arg, places.get(i).and_then(Option::as_ref)))
-            .collect()
+    ) -> Vec<SubscriptActual> {
+        args.iter().map(Self::subscript_actual).collect()
     }
 
     /// An intrinsic storage subscript: a constant index into heterogeneous

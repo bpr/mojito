@@ -9661,21 +9661,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2189 Pliron reads a by-address argument from its place, not from
-  its reference operand**
-
-  Upstream's LLVM lowering passes the `!lit.ref` operand's pointer.
-  `place_backed_arg_value` (`lower/abi.rs`) loads a scalar addressed
-  operand from its place (`addresses_place`) and falls back to
-  `loaded_places` for a borrowed aggregate.
-  - Callers: `lower/calls.rs`, `lower/methods.rs`, `lower/closures.rs`
-    (`contract_arg_value`), `lower/subscripts.rs`
-    (`lower_subscript_call`).
-  - Fix: lower a `Ref` operand to its address, loading it for a scalar
-    by-value slot, and drop the place parameter.
-  - Depends on R2247, R2186, R2187.
-  - Model: Fable, Planned.
-
 - [ ] **R2190 The loan analysis and the inliner read a call's place table
   rather than its reference operands**
 
@@ -9718,6 +9703,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     consumes, and the inliner forwards an owned argument's slot by
     `loaded_place`: upstream's call takes ownership of the operand value
     instead.
+  - Pliron's last place readers are the same `deinit` receiver:
+    `lower_method_call` passes an aggregate `deinit` receiver's
+    `recv_place` address, and `borrowed_operands`' `receiver_borrows`
+    reads the place's presence for a `Deinit` receiver.
   - Fix: delete the tables, constructors and text fields included, with a
     MIR text bump whose upgrade runs `mir::upgrade_call_operands` first.
   - The owner approved the `tests/mir_passes` re-bless in advance

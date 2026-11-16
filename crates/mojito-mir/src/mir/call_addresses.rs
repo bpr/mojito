@@ -183,7 +183,7 @@ pub fn load_register_passable_operands(
 /// `Tuple` through `Sized`), and the template passed the receiver and
 /// each memory-only `read` operand as a `ref.make` of its place, as
 /// lowering forms it. Each `(register, place)` whose register addresses
-/// its place ([`addresses_place`]) becomes a `ref.read` of it, returned
+/// its place (`addresses_referent`) becomes a `ref.read` of it, returned
 /// for the caller to splice ahead of the call, as upstream's
 /// `LowerArgConventions` loads a by-value argument at the call.
 pub fn read_addressed_operands<'r>(
@@ -212,20 +212,6 @@ pub fn read_addressed_operands<'r>(
         *register = loaded;
     }
     loads
-}
-
-/// Whether a call operand of type `operand` passes `place` by address.
-///
-/// The operand is a reference to the place's own storage, or, where the
-/// place holds a reference (a `ref` field, a `ref` binding's slot), that
-/// stored reference itself, as upstream passes the `!lit.ref` the place
-/// holds (`Flatten::address_operand`).
-#[must_use]
-pub fn addresses_place(operand: Option<&Ty>, place: &MirPlace) -> bool {
-    matches!(
-        operand.map(Ty::kind),
-        Some(TyKind::Ref(reference)) if addresses_referent(&reference.referent, place)
-    )
 }
 
 /// Whether two places name the same storage, whatever local reference

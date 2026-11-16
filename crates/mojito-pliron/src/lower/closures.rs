@@ -64,7 +64,6 @@ impl FnLowering<'_> {
     /// the callee register's checked contract, load `{ invoke, env }`, and
     /// call `invoke` indirectly with the environment pointer prepended
     /// (after the outcome/sret out-pointer, when one exists).
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_call_indirect(
         &mut self,
         ctx: &mut Context,
@@ -72,8 +71,6 @@ impl FnLowering<'_> {
         callee: Reg,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
-        kwarg_places: &[Option<MirPlace>],
         instantiated_contract: Option<&Ty>,
     ) -> Result<(), PlironError> {
         let contract = instantiated_contract
@@ -86,8 +83,7 @@ impl FnLowering<'_> {
             contract = reference.referent.clone();
         }
         let abi = self.contract_abi(ctx, &contract, dest)?;
-        let bound =
-            self.bind_contract_slots(ctx, dest, &abi, args, kwargs, arg_places, kwarg_places)?;
+        let bound = self.bind_contract_slots(ctx, dest, &abi, args, kwargs)?;
         let base = self.reg_ptr(ctx, callee)?;
         let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
         let invoke = LoadOp::new(ctx, base, ptr_ty);
@@ -115,8 +111,8 @@ impl FnLowering<'_> {
     /// binding as `bind_call_slots`, off the `TyKind::Func` contract instead of
     /// a compiled declaration. Defaults reject: the VM binds an omitted
     /// argument from the runtime callee's declaration, which the native
-    /// caller cannot see behind the thunk.
-    #[allow(clippy::too_many_arguments)]
+    /// caller cannot see behind the thunk. A `mut`/`ref` slot passes the
+    /// reference its operand is.
     pub(super) fn bind_contract_slots(
         &mut self,
         ctx: &mut Context,
@@ -124,8 +120,6 @@ impl FnLowering<'_> {
         abi: &ContractAbi,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
-        kwarg_places: &[Option<MirPlace>],
     ) -> Result<Vec<Value>, PlironError> {
         let kw_names: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
         let matched = match_call_slots(
@@ -172,39 +166,17 @@ impl FnLowering<'_> {
             let expected = expected.clone();
             let owned = abi.owned_params.get(index).copied().unwrap_or(false);
             let by_ref = abi.ref_params.get(index).copied().unwrap_or(false);
-            let place_address = |lowering: &mut Self,
-                                 ctx: &mut Context,
-                                 place: Option<&MirPlace>|
-             -> Result<Value, PlironError> {
-                let Some(place) = place.cloned() else {
-                    return Err(lowering.unsupported_reg(
-                        "`mut`/`ref` indirect argument without a place".into(),
-                        dest,
-                    ));
-                };
-                Ok(lowering.place_address(ctx, &place, dest)?.0)
-            };
             let value = match slot {
-                ArgSlot::Positional(p) if by_ref => {
-                    place_address(self, ctx, arg_places.get(*p).and_then(Option::as_ref))?
-                }
+                ArgSlot::Positional(p) if by_ref => self.by_address_operand(ctx, args[*p], dest)?,
                 ArgSlot::Keyword(k) if by_ref => {
-                    place_address(self, ctx, kwarg_places.get(*k).and_then(Option::as_ref))?
+                    self.by_address_operand(ctx, kwargs[*k].1, dest)?
                 }
-                ArgSlot::Positional(p) => self.contract_arg_value(
-                    ctx,
-                    args[*p],
-                    arg_places.get(*p).and_then(Option::as_ref),
-                    (&expected, owned),
-                    dest,
-                )?,
-                ArgSlot::Keyword(k) => self.contract_arg_value(
-                    ctx,
-                    kwargs[*k].1,
-                    kwarg_places.get(*k).and_then(Option::as_ref),
-                    (&expected, owned),
-                    dest,
-                )?,
+                ArgSlot::Positional(p) => {
+                    self.call_operand_value(ctx, args[*p], &expected, owned, dest)?
+                }
+                ArgSlot::Keyword(k) => {
+                    self.call_operand_value(ctx, kwargs[*k].1, &expected, owned, dest)?
+                }
                 ArgSlot::Default => {
                     return Err(self.unsupported_reg(
                         "defaulted argument at an indirect call site".into(),
@@ -215,25 +187,6 @@ impl FnLowering<'_> {
             lowered.push(value);
         }
         Ok(lowered)
-    }
-
-    /// The value an indirect call passes for a by-value slot: one the call
-    /// passes by address (a `ref.make` MIR lowering forms) is
-    /// read from, or bound to, its place.
-    fn contract_arg_value(
-        &mut self,
-        ctx: &mut Context,
-        reg: Reg,
-        place: Option<&MirPlace>,
-        (expected, owned): (&LowerTy, bool),
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        match place.filter(|place| self.addresses_place(reg, place)) {
-            Some(place) => {
-                self.place_backed_arg_value(ctx, reg, expected, owned, Some(place), dest)
-            }
-            None => self.arg_value(ctx, reg, expected, owned, dest),
-        }
     }
 
     /// Materialize a constant default at the parameter's scalar type, exactly

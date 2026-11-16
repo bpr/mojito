@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth};
+use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -70,46 +70,55 @@ impl FnLowering<'_> {
         }
     }
 
-    /// Bind an immutable aggregate argument directly to its checked caller
-    /// place, or to the place behind its `LoadPlace` when the checker retained
-    /// none: a borrowed argument never runs a copy lifecycle. A scalar the
-    /// call passes by address (`ref.make` of its place) is read from the
-    /// place.
-    pub(super) fn place_backed_arg_value(
+    /// The value one argument passes at a slot its callee binds by value
+    /// in the lowered signature: a reference operand (a by-address `read`
+    /// argument, a `ref.make` MIR lowering formed) passes its pointer at an
+    /// aggregate slot and is loaded at a scalar one, as upstream's LLVM
+    /// lowering passes a `!lit.ref` operand's pointer; any other operand is
+    /// its own value ([`Self::arg_value`]). A consuming slot never takes a
+    /// reference: it takes the owned value.
+    pub(super) fn call_operand_value(
         &mut self,
         ctx: &mut Context,
         reg: Reg,
         expected: &LowerTy,
         owned: bool,
-        place: Option<&MirPlace>,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        if let (LowerTy::Scalar(scalar), Some(place)) = (expected, place)
-            && self.addresses_place(reg, place)
-        {
-            let address = self.aliased_receiver_address(ctx, place, dest)?;
-            let handle = scalar.handle(ctx);
-            let load = LoadOp::new(ctx, address, handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            return Ok(load.get_result(ctx));
+        if !self.is_reference_operand(reg) {
+            return self.arg_value(ctx, reg, expected, owned, dest);
         }
-        if !owned && matches!(expected, LowerTy::Aggregate { .. }) {
-            let place = place
-                .cloned()
-                .or_else(|| self.loaded_places.get(&reg.0).cloned());
-            // A direct `ref` field's place passes its referent's address.
-            if let Some(place) = place {
-                return self.aliased_receiver_address(ctx, &place, dest);
+        if owned {
+            return Err(self.unsupported_reg("consuming argument passed by reference".into(), dest));
+        }
+        match expected {
+            LowerTy::Scalar(scalar) => {
+                let address = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, address, handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                Ok(load.get_result(ctx))
             }
+            LowerTy::Aggregate { .. } => self.reg_value(ctx, reg, ScalarTy::Ptr),
+            LowerTy::ZeroSized => Err(self.unsupported_reg("zero-sized argument".into(), dest)),
         }
-        self.arg_value(ctx, reg, expected, owned, dest)
     }
 
-    /// Whether `reg` passes `place` by address ([`mojito_mir::mir::addresses_place`]):
-    /// a reference to the place's own storage, or the reference a place
-    /// holding one stores.
-    pub(super) fn addresses_place(&self, reg: Reg, place: &MirPlace) -> bool {
-        mojito_mir::mir::addresses_place(self.func.reg_types.get(&reg.0), place)
+    /// The pointer a by-address operand passes (a `mut`/`ref` argument or
+    /// receiver): the reference the operand is, as upstream's LLVM lowering
+    /// passes a `!lit.ref`.
+    pub(super) fn by_address_operand(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        if !self.is_reference_operand(reg) {
+            return Err(
+                self.unsupported_reg("by-address argument that is not a reference".into(), dest)
+            );
+        }
+        self.reg_value(ctx, reg, ScalarTy::Ptr)
     }
 
     /// Transfer an owning `{data, len}` Array temporary into the List
@@ -623,6 +632,14 @@ impl FnLowering<'_> {
         alloca.get_operation().insert_at_front(entry, ctx);
         count.get_operation().insert_at_front(entry, ctx);
         alloca.get_result(ctx)
+    }
+
+    /// Whether `reg` is a reference: the `!lit.ref` a by-address operand is.
+    fn is_reference_operand(&self, reg: Reg) -> bool {
+        matches!(
+            self.func.reg_types.get(&reg.0).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        )
     }
 }
 

@@ -435,8 +435,6 @@ impl FnLowering<'_> {
                 args,
                 kwargs,
                 recv_place,
-                arg_places,
-                kwarg_places,
                 capture_accesses,
                 ..
             } => {
@@ -445,9 +443,8 @@ impl FnLowering<'_> {
                 let _ = (raises, reference_result);
                 // Capture accesses are static ownership facts execution
                 // erases; verified concrete MIR carries no compile-time
-                // argument slots. Argument places matter only at `mut`/`ref`
-                // parameter positions (borrowed read arguments pass their
-                // value copy).
+                // argument slots. A by-address operand is the reference the
+                // call passes; only a `deinit` receiver's place is read.
                 let _ = capture_accesses;
                 let adapter = result_adapter
                     .as_deref()
@@ -460,8 +457,6 @@ impl FnLowering<'_> {
                     resolved.as_deref(),
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                     recv_place.as_deref(),
                 )?;
                 // `__next__` reached through the iterator contract yields its
@@ -485,8 +480,8 @@ impl FnLowering<'_> {
                 raises,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
+                arg_places: _,
+                kwarg_places: _,
                 conventions: _,
                 capture_accesses,
                 param_arg_regs: _,
@@ -499,16 +494,15 @@ impl FnLowering<'_> {
                 let _ = raises;
                 // Capture accesses are static ownership facts execution
                 // erases; verified concrete MIR carries no compile-time
-                // argument slots. Argument places matter only at `mut`/`ref`
-                // parameter positions (borrowed read arguments pass their
-                // value copy).
+                // argument slots. A by-address operand is the reference the
+                // call passes.
                 let _ = capture_accesses;
                 // The libc FFI builtin reads its callee from the call's
                 // compile-time arguments.
                 if func.0 == "external_call" {
                     return self.lower_external_call(ctx, *dest, args, instantiated_args);
                 }
-                self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places, kwarg_places)
+                self.lower_call(ctx, *dest, &func.0, args, kwargs)
             }
             // The slot's alloca already exists from function entry.
             MirInstr::DeclareVar { .. } => Ok(()),
@@ -616,10 +610,8 @@ impl FnLowering<'_> {
                 dest,
                 base,
                 index,
-                base_place,
-                index_place,
                 call: Some(call),
-                intrinsic: _,
+                ..
             } => {
                 // A parameterless specialized accessor (a Tuple element
                 // getter) takes only `self`; an overloaded `__getitem__`
@@ -628,18 +620,9 @@ impl FnLowering<'_> {
                 let positional = if call.arguments.is_empty() {
                     Vec::new()
                 } else {
-                    vec![SubscriptActual::Reg(*index, index_place.as_deref())]
+                    vec![SubscriptActual::Reg(*index)]
                 };
-                self.lower_subscript_call(
-                    ctx,
-                    *dest,
-                    "__getitem__",
-                    call,
-                    *base,
-                    base_place.as_deref(),
-                    &positional,
-                    &[],
-                )
+                self.lower_subscript_call(ctx, *dest, call, *base, &positional, &[])
             }
             MirInstr::Index {
                 dest,
@@ -652,58 +635,31 @@ impl FnLowering<'_> {
                 dest,
                 object,
                 args,
-                object_place,
-                arg_places,
                 kwargs,
-                kwarg_places,
                 call: Some(call),
+                ..
             } => {
-                let positional = Self::subscript_actuals(args, arg_places);
-                let mut keywords = Vec::with_capacity(kwargs.len());
-                for (i, (name, arg)) in kwargs.iter().enumerate() {
-                    let actual =
-                        Self::subscript_actual(arg, kwarg_places.get(i).and_then(Option::as_ref));
-                    keywords.push((name.as_str(), actual));
-                }
-                self.lower_subscript_call(
-                    ctx,
-                    *dest,
-                    "__getitem__",
-                    call,
-                    *object,
-                    object_place.as_deref(),
-                    &positional,
-                    &keywords,
-                )
+                let positional = Self::subscript_actuals(args);
+                let keywords: Vec<_> = kwargs
+                    .iter()
+                    .map(|(name, arg)| (name.as_str(), Self::subscript_actual(arg)))
+                    .collect();
+                self.lower_subscript_call(ctx, *dest, call, *object, &positional, &keywords)
             }
             MirInstr::MultiSet {
                 receiver,
-                receiver_place,
                 args,
-                arg_places,
                 value,
-                value_place,
                 value_keyword,
                 call,
+                ..
             } => {
                 // The discarded `__setitem__` result binds to a scratch
                 // register outside the function's register space.
                 let scratch = Reg(u32::MAX);
-                let positional = Self::subscript_actuals(args, arg_places);
-                let keywords = vec![(
-                    value_keyword.as_str(),
-                    SubscriptActual::Reg(*value, value_place.as_deref()),
-                )];
-                self.lower_subscript_call(
-                    ctx,
-                    scratch,
-                    "__setitem__",
-                    call,
-                    *receiver,
-                    receiver_place.as_deref(),
-                    &positional,
-                    &keywords,
-                )
+                let positional = Self::subscript_actuals(args);
+                let keywords = vec![(value_keyword.as_str(), SubscriptActual::Reg(*value))];
+                self.lower_subscript_call(ctx, scratch, call, *receiver, &positional, &keywords)
             }
             MirInstr::MakeClosure {
                 dest,
@@ -719,8 +675,8 @@ impl FnLowering<'_> {
                 args,
                 kwargs,
                 callee_place,
-                arg_places,
-                kwarg_places,
+                arg_places: _,
+                kwarg_places: _,
                 capture_accesses,
                 param_arg_regs: _,
                 param_decls,
@@ -755,8 +711,6 @@ impl FnLowering<'_> {
                     *callee,
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                     instantiated_contract.as_ref(),
                 )
             }

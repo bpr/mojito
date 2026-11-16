@@ -2494,10 +2494,15 @@ holds, as upstream passes the `!lit.ref` the field or binding is
 the read through it becomes a forwarding `ref.make` of the `ref` field's
 place, typed as the stored reference, or a `ref.make` of the binding's
 slot through itself, and a subscript store's setter takes the same
-reference of its base. The place stays beside it, and `mir::addresses_place`
-(shared by the elaborator's `read_addressed_operands`, the VM, and Pliron)
-counts such an operand as addressing it; the inliner binds a parameter
-passed a `ref` field to the handle it stores (`place_binding`). The verifier
+reference of its base. The place stays beside it, and the elaborator's
+`read_addressed_operands` counts such an operand as addressing it; the
+inliner binds a parameter passed a `ref` field to the handle it stores
+(`place_binding`). Backends read the operand, not the place: the VM binds
+the reference, and Pliron passes its pointer as upstream's LLVM lowering
+passes a `!lit.ref`, loading it at a slot its lowered signature takes as a
+scalar (`call_operand_value`, `by_address_operand`, `lower/abi.rs`); only a
+`deinit` receiver's consumed place is still read from the place table
+(R2191). The verifier
 (`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
 or `call.method` binding by its callee's declaration; the same rule at a
 by-address `read` slot waits on the shapes above (R2251). A MIR text
@@ -2524,8 +2529,9 @@ receiver register-passable (`read x: T` at `T = Int`), as upstream's pass
 loads such an argument at the call; the move check and the inliner's
 receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
-referent. The place stays in `arg_places`, which Pliron still binds a
-parameter from (R2189); the VM binds each operand as the call passes it,
+referent. The place stays in `arg_places`, which no backend binds a
+parameter from (Pliron reads only a `deinit` receiver's, R2191); the VM
+binds each operand as the call passes it,
 a by-address one as its reference, as upstream's callee binds its
 `!lit.ref`, reads one through only for a builtin taking values, and
 passes the pointer a place-pointer slot holds for a reference to that
@@ -2641,7 +2647,7 @@ the span's pointer one to the array slot's first element, which pointer
 arithmetic moves along that array (`offset_place_handle`). A spread
 (`show(*args)`, `take(*args^)`) passes the caller's pack itself: Pliron
 binds a `read` collector to the caller's storage in place and an owning one
-to the moved pack (`place_backed_arg_value`). A call spreading the caller's
+to the moved pack (`call_operand_value`). A call spreading the caller's
 pack fills its omitted defaults as any call does (`fill_omitted_arguments`).
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time

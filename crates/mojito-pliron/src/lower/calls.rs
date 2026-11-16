@@ -10,7 +10,6 @@ impl FnLowering<'_> {
     /// exactly like the VM; everything else binds against the compiled
     /// signature, resolving keywords and constant defaults through the shared
     /// call-slot matcher.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_call(
         &mut self,
         ctx: &mut Context,
@@ -18,8 +17,6 @@ impl FnLowering<'_> {
         name: &str,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
-        kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         if intercepted_call(name) {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
@@ -136,14 +133,7 @@ impl FnLowering<'_> {
                         continue;
                     }
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
-                    lowered.push(self.place_backed_arg_value(
-                        ctx,
-                        *arg,
-                        expected,
-                        owned,
-                        arg_places.get(i).and_then(Option::as_ref),
-                        dest,
-                    )?);
+                    lowered.push(self.call_operand_value(ctx, *arg, expected, owned, dest)?);
                 }
             } else {
                 lowered.extend(self.bind_call_slots(
@@ -155,8 +145,6 @@ impl FnLowering<'_> {
                     rest_by_reference,
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                 )?);
             }
             self.emit_bound_call(ctx, dest, name, lowered)?;
@@ -184,25 +172,9 @@ impl FnLowering<'_> {
                     }
                     let owned = owned.get(i).copied().unwrap_or(false);
                     let value = if by_ref {
-                        // A `mut`/`ref` argument passes the address of the
-                        // caller's designated storage (write-through).
-                        let Some(place) = arg_places.get(i).and_then(Option::as_ref) else {
-                            return Err(self.unsupported_reg(
-                                format!("`mut`/`ref` argument of `{name}` without a place"),
-                                dest,
-                            ));
-                        };
-                        let place = place.clone();
-                        self.reference_argument_address(ctx, &place, dest)?
+                        self.by_address_operand(ctx, *arg, dest)?
                     } else {
-                        self.place_backed_arg_value(
-                            ctx,
-                            *arg,
-                            expected,
-                            owned,
-                            arg_places.get(i).and_then(Option::as_ref),
-                            dest,
-                        )?
+                        self.call_operand_value(ctx, *arg, expected, owned, dest)?
                     };
                     lowered.push(value);
                 }
@@ -217,8 +189,6 @@ impl FnLowering<'_> {
                     &by_reference,
                     args,
                     kwargs,
-                    arg_places,
-                    kwarg_places,
                 )?
             };
         self.emit_bound_call(ctx, dest, name, lowered_args)
@@ -229,10 +199,8 @@ impl FnLowering<'_> {
     /// structural binding the VM applies (`src/call.rs` owns the policy).
     /// `params`, `owned`, and `by_reference` are the expected slices of value
     /// parameters: a method or constructor caller passes its signature minus
-    /// the receiver. A `mut`/`ref` slot passes the address of its checked
-    /// place, taken from the source array the matched slot names —
-    /// `arg_places[p]` for `Positional(p)`, `kwarg_places[k]` for
-    /// `Keyword(k)` — never the parameter position.
+    /// the receiver. A `mut`/`ref` slot passes the reference its operand
+    /// is.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn bind_call_slots(
         &mut self,
@@ -244,8 +212,6 @@ impl FnLowering<'_> {
         by_reference: &[bool],
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
-        kwarg_places: &[Option<MirPlace>],
     ) -> Result<Vec<Value>, PlironError> {
         let Some(decl) = self.declarations.get(name) else {
             return Err(self.unsupported_reg(
@@ -302,12 +268,11 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                let value = self.place_backed_arg_value(
+                let value = self.call_operand_value(
                     ctx,
                     args[*collector],
                     &expected,
                     owned.get(index).copied().unwrap_or(false),
-                    arg_places.get(*collector).and_then(Option::as_ref),
                     dest,
                 )?;
                 Some((index, value))
@@ -332,12 +297,11 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                let value = self.place_backed_arg_value(
+                let value = self.call_operand_value(
                     ctx,
                     kwargs[passed].1,
                     &collector,
                     owned.get(index).copied().unwrap_or(true),
-                    kwarg_places.get(passed).and_then(Option::as_ref),
                     dest,
                 )?;
                 Some((index, value))
@@ -386,41 +350,17 @@ impl FnLowering<'_> {
             }
             let owned = owned.get(i).copied().unwrap_or(false);
             let by_ref = by_reference.get(i).copied().unwrap_or(false);
-            let place_address = |lowering: &mut Self,
-                                 ctx: &mut Context,
-                                 place: Option<&MirPlace>|
-             -> Result<Value, PlironError> {
-                let Some(place) = place.cloned() else {
-                    return Err(lowering.unsupported_reg(
-                        format!("`mut`/`ref` argument of `{name}` without a place"),
-                        dest,
-                    ));
-                };
-                lowering.reference_argument_address(ctx, &place, dest)
-            };
             let value = match slot {
-                ArgSlot::Positional(p) if by_ref => {
-                    place_address(self, ctx, arg_places.get(*p).and_then(Option::as_ref))?
-                }
+                ArgSlot::Positional(p) if by_ref => self.by_address_operand(ctx, args[*p], dest)?,
                 ArgSlot::Keyword(k) if by_ref => {
-                    place_address(self, ctx, kwarg_places.get(*k).and_then(Option::as_ref))?
+                    self.by_address_operand(ctx, kwargs[*k].1, dest)?
                 }
-                ArgSlot::Positional(p) => self.place_backed_arg_value(
-                    ctx,
-                    args[*p],
-                    &expected,
-                    owned,
-                    arg_places.get(*p).and_then(Option::as_ref),
-                    dest,
-                )?,
-                ArgSlot::Keyword(k) => self.place_backed_arg_value(
-                    ctx,
-                    kwargs[*k].1,
-                    &expected,
-                    owned,
-                    kwarg_places.get(*k).and_then(Option::as_ref),
-                    dest,
-                )?,
+                ArgSlot::Positional(p) => {
+                    self.call_operand_value(ctx, args[*p], &expected, owned, dest)?
+                }
+                ArgSlot::Keyword(k) => {
+                    self.call_operand_value(ctx, kwargs[*k].1, &expected, owned, dest)?
+                }
                 ArgSlot::Default => {
                     if by_ref {
                         return Err(self.unsupported_reg(

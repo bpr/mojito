@@ -59,7 +59,7 @@ mod bound_calls;
 pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
 mod call_addresses;
 pub use call_addresses::{
-    addresses_place, by_address_parameter, by_address_receiver, call_operand_parameters,
+    by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, operand_value_ty, read_addressed_operands,
     upgrade_call_operands, upgrade_stored_handles,
 };

@@ -357,10 +357,9 @@ pub const fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
     }
 }
 
-/// One already-lowered subscript actual: an index register, with its checked
-/// place for `mut`/`ref` slots.
-pub enum SubscriptActual<'a> {
-    Reg(Reg, Option<&'a MirPlace>),
+/// One already-lowered subscript actual: an index register.
+pub enum SubscriptActual {
+    Reg(Reg),
 }
 
 pub const fn instr_name(instr: &MirInstr) -> &'static str {
@@ -526,18 +525,14 @@ fn borrowed_operands(
             args.iter().map(|reg| reg.0).collect()
         }
         MirInstr::Call {
-            func,
-            args,
-            kwargs,
-            kwarg_places,
-            ..
+            func, args, kwargs, ..
         } => {
             // A construction of a struct with one `__init__` names the
             // struct; its arguments bind by that initializer's conventions.
             let declaration = declarations
                 .get(&func.0)
                 .or_else(|| declarations.get(&format!("{}.__init__", func.0)));
-            let mut borrowed = match declaration {
+            match declaration {
                 Some(declaration) if declaration.kw_variadic.is_none() => {
                     borrowed_slots(declaration, args, kwargs)
                 }
@@ -548,18 +543,7 @@ fn borrowed_operands(
                     .map(|reg| reg.0)
                     .collect(),
                 None => Vec::new(),
-            };
-            // `Type(copy=place)` is the explicit copy-constructor boundary:
-            // the constructor itself runs the copy lifecycle on the borrowed
-            // source.
-            borrowed.extend(
-                kwargs
-                    .iter()
-                    .zip(kwarg_places)
-                    .filter(|((name, _), place)| name == "copy" && place.is_some())
-                    .map(|((_, reg), _)| reg.0),
-            );
-            borrowed
+            }
         }
         _ => Vec::new(),
     }
@@ -615,9 +599,8 @@ const fn receiver_borrows(
 ) -> bool {
     match convention {
         Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Out) => false,
-        Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Deinit) => {
-            has_place
-        }
+        // A `deinit` receiver borrows its consumed place in place (R2191).
+        Some(mojito_ast::ast::ArgConvention::Deinit) => has_place,
         _ => true,
     }
 }

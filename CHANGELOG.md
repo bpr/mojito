@@ -1008,6 +1008,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The Pliron backend passes a by-address argument or receiver as the
+  pointer its reference operand is, as upstream's LLVM lowering passes a
+  `!lit.ref`, loading it where the lowered signature takes a scalar,
+  instead of rebuilding the address from the call's place table. Its
+  `mut self` write-backs, which could no longer run, are gone, and
+  `mir::addresses_place` is retired; only a `deinit` receiver's consumed
+  place is still read from the table (R2191). (R2189)
+
 - The VM binds a by-address parameter or receiver to the reference its
   call's operand is, as upstream's callee binds its `!lit.ref`, instead of
   loading the operand's place and rebuilding a handle from the call's

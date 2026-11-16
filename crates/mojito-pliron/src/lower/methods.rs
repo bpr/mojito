@@ -41,10 +41,10 @@ impl FnLowering<'_> {
         }
     }
 
-    /// A resolved method call: the receiver and aggregate arguments pass by
-    /// pointer; a `mut self` (or `deinit self`) receiver's final state copies
-    /// back to the caller's receiver place afterwards — the VM's
-    /// `store_at_call_place` write-back.
+    /// A resolved method call: a by-address receiver or argument passes the
+    /// reference its operand is, and an aggregate passes by pointer.
+    /// `recv_place` is read only for a `deinit` receiver, whose consumed
+    /// place the call still takes from the place table (R2191).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_method_call(
         &mut self,
@@ -55,8 +55,6 @@ impl FnLowering<'_> {
         resolved: Option<&str>,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
-        kwarg_places: &[Option<MirPlace>],
         recv_place: Option<&MirPlace>,
     ) -> Result<(), PlironError> {
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
@@ -132,29 +130,25 @@ impl FnLowering<'_> {
             ));
         }
         let recv_owned = owned.first().copied().unwrap_or(false);
-        // A receiver with a known place passes the caller's storage address
-        // directly (write-through) — copy-in/copy-out would point an escaping
-        // interior pointer at the copy — as does a `mut` receiver the callee
-        // takes by reference (a scalar's `SIMD.__setitem__`). A placeless
-        // receiver register is either an aliased load (its address) or an
-        // owned register.
-        let receiver_alias = recv_place.is_some()
-            && (matches!(params[0], LowerTy::Aggregate { .. })
-                || by_reference.first().copied().unwrap_or(false));
-        // A zero-sized receiver (a numeric literal) has no physical
-        // operand: the compiled signature erased its slot.
-        let recv_value = if receiver_alias {
-            let place = recv_place.expect("aliased receivers have a place").clone();
-            Some(self.aliased_receiver_address(ctx, &place, dest)?)
+        // An aggregate `deinit` receiver with a place consumes the caller's
+        // storage in place (R2191). A `mut`/`ref` receiver passes the reference its
+        // operand is, and a zero-sized one (a numeric literal) has no
+        // physical operand: the compiled signature erased its slot.
+        let recv_value = if deinit_receiver
+            && matches!(params[0], LowerTy::Aggregate { .. })
+            && let Some(place) = recv_place
+        {
+            Some(self.aliased_receiver_address(ctx, place, dest)?)
+        } else if by_reference.first().copied().unwrap_or(false) {
+            Some(self.by_address_operand(ctx, recv, dest)?)
         } else if matches!(params[0], LowerTy::ZeroSized) {
             None
         } else {
-            Some(self.place_backed_arg_value(
+            Some(self.call_operand_value(
                 ctx,
                 recv,
                 &params[0],
                 recv_owned || deinit_receiver,
-                recv_place.filter(|place| self.addresses_place(recv, place)),
                 dest,
             )?)
         };
@@ -176,25 +170,9 @@ impl FnLowering<'_> {
                 }
                 let owned = rest_owned.get(i).copied().unwrap_or(false);
                 let value = if rest_by_reference.get(i).copied().unwrap_or(false) {
-                    // A `mut`/`ref` argument passes the address of the
-                    // caller's designated storage (write-through).
-                    let Some(place) = arg_places.get(i).and_then(Option::as_ref) else {
-                        return Err(self.unsupported_reg(
-                            format!("`mut`/`ref` argument of `{resolved}` without a place"),
-                            dest,
-                        ));
-                    };
-                    let place = place.clone();
-                    self.place_address(ctx, &place, dest)?.0
+                    self.by_address_operand(ctx, *arg, dest)?
                 } else {
-                    self.place_backed_arg_value(
-                        ctx,
-                        *arg,
-                        expected,
-                        owned,
-                        arg_places.get(i).and_then(Option::as_ref),
-                        dest,
-                    )?
+                    self.call_operand_value(ctx, *arg, expected, owned, dest)?
                 };
                 lowered.push(value);
             }
@@ -208,47 +186,9 @@ impl FnLowering<'_> {
                 rest_by_reference,
                 args,
                 kwargs,
-                arg_places,
-                kwarg_places,
             )?);
         }
-        self.emit_bound_call(ctx, dest, resolved, lowered)?;
-        // `mut self` (the struct's mut_self_methods set — keyed by either the
-        // overload-qualified or the source method name) and named destructors
-        // write the receiver back; a missing place means a discarded
-        // temporary receiver.
-        let write_back = !receiver_alias
-            && !self.aliased_load_regs.contains(&recv.0)
-            && match recv_place
-                .filter(|place| self.addresses_place(recv, place))
-                .and_then(|place| place.ty.as_ref())
-                .or_else(|| self.func.reg_types.get(&recv.0))
-                .map(Ty::kind)
-            {
-                Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
-                    let is_mut = self
-                        .struct_decls
-                        .get(struct_name.as_str())
-                        .is_some_and(|d| {
-                            d.mut_self_methods.contains(resolved)
-                                || d.mut_self_methods.contains(method)
-                        });
-                    is_mut || (deinit_receiver && matches!(params[0], LowerTy::Aggregate { .. }))
-                }
-                _ => false,
-            };
-        if write_back && let Some(place) = recv_place {
-            let LowerTy::Aggregate { layout, .. } = &params[0] else {
-                return Err(
-                    self.unsupported_reg("mutating method on a scalar receiver".into(), dest)
-                );
-            };
-            let size = layout.size;
-            let recv_ptr = self.reg_ptr(ctx, recv)?;
-            let (address, _) = self.place_address(ctx, place, dest)?;
-            self.mem_copy(ctx, address, recv_ptr, size, dest);
-        }
-        Ok(())
+        self.emit_bound_call(ctx, dest, resolved, lowered)
     }
 
     /// `_mojito_abort(message)` — the `std.os.abort` crossing: report the
