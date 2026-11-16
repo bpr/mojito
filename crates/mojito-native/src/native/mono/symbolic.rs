@@ -392,6 +392,8 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
                 | MirInstr::CopyValue { dest, .. }
                 | MirInstr::UseVar { dest, .. }
                 | MirInstr::LoadPlace { dest, .. }
+                | MirInstr::MakeRef { dest, .. }
+                | MirInstr::ReadRef { dest, .. }
                     if generic_regs.contains(&dest.0) =>
                 {
                     *instruction = MirInstr::Const {
@@ -412,7 +414,7 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
     let generic_regs = function
         .reg_types
         .iter()
-        .filter_map(|(reg, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*reg))
+        .filter_map(|(reg, ty)| generic_callable_storage(ty).then_some(*reg))
         .collect::<HashSet<_>>();
     let generic_vars = function
         .var_tys
@@ -691,4 +693,14 @@ fn layout_answer(
         return Ok(None);
     }
     oracle.answer(query, &ty, target).map(Some)
+}
+
+/// Whether a value of type `ty` is a generic callable or a reference to one,
+/// as a `def(...)` bound's call addresses its callee.
+fn generic_callable_storage(ty: &Ty) -> bool {
+    match ty.kind() {
+        TyKind::GenericFunc(_) => true,
+        TyKind::Ref(reference) => matches!(reference.referent.kind(), TyKind::GenericFunc(_)),
+        _ => false,
+    }
 }

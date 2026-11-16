@@ -116,6 +116,11 @@ impl Decoder {
             // older call reads the value through it.
             crate::mir::upgrade_stored_handles(&mut functions, &declarations);
         }
+        // Schema 1.199 passes a `def(...)` bound's callee to its
+        // `__call__` requirement by address; an older call passes the value.
+        if self.minor < 199 {
+            crate::mir::upgrade_bound_receivers(&mut functions);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {
@@ -163,17 +168,11 @@ impl Decoder {
             }
             entries
         };
-        let mut_self_methods = {
-            let field = self.required(value, fields, "mut_self_methods")?;
-            let names = self.strings(field);
-            let mut methods = HashSet::new();
-            for method in names {
-                if !methods.insert(method.clone()) {
-                    self.error(field.span, format!("duplicate mut_self method `{method}`"));
-                }
-            }
-            methods
-        };
+        // Schema 1.199 drops the list of `mut self` methods, which only a
+        // receiver write-back read.
+        if self.minor < 199 {
+            self.required(value, fields, "mut_self_methods")?;
+        }
         let fieldwise_init = self.req(value, fields, "fieldwise_init", Self::boolean)?;
         let param_decls = self.req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?;
         let explicit_destroy_message =
@@ -387,36 +386,38 @@ impl Decoder {
             .ok()
             .and_then(|module| self.string(module))
             .unwrap_or_default();
-        self.unknown(
-            fields,
-            &[
-                "name",
-                "module",
-                "fields",
-                "mut_self_methods",
-                "fieldwise_init",
-                "param_decls",
-                "origin_params",
-                "explicit_destroy_message",
-                "explicit_destructors",
-                "explicit_destroy_declared",
-                "explicit_destroy_fields",
-                "conformances",
-                "declared",
-                "register_passable",
-                "associated_types",
-                "parameterized_associated_types",
-                "associated_values",
-                "parameterized_associated_values",
-                "members",
-                "witness_tables",
-            ],
-        );
+        let known: &[&str] = &[
+            "name",
+            "module",
+            "fields",
+            "mut_self_methods",
+            "fieldwise_init",
+            "param_decls",
+            "origin_params",
+            "explicit_destroy_message",
+            "explicit_destructors",
+            "explicit_destroy_declared",
+            "explicit_destroy_fields",
+            "conformances",
+            "declared",
+            "register_passable",
+            "associated_types",
+            "parameterized_associated_types",
+            "associated_values",
+            "parameterized_associated_values",
+            "members",
+            "witness_tables",
+        ];
+        let known: Vec<&str> = known
+            .iter()
+            .copied()
+            .filter(|field| self.minor < 199 || *field != "mut_self_methods")
+            .collect();
+        self.unknown(fields, &known);
         Some(MirStructDeclaration {
             name,
             module,
             fields: struct_fields,
-            mut_self_methods,
             fieldwise_init,
             param_decls,
             origin_params,

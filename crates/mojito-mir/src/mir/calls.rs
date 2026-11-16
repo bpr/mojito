@@ -2135,9 +2135,37 @@ impl<'a> Flatten<'a> {
         location: SourceSpan,
         lowered: (Reg, Option<MirPlace>),
     ) -> (Reg, Option<MirPlace>) {
-        match receiver_by_address(contract, register_passable_read, lowered.1.as_ref()) {
+        match receiver_by_address(contract, register_passable_read) {
             Some(wanted) => self.address_lowered_operand(location, lowered, wanted),
             None => lowered,
+        }
+    }
+
+    /// The receiver of a call through a `def(...)` bound: upstream reads the
+    /// bound as a trait whose `__call__` requirement takes `read self`, so
+    /// the call passes an immutable `!lit.ref` of the callee's storage. A
+    /// callee of type `callee_ty` that is a callable-bound parameter and
+    /// kept a typed `callee_place` is addressed; any other callee, such as a
+    /// callable binder's compile-time function, which has no place, stays
+    /// the value it is.
+    pub(super) fn address_bound_callee(
+        &mut self,
+        location: SourceSpan,
+        callee: Reg,
+        callee_place: Option<&MirPlace>,
+        callee_ty: Option<&Ty>,
+    ) -> Reg {
+        let bound = callee_ty.is_some_and(crate::mir::bound_calls::is_callable_bound);
+        match callee_place.filter(|place| bound && place.is_typed()) {
+            Some(place) => {
+                self.address_lowered_operand(
+                    location,
+                    (callee, Some(place.clone())),
+                    mojito_types::origin::Mutability::Immutable,
+                )
+                .0
+            }
+            None => callee,
         }
     }
 
@@ -2159,8 +2187,7 @@ impl<'a> Flatten<'a> {
         let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
         if let Some(place) = place
             && place.ty.is_some()
-            && let Some(wanted) =
-                receiver_by_address(setter, receiver.register_passable_read(), Some(place))
+            && let Some(wanted) = receiver_by_address(setter, receiver.register_passable_read())
         {
             return if is_reference(place.ty.as_ref()) {
                 let (handle_place, handle) = stored_handle(place, wanted);
@@ -3063,26 +3090,21 @@ fn stored_handle(place: &MirPlace, wanted: mojito_types::origin::Mutability) -> 
 }
 
 /// How the method call (or subscript accessor) bound by `contract`
-/// receives its receiver, which kept `place` and is register-passable as
+/// receives its receiver, which is register-passable as
 /// `register_passable_read` records, by address: a declared `mut` or
 /// `ref` receiver (`receiver_requires_place`, whatever its effective
 /// access) as a mutable
 /// reference, which [`Flatten::place_handle_ty`] narrows to the place's own
 /// mutability, a `read` one the check did not prove register-passable as an
 /// immutable one, as upstream's `lit.call` takes a `!lit.ref` of the
-/// receiver's storage. An owned receiver, an elided one, and a `def(...)`
-/// bound's callee, which is the value it is, are `None`.
-fn receiver_by_address(
+/// receiver's storage. An owned receiver and an elided one are `None`.
+const fn receiver_by_address(
     contract: &mojito_checked::checked::CheckedCallContract,
     register_passable_read: bool,
-    place: Option<&MirPlace>,
 ) -> Option<mojito_types::origin::Mutability> {
     use mojito_ast::ast::ArgConvention;
     use mojito_types::origin::Mutability;
-    let callable_bound = place.and_then(|place| place.ty.as_ref()).is_some_and(|ty| {
-        crate::mir::bound_calls::callable_bound_requirement(ty, &contract.target).is_some()
-    });
-    if contract.receiver_elided || callable_bound {
+    if contract.receiver_elided {
         return None;
     }
     if contract.receiver_requires_place {

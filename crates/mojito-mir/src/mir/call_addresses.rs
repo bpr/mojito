@@ -537,8 +537,10 @@ struct BoundCall<'i> {
 /// was selected through. A call through a function value binds the
 /// value's function type, the contract the call instantiates when it
 /// applies compile-time arguments, and a `def(...)` bound's `__call__` the
-/// bound's ([`callable_bound_requirement`]); neither passes its callee by
-/// address.
+/// bound's ([`callable_bound_requirement`]). Neither reports its callee:
+/// a function value's is passed by value, and a bound's is already its
+/// place's address, formed by lowering and read through where the bound
+/// closes to a function value ([`super::indirect_from_bound_call`]).
 fn bound_call<'i>(
     instruction: &'i MirInstr,
     callees: &Callees<'i>,
@@ -628,7 +630,7 @@ fn bound_call<'i>(
             let parameters = operand_parameters(&contract.shape()?, args.len(), &keywords)?;
             // A requirement call whose receiver convention went unrecorded
             // but which writes its receiver is left to its place, and a
-            // `def(...)` bound's callee is passed as the value it is.
+            // `def(...)` bound's callee is the address lowering formed.
             let unrecorded = matches!(contract, Contract::Required { receiver: None, .. })
                 && *recv_writes
                 || matches!(contract, Contract::Signature(_));

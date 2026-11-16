@@ -418,7 +418,6 @@ mod tests {
     use mojito_types::origin::PointerOrigin;
     use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
     use mojito_types::types::{SimdDtype, SimdWidth};
-    use std::collections::HashSet;
 
     fn value_decl(owner: &str, name: &str) -> ParamDecl {
         ParamDecl::Value {
@@ -456,7 +455,6 @@ mod tests {
                 .enumerate()
                 .map(|(index, ty)| (format!("f{index}"), ty))
                 .collect(),
-            mut_self_methods: HashSet::new(),
             fieldwise_init: false,
             param_decls: vec![decl],
             explicit_destructors: HashMap::new(),

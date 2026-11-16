@@ -9,11 +9,11 @@
 //! function value, which has no witness table, to its own
 //! [`MirInstr::CallIndirect`].
 
-use super::MirInstr;
+use super::{MirFunction, MirInstr};
 use mojito_symbol::symbol::{
     callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
 };
-use mojito_types::origin::RefTy;
+use mojito_types::origin::{Mutability, RefTy};
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
@@ -60,18 +60,22 @@ pub fn bound_call_contract<'t, S: BuildHasher>(
 
 /// Rewrite a `__call__` requirement call through a `def(...)` bound whose
 /// receiver substitution made a function value into that value's own
-/// indirect call; returns whether it rewrote `instruction`.
+/// indirect call; returns the loads to splice ahead of the call.
 ///
 /// A function value has no witness table, so upstream's call of the
-/// requirement on it is the call of the value. The rewritten call names
+/// requirement on it is the call of the value. The requirement call passed
+/// the callee's address; a function value is register-passable, so the
+/// rewritten call reads it through that reference (a `ref.read` among the
+/// returned loads), as upstream's `LowerArgConventions` loads a
+/// register-passable `read` operand. The rewritten call names
 /// the receiver's own contract and keeps every operand, place, and capture
 /// access. A generic bound's call keeps the bound's compile-time parameter
 /// declarations, which its parameter arguments name, so the bound's
 /// binders and defaults, not the value's own, bind them.
-pub fn indirect_from_bound_call<S: BuildHasher>(
+pub fn indirect_from_bound_call(
     instruction: &mut MirInstr,
-    reg_types: &HashMap<u32, Ty, S>,
-) -> bool {
+    function: &mut MirFunction,
+) -> Vec<MirInstr> {
     let MirInstr::MethodCall {
         dest,
         recv,
@@ -91,21 +95,23 @@ pub fn indirect_from_bound_call<S: BuildHasher>(
         ..
     } = instruction
     else {
-        return false;
+        return Vec::new();
     };
-    let Some(receiver) = reg_types.get(&recv.0).map(peel_refs) else {
-        return false;
+    let Some(receiver) = function.reg_types.get(&recv.0).map(peel_refs).cloned() else {
+        return Vec::new();
     };
     if method != "__call__"
         || !is_callable_contract_dispatch(target)
         || !matches!(receiver.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
     {
-        return false;
+        return Vec::new();
     }
+    let mut callee = *recv;
+    let loads = super::read_addressed_operands(function, [(&mut callee, recv_place.as_deref())]);
     *instruction = MirInstr::CallIndirect {
         dest: *dest,
-        callee: *recv,
-        resolved: callable_contract_target(receiver),
+        callee,
+        resolved: callable_contract_target(&receiver),
         raises: raises.take(),
         args: std::mem::take(args),
         kwargs: std::mem::take(kwargs),
@@ -119,19 +125,48 @@ pub fn indirect_from_bound_call<S: BuildHasher>(
         // they instantiate, as the call of the value by its own type does.
         instantiated_contract: (!instantiated_args.is_empty())
             .then(|| {
-                super::verify::instantiate_generic_callable_contract(receiver, instantiated_args)
+                super::verify::instantiate_generic_callable_contract(&receiver, instantiated_args)
                     .ok()
             })
             .flatten(),
         instantiated_args: std::mem::take(instantiated_args),
         spread: spread.take(),
     };
-    true
+    loads
+}
+
+/// Upgrade the `def(...)` bound calls of `functions`, read from an
+/// artifact written before such a call passed its callee's address.
+///
+/// Each requirement call whose receiver is still the callee's value and
+/// that kept the callee's typed place passes an immutable `ref.make` of
+/// that place (the reference a place holding one stores), as lowering
+/// forms it: the read defining the receiver in the call's block becomes
+/// the `ref.make`, or one is emitted before the call.
+pub fn upgrade_bound_receivers(functions: &mut [(String, MirFunction)]) {
+    for (_, function) in functions {
+        let mut body = std::mem::take(&mut function.body);
+        upgrade_bound_receivers_in(&mut body, function);
+        function.body = body;
+    }
+}
+
+/// Whether `ty`, through any references, is a type parameter with a
+/// `def(...)` bound.
+pub(super) fn is_callable_bound(ty: &Ty) -> bool {
+    matches!(
+        peel_refs(ty).kind(),
+        TyKind::Param {
+            callable_bound: Some(_),
+            ..
+        }
+    )
 }
 
 /// The requirement call a lowered indirect call through a `def(...)`
 /// bound is, `instruction` itself for any other call: the bound's
-/// `__call__` on its read receiver, `callee`, whose place is the callee's,
+/// `__call__` on its read receiver, `callee`, the callee's address
+/// (`Flatten::address_bound_callee`) whose place is the callee's,
 /// keeping a generic bound's compile-time parameters and the arguments the
 /// call applies. `reference_result` is the call's checked reference result.
 pub(super) fn bound_call_from_indirect(
@@ -141,15 +176,7 @@ pub(super) fn bound_call_from_indirect(
 ) -> MirInstr {
     let requirement = callee_ty
         .map(peel_refs)
-        .filter(|ty| {
-            matches!(
-                ty.kind(),
-                TyKind::Param {
-                    callable_bound: Some(_),
-                    ..
-                }
-            )
-        })
+        .filter(|ty| is_callable_bound(ty))
         .and_then(callable_requirement_target)
         .filter(|requirement| {
             matches!(
@@ -205,5 +232,74 @@ fn peel_refs(ty: &Ty) -> &Ty {
     match ty.kind() {
         TyKind::Ref(reference) => peel_refs(&reference.referent),
         _ => ty,
+    }
+}
+
+fn upgrade_bound_receivers_in(block: &mut super::MirBlock, function: &mut MirFunction) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in super::instruction_regions_mut(&mut block.instrs[index]) {
+            upgrade_bound_receivers_in(region, function);
+        }
+        let receiver = bound_call_contract(&block.instrs[index], &function.reg_types)
+            .is_some()
+            .then_some(&block.instrs[index])
+            .and_then(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    recv,
+                    recv_place: Some(place),
+                    ..
+                } if place.is_typed()
+                    && !matches!(
+                        function.reg_types.get(&recv.0).map(Ty::kind),
+                        Some(TyKind::Ref(_))
+                    ) =>
+                {
+                    Some((*recv, (**place).clone()))
+                }
+                _ => None,
+            });
+        let Some((value, place)) = receiver else {
+            index += 1;
+            continue;
+        };
+        let (place, handle) = super::call_addresses::stored_handle(&place, Mutability::Immutable)
+            .unwrap_or_else(|| {
+                let handle = super::mir_place_handle_ty(&place, Some(Mutability::Immutable))
+                    .unwrap_or_else(Ty::error);
+                (place, handle)
+            });
+        let defined = block.instrs[..index]
+            .iter()
+            .rposition(|instruction| match instruction {
+                MirInstr::UseVar { dest, var, .. } => {
+                    *dest == value && place.is_whole_root() && place.root == *var
+                }
+                MirInstr::LoadPlace { dest, place: read } => {
+                    *dest == value && super::call_addresses::same_storage(read, &place)
+                }
+                _ => false,
+            });
+        let address = if let Some(at) = defined {
+            function.reg_types.insert(value.0, handle);
+            block.instrs[at] = MirInstr::MakeRef { dest: value, place };
+            value
+        } else {
+            let span = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
+            let address = super::fresh_register(function, handle, span.as_ref());
+            block.instrs.insert(
+                index,
+                MirInstr::MakeRef {
+                    dest: address,
+                    place,
+                },
+            );
+            index += 1;
+            address
+        };
+        if let MirInstr::MethodCall { recv, .. } = &mut block.instrs[index] {
+            *recv = address;
+        }
+        index += 1;
     }
 }

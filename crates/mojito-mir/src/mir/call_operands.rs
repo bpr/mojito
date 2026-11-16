@@ -291,9 +291,8 @@ const fn subscript_reg(argument: &MirSubscriptArg) -> Reg {
 ///   consumes;
 /// - a spread pack's `arg_places` entry and an `external_call`'s retained
 ///   operand places, which keep their owners alive across the call;
-/// - a `call.indirect`'s `callee_place`, and `canonicalize`'s closure
-///   receiver over a loaded callee, whose closure call receives its context
-///   by value;
+/// - a `call.indirect`'s `callee_place`, whose callee is a function value
+///   passed by value;
 /// - an operand that is already a reference without being a `ref.make` of
 ///   its table's place (a forwarded reference parameter).
 const fn table_fallback<'a>(operand: &CallOperand<'a>) -> Option<&'a MirPlace> {

@@ -1214,7 +1214,6 @@ pub(super) mod tests {
             name: "Box".into(),
             module: String::new(),
             fields: vec![("v".into(), Ty::int())],
-            mut_self_methods: HashSet::new(),
             fieldwise_init: false,
             param_decls: vec![value_decl("Box", 0, "n", Ty::int())],
             explicit_destructors: HashMap::new(),
@@ -1426,7 +1425,6 @@ pub(super) mod tests {
             name: "Bag".into(),
             module: String::new(),
             fields: Vec::new(),
-            mut_self_methods: HashSet::new(),
             fieldwise_init: false,
             param_decls: vec![ParamDecl::Type {
                 id: ParamId::new("Bag", 0),

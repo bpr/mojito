@@ -696,8 +696,9 @@ fn folded_callee<'c, 'd>(
 /// captured places the call now takes first: their addresses, or a
 /// closure method's storage.
 ///
-/// A closure's method is called on its storage, passed at its place when
-/// memory-only, as a capture-list `def` called by name is; any other
+/// A closure's method is called on its storage, passed as an immutable
+/// reference to its place when memory-only, as a capture-list `def` called
+/// by name is; any other
 /// target takes each captured place as a leading reference argument, with
 /// the access its parameter makes to it.
 fn direct_call(
@@ -743,6 +744,20 @@ fn direct_call(
             .ty
             .as_ref()
             .is_some_and(|ty| !declarations.register_passable(ty));
+        // A memory-only storage's `read self` takes its address, as
+        // upstream's `lit.call` takes a `!lit.ref` of it.
+        if memory_only
+            && let Some(handle) = mojito_mir::mir::mir_place_handle_ty(
+                storage,
+                Some(mojito_types::origin::Mutability::Immutable),
+            )
+        {
+            function.reg_types.insert(recv.0, handle);
+            loads[0] = MirInstr::MakeRef {
+                dest: *recv,
+                place: (*storage).clone(),
+            };
+        }
         *instruction = MirInstr::MethodCall {
             conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: *dest,

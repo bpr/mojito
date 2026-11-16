@@ -338,6 +338,12 @@ impl<'a> Flatten<'a> {
                     )
                 })
                 .and_then(mojito_symbol::symbol::callable_contract_target);
+            let factory = self.address_bound_callee(
+                factory_node.location(),
+                factory,
+                callee_place.as_ref(),
+                factory_ty.as_ref(),
+            );
             self.emit(crate::mir::bound_calls::bound_call_from_indirect(
                 MirInstr::CallIndirect {
                     dest: payload,
@@ -588,6 +594,12 @@ impl<'a> Flatten<'a> {
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, callable_target(&node.adjustments), 0);
         let raises = self.call_raises(call, call.raises());
+        let callee = self.address_bound_callee(
+            call.location(),
+            callee,
+            callee_place.as_ref(),
+            callable_ty.as_ref(),
+        );
         self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
             MirInstr::CallIndirect {
                 dest,

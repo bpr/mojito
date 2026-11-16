@@ -1116,7 +1116,6 @@ mod tests {
             name: "S".into(),
             module: String::new(),
             fields: Vec::new(),
-            mut_self_methods: HashSet::new(),
             fieldwise_init: false,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),

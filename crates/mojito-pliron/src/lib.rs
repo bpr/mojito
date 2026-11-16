@@ -1374,7 +1374,6 @@ mod tests {
                     name: "Point".to_string(),
                     module: String::new(),
                     fields: vec![("x".to_string(), Ty::int())],
-                    mut_self_methods: HashSet::default(),
                     fieldwise_init: false,
                     param_decls: Vec::new(),
                     explicit_destructors: HashMap::new(),

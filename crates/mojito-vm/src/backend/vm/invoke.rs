@@ -272,9 +272,6 @@ impl VmBackend {
                 if deinit_receiver && let Some(place) = receiver_place {
                     self.store_at_call_place(frame_id, place, Value::Moved, regs, vars)?;
                 }
-                let write_back = !matches!(receiver, Value::Ref { .. } | Value::Pointer { .. })
-                    && !owned_receiver
-                    && prog.writes_by_value_receiver(name, method, &fname);
                 let mut call_args = Vec::with_capacity(bound.len() + 1);
                 call_args.push(receiver);
                 call_args.extend(bound);
@@ -301,8 +298,7 @@ impl VmBackend {
                 // Adapt while the completed method frame is still available.
                 // A read-only or consuming receiver may return a reference into
                 // that temporary frame, and adapter-time lifecycle code may
-                // write through handles nested in the result. A receiver
-                // write-back therefore follows adaptation.
+                // write through handles nested in the result.
                 let ret = self.apply_checked_result_adapter(
                     prog,
                     ret,
@@ -314,9 +310,6 @@ impl VmBackend {
                         returned: Some((returned_frame_id, &mut frame_vars)),
                     },
                 )?;
-                if write_back && let Some(place) = receiver_place {
-                    self.store_at_call_place(frame_id, place, frame_vars[0].clone(), regs, vars)?;
-                }
                 Ok(ret)
             }
             other => Err(RuntimeError::Unsupported(format!(

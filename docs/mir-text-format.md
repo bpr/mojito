@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.198
+# Mojito Textual MIR Format, Version 1.199
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.198 is implemented end to end for inspection and loading: canonical
+Version 1.199 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.198
+mojito-mir 1.199
 ```
 
-The writer emits 1.198. The reader accepts 1.0 through 1.198; *Schema 1.0*
+The writer emits 1.199. The reader accepts 1.0 through 1.199; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1198,6 +1198,17 @@ takes. The package format moves to `mojito-package 218` with it, when a
 checked `kgen.struct.load_indirect` records
 `SemanticAdjustment::KgenStructLoadIndirect` (R1922).
 
+Schema 1.199 passes a `def(...)` bound's callee to its `__call__`
+requirement call as an immutable `ref.make` of the callee's place (the
+reference a place holding one stores), as upstream's requirement call takes
+a `!lit.ref` of its `read self`; the verifier requires that reference
+wherever the call keeps the callee's place. Struct declarations drop
+`mut_self_methods`, which only the VM's receiver write-back read: a 1.199
+reader rejects the field, and reads and drops it below 1.199. An older
+artifact's bound calls are addressed as it loads
+(`mir::upgrade_bound_receivers`). The package format moves to
+`mojito-package 224` with it (R2254).
+
 Schema 1.198 passes a by-address operand whose retained place holds a
 reference (a `ref` field, a `ref` binding's slot) as that reference: a
 `ref.make` of the `ref` field's place typed as the stored reference, which
@@ -1610,7 +1621,6 @@ identity has already been resolved before MIR.
 struct {
   name: Box,
   fields: [field { name: value, type: Int }],
-  mut_self_methods: [set],
   fieldwise_init: true,
   param_decls: [],
   explicit_destroy_message: absent,

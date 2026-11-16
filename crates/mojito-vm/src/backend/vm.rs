@@ -1048,22 +1048,6 @@ impl Prog {
         }
     }
 
-    /// Whether the method `function_name`, selected for `owner.method`,
-    /// writes its `self` though its call passes the receiver by value: a
-    /// closure storage's call whose body writes a `var` capture, whose
-    /// receiver the VM writes back to the call's receiver place (R2254).
-    fn writes_by_value_receiver(&self, owner: &str, method: &str, function_name: &str) -> bool {
-        let source_name = format!("{owner}.{method}");
-        let key = if function_name == source_name {
-            method
-        } else {
-            function_name
-        };
-        self.structs
-            .get(owner)
-            .is_some_and(|declaration| declaration.mut_self_methods.contains(key))
-    }
-
     fn index_of(&self, name: &str) -> Option<usize> {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
@@ -1330,13 +1314,9 @@ struct FnSig {
 struct FrameId(u64);
 
 /// A struct type's runtime shape, gathered from the program AST (the MIR doesn't
-/// keep field layout): field names + types (for `struct.create` coercion), and which
-/// methods write their `self` where the call passes the receiver by value
-/// (a closure storage whose body writes a `var` capture), so their receiver is
-/// written back (R2254).
+/// keep field layout): field names + types (for `struct.create` coercion).
 struct StructDef {
     fields: Vec<(String, Ty)>,
-    mut_self_methods: std::collections::HashSet<String>,
     /// The lifecycle members the struct owns, with their symbols.
     members: Vec<(String, String)>,
     /// The one field a value of the struct is held as
@@ -1506,9 +1486,7 @@ struct MethodInvocation<'a> {
     /// by-address receiver is, which the method binds as its `self`.
     /// `None` for a receiver passed by value.
     receiver_operand: Option<Value>,
-    /// The receiver's place, which a `deinit` receiver's call consumes and
-    /// a by-value receiver of a `self`-writing closure storage call is
-    /// written back to (R2254).
+    /// The receiver's place, which a `deinit` receiver's call consumes.
     receiver_place: Option<&'a MirPlace>,
 }
 
@@ -1589,7 +1567,6 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                 declaration.name.clone(),
                 StructDef {
                     fields: declaration.fields.clone(),
-                    mut_self_methods: declaration.mut_self_methods.clone(),
                     members: declaration
                         .members
                         .iter()
@@ -1876,7 +1853,6 @@ mod held_struct_tests {
             fields: (0..fields)
                 .map(|at| (format!("f{at}"), Ty::int()))
                 .collect(),
-            mut_self_methods: HashSet::new(),
             fieldwise_init: true,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),

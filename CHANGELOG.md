@@ -1008,6 +1008,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a `def(...)` bound passes its callee's storage as an
+  immutable reference, as upstream's requirement call takes a `!lit.ref`
+  of its `read self`, so a closure storage whose body writes a `var`
+  capture writes the caller's storage. The VM's receiver write-back and
+  the struct declarations' `mut_self_methods` list are gone; the
+  elaborator reads a function-value callee through the reference, and
+  the inliner's witness fold renames a generic bound's compile-time
+  arguments to its member's. MIR text is 1.199, its reader upgrades an
+  older artifact's bound calls, and the package format is
+  `mojito-package 224`
+  (`assets/ok/bound_call_storage_receiver_address.mojo`). (R2254)
+
 - The loan check, the drop facts, `RegisterEnds`, and the inliner read
   the storage a by-address call operand addresses from its `ref.make`, as
   upstream's checks read a `lit.call`'s `!lit.ref` operand, through the

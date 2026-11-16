@@ -480,14 +480,6 @@ impl VmBackend {
             Some(reference) if !owned_receiver => reference,
             _ => receiver,
         };
-        // A by-value receiver the method writes is written back by the
-        // synchronous path (R2254).
-        if !matches!(receiver, Value::Ref { .. } | Value::Pointer { .. })
-            && !owned_receiver
-            && prog.writes_by_value_receiver(&owner, method, &function_name)
-        {
-            return Ok(None);
-        }
         if deinit_receiver && let Some(place) = recv_place.as_deref() {
             self.store_at_call_place(
                 caller.id,

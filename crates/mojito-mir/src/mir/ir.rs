@@ -1417,6 +1417,29 @@ impl MirParamArg {
     }
 }
 
+/// Rename `arguments`, named by `contract`'s declarations, to the witness's
+/// own declarations in `decls`.
+///
+/// Each takes the declaration in the same position of `decls`'s trailing
+/// own parameters, as a conformance maps a requirement's parameters to its
+/// witness's (`def[n: Int](Int)` answered by `__call__[k: Int]`). An
+/// argument naming no contract declaration keeps its name.
+pub fn witness_arguments(
+    contract: &[ParamDecl],
+    decls: &[ParamDecl],
+    arguments: &mut [MirParamArg],
+) {
+    let own = &decls[decls.len().saturating_sub(contract.len())..];
+    for argument in arguments {
+        if let Some(witness) = argument
+            .declaration_index(contract)
+            .and_then(|index| own.get(index))
+        {
+            argument.name = Some(mojito_ast::call::CompileTimeParam::keyword(witness).to_string());
+        }
+    }
+}
+
 /// A source byte range `(start, end)` — re-exported from [`mojito_common::token`], the
 /// canonical span type stamped by the parser onto every AST node.
 pub use mojito_common::token::Span;
@@ -4508,7 +4531,6 @@ mod tests {
                     .enumerate()
                     .map(|(at, ty)| (format!("f{at}"), ty))
                     .collect(),
-                mut_self_methods: HashSet::new(),
                 fieldwise_init: true,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),
@@ -4654,7 +4676,6 @@ mod tests {
                     fields: (0..fields)
                         .map(|at| (format!("f{at}"), Ty::int()))
                         .collect(),
-                    mut_self_methods: HashSet::new(),
                     fieldwise_init: true,
                     param_decls: Vec::new(),
                     explicit_destructors: HashMap::new(),
@@ -4725,7 +4746,6 @@ mod tests {
                 "f0".into(),
                 Ty::new(TyKind::Struct("String".into(), Vec::new())),
             )],
-            mut_self_methods: HashSet::new(),
             fieldwise_init: true,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),
@@ -4813,7 +4833,6 @@ mod tests {
                 name: name.into(),
                 module: String::new(),
                 fields: Vec::new(),
-                mut_self_methods: HashSet::new(),
                 fieldwise_init: false,
                 param_decls: vec![ParamDecl::Type {
                     id,
@@ -4912,7 +4931,6 @@ mod tests {
                 name: mojito_types::types::STRING_LITERAL_TYPE_NAME.into(),
                 module: String::new(),
                 fields: Vec::new(),
-                mut_self_methods: HashSet::new(),
                 fieldwise_init: false,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),

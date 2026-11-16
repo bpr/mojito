@@ -282,8 +282,6 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
             list(declaration.fields.iter().map(|(name, ty)| {
                 record("field", &[("name", symbol(name)), ("type", ty_value(ty))])
             }));
-        let mut methods = declaration.mut_self_methods.iter().collect::<Vec<_>>();
-        methods.sort();
         let explicit_destroy = declaration.explicit_destroy.as_ref();
         let destructors = {
             let mut entries = declaration.explicit_destructors.iter().collect::<Vec<_>>();
@@ -311,10 +309,6 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
         let mut entries = vec![
             ("name", symbol(&declaration.name)),
             ("fields", fields),
-            (
-                "mut_self_methods",
-                list(methods.into_iter().map(|name| symbol(name))),
-            ),
             ("fieldwise_init", declaration.fieldwise_init.to_string()),
             (
                 "param_decls",

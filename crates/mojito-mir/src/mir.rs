@@ -56,7 +56,10 @@ pub mod verify;
 pub mod visit;
 
 mod bound_calls;
-pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
+pub use bound_calls::{
+    bound_call_contract, callable_bound_requirement, indirect_from_bound_call,
+    upgrade_bound_receivers,
+};
 mod call_addresses;
 pub use call_addresses::{
     by_address_parameter, by_address_receiver, call_operand_parameters,
@@ -1896,46 +1899,9 @@ fn struct_declaration(
     let mojito_checked::checked::CheckedStruct {
         name,
         fields,
-        methods,
         fieldwise_init,
         ..
     } = &**declaration;
-    let mut_self_methods = methods
-        .iter()
-        .filter(|m| {
-            matches!(
-                m.self_convention,
-                Some(ArgConvention::Mut | ArgConvention::Ref)
-            )
-        })
-        .map(|m| {
-            if m.symbol == format!("{name}.{}", m.registered) {
-                m.registered.clone()
-            } else {
-                m.symbol.clone()
-            }
-        })
-        .chain(
-            checked
-                .default_wrappers()
-                .iter()
-                .filter(|wrapper| {
-                    wrapper.declaration == *name
-                        && wrapper.module == s.module
-                        && matches!(
-                            wrapper.self_convention,
-                            Some(ArgConvention::Mut | ArgConvention::Ref)
-                        )
-                })
-                .map(|wrapper| {
-                    if wrapper.lowered_name == format!("{name}.{}", wrapper.method) {
-                        wrapper.method.clone()
-                    } else {
-                        wrapper.lowered_name.clone()
-                    }
-                }),
-        )
-        .collect();
     Some(MirStructDeclaration {
         name: name.clone(),
         module: checked
@@ -1956,7 +1922,6 @@ fn struct_declaration(
                 )
             })
             .collect(),
-        mut_self_methods,
         fieldwise_init: *fieldwise_init,
         // The argument view: an instance carries its origins as a tail.
         param_decls: checked

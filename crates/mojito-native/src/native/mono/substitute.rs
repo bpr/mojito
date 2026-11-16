@@ -202,6 +202,32 @@ pub(super) fn substitute_callable_parameter_reads(
     }
 }
 
+/// The function each register of `block`, its regions included, holds a
+/// reference to: a `ref.make` of a retained callable runtime parameter's
+/// whole slot, as a `def(...)` bound's call passes its callee, addresses
+/// the function its argument names ([`substitute_callable_parameter_reads`]
+/// reads the slot's value as it).
+pub(super) fn callable_parameter_addresses(
+    block: &MirBlock,
+    var_names: &[String],
+    callables: &HashMap<String, String>,
+) -> HashMap<u32, (String, bool)> {
+    mojito_mir::mir::nested_instructions(block)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, place }
+                if place.through.is_none() && place.proj.is_empty() =>
+            {
+                var_names
+                    .get(place.root as usize)
+                    .and_then(|name| callables.get(name))
+                    .map(|callable| (dest.0, (callable.clone(), true)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(super) fn substitute_declaration(
     decl: &mut MirFunctionDeclaration,
     bindings: &Bindings,

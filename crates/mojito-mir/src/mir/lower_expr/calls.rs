@@ -127,6 +127,12 @@ impl<'a> Flatten<'a> {
         self.record_call(dest, resolved.clone(), 0);
         let raises = self.call_raises(call, raises);
         let callee_ty = self.f.reg_types.get(&callee.0).or(callable_ty).cloned();
+        let callee = self.address_bound_callee(
+            call.location(),
+            callee,
+            callee_place.as_ref(),
+            callee_ty.as_ref(),
+        );
         self.emit_call(crate::mir::bound_calls::bound_call_from_indirect(
             MirInstr::CallIndirect {
                 dest,

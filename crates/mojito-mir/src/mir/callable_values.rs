@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 /// whether its value captures nothing.
 ///
 /// It is resolved through closures, function constants, copies, and
-/// variables, whether used or loaded whole. A variable names its callable
+/// variables, whether used, loaded, or addressed whole, and through a
+/// reference to one. A variable names its callable
 /// only while nothing writes it but its definitions (see
 /// [`rebound_variables`]) and every definition holds the same callable
 /// (`var g = use; g = use`). The walk descends into every region.
@@ -92,6 +93,20 @@ fn visit_callables(
                     .cloned()
                     .map(|value| (dest.0, value))
             }
+            // A reference to a callable's whole slot, as a `def(...)`
+            // bound's call passes its callee, and the value read through it.
+            MirInstr::MakeRef { dest, place }
+                if place.through.is_none() && place.proj.is_empty() =>
+            {
+                variables
+                    .get(&place.root)
+                    .cloned()
+                    .map(|value| (dest.0, value))
+            }
+            MirInstr::ReadRef { dest, reference } => registers
+                .get(&reference.0)
+                .cloned()
+                .map(|value| (dest.0, value)),
             _ => None,
         };
         if let Some((dest, value)) = resolved

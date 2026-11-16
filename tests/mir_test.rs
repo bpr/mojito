@@ -5414,10 +5414,15 @@ fn nested_call_by_name_passes_its_closure_storage() {
     );
     for storage in ["outer$cap$__storage", "outer$bump$__storage"] {
         assert!(
-            mir.declarations
-                .structure(storage)
-                .is_some_and(|storage| storage.mut_self_methods.is_empty()),
-            "{storage}'s method writes no `self`"
+            mir.functions
+                .iter()
+                .flat_map(|(_, function)| nested_instructions(&function.body))
+                .all(|instruction| !matches!(
+                    instruction,
+                    MirInstr::MethodCall { resolved: Some(resolved), recv_writes: true, .. }
+                        if resolved.starts_with(&format!("{storage}."))
+                )),
+            "{storage}'s methods write no `self`"
         );
     }
 }

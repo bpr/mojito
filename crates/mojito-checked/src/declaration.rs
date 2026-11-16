@@ -18,7 +18,7 @@ use mojito_types::types::{
     GenericConstraint, ParamDecl, Ty, TyArg, TyKind, mentions, replace_parameters,
     substitute_origin_params,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// A package stores each one as a bytecode record, its sets and maps
@@ -34,8 +34,6 @@ pub struct StructDeclaration {
     /// qualifies its name in `reflect[T].name()`.
     pub module: String,
     pub fields: Vec<(String, Ty)>,
-    #[serde(serialize_with = "sorted_names")]
-    pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<ParamDecl>,
     /// The id of each of the struct's explicit origin parameters, in the
@@ -935,16 +933,6 @@ pub fn declared_overloads(
     )
 }
 
-fn sorted_names<S: serde::Serializer>(
-    names: &HashSet<String>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serde::Serialize::serialize(
-        &names.iter().collect::<std::collections::BTreeSet<_>>(),
-        serializer,
-    )
-}
-
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
     map: &HashMap<K, V>,
     serializer: S,
@@ -994,7 +982,6 @@ mod tests {
             name: "Bag".into(),
             module: String::new(),
             fields: Vec::new(),
-            mut_self_methods: HashSet::new(),
             fieldwise_init: false,
             param_decls: Vec::new(),
             origin_params,

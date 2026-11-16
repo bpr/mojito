@@ -9663,34 +9663,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2254 A call through a `def(...)` bound passes a self-writing
-  closure storage by value, so the VM writes it back**
-
-  Upstream's closure call receives its context by reference, so a body
-  that writes a `var` capture writes the caller's storage. Mojito lowers
-  the bound's `__call__` requirement call with the callee value as a
-  by-value receiver (`var.use` of the `F` slot, no `receiver_convention`),
-  and the storage's `__call__` and body methods are only listed in
-  `mut_self_methods` (`mir/nested.rs`).
-  - So the VM keeps one receiver write-back: a by-value receiver of a
-    method `Prog::writes_by_value_receiver` names is written back to the
-    call's `recv_place` after a synchronous call (`method_call`,
-    `vm/invoke.rs`; `prepare_method_call` defers to it).
-  - Probe: `assets/ok/memory_only_read_temporary_address.mojo`
-    (`twice(lambda {var s^} -> Int: (s.__iadd__("!"), ...)[1])` prints
-    `34`; without the write-back the second call double-frees the string).
-  - Probe: `assets/ok/closure_storage_method_binders.mojo`.
-  - A `call.indirect`'s `callee_place` and `canonicalize`'s closure
-    `recv_place` over a loaded callee (`direct_call`) are the same
-    by-value context: `OperandAddresses::address` falls back to the place
-    table for both, and the inliner finds the called closure by
-    `callee_place` (`Closures::called`).
-  - Fix: lower such a receiver as a mutable `ref.make` of the callee's
-    place, then delete `mut_self_methods` from the VM's `StructDef` and the
-    write-back.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2255 The liveness scan, the interior check, copy elision, and
   unused-parameter removal read a call's place table rather than its
   reference operands**

@@ -1714,7 +1714,6 @@ fn declaration_metadata_reprints_byte_identically() {
         name: "Box".into(),
         module: String::new(),
         fields: vec![("value".into(), Ty::int()), ("tag".into(), Ty::bool())],
-        mut_self_methods: HashSet::from(["append".into(), "clear".into()]),
         fieldwise_init: true,
         param_decls: vec![ParamDecl::Type {
             id: test_id("T"),
@@ -1845,7 +1844,6 @@ fn declaration_metadata_reprints_byte_identically() {
         name: "Zebra needs quoting!".into(),
         module: String::new(),
         fields: Vec::new(),
-        mut_self_methods: HashSet::new(),
         fieldwise_init: false,
         param_decls: Vec::new(),
         explicit_destructors: HashMap::new(),

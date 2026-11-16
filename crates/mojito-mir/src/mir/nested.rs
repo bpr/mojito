@@ -832,7 +832,6 @@ fn lower_closure_storage(
 ) -> Option<StorageScope> {
     let storage = storage?;
     let captures = &node.captures;
-    let method = &node.source_name;
     let from = LoweredFrom::at(functions, declarations);
     let copyable = storage.declared.copyable;
     let Some((name, _)) = storage.ty.kind().as_non_simd_struct() else {
@@ -912,14 +911,10 @@ fn lower_closure_storage(
             );
         }
     }
-    let writes_self = captures
-        .iter()
-        .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
     declarations.structs.push(MirStructDeclaration {
         name: name.clone(),
         module: String::new(),
         fields: storage.fields.clone(),
-        mut_self_methods: writes_self.then(|| method.clone()).into_iter().collect(),
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
         origin_params: Vec::new(),
@@ -1015,9 +1010,12 @@ fn lower_closure_storage(
 /// forwards its slot's address, and a reference result is returned as the
 /// reference the call produces. A generic closure's
 /// witness takes the method's parameters and forwards them as its own.
+/// The call writes its receiver (`writes_self`) when the body writes a
+/// `var` capture of the storage.
 fn lower_storage_call_witness(
     storage: &ClosureStorage,
     parameters: &[(String, Ty, Option<ArgConvention>)],
+    writes_self: bool,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
@@ -1156,9 +1154,6 @@ fn lower_storage_call_witness(
         flag: register(&Ty::bool()),
         error: error_slot,
     });
-    let writes_self = declarations
-        .structure(name)
-        .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
     instrs.push(MirInstr::MethodCall {
         conventions: crate::mir::MirArgConventions::default(),
         dest,
@@ -1208,9 +1203,6 @@ fn lower_storage_call_witness(
         .iter_mut()
         .find(|declaration| declaration.name == *name)
     {
-        if writes_self {
-            declaration.mut_self_methods.insert("__call__".to_string());
-        }
         declaration.record_member("__call__", &symbol);
         declaration
             .witness_tables
@@ -1542,7 +1534,10 @@ fn lower_nested_node(
             .zip(&ptys[leading..])
             .map(|((_, parameter), ty)| (parameter.name.clone(), ty.clone(), parameter.convention))
             .collect();
-        lower_storage_call_witness(storage, &parameters, out, declarations);
+        let writes_self = captures
+            .iter()
+            .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
+        lower_storage_call_witness(storage, &parameters, writes_self, out, declarations);
     }
     let immutable_captures: HashSet<String> = captures
         .iter()

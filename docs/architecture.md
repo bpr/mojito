@@ -828,9 +828,11 @@ policy or data-model responsibilities to focused children:
   through a sibling capturing it, is a `method_call` on the storage
   (`Flatten::lower_direct_nested_call`): by value when it is
   register-passable, so a moved capture the body writes is written in
-  that call's copy, and through the storage's place otherwise, which a
-  body owning a moved capture writes back (the struct lists the method in
-  `mut_self_methods`). A first-class use is the storage itself, as
+  that call's copy, and as an immutable reference to the storage's place
+  otherwise, through which a body owning a moved capture writes the
+  caller's storage, as upstream's `read self` takes a `!lit.ref`. A call
+  through a `def(...)` bound passes its callee's place the same way
+  (`Flatten::address_bound_callee`). A first-class use is the storage itself, as
   upstream's `emitClosure` returns it: the check types the value as a
   struct nested in the closure's declaration
   (`symbol::nested_closure_storage_name`), registered as a checker struct
@@ -1275,8 +1277,9 @@ its `param_decls`), so no consumer binds an argument by position again:
 `mir::supplied_parameter_arguments` and the verifier pair each with the
 declaration it names (`MirParamArg::declaration_index`). A call through a
 callable contract or a trait requirement names the contract's
-declarations, which the elaborator renames to its witness's by position
-(`mono/unify.rs`'s `witness_arguments`), as a conformance maps a
+declarations, which the elaborator, and the inliner where it folds a
+witness, rename to the witness's by position (`mir::witness_arguments`),
+as a conformance maps a
 requirement's parameters to its witness's. A type-shaped argument's
 attribute is what it bound to — a type, a value it names (`Self.n`, a
 struct parameter or `comptime` member; a pack spread `*vs`), or an origin — and a value-shaped one's is the type or origin
@@ -4816,8 +4819,7 @@ MIR calls keep the information their backends need for Mojo-style conventions:
 - keyword argument registers
 - simple caller places aligned with both positional and keyword `mut`/`ref`
   arguments, which the loan analysis, the inliner, and Pliron read (the VM
-  reads only a receiver's: a `deinit` one's, which its call consumes, and a
-  by-value self-writing closure storage's, R2254)
+  reads only a `deinit` receiver's, which its call consumes)
 - an optional callable-value place for a nominal `mut`/`ref __call__` receiver
 - source-ordered compile-time parameter arguments, retaining an optional name
   separately from the optional value register (type arguments have no register)
@@ -8533,7 +8535,6 @@ The VM builds a `Prog` containing:
 
 - lowered MIR
 - struct definitions and field layouts
-- the closure-storage methods that write a by-value receiver (R2254)
 - function signatures
 - default arguments
 - value-parameter declarations
@@ -8603,8 +8604,9 @@ Method calls are normal function calls with a receiver convention:
   reference its operand is, as does a borrow of a slot holding a reference,
   so a `mut self` mutation writes the caller's storage directly; an owned or
   `deinit` receiver binds its value, and the call consumes a `deinit`
-  receiver's place; a self-writing closure storage passed by value through
-  a `def(...)` bound is written back to its place (R2254)
+  receiver's place; a `def(...)` bound's callee is such a `read self`
+  receiver, so a closure storage whose body writes a `var` capture writes
+  the caller's storage
 - ordinary `mut` and `ref` method parameters bind their operands' references
 
 Method-dispatched nominal `Index`, `MultiIndex`, and `MultiSet` enter

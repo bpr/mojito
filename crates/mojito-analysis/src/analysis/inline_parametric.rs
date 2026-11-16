@@ -4256,7 +4256,7 @@ fn instantiated<'c>(
     let closures = instantiation.read_binders(&mut function)?;
     let mut blocks = std::mem::take(&mut function.body);
     fold_witnesses(&mut blocks, &function, declarations);
-    fold_bound_calls(&mut blocks, &function);
+    fold_bound_calls(&mut blocks, &mut function);
     adopt_callee_binders(&mut blocks, &function);
     function.body = blocks;
     Some(Instantiated {
@@ -4297,12 +4297,18 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 result_adapter: result_adapter @ Some(_),
                 receiver_convention,
                 param_decls,
+                param_arg_regs,
                 ..
             } if result_adapter.as_ref().is_some_and(|adapter| {
                 adapter.kind == CheckedResultAdapter::CopyIteratorReference
             }) && declaration.param_decls.len() == param_decls.len() =>
             {
                 *resolved = Some(member);
+                mojito_mir::mir::witness_arguments(
+                    param_decls,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                );
                 param_decls.clone_from(&declaration.param_decls);
                 if !declaration.returns_reference {
                     *result_adapter = None;
@@ -4316,11 +4322,17 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 reference_result,
                 result_adapter: None,
                 param_decls,
+                param_arg_regs,
                 ..
             } if declaration.returns_reference == reference_result.is_some()
                 && declaration.param_decls.len() == param_decls.len() =>
             {
                 *resolved = Some(member);
+                mojito_mir::mir::witness_arguments(
+                    param_decls,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                );
                 param_decls.clone_from(&declaration.param_decls);
             }
             // An operator through a bound is its member's call once
@@ -4354,6 +4366,11 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                     && declaration.param_decls.len() == call.param_decls.len()
                 {
                     call.target = member;
+                    mojito_mir::mir::witness_arguments(
+                        &call.param_decls,
+                        &declaration.param_decls,
+                        &mut call.param_arg_regs,
+                    );
                     call.param_decls.clone_from(&declaration.param_decls);
                 }
             }
@@ -4363,13 +4380,20 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
 
 /// Make each `def(...)` bound's `__call__` requirement call of `block`
 /// whose receiver the substitution made a function value that value's own
-/// indirect call, as a function type has no witness table to fold.
-fn fold_bound_calls(block: &mut MirBlock, function: &MirFunction) {
-    for instruction in &mut block.instrs {
+/// indirect call, as a function type has no witness table to fold. The
+/// call reads its callee through the reference it passed; `block` belongs
+/// to the body taken out of `function`.
+fn fold_bound_calls(block: &mut MirBlock, function: &mut MirFunction) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        let instruction = &mut block.instrs[index];
         for region in instruction_regions_mut(instruction) {
             fold_bound_calls(region, function);
         }
-        mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
+        let loads = mojito_mir::mir::indirect_from_bound_call(instruction, function);
+        let spliced = loads.len();
+        block.instrs.splice(index..index, loads);
+        index += spliced + 1;
     }
 }
 

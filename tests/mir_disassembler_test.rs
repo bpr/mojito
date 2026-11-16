@@ -9,7 +9,7 @@ use mojito::mir::{
 use mojito::types::ParamDecl;
 use mojito::types::Ty;
 use mojito::types::kgen_simd_ty;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 fn identity_program() -> MirProgram {
     let function = MirFunction {
@@ -171,7 +171,6 @@ fn metadata_program() -> MirProgram {
             name: "Box".into(),
             module: String::new(),
             fields: vec![("value".into(), Ty::int())],
-            mut_self_methods: HashSet::from(["set".into()]),
             fieldwise_init: true,
             param_decls: vec![ParamDecl::Type {
                 id: mojito::param_expr::ParamId::new("$test:T", 0),

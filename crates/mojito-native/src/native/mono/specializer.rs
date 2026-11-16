@@ -1124,6 +1124,14 @@ impl<'a> Specializer<'a> {
                     CtValue::FuncSymbol(FuncSymbolRef::bare(target.clone())),
                 )
             }));
+        // A bound call's reference to a callable parameter's slot, which
+        // its fold reads through to the function the argument names.
+        self.callable_targets
+            .extend(super::substitute::callable_parameter_addresses(
+                &function.body,
+                &function.var_names,
+                &bindings.callables,
+            ));
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.body);
@@ -3031,7 +3039,17 @@ impl<'a> Specializer<'a> {
             // A `def(...)` bound's `__call__` requirement called on a
             // function value is the value's own indirect call: a
             // function type has no witness table.
-            mojito_mir::mir::indirect_from_bound_call(instruction, &function.reg_types);
+            let loads = mojito_mir::mir::indirect_from_bound_call(instruction, function);
+            for load in &loads {
+                if let MirInstr::ReadRef { dest, reference } = load
+                    && let Some(target) = self.callable_targets.get(&reference.0).cloned()
+                {
+                    self.callable_targets.insert(dest.0, target);
+                }
+            }
+            if !loads.is_empty() {
+                preludes.push((index, loads));
+            }
             // `abs` on a nominal receiver is a checker-typed dunder
             // dispatch the VM performs by name (`call_dunder`); rewrite
             // it into an ordinary method call so the shared resolver and
@@ -3399,7 +3417,7 @@ impl<'a> Specializer<'a> {
                         .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
                         && let Some(declaration) = self.declarations.get(target.as_str())
                     {
-                        super::unify::witness_arguments(
+                        mojito_mir::mir::witness_arguments(
                             param_decls,
                             &declaration.param_decls,
                             param_arg_regs,
@@ -3543,7 +3561,7 @@ impl<'a> Specializer<'a> {
                                 instantiated_args.clone()
                             };
                             if let Some(declaration) = self.declarations.get(target.as_str()) {
-                                super::unify::witness_arguments(
+                                mojito_mir::mir::witness_arguments(
                                     contract,
                                     &declaration.param_decls,
                                     param_arg_regs,
@@ -4110,23 +4128,6 @@ impl<'a> Specializer<'a> {
         declaration.parameterized_associated_values.clear();
         declaration.members.clear();
         declaration.witness_tables.clear();
-        // Overload-qualified `mut self` entries name the template
-        // (for example, a signature-qualified `List.pop`); respell them
-        // under the instance so
-        // lowering's receiver write-back check matches the retargeted
-        // method symbols. Bare method-name entries stay as they are.
-        declaration.mut_self_methods = declaration
-            .mut_self_methods
-            .iter()
-            .map(|entry| {
-                if entry.contains('.') {
-                    mojito_symbol::symbol::retarget_method_symbol(entry, &declaration.name)
-                        .unwrap_or_else(|| entry.clone())
-                } else {
-                    entry.clone()
-                }
-            })
-            .collect();
         declaration.conformances = self.instance_conformances(&template.conformances, bindings);
         declaration.declared = self.instance_conformances(&template.declared, bindings);
         declaration
