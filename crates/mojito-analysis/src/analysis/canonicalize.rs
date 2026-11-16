@@ -744,6 +744,7 @@ fn direct_call(
             .as_ref()
             .is_some_and(|ty| !declarations.register_passable(ty));
         *instruction = MirInstr::MethodCall {
+            conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: *dest,
             recv: *recv,
             method: method.to_owned(),
@@ -800,6 +801,7 @@ fn direct_call(
     }
     places.append(arg_places);
     *instruction = MirInstr::Call {
+        conventions: mojito_mir::mir::MirArgConventions::default(),
         dest: *dest,
         func: FuncRef(callee.name.clone()),
         raises: raises.take(),

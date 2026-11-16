@@ -804,6 +804,7 @@ mod interior_origin_tests {
         // whose convention the MIR does not record, which the checker bound
         // to the shared reference.
         let call = MirInstr::Call {
+            conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: Reg(3),
             func: mojito_mir::mir::FuncRef::named("unknown"),
             raises: None,

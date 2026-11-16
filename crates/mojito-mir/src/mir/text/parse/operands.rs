@@ -426,6 +426,19 @@ impl Decoder {
         })
     }
 
+    pub(super) fn argument_convention(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_checked::checked::CheckedArgumentConvention> {
+        let fields = self.record(value, "argument_convention").ok()?;
+        let source = self.req(value, fields, "source", Self::call_argument_source)?;
+        let convention = self.req(value, fields, "convention", |d, v| {
+            Some(d.option_value(Some(v)).and_then(|v| d.convention(v)))
+        })?;
+        self.unknown(fields, &["source", "convention"]);
+        Some(mojito_checked::checked::CheckedArgumentConvention { source, convention })
+    }
+
     pub(super) fn call_argument_source(
         &mut self,
         value: &Value,

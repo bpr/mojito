@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2244**.
+Next free ID: **R2245**.
 
 ## Ordered Work
 
@@ -7387,6 +7387,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the pin; that special case goes with the port.
   - Done when the bundled declaration is upstream's and the name check is
     gone.
+  - Probe: `show(span[i])` over `def show(s: StringSlice)` and `var span
+    = Span(items)` of a `read` `items`, `span` used after the call, is
+    rejected ("access to 'items' conflicts with live reference 'span'"),
+    where the pin runs it: the implicit conversion's `ref [Self.origin]`
+    takes the element mutably. `StringSlice(span[0])` spelled out runs
+    (found while landing R1931).
   - Found while repairing the 2026-11-04 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9498,23 +9504,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1931 The loan check reconstructs a call argument's convention
-  from declaration tables, so a trait-dispatched method's and a keyword
-  slot's retained places are unclassified**
+- [ ] **R2244 A call's recorded `ref` convention does not say whether
+  the callee declares or infers the slot's mutability**
 
-  `loan_accesses` (`analysis/loans.rs`) asks `CalleeRefParams` for the
-  slot's `param_writes`, which a `__trait_dispatch` symbol, an unresolved
-  `call.method`, and a keyword place never answer, so their places are
-  `LoanAccess::Unclassified` and exclude a shared live loan as a write
-  would; upstream's `lit.call` carries each operand's convention in its
-  callee's type.
-  - Probe: `writer.write_string(span[i])` over a live shared `Span`
-    reference of the same storage (`__trait_dispatch.write_string$ov$…`).
-  - Probe: a keyword argument `f(x=a)` at a `read` slot beside a live
-    shared reference to `a`.
-  - Fix: record each argument's convention on `call`/`call.method` at
-    lowering (the checker binds it), and classify by that record.
-  - Found while landing R1930 (2026-11-05).
+  A trait-dispatched call binding a mutable place to a bare `ref x: T`
+  slot is rejected as a loan conflict beside a live view of that place,
+  where the pin runs it.
+  - The checker's effective convention keeps `ref` for an inferred
+    mutability over a mutable actual (`solve_call_origins`), which the
+    argument-exclusivity check needs.
+  - `recorded_access` (`analysis/loans.rs`) therefore reads a recorded
+    `ref` as a write unless the callee's `param_writes` says otherwise,
+    and a `__trait_dispatch` symbol has no declaration to ask.
+  - Fix: record beside each argument's convention whether its slot's
+    declared contract writes (`DeclarationEffect::param_writes`'s rule),
+    so the loan check reads the call alone.
+  - Probe: `t.size(a)` over a trait requirement `def size(self, ref x:
+    List[Int]) -> Int`, in a generic body holding `var s = Span(a)` used
+    after the call; the pin prints its result.
+  - Found while landing R1931 (2026-11-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

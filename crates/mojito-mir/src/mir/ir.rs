@@ -459,6 +459,7 @@ pub fn dunder_method_call(
 ) -> MirInstr {
     let arg_places = vec![None; args.len()];
     MirInstr::MethodCall {
+        conventions: MirArgConventions::default(),
         dest,
         recv,
         method: method.to_string(),
@@ -525,6 +526,7 @@ pub fn subscript_store_call(
     let call = *call;
     let spread = collector_operand(declared, positional.len(), &kwargs);
     *instruction = MirInstr::MethodCall {
+        conventions: MirArgConventions::default(),
         dest,
         recv: receiver,
         method: "__setitem__".to_string(),
@@ -610,6 +612,7 @@ pub fn receiverless_subscript_call(
     arg_places.resize(args.len(), None);
     let spread = collector_operand(declared, args.len(), &kwargs);
     *instruction = MirInstr::Call {
+        conventions: MirArgConventions::default(),
         dest,
         func: FuncRef::named(&call.target),
         raises: call.raises,
@@ -1877,6 +1880,74 @@ pub struct MirSubscriptCall {
     pub refined_bound: Option<Vec<String>>,
 }
 
+/// The effective convention a call's selected callee binds each of its
+/// source arguments by, as upstream's call carries each operand's
+/// convention in its callee's type.
+///
+/// It is the checker's binding: a contract's
+/// [`mojito_checked::checked::CheckedCallContract::arguments`], or a
+/// call's [`mojito_checked::checked::SemanticAdjustment::CallConventions`].
+/// Empty when the call records no checked binding. Boxed so a call
+/// instruction carries one pointer for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MirArgConventions(Option<Box<ArgumentConventionList>>);
+
+impl MirArgConventions {
+    /// The record of `conventions`, its default sources dropped.
+    pub fn new(
+        conventions: impl IntoIterator<Item = mojito_checked::checked::CheckedArgumentConvention>,
+    ) -> Self {
+        let conventions: Vec<_> = conventions
+            .into_iter()
+            .filter(|argument| {
+                argument.source != mojito_checked::checked::CheckedCallArgumentSource::Default
+            })
+            .collect();
+        Self((!conventions.is_empty()).then(|| Box::new(ArgumentConventionList(conventions))))
+    }
+
+    /// The record of a checked contract's bound `arguments`.
+    pub fn of_arguments(arguments: &[mojito_checked::checked::CheckedCallArgument]) -> Self {
+        Self::new(arguments.iter().map(|argument| {
+            mojito_checked::checked::CheckedArgumentConvention {
+                source: argument.source,
+                convention: argument.convention,
+            }
+        }))
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = &mojito_checked::checked::CheckedArgumentConvention> {
+        self.0.iter().flat_map(|conventions| conventions.0.iter())
+    }
+
+    /// The convention the call binds source argument `source` by: `None`
+    /// when the record does not name it, `Some(None)` for a plain read.
+    pub fn of(
+        &self,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+    ) -> Option<Option<mojito_ast::ast::ArgConvention>> {
+        self.iter()
+            .find(|argument| argument.source == source)
+            .map(|argument| argument.convention)
+    }
+
+    /// The record with each positional source moved `offset` operands
+    /// later, for a call whose leading operands no source names.
+    #[must_use]
+    pub fn shifted(self, offset: usize) -> Self {
+        use mojito_checked::checked::CheckedCallArgumentSource;
+        Self::new(self.iter().map(|argument| {
+            let mut argument = *argument;
+            if let CheckedCallArgumentSource::Positional(position) = argument.source {
+                argument.source = CheckedCallArgumentSource::Positional(position + offset);
+            }
+            argument
+        }))
+    }
+}
+
 /// A raising instruction's error contract and its raise edge.
 ///
 /// Upstream's throwing `lit.call` returns an `i1` error flag as its result
@@ -2249,6 +2320,13 @@ pub enum MirInstr {
         /// reordered by the call ABI, so the backend resolves these by the
         /// selected parameter name rather than by positional index.
         kwarg_places: Vec<Option<MirPlace>>,
+        /// The effective convention the selected callee binds each source
+        /// argument by, as upstream's call carries each operand's convention
+        /// in its callee's type: positional sources index `args` (a direct
+        /// nested call's leading captured operands included), keyword
+        /// sources index `kwargs`. Empty when the call records no checked
+        /// binding; the loan check then reads the callee's declaration.
+        conventions: MirArgConventions,
         /// Concrete captured-owner effects performed transitively during this
         /// call. Static verification consumes these; execution erases them.
         capture_accesses: Vec<MirCaptureAccess>,
@@ -2376,6 +2454,9 @@ pub enum MirInstr {
         arg_places: Vec<Option<MirPlace>>,
         /// Like `Call::kwarg_places`, aligned with `kwargs`.
         kwarg_places: Vec<Option<MirPlace>>,
+        /// Like `Call::conventions`, the receiver's excluded
+        /// (`receiver_convention`).
+        conventions: MirArgConventions,
         capture_accesses: Vec<MirCaptureAccess>,
         /// Compile-time arguments supplied by direct parameterized-method
         /// syntax, in source order. Callable/scalar value parameters retain a
@@ -2992,7 +3073,7 @@ pub enum MirInstr {
 /// An instruction is sized for its common variants: the places and subscript
 /// calls only a few call variants carry sit behind boxes, and a type is one
 /// handle. The call variants' argument lists set this bound.
-const _: () = assert!(std::mem::size_of::<MirInstr>() <= 320);
+const _: () = assert!(std::mem::size_of::<MirInstr>() <= 328);
 
 impl MirInstr {
     /// The `fastmathFlags` constant of the `pop.add`, `pop.sub`, `pop.mul`,
@@ -4314,6 +4395,10 @@ fn comptime_exits_in(
         _ => {}
     }
 }
+
+/// The non-empty list a [`MirArgConventions`] holds.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct ArgumentConventionList(Vec<mojito_checked::checked::CheckedArgumentConvention>);
 
 #[cfg(test)]
 mod tests {

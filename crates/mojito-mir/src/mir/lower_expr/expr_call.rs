@@ -660,9 +660,17 @@ impl<'a> Flatten<'a> {
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
         self.close_call_setup(Some(call));
+        // A fieldwise construction passes its keywords positionally, which
+        // no source the checker bound names.
+        let mut conventions = call.argument_conventions();
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
-            Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
-                .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
+            Some(TyKind::Struct(constructed, _)) if *constructed == *name => {
+                conventions = crate::mir::MirArgConventions::default();
+                self.fieldwise_keywords_positional(
+                    constructed,
+                    (regs, arg_places, kw, kwarg_places),
+                )
+            }
             _ => (regs, arg_places, kw, kwarg_places),
         };
         let target = callable_target(&node.adjustments)
@@ -675,6 +683,7 @@ impl<'a> Flatten<'a> {
         self.record_call(d, Some(target.clone()), 0);
         let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
+            conventions,
             dest: d,
             func: FuncRef::named(&target),
             raises: raises.clone(),
@@ -855,6 +864,7 @@ impl<'a> Flatten<'a> {
             self.record_call(dest, Some(target.clone()), 0);
             let raises = self.call_raises(call, call.raises());
             self.emit_call(MirInstr::Call {
+                conventions: call.argument_conventions(),
                 dest,
                 func: FuncRef::named(&target),
                 raises: raises.clone(),
@@ -912,6 +922,7 @@ impl<'a> Flatten<'a> {
         let transfer_recv_place = recv_place.clone();
         let transfer_arg_places = arg_places.clone();
         self.emit_call(MirInstr::MethodCall {
+            conventions: call.argument_conventions(),
             dest,
             recv,
             method: field,

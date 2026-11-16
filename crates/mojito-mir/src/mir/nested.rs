@@ -1111,6 +1111,7 @@ fn lower_storage_call_witness(
         .structure(name)
         .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
     instrs.push(MirInstr::MethodCall {
+        conventions: crate::mir::MirArgConventions::default(),
         dest,
         recv,
         method: method_name(method),

@@ -273,6 +273,7 @@ impl<'a> Flatten<'a> {
             }
             let dest = self.fresh_typed(e.location(), None, Ty::index());
             self.emit(MirInstr::MethodCall {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest,
                 recv,
                 method: "__mlir_index__".to_string(),
@@ -374,6 +375,7 @@ impl<'a> Flatten<'a> {
             })
             .unwrap_or_default();
         self.emit(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             func: FuncRef::named(target),
             raises,
@@ -624,6 +626,7 @@ impl<'a> Flatten<'a> {
             .into(),
         );
         self.emit(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: nominal,
             func: FuncRef::named(&mojito_symbol::symbol::nominal_string_literal_ctor_symbol()),
             raises: None,

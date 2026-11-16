@@ -1366,6 +1366,7 @@ fn array_literal_construction(
             k: Const::None,
         },
         MirInstr::Call {
+            conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: marker,
             func: mojito_mir::mir::FuncRef::named(mojito_types::types::NONE_TYPE_FROM_NONE),
             raises: None,
@@ -1384,6 +1385,7 @@ fn array_literal_construction(
             k: Const::Int(length),
         },
         MirInstr::Call {
+            conventions: mojito_mir::mir::MirArgConventions::default(),
             dest,
             func: mojito_mir::mir::FuncRef::named(constructor),
             raises: None,

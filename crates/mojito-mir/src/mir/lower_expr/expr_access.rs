@@ -308,6 +308,7 @@ impl<'a> Flatten<'a> {
         self.emit_interior_invalidations(object, None);
         let raises = self.call_raises(e, e.raises());
         self.emit(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             recv,
             method: "__getitem_param__".to_string(),

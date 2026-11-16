@@ -754,6 +754,7 @@ impl DefaultValue {
                 let arg = arg.materialize(function, span, instructions);
                 let dest = fresh_register(function, ty.clone(), span);
                 instructions.push(MirInstr::Call {
+                    conventions: mojito_mir::mir::MirArgConventions::default(),
                     dest,
                     func: FuncRef::named(target),
                     raises: None,

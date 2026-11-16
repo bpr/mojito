@@ -526,6 +526,28 @@ impl<'a> Node<'a> {
             .and_then(|contract| contract.receiver_convention)
     }
 
+    /// The effective conventions this call binds its run-time arguments
+    /// by, which its MIR call records: its contract's
+    /// ([`mojito_checked::checked::CheckedCallContract::arguments`]) or,
+    /// for a call that records none, its recorded conventions
+    /// ([`mojito_checked::checked::SemanticAdjustment::CallConventions`]).
+    pub(super) fn argument_conventions(self) -> crate::mir::MirArgConventions {
+        if let Some(contract) = self.call_contract() {
+            return crate::mir::MirArgConventions::of_arguments(&contract.arguments);
+        }
+        crate::mir::MirArgConventions::new(
+            self.adjustments()
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::CallConventions(conventions) => {
+                        Some(conventions.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
+        )
+    }
+
     /// How this call binds its run-time argument `source`: by the effective
     /// convention of the parameter its selected callee binds it to, its
     /// contract's ([`mojito_checked::checked::CheckedCallContract::arguments`])

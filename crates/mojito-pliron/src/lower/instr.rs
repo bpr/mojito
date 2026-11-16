@@ -487,6 +487,7 @@ impl FnLowering<'_> {
                 kwargs,
                 arg_places,
                 kwarg_places,
+                conventions: _,
                 capture_accesses,
                 param_arg_regs: _,
                 receiver: _,

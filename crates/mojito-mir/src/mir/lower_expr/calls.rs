@@ -53,6 +53,7 @@ impl<'a> Flatten<'a> {
         self.record_call(dest, Some(contract.target.clone()), 0);
         let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
+            conventions: call.argument_conventions(),
             dest,
             func: FuncRef::named(&contract.target),
             raises: raises.clone(),
@@ -466,6 +467,7 @@ impl<'a> Flatten<'a> {
         {
             self.record_call(d, Some(info.mangled.clone()), 0);
             self.emit_call(MirInstr::MethodCall {
+                conventions: call.argument_conventions(),
                 dest: d,
                 recv: *recv,
                 method: info.source_name.clone(),
@@ -501,7 +503,8 @@ impl<'a> Flatten<'a> {
             self.error_region(raises);
             return d;
         }
-        let spread = Self::spread_position(args).map(|position| position + captured.len());
+        let captured_count = captured.len();
+        let spread = Self::spread_position(args).map(|position| position + captured_count);
         // The captured places fill the lifted body's leading parameters,
         // which its declaration lists.
         self.record_call(d, Some(info.mangled.clone()), 0);
@@ -511,6 +514,7 @@ impl<'a> Flatten<'a> {
             captured.into_iter().map(|(_, place)| place).collect();
         all_places.extend(arg_places);
         self.emit_call(MirInstr::Call {
+            conventions: call.argument_conventions().shifted(captured_count),
             dest: d,
             func: FuncRef::named(&info.mangled),
             raises: raises.clone(),

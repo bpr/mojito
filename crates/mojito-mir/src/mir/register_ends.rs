@@ -899,6 +899,7 @@ mod tests {
 
     fn call(args: Vec<Reg>) -> MirInstr {
         MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(9),
             func: FuncRef("take".into()),
             raises: None,
@@ -952,6 +953,7 @@ mod tests {
         receiver_convention: Option<ArgConvention>,
     ) -> MirInstr {
         MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(9),
             recv,
             method: "m".into(),

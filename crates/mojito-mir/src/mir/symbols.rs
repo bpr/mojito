@@ -659,6 +659,7 @@ mod tests {
 
     fn call(name: &str) -> MirInstr {
         MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(0),
             func: FuncRef::named(name),
             raises: None,

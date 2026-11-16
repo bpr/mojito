@@ -1349,6 +1349,7 @@ impl<'a> Flatten<'a> {
             .to_string();
         let raises = self.call_raises(site, contract.raises.clone());
         self.emit_call(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::of_arguments(&contract.arguments),
             dest,
             recv,
             method,
@@ -2362,6 +2363,7 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh_typed(at.clone(), None, storage.instance_ty.clone());
         self.record_call(dest, Some(constructor.clone()), 0);
         self.emit_call(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             func: FuncRef::named(&constructor),
             raises: None,
@@ -4002,6 +4004,7 @@ impl<'a> Flatten<'a> {
         self.record_call(iterator, Some(selected.to_string()), 0);
         let raises = self.raises(error.cloned(), span);
         self.emit_call(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: iterator,
             recv,
             method: "__iter__".to_string(),
@@ -4055,6 +4058,7 @@ impl<'a> Flatten<'a> {
         self.record_call(element, Some(call.target.clone()), 0);
         let raises = self.raises(Some(error.clone()), span);
         self.emit_call(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: element,
             recv,
             method: "__next__".to_string(),

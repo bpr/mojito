@@ -294,6 +294,7 @@ impl<'a> Flatten<'a> {
         self.emit_call_invalidations(node, &[value], &[]);
         let raises = self.call_raises(node, node.raises());
         self.emit_call(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: contains,
             recv,
             method: "__contains__".to_string(),
@@ -457,6 +458,7 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh_typed(node.location(), None, ty);
         self.record_call(dest, Some(func.to_string()), 0);
         self.emit(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             func: FuncRef::named(func),
             raises: None,
@@ -493,6 +495,7 @@ impl<'a> Flatten<'a> {
             let d = self.fresh_typed(node.location(), None, target);
             self.record_call(d, Some(constructor.clone()), 0);
             self.emit(MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest: d,
                 func: FuncRef::named(&constructor),
                 raises: None,
@@ -587,6 +590,7 @@ impl<'a> Flatten<'a> {
             let dest = self.fresh_typed(node.location(), None, target.clone());
             self.record_call(dest, Some(constructor.to_string()), 0);
             self.emit(MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest,
                 func: FuncRef::named(constructor),
                 raises: None,

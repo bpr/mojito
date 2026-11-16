@@ -1163,6 +1163,7 @@ pub(super) mod tests {
         let declarations = declarations("f", Vec::new());
         let mut function = function_with(vec![Ty::none(), Ty::none()]);
         function.body.instrs.push(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(1),
             recv: Reg(0),
             method: "show".into(),
@@ -1359,6 +1360,7 @@ pub(super) mod tests {
                         constructor: None,
                     },
                     MirInstr::Call {
+                        conventions: crate::mir::MirArgConventions::default(),
                         dest: Reg(1),
                         func: crate::mir::FuncRef::named("g"),
                         raises: None,
@@ -1482,6 +1484,7 @@ pub(super) mod tests {
         decls: Vec<ParamDecl>,
     ) -> MirInstr {
         MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(1),
             recv: Reg(0),
             method: "get".into(),

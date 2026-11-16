@@ -534,6 +534,7 @@ impl Decoder {
             "call" => {
                 let func_name = self.req(value, fields, "func", Self::symbol);
                 Some(MirInstr::Call {
+                    conventions: self.argument_conventions(fields),
                     dest: self.req(value, fields, "dest", Self::reg)?,
                     func: FuncRef(func_name.clone()?),
                     raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
@@ -618,6 +619,7 @@ impl Decoder {
                     .and_then(|found| self.option_uint(found)),
             }),
             "call.method" => Some(MirInstr::MethodCall {
+                conventions: self.argument_conventions(fields),
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 recv: self.req(value, fields, "recv", Self::reg)?,
                 method: self.req(value, fields, "method", Self::symbol)?,
@@ -1221,6 +1223,21 @@ impl Decoder {
         self.field(fields, "refined_bound")
             .ok()
             .map(|value| self.strings(value))
+    }
+
+    /// The `conventions` a call records its arguments bound by (schema
+    /// 1.196), empty when it records none, as before 1.196.
+    fn argument_conventions(&mut self, fields: &[Field]) -> crate::mir::MirArgConventions {
+        let Ok(value) = self.field(fields, "conventions") else {
+            return crate::mir::MirArgConventions::default();
+        };
+        let values = self.list(value).unwrap_or_default();
+        crate::mir::MirArgConventions::new(
+            values
+                .iter()
+                .filter_map(|value| self.argument_convention(value))
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// The `fastmath` flag constant a `binary`, `pop`, or `simd.cast`

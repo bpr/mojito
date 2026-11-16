@@ -315,6 +315,7 @@ impl<'a> Specializer<'a> {
         )?;
         if self.removes_receiver(target) {
             let call = MirInstr::Call {
+                conventions: mojito_mir::mir::MirArgConventions::default(),
                 dest: *dest,
                 func: mojito_mir::mir::FuncRef::named(concrete),
                 raises: raises.take(),
@@ -3598,6 +3599,7 @@ impl<'a> Specializer<'a> {
                             target
                         };
                         *instruction = MirInstr::Call {
+                            conventions: mojito_mir::mir::MirArgConventions::default(),
                             dest: *dest,
                             func: mojito_mir::mir::FuncRef(concrete),
                             raises: raises.clone(),

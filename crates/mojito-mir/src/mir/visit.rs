@@ -890,6 +890,7 @@ mod tests {
     /// contract, the sites a read-only client must not miss.
     fn method_call() -> MirInstr {
         MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(6),
             recv: Reg(0),
             method: "get".into(),

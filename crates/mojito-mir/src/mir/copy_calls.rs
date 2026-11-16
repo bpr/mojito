@@ -225,6 +225,7 @@ fn constructor_call(
     let arg_places = vec![None; args.len()];
     let kwarg_places = vec![None; kwargs.len()];
     MirInstr::Call {
+        conventions: crate::mir::MirArgConventions::default(),
         dest,
         func: FuncRef::named(constructor),
         raises: None,

@@ -171,6 +171,7 @@ impl<'a> Flatten<'a> {
         self.record_call(dest, Some(target.to_string()), 0);
         let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::Call {
+            conventions: call.argument_conventions(),
             dest,
             func: FuncRef::named(target),
             raises: raises.clone(),
@@ -755,6 +756,7 @@ impl<'a> Flatten<'a> {
         self.record_call(d, callable_target(&node.adjustments), 0);
         let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::MethodCall {
+            conventions: call.argument_conventions(),
             dest: d,
             recv,
             method: method.to_owned(),

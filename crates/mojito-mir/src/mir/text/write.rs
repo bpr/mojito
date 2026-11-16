@@ -1111,6 +1111,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             kwargs,
             arg_places,
             kwarg_places,
+            conventions,
             capture_accesses,
             param_arg_regs,
             receiver,
@@ -1118,29 +1119,32 @@ fn instruction_value(instruction: &MirInstr) -> String {
             spread,
         } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("func", symbol(&func.0)),
-                ("raises", option(raises.as_ref().map(raises_value))),
-                ("args", regs(args)),
-                ("kwargs", kwargs_value(kwargs)),
-                ("arg_places", places_option(arg_places)),
-                ("kwarg_places", places_option(kwarg_places)),
-                (
-                    "capture_accesses",
-                    list(capture_accesses.iter().map(capture_access)),
-                ),
-                ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
-                ("receiver", option(receiver.as_ref().map(ty_value))),
-                (
-                    "instantiated_args",
-                    list(instantiated_args.iter().map(ty_arg)),
-                ),
-                (
-                    "spread",
-                    option(spread.map(|position| position.to_string())),
-                ),
-            ],
+            &with_conventions(
+                vec![
+                    ("dest", reg_value(*dest)),
+                    ("func", symbol(&func.0)),
+                    ("raises", option(raises.as_ref().map(raises_value))),
+                    ("args", regs(args)),
+                    ("kwargs", kwargs_value(kwargs)),
+                    ("arg_places", places_option(arg_places)),
+                    ("kwarg_places", places_option(kwarg_places)),
+                    (
+                        "capture_accesses",
+                        list(capture_accesses.iter().map(capture_access)),
+                    ),
+                    ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
+                    ("receiver", option(receiver.as_ref().map(ty_value))),
+                    (
+                        "instantiated_args",
+                        list(instantiated_args.iter().map(ty_arg)),
+                    ),
+                    (
+                        "spread",
+                        option(spread.map(|position| position.to_string())),
+                    ),
+                ],
+                conventions,
+            ),
         ),
         MirInstr::CallIndirect {
             dest,
@@ -1208,6 +1212,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             receiver_convention,
             arg_places,
             kwarg_places,
+            conventions,
             capture_accesses,
             param_arg_regs,
             param_decls,
@@ -1217,54 +1222,57 @@ fn instruction_value(instruction: &MirInstr) -> String {
         } => record(
             tag,
             &with_refined_bound(
-                with_symbol(
-                    vec![
-                        ("dest", reg_value(*dest)),
-                        ("recv", reg_value(*recv)),
-                        ("method", symbol(method)),
-                        ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                        ("raises", option(raises.as_ref().map(raises_value))),
-                        (
-                            "reference_result",
-                            option(reference_result.as_deref().map(ref_ty)),
-                        ),
-                        (
-                            "result_adapter",
-                            option(
-                                result_adapter
-                                    .as_deref()
-                                    .map(|adapter| result_adapter_value(adapter.kind)),
+                with_conventions(
+                    with_symbol(
+                        vec![
+                            ("dest", reg_value(*dest)),
+                            ("recv", reg_value(*recv)),
+                            ("method", symbol(method)),
+                            ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                            ("raises", option(raises.as_ref().map(raises_value))),
+                            (
+                                "reference_result",
+                                option(reference_result.as_deref().map(ref_ty)),
                             ),
-                        ),
-                        ("args", regs(args)),
-                        ("kwargs", kwargs_value(kwargs)),
-                        ("recv_place", option(recv_place.as_deref().map(place_value))),
-                        ("recv_writes", recv_writes.to_string()),
-                        (
-                            "receiver_convention",
-                            option(receiver_convention.map(convention)),
-                        ),
-                        ("arg_places", places_option(arg_places)),
-                        ("kwarg_places", places_option(kwarg_places)),
-                        (
-                            "capture_accesses",
-                            list(capture_accesses.iter().map(capture_access)),
-                        ),
-                        ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
-                        ("param_decls", list(param_decls.iter().map(param_decl))),
-                        (
-                            "instantiated_args",
-                            list(instantiated_args.iter().map(ty_arg)),
-                        ),
-                        (
-                            "spread",
-                            option(spread.map(|position| position.to_string())),
-                        ),
-                    ],
-                    "adapter_constructor",
-                    result_adapter
-                        .as_deref()
-                        .and_then(|adapter| adapter.constructor.as_deref()),
+                            (
+                                "result_adapter",
+                                option(
+                                    result_adapter
+                                        .as_deref()
+                                        .map(|adapter| result_adapter_value(adapter.kind)),
+                                ),
+                            ),
+                            ("args", regs(args)),
+                            ("kwargs", kwargs_value(kwargs)),
+                            ("recv_place", option(recv_place.as_deref().map(place_value))),
+                            ("recv_writes", recv_writes.to_string()),
+                            (
+                                "receiver_convention",
+                                option(receiver_convention.map(convention)),
+                            ),
+                            ("arg_places", places_option(arg_places)),
+                            ("kwarg_places", places_option(kwarg_places)),
+                            (
+                                "capture_accesses",
+                                list(capture_accesses.iter().map(capture_access)),
+                            ),
+                            ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
+                            ("param_decls", list(param_decls.iter().map(param_decl))),
+                            (
+                                "instantiated_args",
+                                list(instantiated_args.iter().map(ty_arg)),
+                            ),
+                            (
+                                "spread",
+                                option(spread.map(|position| position.to_string())),
+                            ),
+                        ],
+                        "adapter_constructor",
+                        result_adapter
+                            .as_deref()
+                            .and_then(|adapter| adapter.constructor.as_deref()),
+                    ),
+                    conventions,
                 ),
                 refined_bound
                     .as_deref()
@@ -1966,6 +1974,21 @@ fn with_refined_bound<'a>(
     fields
 }
 
+/// A call's fields, then the `conventions` its arguments are bound by,
+/// omitted while it records none.
+fn with_conventions<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    conventions: &crate::mir::MirArgConventions,
+) -> Vec<(&'a str, String)> {
+    if conventions.iter().next().is_some() {
+        fields.push((
+            "conventions",
+            list(conventions.iter().map(argument_convention)),
+        ));
+    }
+    fields
+}
+
 /// An op's fields, then its `fastmath` flag constant, omitted while it
 /// has none.
 fn with_fastmath<'a>(
@@ -2191,21 +2214,28 @@ fn call_argument(value: &CheckedCallArgument) -> String {
     record(
         "call_argument",
         &[
-            (
-                "source",
-                match value.source {
-                    CheckedCallArgumentSource::Positional(v) => {
-                        positional("positional", &v.to_string())
-                    }
-                    CheckedCallArgumentSource::Keyword(v) => positional("keyword", &v.to_string()),
-                    CheckedCallArgumentSource::Default => "default".into(),
-                },
-            ),
+            ("source", call_argument_source(value.source)),
             ("parameter_type", ty_value(&value.parameter_ty)),
             ("requires_place", value.requires_place.to_string()),
             ("convention", option(value.convention.map(convention))),
         ],
     )
+}
+fn argument_convention(value: &mojito_checked::checked::CheckedArgumentConvention) -> String {
+    record(
+        "argument_convention",
+        &[
+            ("source", call_argument_source(value.source)),
+            ("convention", option(value.convention.map(convention))),
+        ],
+    )
+}
+fn call_argument_source(source: CheckedCallArgumentSource) -> String {
+    match source {
+        CheckedCallArgumentSource::Positional(v) => positional("positional", &v.to_string()),
+        CheckedCallArgumentSource::Keyword(v) => positional("keyword", &v.to_string()),
+        CheckedCallArgumentSource::Default => "default".into(),
+    }
 }
 fn raises_value(value: &Raises) -> String {
     record(

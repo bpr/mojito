@@ -175,6 +175,7 @@ pub(super) fn bound_call_from_indirect(
             spread,
             ..
         } if requirement.is_some() => MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             recv: callee,
             method: "__call__".to_string(),

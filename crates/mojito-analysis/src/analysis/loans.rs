@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedCallArgumentSource;
 
 #[derive(Clone)]
 pub(super) struct Loan {
@@ -391,22 +392,7 @@ pub(super) fn loan_accesses(
     let captured = |access: &mojito_mir::mir::MirCaptureAccess, marker: Reg| {
         captured_through(access, marker, None)
     };
-    let access_for_convention = |convention: Option<mojito_ast::ast::ArgConvention>| {
-        if matches!(
-            convention,
-            Some(
-                mojito_ast::ast::ArgConvention::Mut
-                    | mojito_ast::ast::ArgConvention::Ref
-                    | mojito_ast::ast::ArgConvention::Var
-                    | mojito_ast::ast::ArgConvention::Out
-                    | mojito_ast::ast::ArgConvention::Deinit
-            )
-        ) {
-            LoanAccess::Write
-        } else {
-            LoanAccess::Read
-        }
-    };
+    let access_for_convention = convention_access;
     let subscript_accesses = |call: &mojito_mir::mir::MirSubscriptCall,
                               receiver_place: Option<&MirPlace>,
                               positional_places: &[Option<MirPlace>],
@@ -566,34 +552,50 @@ pub(super) fn loan_accesses(
             func,
             arg_places,
             kwarg_places,
+            conventions,
             capture_accesses,
+            spread,
             ..
         } => {
             // `external_call` borrows its retained caller places only to
             // keep pointer-backed values alive through the call. Other
-            // retained places are classified by the callee's convention at
-            // that slot; a keyword place stays exclusive (its slot is not
-            // known positionally here).
+            // retained places are classified by the convention the call
+            // records its argument bound by, a slot it records none for by
+            // the callee's declaration at that slot; a keyword place it
+            // records none for stays exclusive.
             let intrinsic_read = func.0 == "external_call";
-            let access = |parameter: Option<usize>| match parameter {
-                _ if intrinsic_read => LoanAccess::Read,
-                Some(parameter) => retained_access(&func.0, parameter),
-                None => LoanAccess::Unclassified,
+            let access = |source: CheckedCallArgumentSource| {
+                let declared = || match source {
+                    CheckedCallArgumentSource::Positional(parameter) => {
+                        retained_access(&func.0, parameter)
+                    }
+                    _ => LoanAccess::Unclassified,
+                };
+                if intrinsic_read {
+                    LoanAccess::Read
+                } else {
+                    recorded_access(conventions, source, *spread, declared)
+                }
             };
             let mut accesses = arg_places
                 .iter()
                 .enumerate()
                 .filter_map(|(parameter, place)| {
-                    place
-                        .clone()
-                        .map(|place| (place, access(Some(parameter)), span_for(*dest)))
+                    place.clone().map(|place| {
+                        let source = CheckedCallArgumentSource::Positional(parameter);
+                        (place, access(source), span_for(*dest))
+                    })
                 })
                 .chain(
                     kwarg_places
                         .iter()
-                        .flatten()
-                        .cloned()
-                        .map(|place| (place, access(None), span_for(*dest))),
+                        .enumerate()
+                        .filter_map(|(keyword, place)| {
+                            place.clone().map(|place| {
+                                let source = CheckedCallArgumentSource::Keyword(keyword);
+                                (place, access(source), span_for(*dest))
+                            })
+                        }),
                 )
                 .collect::<Vec<_>>();
             accesses.extend(
@@ -660,14 +662,18 @@ pub(super) fn loan_accesses(
             recv_writes,
             arg_places,
             kwarg_places,
+            conventions,
             capture_accesses,
+            spread,
             ..
         } => {
             // A borrowed `self` receiver reads its retained place; only a
             // `mut`/mutable-`ref`/consuming receiver writes through it.
-            // Retained argument places are classified by the resolved
-            // callee's convention at that slot (`self` occupies slot zero);
-            // keyword places stay exclusive.
+            // Retained argument places are classified by the convention the
+            // call records their argument bound by, a slot it records none
+            // for by the resolved callee's declaration at that slot (`self`
+            // occupies slot zero); a keyword place it records none for
+            // stays exclusive.
             let receiver_access = if *recv_writes {
                 LoanAccess::Write
             } else {
@@ -689,14 +695,33 @@ pub(super) fn loan_accesses(
                         mojito_symbol::symbol::is_closure_storage_name(name)
                     })
                 });
-            let argument_access = |argument: usize| match (bound, resolved) {
-                (Some(contract), _) => contract
+            let argument_access = |argument: usize| match bound {
+                Some(contract) => contract
                     .conventions
                     .get(argument)
                     .copied()
                     .map_or(LoanAccess::Unclassified, access_for_convention),
-                (None, Some(callee)) => callees.retained_access(callee, argument, true),
-                (None, None) => LoanAccess::Unclassified,
+                None => recorded_access(
+                    conventions,
+                    CheckedCallArgumentSource::Positional(argument),
+                    *spread,
+                    || {
+                        resolved
+                            .as_deref()
+                            .map_or(LoanAccess::Unclassified, |callee| {
+                                callees.retained_access(callee, argument, true)
+                            })
+                    },
+                ),
+            };
+            let keyword_access = |keyword: usize| match recorded_access(
+                conventions,
+                CheckedCallArgumentSource::Keyword(keyword),
+                *spread,
+                || LoanAccess::Unclassified,
+            ) {
+                LoanAccess::Unclassified => LoanAccess::Write,
+                access => access,
             };
             let mut accesses = recv_place
                 .as_deref()
@@ -716,9 +741,12 @@ pub(super) fn loan_accesses(
                 .chain(
                     kwarg_places
                         .iter()
-                        .flatten()
-                        .cloned()
-                        .map(|place| (place, LoanAccess::Write, span_for(*dest))),
+                        .enumerate()
+                        .filter_map(|(keyword, place)| {
+                            place
+                                .clone()
+                                .map(|place| (place, keyword_access(keyword), span_for(*dest)))
+                        }),
                 )
                 .collect::<Vec<_>>();
             let storage = (bound.is_some() || calls_closure)
@@ -749,6 +777,57 @@ pub(super) fn loan_error(
         place: place_display(&f.var_names[place.root as usize], &place_path(place)),
         loan: f.var_names[reference as usize].clone(),
         span,
+    }
+}
+
+/// The access a retained place bound by `convention` performs: a write
+/// through a `mut`, owned, or result slot, a read through a borrowed one.
+const fn convention_access(convention: Option<mojito_ast::ast::ArgConvention>) -> LoanAccess {
+    use mojito_ast::ast::ArgConvention;
+    if matches!(
+        convention,
+        Some(
+            ArgConvention::Mut
+                | ArgConvention::Ref
+                | ArgConvention::Var
+                | ArgConvention::Out
+                | ArgConvention::Deinit
+        )
+    ) {
+        LoanAccess::Write
+    } else {
+        LoanAccess::Read
+    }
+}
+
+/// The access a call's retained place for argument `source` performs, by
+/// the convention the call records the argument bound by
+/// ([`mojito_mir::mir::MirArgConventions`]); `declared` classifies it by
+/// the callee's declaration where the call records none, or for an
+/// operand past the collector the call builds (`spread`).
+///
+/// A `ref` slot the record binds mutably writes only where the declaration
+/// writes through it: a `ref` whose mutability the callee infers
+/// (`ref x: T`) cannot write through a mutable actual, so the place stays
+/// a shared read, as the pin accepts; where the declaration does not
+/// answer (a trait requirement, a keyword slot), it is a write.
+fn recorded_access(
+    conventions: &mojito_mir::mir::MirArgConventions,
+    source: CheckedCallArgumentSource,
+    spread: Option<usize>,
+    declared: impl FnOnce() -> LoanAccess,
+) -> LoanAccess {
+    let past_collector = matches!(
+        (source, spread),
+        (CheckedCallArgumentSource::Positional(position), Some(collector)) if position >= collector
+    );
+    match conventions.of(source).filter(|_| !past_collector) {
+        None => declared(),
+        Some(Some(mojito_ast::ast::ArgConvention::Ref)) => match declared() {
+            LoanAccess::Unclassified => LoanAccess::Write,
+            access => access,
+        },
+        Some(convention) => convention_access(convention),
     }
 }
 

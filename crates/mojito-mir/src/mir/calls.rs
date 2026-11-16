@@ -1022,6 +1022,7 @@ impl<'a> Flatten<'a> {
                         parameter_ty.clone().unwrap_or_else(Ty::error),
                     );
                     self.emit(MirInstr::Call {
+                        conventions: crate::mir::MirArgConventions::default(),
                         dest,
                         func: FuncRef::named(target),
                         raises: None,
@@ -1043,6 +1044,7 @@ impl<'a> Flatten<'a> {
                 } => {
                     let dest = self.fresh_typed(site.clone(), None, Ty::index());
                     self.emit(MirInstr::MethodCall {
+                        conventions: crate::mir::MirArgConventions::default(),
                         dest,
                         recv: value,
                         method: "__mlir_index__".to_string(),
@@ -1102,6 +1104,7 @@ impl<'a> Flatten<'a> {
         let ty = materialization.ty.clone();
         let dest = self.fresh_typed(site.clone(), None, ty.clone());
         self.emit(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             func: FuncRef::named(&materialization.constructor),
             raises: None,

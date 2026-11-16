@@ -707,6 +707,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A keyword argument at a `read` slot (`g(x=a)`) beside a live view of
+  `a` is no longer rejected as a loan conflict. MIR `call` and `call.method` now
+  carry the effective convention the checker bound each argument by, as
+  upstream's call carries each operand's, and the loan check classifies
+  retained places by it instead of rebuilding the convention from
+  declaration tables (MIR text 1.196, `mojito-package 220`, R1931).
+
 - Reading a type's compile-time member whose type is not
   `ImplicitlyCopyable` at run time (`var s = S.k` over `comptime k = S(1)`
   in a `struct S(Movable)`, or a case of an `enum` that opts out of

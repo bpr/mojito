@@ -358,6 +358,7 @@ fn initializer_call(
     kwarg_places: Vec<Option<MirPlace>>,
 ) -> MirInstr {
     MirInstr::Call {
+        conventions: crate::mir::MirArgConventions::default(),
         dest,
         func: FuncRef::named(initializer),
         raises: None,

@@ -108,6 +108,7 @@ fn lowered(
     let span = function.spans.0.get(&recv.0).map(|(span, _)| span.clone());
     let dest = fresh_register(function, TyKind::None.into(), span.as_ref());
     let call = MirInstr::MethodCall {
+        conventions: crate::mir::MirArgConventions::default(),
         dest,
         recv,
         method: "__deinit__".to_string(),

@@ -1560,6 +1560,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
                     k: Const::Str("no".to_string()),
                 },
                 MirInstr::Call {
+                    conventions: mojito::mir::MirArgConventions::default(),
                     dest: Reg(1),
                     func: FuncRef::named("callee"),
                     raises: None,
@@ -1625,6 +1626,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
     let f = function(
         block(
             vec![MirInstr::Call {
+                conventions: mojito::mir::MirArgConventions::default(),
                 dest: Reg(1),
                 func: FuncRef::named("callee"),
                 raises: None,
@@ -1956,6 +1958,7 @@ fn verifier_rejects_misaligned_call_place_metadata() {
                     k: Const::Int(1),
                 },
                 MirInstr::Call {
+                    conventions: mojito::mir::MirArgConventions::default(),
                     dest: Reg(1),
                     func: FuncRef::named("callee"),
                     raises: None,
@@ -2072,6 +2075,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
         function(
             block(
                 vec![MirInstr::MethodCall {
+                    conventions: mojito::mir::MirArgConventions::default(),
                     dest: Reg(1),
                     recv: Reg(0),
                     method: "__next__".to_string(),
@@ -2256,6 +2260,7 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
         program(function(
             block(
                 vec![MirInstr::MethodCall {
+                    conventions: mojito::mir::MirArgConventions::default(),
                     dest: Reg(2),
                     recv: Reg(0),
                     method: "take".to_string(),
@@ -2385,6 +2390,7 @@ const DROP_X: MirInstr = MirInstr::DropVar {
 fn raising_call() -> Vec<MirInstr> {
     vec![
         MirInstr::Call {
+            conventions: mojito::mir::MirArgConventions::default(),
             dest: Reg(2),
             func: FuncRef::named("boom"),
             raises: Some(Raises {
@@ -2712,6 +2718,7 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
         callable_bound: None,
     });
     let absorb = MirInstr::MethodCall {
+        conventions: mojito::mir::MirArgConventions::default(),
         dest: Reg(3),
         recv: Reg(2),
         method: "absorb".into(),
@@ -2791,6 +2798,7 @@ fn verifier_accepts_a_drop_of_an_element_a_borrowed_pack_holds() {
 /// The `deinit`-receiver call of `S.__del__` on `recv`, its result `dest`.
 fn deinit_call(dest: u32, recv: u32) -> MirInstr {
     MirInstr::MethodCall {
+        conventions: mojito::mir::MirArgConventions::default(),
         dest: Reg(dest),
         recv: Reg(recv),
         method: "__deinit__".into(),

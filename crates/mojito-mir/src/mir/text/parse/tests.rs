@@ -1045,6 +1045,7 @@ fn instruction_families_reprint_byte_identically() {
             fastmath: None,
         },
         MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(10),
             func: FuncRef("std::print".into()),
             raises: Some(Raises {
@@ -1116,6 +1117,7 @@ fn instruction_families_reprint_byte_identically() {
             spread: None,
         },
         MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(12),
             recv: Reg(0),
             method: "append".into(),
@@ -2430,6 +2432,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             element: None,
         },
         MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: Reg(1),
             func: FuncRef::named("hash"),
             raises: None,
@@ -3080,6 +3083,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
             function_with(
                 vec![Ty::int(), Ty::int()],
                 vec![MirInstr::MethodCall {
+                    conventions: crate::mir::MirArgConventions::default(),
                     dest: Reg(1),
                     recv: Reg(0),
                     method: "name".into(),
@@ -3174,6 +3178,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
             function_with(
                 vec![Ty::int(), Ty::int()],
                 vec![MirInstr::Call {
+                    conventions: crate::mir::MirArgConventions::default(),
                     dest: Reg(1),
                     func: FuncRef::named("successor"),
                     raises: None,
@@ -3223,6 +3228,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
             function_with(
                 vec![Ty::int()],
                 vec![MirInstr::Call {
+                    conventions: crate::mir::MirArgConventions::default(),
                     dest: Reg(0),
                     func: FuncRef::named("Pair.count"),
                     raises: None,
@@ -4646,6 +4652,7 @@ fn older_raise_edge_writes_a_slot_of_its_own() {
         vec![Ty::int(), Ty::bool()],
         vec![
             MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest: Reg(0),
                 func: FuncRef("g".into()),
                 raises: Some(Raises {
@@ -4737,6 +4744,7 @@ fn older_mut_argument_loads_as_its_address() {
                 place: place.clone(),
             },
             MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest: Reg(1),
                 func: FuncRef("inc".into()),
                 raises: None,

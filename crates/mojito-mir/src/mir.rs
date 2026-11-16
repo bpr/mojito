@@ -3992,6 +3992,7 @@ impl<'a> Flatten<'a> {
                 });
                 let error = self.fresh_typed(site, None, conversion.ty.clone());
                 self.emit(MirInstr::Call {
+                    conventions: crate::mir::MirArgConventions::default(),
                     dest: error,
                     func: FuncRef::named(&conversion.constructor),
                     raises: None,

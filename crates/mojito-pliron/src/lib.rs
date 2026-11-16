@@ -1332,6 +1332,7 @@ mod tests {
             &mojito_symbol::symbol::SignatureKey::from_tys([&Ty::int()]),
         );
         let constructor_call = MirInstr::Call {
+            conventions: mojito_mir::mir::MirArgConventions::default(),
             dest: Reg(0),
             func: FuncRef(init_symbol.clone()),
             raises: None,

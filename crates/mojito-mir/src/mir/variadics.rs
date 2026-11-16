@@ -166,6 +166,7 @@ pub fn build_variadic_list(
     });
     let list = tables.fresh_register(variadic_list_type(element.clone(), owned));
     before.push(MirInstr::Call {
+        conventions: crate::mir::MirArgConventions::default(),
         dest: list,
         func: FuncRef::named(&mojito_symbol::symbol::variadic_list_constructor_symbol()),
         raises: None,

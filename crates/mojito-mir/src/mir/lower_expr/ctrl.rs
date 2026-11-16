@@ -89,6 +89,7 @@ impl<'a> Flatten<'a> {
             return dest;
         }
         self.emit(MirInstr::Call {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             func: FuncRef::named("Bool"),
             raises: None,
@@ -605,6 +606,7 @@ impl<'a> Flatten<'a> {
         });
         let dest = self.fresh_typed(expression.location(), None, Ty::none());
         self.emit(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest,
             recv,
             method,

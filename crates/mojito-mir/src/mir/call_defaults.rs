@@ -771,6 +771,7 @@ fn build_keyword_collector(
     );
     let collector = fresh_register(function, ty.clone(), location);
     prelude.push(MirInstr::Call {
+        conventions: crate::mir::MirArgConventions::default(),
         dest: collector,
         func: FuncRef::named(&mojito_symbol::symbol::keyword_collector_constructor_symbol()),
         raises: None,
@@ -821,6 +822,7 @@ fn build_keyword_collector(
             place: place.clone(),
         });
         prelude.push(MirInstr::MethodCall {
+            conventions: crate::mir::MirArgConventions::default(),
             dest: fresh_register(function, Ty::none(), location),
             recv: receiver,
             method: "_insert".to_string(),
@@ -2241,6 +2243,7 @@ fn evaluate_constant(
                 _ => Vec::new(),
             };
             prelude.push(MirInstr::Call {
+                conventions: crate::mir::MirArgConventions::default(),
                 dest: value,
                 func: FuncRef::named(target),
                 raises: None,

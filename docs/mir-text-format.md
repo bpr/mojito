@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.195
+# Mojito Textual MIR Format, Version 1.196
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.195 is implemented end to end for inspection and loading: canonical
+Version 1.196 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.195
+mojito-mir 1.196
 ```
 
-The writer emits 1.195. The reader accepts 1.0 through 1.195; *Schema 1.0*
+The writer emits 1.196. The reader accepts 1.0 through 1.196; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1198,6 +1198,16 @@ takes. The package format moves to `mojito-package 218` with it, when a
 checked `kgen.struct.load_indirect` records
 `SemanticAdjustment::KgenStructLoadIndirect` (R1922).
 
+Schema 1.196 adds an optional `conventions: [argument_convention
+{ source, convention }, ...]` to `call` and `call.method`: the effective
+convention the selected callee binds each source argument by (`source` is
+`positional(N)`, indexing `args`, or `keyword(N)`, indexing `kwargs`;
+`convention` is `option<convention>`), as upstream's call carries each
+operand's convention in its callee's type. A call that records no checked
+binding omits it, as does every artifact before 1.196; the loan check then
+classifies a retained place by the callee's declaration. The package format
+moves to `mojito-package 220` with it (R1931).
+
 Schema 1.195 adds `pointer.bitcast { dest, value }`, upstream's
 `pop.pointer.bitcast`: `Pointer.unsafe_bitcast[U]()` retypes a `pointer`'s
 element with its address and origin unchanged. The package format moves
@@ -2347,7 +2357,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`; schema 1.91: `raises` is `option<raises { type, flag, error }>`, as a call's; schema 1.181: `binary` adds an optional `fastmath` constant, a `pop.add`/`sub`/`mul`'s `fastmathFlags`) |
-| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.100: `receiver_convention: option<convention>` after `recv_writes`, the callee's receiver convention: a `deinit` one consumes `recv_place`, and with no `recv_place` a `var` or `deinit` one consumes `recv`; schema 1.98 spelled `deinit_receiver: bool`; schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.114: a `call.method` selected through a refined archetype bound carries `refined_bound: [<symbol>, …]` last; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises; schema 1.193: `error: $vM`, the error slot the instruction writes when it raises) |
+| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.196: `call` and `call.method` carry an optional `conventions` after their other fields, before `call.method`'s `refined_bound`, the effective convention each source argument is bound by; schema 1.100: `receiver_convention: option<convention>` after `recv_writes`, the callee's receiver convention: a `deinit` one consumes `recv_place`, and with no `recv_place` a `var` or `deinit` one consumes `recv`; schema 1.98 spelled `deinit_receiver: bool`; schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.114: a `call.method` selected through a refined archetype bound carries `refined_bound: [<symbol>, …]` last; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises; schema 1.193: `error: $vM`, the error slot the instruction writes when it raises) |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` — a `pointer.destroy` carries `destructor: "<symbol>"` after `element` when it names the element's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`; `lower-lit` erases it, so concrete MIR holds none) |
