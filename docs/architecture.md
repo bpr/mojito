@@ -2503,7 +2503,13 @@ constructor that reads it by address
 passes the getter result slot's `ref.make` to the constructor and
 destroys the slot after the setter (`Flatten::augmented_setter_value`),
 as upstream's caller destroys the getter's `__call_result_tmp__`. A
-function value still passes a value (R2250). A retained place that holds a
+function constant or capture-free closure at a by-address `read` slot (a
+`def(...)` bound, which does not refine `RegisterPassable` at the pin) is
+materialized in a hidden `$mat_r` slot and passed by address like any
+other temporary (`Flatten::materialize_operand`), as upstream passes the
+`!lit.ref` of its callable-bound `read` parameter; that immutable address
+does not rebind the slot, so `callable_targets` still resolves the
+callable it holds (`rebound_variables`). A retained place that holds a
 reference (a `ref` field, a `ref` binding's slot) passes the reference it
 holds, as upstream passes the `!lit.ref` the field or binding is
 (`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`):

@@ -9,9 +9,11 @@
 //! call and needs none of this.
 
 use crate::mir::{
-    Const, MirBlock, MirFunction, MirInstr, MirPlace, OperandSlot, call_operands,
+    Const, MirBlock, MirFunction, MirInstr, MirPlace, OperandSlot, Reg, call_operands,
     instruction_regions, operand_addresses,
 };
+use mojito_types::origin::Mutability;
+use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet};
 
 /// The function each register of `function` statically holds, beside
@@ -144,9 +146,10 @@ fn visit_callables(
 }
 
 /// The variables whose value is not fixed by their definitions: written
-/// whole through a store, a reference, a call operand's address, or a
-/// callable environment, as upstream treats a `!lit.ref` a call takes as
-/// an escape whichever operand it is.
+/// whole through a store, a reference, a mutable call operand's address,
+/// or a callable environment, as upstream treats a mutable `!lit.ref` a
+/// call takes as an escape whichever operand it is. A `read` operand's
+/// immutable reference cannot rebind its referent.
 fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
     let instructions = nested_instructions(&function.body);
     let addresses = operand_addresses(&function.body, &function.reg_types);
@@ -178,6 +181,7 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
                     call_operands(instruction)
                         .iter()
                         .filter(|operand| operand.slot != OperandSlot::Callee)
+                        .filter(|operand| !immutable_reference(function, operand.reg))
                         .filter_map(|operand| addresses.made(operand.reg))
                         .filter_map(whole),
                 );
@@ -195,4 +199,15 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
         }
     }
     rebound
+}
+
+/// Whether `register` of `function` holds an immutable reference.
+fn immutable_reference(function: &MirFunction, register: Reg) -> bool {
+    function
+        .reg_types
+        .get(&register.0)
+        .is_some_and(|ty| match ty.kind() {
+            TyKind::Ref(reference) => reference.mutability == Mutability::Immutable,
+            _ => false,
+        })
 }

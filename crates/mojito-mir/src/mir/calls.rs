@@ -532,8 +532,8 @@ impl<'a> Flatten<'a> {
     /// else, for a temporary the operand owns, a hidden slot it is
     /// materialized in ([`Self::materialize_in_slot`]) holding the
     /// operand's loans, as upstream passes the `!lit.ref` of an anonymous
-    /// temporary. A value read through a reference, and a function value,
-    /// stay values.
+    /// temporary, a function constant or closure among them. A value read
+    /// through a reference stays a value.
     fn materialize_operand(&mut self, expression: Node<'a>, value: Reg) -> (Reg, Option<MirPlace>) {
         match self.f.body.instrs.last() {
             Some(MirInstr::LoadPlace { dest, place }) if *dest == value => {
@@ -565,17 +565,7 @@ impl<'a> Flatten<'a> {
         else {
             return (value, None);
         };
-        if matches!(
-            ty.kind(),
-            TyKind::Ref(_)
-                | TyKind::Func(_)
-                | TyKind::GenericFunc(_)
-                | TyKind::Overload(_)
-                | TyKind::Param {
-                    callable_bound: Some(_),
-                    ..
-                }
-        ) || !self.owned_temporary(value)
+        if matches!(ty.kind(), TyKind::Ref(_) | TyKind::Overload(_)) || !self.owned_temporary(value)
         {
             return (value, None);
         }

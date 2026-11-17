@@ -1045,6 +1045,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function name, nested `def`, or capture-free lambda passed to a
+  `def(...)`-bound `read` parameter (`apply(dbl)`, `Tuple()`'s
+  `init_with` lambda) is now materialized in a hidden slot and passed by
+  address, as at the pin, whose `def(...)` bound does not refine
+  `RegisterPassable`. An immutable call operand address no longer counts
+  as rebinding its slot, so the elaborator still folds the callee into the
+  instance (`assets/ok/callable_bound_function_value_address.mojo`). No
+  program output changes. (R2250)
+
 - A recorded parameter value at a by-address `read` slot (`dtype in
   (DType.float32, DType.float64)`, `len(Self.Ts)` in a `comptime` thunk)
   is now read from its materialized call-result slot, whose address the

@@ -3737,6 +3737,83 @@ def main():
 }
 
 #[test]
+fn callable_bound_function_value_passes_its_slot_address() {
+    // A `def(...)` bound does not refine `RegisterPassable`, so upstream's
+    // `read f: F` is a `!lit.ref`: a function name or nested `def` passed
+    // there is materialized in a hidden slot and passed by address, and
+    // that immutable address does not rebind the slot, so the callable it
+    // holds stays statically known. A concrete function type is
+    // register-passable and stays a value.
+    let source = r#"
+def dbl(x: Int) -> Int:
+    return x * 2
+
+@no_inline
+def apply[F: def(Int) -> Int](f: F) -> Int:
+    return f(3)
+
+@no_inline
+def apply_val(f: def(x: Int) thin -> Int) -> Int:
+    return f(3)
+
+def main():
+    print(apply(dbl))
+    def g(x: Int) -> Int:
+        return x * 3
+    print(apply(g))
+    print(apply_val(dbl))
+"#;
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = &compiled
+        .mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let targets = mojito::mir::callable_targets(main);
+    let operands = |callee: &str| {
+        nested_instructions(&main.body)
+            .into_iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call { func, args, .. }
+                    if func.0 == callee || func.0.starts_with(&format!("{callee}$")) =>
+                {
+                    args.first().copied()
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let applied = operands("apply");
+    assert_eq!(applied.len(), 2, "two calls of `apply`");
+    for (operand, target) in applied.into_iter().zip(["dbl", "main$g"]) {
+        let place = addresses
+            .made(operand)
+            .unwrap_or_else(|| panic!("`apply` takes the address of `{target}`'s slot"));
+        assert!(
+            main.var_names[place.root as usize].starts_with("$mat_r"),
+            "{place:?}"
+        );
+        assert!(place.proj.is_empty(), "{place:?}");
+        let (resolved, _) = targets
+            .get(&operand.0)
+            .unwrap_or_else(|| panic!("the operand resolves to `{target}`"));
+        assert!(resolved.ends_with(target), "{resolved} is not {target}");
+    }
+    let by_value = operands("apply_val");
+    assert!(
+        by_value
+            .first()
+            .is_some_and(|operand| addresses.made(*operand).is_none()),
+        "a concrete function type stays a value"
+    );
+}
+
+#[test]
 fn parameter_value_at_read_slot_passes_its_slot_address() {
     // A recorded parameter value (`dtype`) at a by-address `read` slot is
     // an rvalue materialized in a call-result slot: the call passes that

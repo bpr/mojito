@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2278**.
+Next free ID: **R2280**.
 
 ## Ordered Work
 
@@ -9370,6 +9370,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R2251.
   - Model: Fable, Not Planned.
 
+- [ ] **R2278 A run-time function value binds a `def(...)` bound**
+
+  The pin binds a `def(...)` bound only from a function name or a
+  closure. A variable holding a function is rejected, but Mojito accepts
+  it and runs the call.
+  - Probe: `var f = dbl; print(apply(f))` over
+    `def apply[F: def(Int) -> Int](f: F)` prints `6`. The pin reports
+    "invalid call to 'apply': value passed to 'f' cannot be converted
+    from 'def(x: Int) thin -> Int' to 'F'".
+  - Fix: reject it in the checker's binding of a callable bound, with the
+    pin's wording.
+  - Add a negative fixture under `assets/type_error/` with its
+    `conformance/assets-mojo-errors.tsv` row.
+  - Check that no `assets/ok` fixture relies on the acceptance.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -9585,36 +9602,38 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2250 A function value at a callable-bound `read` parameter is
-  judged by address**
+- [ ] **R2279 A function name at a `def(...)` bound is not inflated into
+  the bound's type**
 
-  The check records a `read f: F` over `F: def(...)` (and a lambda at
-  `Tuple(init_with=…)`) as by address, since `Checker::memory_only` does
-  not prove a callable bound register-passable. Lowering cannot
-  materialize the value (its slot keeps the symbolic function type through
-  elaboration), so it stays a value at a by-address slot.
-  - Probe: `Tuple.__init__$ov$F$Callable…$kw$init_with` from `Tuple()`
-    over `Defaultable` elements passes a `MakeClosure` value.
-  - Probe: `apply(f)` over `def apply[F: def(Int) -> Int](f: F)`.
-  - Fix: confirm against the pin whether a `def(...)` value is
-    register-passable, and decide the bound's verdict in
-    `Checker::memory_only` accordingly; materialize only if it is not.
-  - Depends on nothing.
-  - Model: Opus, Planned.
+  Upstream binds `F` in `apply(dbl)` to an inflated closure type whose
+  `__call__` is `dbl` (`#__CALL__#=dbl` in its LLVM symbol). The value is
+  an empty struct, and the instance takes no argument. Mojito keeps the
+  thin function as a run-time argument passed by address.
+  - The elaborator folds the callee into the instance through
+    `bindings.callables` (`native/mono/infer.rs`), which reads
+    `callable_targets` dataflow rather than the type.
+  - A `GenericFunc` slot is erased to an `Int` placeholder
+    (`erase_specialized_generic_callable_storage`, `mono/symbolic.rs`).
+  - Probe: `apply(dbl)` and a nested `def g` in
+    `assets/ok/callable_bound_function_value_address.mojo`.
+  - Fix: inflate the function into the bound's type where the checker
+    binds a callable bound, so the elaborator's dataflow fold and the
+    placeholder erasure can retire.
+  - Depends on R2278, since inflation makes that rejection fall out.
+  - Model: Fable, Planned.
 
 - [ ] **R2251 The verifier accepts a value at a by-address `read` slot**
 
   Upstream's `lit.call` verifier rejects a value where the callee's
   signature takes a `!lit.ref`. `verify_direct_call` still requires a
-  reference only at a `mut`/`ref` slot, because R2250's operands pass
-  values.
+  reference only at a `mut`/`ref` slot.
   - Fix: require a reference wherever `by_address_parameter` takes the
     slot by address. On elaborated MIR the instance's declaration names
     its substituted types, so a `read` the instance proves
     register-passable may pass the value `load_register_passable_operands`
     reads, which needs no row rewrite.
   - Stop when std packages and `scripts/smoke` is clean with the rule on.
-  - Depends on R2187, R2248, R2250.
+  - Depends on R2187, R2248.
   - Model: Fable, Planned.
 
 - [ ] **R2253 The VM represents a place pointer by the same handle as a
