@@ -1063,6 +1063,7 @@ assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_slot_is_its_pointer.mojo	main	exe-differential	sanitized
 assets/ok/pointer_subscript_reads_in_place.mojo	main	exe-differential	sanitized
+assets/ok/pointer_subtract_offset.mojo	main	exe-differential	sanitized
 assets/ok/pointer_take_pointee_tracked.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_return.mojo	main	exe-differential	sanitized

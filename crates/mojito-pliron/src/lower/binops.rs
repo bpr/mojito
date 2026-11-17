@@ -50,20 +50,31 @@ impl FnLowering<'_> {
         if self.is_string_constant(a) || self.is_string_constant(b) {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
         }
-        // `pointer + i` — provenance-preserving element arithmetic (the MIR
-        // form of `unsafe_offset`): the address `i * sizeof(element)` bytes
-        // on (the VM adds `i` to its element-counted offset).
+        // `pointer + i` and `pointer - i` — provenance-preserving element
+        // arithmetic, upstream's `UnsafePointer.__add__`/`__sub__`: the
+        // address `±i * sizeof(element)` bytes on (the VM moves its
+        // element-counted offset by `±i`).
         if let Some(element) = (self.func.reg_types.get(&a.0).cloned())
             .as_ref()
             .and_then(Ty::pointer_element)
         {
-            if !matches!(op, InfixOp::Add) {
-                return Err(
-                    self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest)
-                );
-            }
             let ptr = self.reg_value(ctx, a, ScalarTy::Ptr)?;
-            let address = self.pointer_element_address(ctx, ptr, b, element, dest)?;
+            let index = self.reg_value(ctx, b, ScalarTy::Int)?;
+            let index = match op {
+                InfixOp::Add => index,
+                InfixOp::Sub => {
+                    let zero = self.int_constant(ctx, 0);
+                    let negated =
+                        SubOp::new_with_overflow_flag(ctx, zero, index, no_overflow_flags());
+                    self.append(ctx, negated.get_operation(), Some(dest));
+                    negated.get_result(ctx)
+                }
+                _ => {
+                    return Err(self
+                        .unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest));
+                }
+            };
+            let address = self.pointer_offset_address(ctx, ptr, index, element, dest)?;
             self.reg_values.insert(dest.0, address);
             return Ok(());
         }

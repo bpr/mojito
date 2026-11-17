@@ -715,6 +715,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The Pliron backend now lowers a pointer's backward offset, `p - n` and
+  `p -= n` over a local, a struct field, or a `mut` parameter, as
+  upstream's `UnsafePointer.__sub__`/`__isub__` do; it previously lowered
+  only `+` and reported `-` unsupported (R2301).
 - Nineteen MIR pass test inputs now pass a memory-only `read` argument or
   receiver as a reference to its slot, as MIR lowering and upstream's
   `lit.call` do, so they load again, and declare `Bool` register-passable

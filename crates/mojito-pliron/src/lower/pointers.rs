@@ -38,11 +38,24 @@ impl FnLowering<'_> {
         element: &Ty,
         dest: Reg,
     ) -> Result<Value, PlironError> {
+        let index_value = self.reg_value(ctx, index, ScalarTy::Int)?;
+        self.pointer_offset_address(ctx, pointer, index_value, element, dest)
+    }
+
+    /// [`Self::pointer_element_address`] over an already-lowered `Int`
+    /// index value.
+    pub(super) fn pointer_offset_address(
+        &mut self,
+        ctx: &mut Context,
+        pointer: Value,
+        index_value: Value,
+        element: &Ty,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
         self.guard_pointer_dereference(ctx, pointer, dest)?;
         let element_layout = self.layout.layout_of(element).map_err(|error| {
             self.unsupported_reg(format!("pointer element layout ({error})"), dest)
         })?;
-        let index_value = self.reg_value(ctx, index, ScalarTy::Int)?;
         let size = self.uint_constant(ctx, element_layout.size);
         let bytes = MulOp::new_with_overflow_flag(ctx, index_value, size, no_overflow_flags());
         self.append(ctx, bytes.get_operation(), Some(dest));

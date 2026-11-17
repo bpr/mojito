@@ -956,22 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2301 Pliron lowers a pointer's offset arithmetic only for `+`**
-
-  Upstream's `UnsafePointer` declares `__sub__` and `__isub__` beside
-  `__add__` and `__iadd__`, each offsetting by `index(offset)`. Pliron's
-  `lower_binop` (`crates/mojito-pliron/src/lower/binops.rs`) lowers a
-  pointer operand's `BinOp` only for `Add`, through
-  `pointer_element_address`, and reports any other operator unsupported.
-  - Probe: `p = p - 1` over `var p = a + 2`, `a = unsafe_alloc[Int](3)`,
-    prints `a[1]` on the VM and stops natively with "unsupported operator
-    `Sub` on Pointer operands".
-  - Probe: `h.p -= 1` over a struct's `UnsafePointer` field, and `p -= 1`
-    over a local, fail natively the same way.
-  - Found while landing R2283 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 
