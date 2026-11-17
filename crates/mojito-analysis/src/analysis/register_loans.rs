@@ -758,23 +758,31 @@ impl RegisterLoanStep {
         if let Some(place) = reference_subscript_place {
             seeded.extend(reached(place));
         }
-        // A free call returning a tracked pointer keeps alive the storage its
-        // result type's origin names, which the operands whose types name that
-        // origin carry, as upstream keeps an origin's memory live while a
-        // value whose type names it is.
+        // A call, method call, or subscript returning a tracked pointer or a
+        // reference keeps alive the storage its result type's origin names,
+        // which the operands whose types name that origin carry, as upstream
+        // keeps an origin's memory live while a value whose type names it is:
+        // `v.get()` over a register-passable `View[origin_of(x)]` keeps `x`.
         let origin_operands = match instruction {
-            MirInstr::Call {
-                dest, args, kwargs, ..
-            } if tracked_pointer_result(register_types, dest) => {
+            MirInstr::Call { dest, .. }
+            | MirInstr::MethodCall { dest, .. }
+            | MirInstr::Index { dest, .. }
+            | MirInstr::MultiIndex { dest, .. }
+                if tracked_pointer_result(register_types, dest)
+                    || matches!(
+                        register_types.get(&dest.0).map(Ty::kind),
+                        Some(TyKind::Ref(_))
+                    ) =>
+            {
                 let named = named_storage(register_types.get(&dest.0));
-                args.iter()
-                    .chain(kwargs.iter().map(|(_, reg)| reg))
+                mojito_mir::mir::call_operands(instruction)
+                    .into_iter()
+                    .map(|operand| operand.reg)
                     .filter(|operand| {
                         named_storage(register_types.get(&operand.0))
                             .iter()
                             .any(|storage| named.contains(storage))
                     })
-                    .copied()
                     .collect()
             }
             _ => Vec::new(),

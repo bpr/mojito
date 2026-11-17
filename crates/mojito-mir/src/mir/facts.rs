@@ -1669,6 +1669,14 @@ impl<'a> Flatten<'a> {
                 }
                 Vec::new()
             }
+            // A field read whose type names an origin (`v.p` over a
+            // `View[origin_of(x)]`) carries the loans its object holds, as
+            // upstream keeps an origin's memory live while a value whose
+            // type names it is.
+            CheckedOp::Member { .. } if node.ty().is_some_and(|ty| carries_references(&ty)) => node
+                .object()
+                .map(|object| self.aggregate_borrows(object))
+                .unwrap_or_default(),
             _ => Vec::new(),
         }
     }

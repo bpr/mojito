@@ -2600,29 +2600,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2263 A method's or subscript's pointer result passed straight to a
-  call loses its receiver's owner**
-
-  `print("v", read_ptr(v.get()))`, over `var v = View(Pointer(to=x))` with
-  `struct View[o: ImmOrigin](TrivialRegisterPassable)` and `def get(self)
-  -> Pointer[Noisy, Self.o]`, destroys `x` before the call and stops with
-  "field access on non-struct <moved>", where the pin prints `del 1`, `v 1`.
-  - Probe: `read_first(s.unsafe_ptr())` over a `Span` fails the same way
-    ("vm: use after Pointer deallocation").
-  - A free call's tracked-pointer result inherits the operands whose types
-    name its origin (`RegisterLoanStep::new`'s `origin_operands`,
-    `register_loans.rs`); a method's or subscript's does not.
-  - Fix: extend `origin_operands` from `Call` to `MethodCall`, `Index`, and
-    `MultiIndex` with a tracked-pointer or `Ref` result, over
-    `call_operands`; R2262 gives the result type the origin to match.
-  - Probe: a field read bound to a variable, `var p = v.p; print("v",
-    p[].v)` over the same `View`, prints `del 1` first and stops with
-    "field access on non-struct <moved>", where the pin prints `v 1`,
-    `del 1`; the field's load needs the same inheritance.
-  - Found while landing R2259 (2026-11-16).
-  - Depends on R2262.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1300 A method's origin parameter bound by `ref[o] self` is not
   the receiver's origin inside the body**
 
@@ -10248,6 +10225,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Origin` its `_mlir_origin`.
   - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
   - Probe: R1463's `print(p)`.
+  - Probe: a bare `UnsafePointer[Int, _]` parameter type with no import
+    resolves, where the pin reports "use of unknown declaration
+    'UnsafePointer'" (and rejects `from std.memory import UnsafePointer`):
+    declare only the names the pin's prelude and `std.memory` export.
   - The base fixtures (`assets/ok/*pointer*`) keep their output on both
     backends.
   - Found while planning R1681 (2026-11-14).

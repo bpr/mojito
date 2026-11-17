@@ -707,6 +707,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method's or subscript's pointer or reference result passed straight to a
+  call (`read_ptr(v.get())` over a register-passable `View[origin_of(x)]`,
+  `read_first(s.unsafe_ptr())` over a `Span`) now keeps the storage its
+  origin names alive through that call, and a field read bound to a variable
+  (`var p = v.p`) carries its object's loans, where `x` used to be destroyed
+  before the read (R2263).
+
 - A method's, subscript's, or field read's `Pointer[T, Self.o]` result now
   names the receiver type's origin argument (`origin_of(x)` on a
   `View[origin_of(x)]`, or a generic caller's own binder), and a free
