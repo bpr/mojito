@@ -29,21 +29,21 @@
       },
       fn {
         name: get_fwd,
-        registers: 6,
-        vars: 0,
-        var_names: [],
+        registers: 7,
+        vars: 1,
+        var_names: ["$mat_r2"],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [],
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(5))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Grid, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 167, end: 174, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 167, end: 177, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(5))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Grid, arguments: [] } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r6, type: ref { referent: struct_type { name: Grid, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 167, end: 174, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 167, end: 177, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 172, end: 173, origin: absent }) }, reg_loc { reg: %r6, location: absent }],
         removed_params: [param_id { owner: "get_fwd", slot: 0 }],
         callee_removed_params: [callee_params { callee: "Grid.__getitem_param__", params: [param_id { owner: "Grid.__getitem_param__", slot: 0 }] }],
         blocks: [
@@ -53,8 +53,10 @@
               literal.materialize { dest: %r5, value: %r0, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r1, fields: [%r5] },
               call { dest: %r2, func: Grid, raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v0, src: %r2, binding_type: present(struct_type { name: Grid, arguments: [] }), in_place: false },
+              ref.make { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [] }), projections: [], type: present(struct_type { name: Grid, arguments: [] }), through: absent } },
               const { dest: %r3, value: param(param_decl_ref { owner: "get_fwd", slot: 0, name: n, type: meta_value(Int) }) },
-              index.get { dest: %r4, base: %r2, index: %r3, call: present(subscript_call { target: "Grid.__getitem_param__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [], capture_accesses: [], reference_result: absent, param_arg_regs: [param_arg { name: present(i), value: present(%r3), expr: present(param_decl_ref { owner: "get_fwd", slot: 0, name: n, type: meta_value(Int) }) }], param_decls: [value_param { owner: "Grid.__getitem_param__", slot: 0, name: i, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }] }), intrinsic: absent }
+              index.get { dest: %r4, base: %r6, index: %r3, call: present(subscript_call { target: "Grid.__getitem_param__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [], capture_accesses: [], reference_result: absent, param_arg_regs: [param_arg { name: present(i), value: present(%r3), expr: present(param_decl_ref { owner: "get_fwd", slot: 0, name: n, type: meta_value(Int) }) }], param_decls: [value_param { owner: "Grid.__getitem_param__", slot: 0, name: i, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }] }), intrinsic: absent }
             ],
             terminator: return { value: present(%r4) }
           }

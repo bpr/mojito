@@ -715,6 +715,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Nineteen MIR pass test inputs now pass a memory-only `read` argument or
+  receiver as a reference to its slot, as MIR lowering and upstream's
+  `lit.call` do, so they load again, and declare `Bool` register-passable
+  where it was missing. Their expectations are re-blessed (R2285).
+
 - An augmented pointer offset with a literal operand (`p += 1` over an
   `UnsafePointer` local, field, or `mut` parameter) now converts the
   literal at `Int`, as `p = p + 1` does, instead of failing MIR

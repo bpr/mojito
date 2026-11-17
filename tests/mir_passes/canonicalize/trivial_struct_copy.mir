@@ -47,21 +47,21 @@ artifact {
       },
       fn {
         name: passed,
-        registers: 11,
-        vars: 1,
-        var_names: [a],
+        registers: 12,
+        vars: 2,
+        var_names: [a, "$mat_r4"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Pt, arguments: [] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: kgen_simd { dtype: int, width: 1 } }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: IntLiteral, arguments: [value_arg(ct_pop_int_literal(2))] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: Pt, arguments: [] } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: kgen_simd { dtype: int, width: 1 } }, reg_type { reg: %r11, type: ref { referent: struct_type { name: Pt, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }],
         blocks: [
           bb0 {
             instructions: [
@@ -75,7 +75,9 @@ artifact {
               value.copy { dest: %r8, value: %r6 },
               value.copy { dest: %r9, value: %r7 },
               struct.create { dest: %r4, fields: [%r8, %r9] },
-              call { dest: %r5, func: take, raises: absent, args: [%r4], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              var.store { var: $v1, src: %r4, binding_type: present(struct_type { name: Pt, arguments: [] }), in_place: false },
+              ref.make { dest: %r11, place: place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
+              call { dest: %r5, func: take, raises: absent, args: [%r11], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r5) }
           }

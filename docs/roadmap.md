@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2302**.
+Next free ID: **R2303**.
 
 ## Ordered Work
 
@@ -9775,7 +9775,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2296, R2297, R2298, R2299, and R1506.
   - Model: Fable, Not Planned.
 
-- [ ] **R2045 Nine MIR pass test inputs destroy a memory-only value
+- [ ] **R2302 The verifier checks no checked-subscript argument at a
+  by-address parameter**
+
+  Upstream's subscript accessor is a `lit.call`, whose verifier requires
+  a `!lit.ref` at every argument the accessor takes by address. MIR
+  lowering passes one (`call_argument`'s `by_address`), but
+  `mir/verify/subscripts.rs` checks only the receiver and `mut`/`ref`
+  arguments, so a memory-only `read` argument passed as a value loads.
+  - Fix: require a reference at every `index.get`, `index.set`, and
+    `index.multi` argument whose accessor parameter `by_address_parameter`
+    takes by address, as `verify_direct_call` does for a plain call.
+  - Probe: before R2285 landed,
+    `tests/mir_passes/remove-unused-params/subscript_forward.mir` passed
+    `Arr[n]` by value to `Grid.__getitem__`, `Pair.__getitem__`, and
+    `Ring.__getitem__`, and loaded. With the rule on, run `mojito opt` on
+    every `tests/mir_passes/*/*.mir` input and fix each one it flags as
+    R2285 did.
+  - Stop when `scripts/smoke` runs clean with the rule on.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2045 Seven MIR pass test inputs destroy a memory-only value
   through a `deinit` receiver register and fail at load**
 
   The MIR verifier rejects a `deinit` receiver call that destroys a
@@ -9786,58 +9807,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `inline-parametric/destructor_drop.mir` and
     `destructor_arm_entry_inlined.mir` (`D[n]`),
     `field_destructor_place.mir` (`S[3]`, `S[2]`),
-    `owned_param_dropped.mir` (`Token`), `read_loaded_across_region.mir`
-    and `read_through_reference_register.mir` (`Res`),
-    `retained_place_read_param.mir` (`Box`), and `tuple_reverse_closed.mir`
-    (`_ZeroStartingRange[DType.int]`, in `$comptime$Tuple.__deinit__$c0`
-    and `$comptime$Tuple.reverse$c0`).
+    `owned_param_dropped.mir` (`Token`),
+    `read_through_reference_register.mir` (`Res`), and
+    `tuple_reverse_closed.mir` (`_ZeroStartingRange[DType.int]`, in
+    `$comptime$Tuple.__deinit__$c0` and `$comptime$Tuple.reverse$c0`).
   - `sroa/destructor_call_kept.mir` (`S`).
   - Fix: pass the receiver as a `ref.make` of the slot that holds it, as
     `elaborate-drops` now emits a memory-only slot's drop, or re-emit the
     input with `emit-mir`, then re-bless and check each expectation still
     shows what its case is about.
-  - `retained_place_read_param.mir` also passes a memory-only value at a
-    by-address `read` slot (R2285); fix both there.
   - Probe: `mojito opt tests/mir_passes/sroa/destructor_call_kept.mir`
     reports "call.method deinit receiver destroys %r13 of memory-only type
     S".
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2285 Fifteen MIR pass test inputs pass a memory-only value at a
-  by-address `read` slot and fail at load**
-
-  Since R2251 the MIR verifier rejects a value at a by-address `read` slot
-  of a declared call, as upstream's `lit.call` takes the `!lit.ref` of a
-  memory-only argument. These inputs predate that rule and pass the loaded
-  value, so `tests/mir_pass_test.rs` fails before the pass runs.
-  - `canonicalize/struct_copy_kept.mir` and `trivial_struct_copy.mir`
-    (`take`'s `Pt`).
-  - `elaborate-drops/handler_drop_call.mir` (`may_raise`'s `Bool`).
-  - `inline-parametric/bound_iteration.mir`, `bound_witness.mir`,
-    `copy_type_param.mir`, `default_wrapper.mir`, `generic_pack.mir`,
-    `generic_type.mir`, `read_collector_register.mir`,
-    `retained_place_read_param.mir`, `returned_if_merge.mir`, and
-    `struct_operator.mir`: most are a generic `read` parameter, which the
-    template passes by address whatever its instance.
-  - `remove-unused-params/forwarded_argument.mir` and
-    `recursive_argument.mir` (`Arr[n]`).
-  - Five more pass a memory-only receiver by value, which fails once
-    R2295 turns the receiver rule on at load:
-    `inline-parametric/read_loaded_across_region.mir` (`Res.add`),
-    `inline-parametric/struct_operator.mir` (`V.__add__`),
-    `remove-unused-params/member_call.mir` (`NBox.__neg__`),
-    `subscript_forward.mir` (`Ring.__getitem__`), and `subscript.mir`
-    (`Grid.__getitem_param__`).
-  - Fix: pass each operand as a `ref.make` of the slot the value was
-    loaded from, as MIR lowering forms it (`Flatten::address_operand`), or
-    re-emit the input with `emit-mir`, then re-bless and check each
-    expectation still shows what its case is about.
-  - Probe: `mojito opt tests/mir_passes/canonicalize/trivial_struct_copy.mir`
-    reports "argument 0 of 'take' is received by address but passes a Pt
-    value".
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R2046 With the library linked from source, a compile-time call
   passing a `String` to a `ref` parameter reads an unresolved value**
 

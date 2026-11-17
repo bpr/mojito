@@ -72,13 +72,13 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: V, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: ref { referent: struct_type { name: V, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 321, end: 322, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 325, end: 326, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 321, end: 326, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 321, end: 326, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 321, end: 326, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 321, end: 326, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
-              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
+              ref.make { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
               loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r3, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } }, place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: V, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } }, binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r5] } }] }
             ],
             terminator: return { value: present(%r2) }

@@ -42,12 +42,12 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r1, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: S, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 52, end: 80, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 80, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
               call { dest: %r1, func: "Tr.m", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -69,13 +69,13 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: S, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r3, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: S, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: struct_type { name: S, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r3, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 127, end: 128, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 127, end: 132, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } },
-              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }, call { dest: %r3, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
+              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [ref.make { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [], type: present(struct_type { name: S, arguments: [] }), through: absent } }, call { dest: %r3, func: "Tr.m", raises: absent, args: [%r2], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: S, arguments: [] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
             ],
             terminator: return { value: present(%r1) }
           }

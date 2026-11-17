@@ -41,12 +41,12 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent } }, reg_type { reg: %r1, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 277, end: 282, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 277, end: 292, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), projections: [], type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), projections: [], type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), through: absent } },
               call.method { dest: %r1, recv: %r0, method: __len__, resolved: present("__trait_dispatch.__len__$ov$SelfRead"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -68,13 +68,13 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r3, type: Int }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r3, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 348, end: 349, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 342, end: 350, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 342, end: 350, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 342, end: 350, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
-              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } }, call.method { dest: %r3, recv: %r2, method: __len__, resolved: present("NBox.__len__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [ref.make { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } }, call.method { dest: %r3, recv: %r2, method: __len__, resolved: present("NBox.__len__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] }
             ],
             terminator: return { value: present(%r1) }
           }
