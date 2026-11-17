@@ -7,7 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{ParamArg, SourceType};
+use mojito_ast::ast::{CaptureList, ParamArg, SourceType};
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
@@ -717,27 +717,24 @@ impl Checker {
     }
 
     /// Record the symbol of the nested `def` `stmt`, just bound in the body
-    /// being checked, when it has no capture list
+    /// being checked, when it has no capture list or an empty one (`{}`),
+    /// which the pin types as capture-free too
     /// ([`Self::nested_function_ref`]), for a read of it as a compile-time
     /// value ([`Self::nested_callable_symbol`]).
     pub(super) fn record_nested_symbol(&mut self, stmt: &Stmt) {
-        let StmtKind::Def {
-            name,
-            captures: None,
-            ..
-        } = &stmt.kind
-        else {
+        let StmtKind::Def { name, captures, .. } = &stmt.kind else {
             return;
         };
-        if let Some(binding) = self.lookup_owner(name)
+        if captures.as_ref().is_none_or(CaptureList::is_empty)
+            && let Some(binding) = self.lookup_owner(name)
             && let Some(symbol) = self.nested_function_ref(stmt.syntax_id)
         {
             self.nested_symbols.insert(binding, symbol);
         }
     }
 
-    /// The symbol of the capture-free nested `def` or lambda `expr` reads as
-    /// a compile-time value, generic or not, applied to the binders in scope
+    /// The symbol of the capture-free nested `def` or lambda `expr` (no
+    /// capture list, or an empty `{}` one) reads as a compile-time value, generic or not, applied to the binders in scope
     /// where it is declared with its own binders left open
     /// ([`Self::nested_function_ref`]), or a bracket over such a `def`
     /// (`inner[5]`): that symbol applied next to the arguments the bracket
@@ -759,7 +756,11 @@ impl Checker {
         match &expr.kind {
             ExprKind::Identifier(name) => self.nested_binding_symbol(name),
             ExprKind::Lambda { def } => match &def.kind {
-                StmtKind::Def { captures: None, .. } => self.nested_function_ref(def.syntax_id),
+                StmtKind::Def { captures, .. }
+                    if captures.as_ref().is_none_or(CaptureList::is_empty) =>
+                {
+                    self.nested_function_ref(def.syntax_id)
+                }
                 _ => None,
             },
             _ => None,

@@ -2144,6 +2144,14 @@ pub struct CaptureList {
     pub default: Option<CaptureKind>,
 }
 
+impl CaptureList {
+    /// Whether the list is `{}`: no entry and no default convention, so the
+    /// function it decorates captures nothing.
+    pub const fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.default.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Capture {
     pub name: String,

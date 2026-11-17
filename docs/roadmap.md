@@ -9555,24 +9555,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2314 A lambda with an empty capture list is a thin function
-  value, where the pin types it as capture-free**
-
-  `transform(lambda (x: Int) {} -> Int: x * 3, 5)` over `F: def(x: Int)
-  -> Int` prints `size_of[F]()` as `16`, where the pin prints `0`: the pin
-  types a `{}` lambda as a capture-free function.
-  - `Checker::nested_callable_symbol` requires `captures: None`, so a
-    `{}` lambda never inflates.
-  - Fix: treat an empty capture list as no capture list when naming the
-    lambda's symbol.
-  - Probe: `conformance/probes/empty_capture_list_lambda_at_callable_bound.mojo`
-    prints `0 15 0 15`.
-  - Probe: `assets/ok/lambda_generic_comptime.mojo` unchanged on both
-    backends, no longer reaching the `Bindings::callables` insert.
-  - Found while planning R2292 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2315 A function at an applied generic struct's initializer bound
   stays a thin function value**
 
@@ -9608,8 +9590,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   it traces through registers, and erases a generic callable's slot to an
   `Int` placeholder.
   - Still load-bearing (2026-11-17): the `Bindings::callables` insert
-    fires for `Optional`'s and `Tuple`'s `init_with`, and the shapes
-    R2314 and R2315 own.
+    fires for `Optional`'s and `Tuple`'s `init_with`, the shapes R2315
+    owns.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
     seeding in `specializer.rs`), the `callable_arguments` instance-key

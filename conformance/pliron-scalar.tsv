@@ -426,6 +426,7 @@ assets/ok/dunder_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/dunder_vec2.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dying_slot_copy_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/element_store_from_same_list.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/empty_capture_list_callable_bound.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/entry_redeclares_library_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/env_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/erased_clone_result_members.mojo	-	ineligible	no-scalar-entry-shape

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A lambda or nested `def` with an empty capture list (`{}`) passed at a
+  `def(...)` bound now binds as its generator's symbol, as at the pin,
+  instead of riding a register as a thin function value, so `size_of[F]()`
+  is `0` (`assets/ok/empty_capture_list_callable_bound.mojo`, R2314).
+
 - A bracket over a capture-free nested generic `def` passed at a
   `def(...)` bound (`apply(inner[5], x)`) now binds as its generator's
   inflated symbol, applied to the enclosing binders and then the bracket's
