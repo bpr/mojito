@@ -4122,29 +4122,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2309 A nested body's symbol cannot carry a variadic or callable
-  enclosing binder**
-
-  `NestedScope` drops its symbol for a scope holding a variadic binder, a
-  callable binder, or a binder with a callable default, so a nested
-  `def` declared there stays `CtValue::Deferred` at a callable slot,
-  where the pin applies its generator to every enclosing parameter.
-  - Where: the applicability filter in `Checker::enter_nested_scope`
-    (`checker/comptime_validation.rs`); the elaborator's
-    `Specializer::bound_enclosing_arguments`
-    (`native/mono/specializer.rs`) binds a type or a plain value only.
-  - A pack binder's argument is its list (`ParamDecl::own_argument`), and
-    a callable binder's the enclosing instance's function symbol.
-  - Probe: `g[k]()` in `def pack[*Ts: AnyType]()` over a nested
-    `def k() -> Int: return 40` prints `40` but carries `ct_deferred`.
-  - Probe: `g[k]()` in `def fwd2[f: def() thin -> Int]()` over a nested
-    `def k() -> Int: return f() + 1` prints `8` for `fwd2[seven]()` but
-    carries `ct_deferred`.
-  - Probe: `Tuple`'s `init_with` lambda (`stdlib/std/builtin/tuple.mojo`)
-    sits in a scope over the `*Ts` pack; it is generic too (R2088).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2088 A generic function passed to a callable parameter has no
   symbol in the checked instance key**
 
@@ -4158,6 +4135,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "cannot infer type parameter 'width' of 'add'".
   - Lever: the generator's unspecialized symbol, which the elaborator's
     `bindings.callables` already keys (`native/mono/infer.rs`).
+  - Probe: a generic lambda at a generic callable slot stays deferred
+    too, since `Checker::nested_callable_symbol` names no body with type
+    parameters: `Tuple`'s `init_with` lambdas
+    (`lambda [i: Int]() -> Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

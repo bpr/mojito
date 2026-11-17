@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-free nested `def` or lambda declared over a type, value, or
+  callable pack, a callable binder, or a binder with a callable default is
+  now its generator's symbol applied to those binders, as at the pin,
+  instead of a register read: it inflates at a `def(...)` bound
+  (`size_of[F]()` is `0`, was `16`), and a compile-time call of it inside
+  such a scope folds a pack read
+  (`assets/ok/nested_callable_symbol_enclosing_binders.mojo`, R2309).
+
 - A capture-free nested `def` or lambda passed to a callable parameter is
   its generator's symbol wherever it is declared: beside a same-spelled overload,
   inside a lambda, inside a capture-list closure, and inside an expression
@@ -21,9 +29,7 @@ to evolve under the `0.x` compatibility rules.
   as the pin keys `g[inner]`: `S[inner](1).get()` inside `outer[n]` now
   runs (`5 6` for `outer[4](), outer[5]()`), and at a `def(...)` bound
   such a callee inflates, so `size_of[F]()` is `0` as at the pin
-  (`assets/ok/nested_callable_parameter_symbol.mojo`, R2087). A nested body
-  over a variadic or callable binder still passes through a register
-  (R2309).
+  (`assets/ok/nested_callable_parameter_symbol.mojo`, R2087).
 
 - A signature names a `read` collector's pack origin as the pin spells
   it, `ref[args.origin]` or `ref[type_of(args).origin]`, and each call

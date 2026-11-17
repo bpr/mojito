@@ -31,6 +31,8 @@ const CALLABLE_PARAMETER_DEFAULTS: &str =
     include_str!("../conformance/fixtures/callable_parameter_defaults.mojo");
 const NESTED_CALLABLE_SYMBOL_SCOPES: &str =
     include_str!("../assets/ok/nested_callable_symbol_scopes.mojo");
+const NESTED_CALLABLE_SYMBOL_ENCLOSING_BINDERS: &str =
+    include_str!("../assets/ok/nested_callable_symbol_enclosing_binders.mojo");
 const GENERIC_ANONYMOUS_CONFORMANCE: &str =
     include_str!("../conformance/fixtures/generic_anonymous_callables.mojo");
 
@@ -140,6 +142,60 @@ fn nested_callable_symbol_is_named_wherever_declared() {
         named, 4,
         "`spelled_twice`, `in_lambda`, `in_closure`, `lifted`"
     );
+}
+
+#[test]
+fn nested_callable_symbol_carries_pack_and_callable_binders() {
+    let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
+    let compiled = compiler
+        .compile_source(
+            NESTED_CALLABLE_SYMBOL_ENCLOSING_BINDERS,
+            std::path::Path::new("nested_callable_symbol_enclosing_binders.mojo"),
+        )
+        .expect("compile nested callable symbols over packs and callable binders");
+    let mir = compiled.elaborated_mir();
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let mut named = 0;
+    for (_, function) in &mir.functions {
+        for instruction in nested_instructions(&function.body) {
+            let MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } = instruction
+            else {
+                continue;
+            };
+            if func.0 != "g" && func.0 != "apply" {
+                continue;
+            }
+            // A body over a pack or callable binder is its generator
+            // applied to them, never the deferred marker.
+            for argument in instantiated_args {
+                match argument {
+                    TyArg::Val(CtValue::FuncSymbol(function)) => {
+                        assert!(
+                            mir.functions
+                                .iter()
+                                .any(|(name, _)| *name == function.symbol),
+                            "`{}` names no lowered function",
+                            function.symbol
+                        );
+                        named += 1;
+                    }
+                    TyArg::Val(CtValue::Deferred(_)) => {
+                        panic!("a nested body at `{}` stays deferred", func.0)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(named >= 6, "only {named} nested bodies named");
 }
 
 #[test]

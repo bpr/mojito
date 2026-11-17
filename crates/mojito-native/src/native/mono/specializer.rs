@@ -1917,7 +1917,7 @@ impl<'a> Specializer<'a> {
                             ),
                         )
                     })?;
-                    bound.types.insert(binder, ty);
+                    bind_enclosing_type(decl, &binder, ty, &mut bound);
                 }
                 ParamDecl::Value { .. } => {
                     let value = self
@@ -2913,7 +2913,7 @@ impl<'a> Specializer<'a> {
             let binder = decl.binder();
             match (decl, argument) {
                 (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                    bound.types.insert(binder, ty.clone());
+                    bind_enclosing_type(decl, &binder, ty.clone(), &mut bound);
                 }
                 (ParamDecl::Value { .. }, TyArg::Val(value)) => {
                     bound.values.insert(binder, value.clone());
@@ -5130,4 +5130,19 @@ fn runtime_pack(elements: &[CtValue], bindings: &Bindings) -> Option<Ty> {
 /// Whether `value` is a `#pop.fmf<flag>` fast-math attribute.
 fn is_fastmath_value(value: &CtValue) -> bool {
     matches!(value, CtValue::MlirAttr(attribute) if mojito_types::mlir::is_fastmath_attribute(attribute))
+}
+
+/// Bind the enclosing binder `binder`, declared as the type binder `decl`,
+/// to `ty`: a type pack's list binder whole ([`super::unify::bind_pack`]),
+/// as a callee's own pack binds, so a pack read in the nested body
+/// (`len(Ts)`) folds.
+fn bind_enclosing_type(decl: &ParamDecl, binder: &ParamRef, ty: Ty, bindings: &mut Bindings) {
+    match ty.kind() {
+        TyKind::RuntimePack(elements) if matches!(decl, ParamDecl::Type { variadic: true, .. }) => {
+            super::unify::bind_pack(binder, elements.clone(), bindings);
+        }
+        _ => {
+            bindings.types.insert(binder.clone(), ty);
+        }
+    }
 }

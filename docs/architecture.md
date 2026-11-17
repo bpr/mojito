@@ -5223,9 +5223,13 @@ under the caller's instance and names the nested body's instance from them
 (`Specializer::function_value_instance`), the one a `closure.make` of the
 body in that instance names, and a callable binder bound to such a symbol
 reads as it directly, since a closed application among its arguments is no
-folded constant. A nested body over a variadic or callable binder (R2309)
-and a generic function argument (R2088)
-keep the slot `CtValue::Deferred`, bound from the argument's register. A
+folded constant. The enclosing binders are every one in scope, a pack's
+list binder and a callable binder included: both enclosing binding paths
+(`bound_enclosing_arguments` for a symbol, `enclosing_bindings` for a
+compile-time application) bind an enclosing type pack whole
+(`unify::bind_pack`), as a callee's own pack binds, so a pack read in the
+nested body folds. A generic function argument (R2088)
+keeps the slot `CtValue::Deferred`, bound from the argument's register. A
 function named where a compile-time
 value is read (`comptime h = sq`, `comptime f: OptionalReg[F] = sq`) is the
 same constant, typed by the function's signature

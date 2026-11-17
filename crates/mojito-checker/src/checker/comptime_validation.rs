@@ -602,11 +602,12 @@ pub(in crate::checker) struct NestedScope {
     /// The symbol the body lowers to, which names each `def` nested in it
     /// a compile-time call applies (`outer$mk`); `None` for a body none of
     /// whose nested `def`s such a call names: a lambda's, one its scope
-    /// spells more than once, one with a capture list, or one that is not
-    /// [`Self::applicable`].
+    /// spells more than once, one with a capture list, or one whose binders
+    /// are unknown ([`Self::applicable`]).
     symbol: Option<String>,
-    /// Whether every binder in scope is one an application argument
-    /// holds, so that a body nested here is its generator applied to them.
+    /// Whether the binders in scope are known, so that a body nested here
+    /// is its generator applied to them: a type or value pack to its list,
+    /// a callable binder to the enclosing instance's function.
     applicable: bool,
     /// The binders in scope in the body, as the elaborator reads a nested
     /// body's generator: a method's struct's, then each enclosing
@@ -632,20 +633,10 @@ impl Checker {
         binders: Option<Vec<ParamDecl>>,
         body: &[Stmt],
     ) {
-        let known = binders.is_some();
-        let binders = binders.unwrap_or_default();
-        let applicable = known
-            && binders.iter().all(|decl| match decl {
-                ParamDecl::Type { variadic, .. } => !variadic,
-                ParamDecl::Value {
-                    variadic,
-                    callable_default,
-                    ..
-                } => !variadic && callable_default.is_none() && !decl.binds_callables(),
-                ParamDecl::Origin { .. } => true,
-            });
+        let applicable = binders.is_some();
         let mut binders: Vec<ParamDecl> = binders
             .into_iter()
+            .flatten()
             .filter(|decl| !matches!(decl, ParamDecl::Origin { .. }))
             .collect();
         let mut seen = HashSet::new();
@@ -707,7 +698,7 @@ impl Checker {
     /// ([`mojito_symbol::symbol::nested_check_name`]), which the
     /// collection of closure uses renames to the symbol the body is lifted
     /// to, as upstream's `liftClosure` renames every use of the nested op.
-    /// `None` where a binder in scope is one no application argument holds
+    /// `None` where the binders in scope are unknown
     /// ([`NestedScope::applicable`]).
     pub(super) fn nested_function_ref(&self, syntax: SyntaxId) -> Option<FuncSymbolRef> {
         let parent = self
@@ -748,8 +739,8 @@ impl Checker {
     /// The symbol of the capture-free nested `def` or lambda `expr` reads as
     /// a compile-time value, applied to the binders in scope where it is
     /// declared ([`Self::nested_function_ref`]). `None` for any other
-    /// expression, a generic body among them, and for a body over a binder
-    /// no application argument holds.
+    /// expression, a generic body among them, and for a body whose binders
+    /// in scope are unknown.
     pub(super) fn nested_callable_symbol(&self, expr: &Expr) -> Option<FuncSymbolRef> {
         match &expr.kind {
             ExprKind::Identifier(name)

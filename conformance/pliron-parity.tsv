@@ -756,6 +756,7 @@ assets/ok/named_shared_views.mojo	main	exe-differential	sanitized
 assets/ok/native_borrowed_reads.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_callable_parameter_symbol.mojo	main	exe-differential	sanitized
+assets/ok/nested_callable_symbol_enclosing_binders.mojo	main	exe-differential	sanitized
 assets/ok/nested_callable_symbol_scopes.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
