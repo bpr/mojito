@@ -729,6 +729,7 @@ impl Checker {
                     &self.enclosing_type_params,
                     &regular_params,
                     self.enclosing_struct_type_params.get(),
+                    super::origins::pack_collector(&method.params),
                 )?),
                 _ => None,
             },
@@ -1934,6 +1935,7 @@ impl Checker {
                 &self.enclosing_type_params,
                 &regular,
                 self.enclosing_struct_type_params.get(),
+                super::origins::pack_collector(&m.params),
             )?),
             _ => None,
         };

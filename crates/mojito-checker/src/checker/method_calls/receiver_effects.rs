@@ -585,11 +585,10 @@ impl Checker {
         // parameter does: the result borrows that frame-local slot and
         // the temporary lives as long as the statement that chains on it.
         let self_reference = self.materialized_reference_actual(object)?;
-        let origin = substitute_sig_origin_with_self(
-            &signature.origin,
-            &actual,
-            Some(self_reference.origin),
-        );
+        let declared =
+            self.bind_sig_pack_origin(&signature.origin, &resolved.positional_overflow, args)?;
+        let origin =
+            substitute_sig_origin_with_self(&declared, &actual, Some(self_reference.origin));
         // A struct origin parameter in the return (`ref[o]`) resolves to the
         // origin the receiver's `ref[o]` field borrows, so the returned
         // reference records a loan on its ultimate source rather than an

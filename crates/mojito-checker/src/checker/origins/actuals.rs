@@ -962,13 +962,42 @@ impl Checker {
     /// returned region and are dropped from the origin identity, exactly as
     /// `returned_reference_parameter_origin` documents for projections
     /// through a reference value.
+    ///
+    /// `collector` is the callable's `read` heterogeneous collector
+    /// ([`super::sig::pack_collector`]): a member naming its pack origin
+    /// (`args.origin`, `type_of(args).origin`) is the callable's implicit
+    /// pack binder, which each call binds to its collected arguments.
     pub(in crate::checker) fn lower_ref_sig_resolved(
         &self,
         spec: &mojito_ast::ast::OriginSpec,
         type_params: &[mojito_ast::ast::TypeParam],
         params: &[&FnParam],
         struct_params: usize,
+        collector: Option<&str>,
     ) -> Result<mojito_types::origin::RefSig, TypeError> {
+        use mojito_types::origin::{Origin, OriginParamId, RefSig, SigMutability, SigOrigin};
+        let (pack, rest): (Vec<&Expr>, Vec<&Expr>) = spec.iter().partition(|member| {
+            collector.is_some_and(|collector| super::sig::names_pack_origin(member, collector))
+        });
+        if !pack.is_empty() {
+            // The pack origin is `Origin[mut=False]` for a `read` collector,
+            // so the reference it joins is immutable.
+            let pack = SigOrigin::Bound(Origin::Param(OriginParamId::pack_binder()));
+            let origin = if rest.is_empty() {
+                pack
+            } else {
+                let rest: mojito_ast::ast::OriginSpec = rest.into_iter().cloned().collect();
+                SigOrigin::union(vec![
+                    pack,
+                    self.lower_ref_sig_resolved(&rest, type_params, params, struct_params, None)?
+                        .origin,
+                ])
+            };
+            return Ok(RefSig {
+                origin,
+                mutability: SigMutability::Immutable,
+            });
+        }
         if let [member] = spec.as_slice()
             && let Some(resolved) = self.delegated_call_ref_sig(member, type_params, params)?
         {

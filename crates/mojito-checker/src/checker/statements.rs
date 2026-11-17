@@ -4146,6 +4146,7 @@ impl Checker {
                 type_params,
                 regular,
                 0,
+                super::origins::pack_collector(params),
             )?),
             _ => None,
         };

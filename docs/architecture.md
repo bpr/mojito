@@ -5538,7 +5538,11 @@ the checker spells it as one: binding a bare `ref` parameter records
 declared binder's index; a heterogeneous `read` collector's
 `VariadicPack[origin=args, ...]` type carries the callable's implicit pack
 origin `OriginParamId::pack_binder()` above those, so `args[i]` names it, as
-upstream's `args.origin`, never a declared binder), so a reference reached through it (`self.n`,
+upstream's `args.origin`, never a declared binder; a ref-return clause names
+it as `args.origin` or `type_of(args).origin` (`lower_ref_sig_resolved`,
+`pack_collector`), and each call binds the callee's declared one to the
+collected arguments' places before substituting actuals with
+`bind_sig_pack_origin`), so a reference reached through it (`self.n`,
 `self.entries[i]`, `pick(x)`, `self._unsafe_unchecked_value()`) carries the
 binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
 result whose contributing arguments all carry one binder). A write through it

@@ -1884,7 +1884,8 @@ impl Checker {
                 &slots,
                 &conventions,
                 &ref_params,
-                ref_return.as_deref(),
+                self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
+                    .as_ref(),
                 args,
                 kwargs,
                 true,
@@ -1929,13 +1930,7 @@ impl Checker {
             None,
         );
 
-        let result = match return_ref {
-            Some(mut reference) => {
-                reference.referent = ret;
-                TyKind::Ref(reference).into()
-            }
-            None => ret,
-        };
+        let result = Self::call_result_ty(return_ref, ret);
         Ok((
             result,
             concrete_overload_rank(score, variadic.is_some() || has_kw_collector, &declared)
@@ -2181,7 +2176,8 @@ impl Checker {
                 &slots,
                 conventions,
                 ref_params,
-                ref_return.as_deref(),
+                self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
+                    .as_ref(),
                 args,
                 kwargs,
                 true,
@@ -2230,12 +2226,7 @@ impl Checker {
             // over the caller's own pack.
             referent = self.close_pack_elements(referent, &[(decls, &tyargs)]);
         }
-        let result = return_ref
-            .map(|mut reference| {
-                reference.referent = referent.clone();
-                Ty::new(TyKind::Ref(reference))
-            })
-            .unwrap_or(referent);
+        let result = Self::call_result_ty(return_ref, referent);
         let error = error.as_ref().map(resolve).transpose()?;
         self.call_bindings
             .borrow_mut()

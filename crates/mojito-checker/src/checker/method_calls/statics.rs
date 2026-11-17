@@ -678,7 +678,12 @@ impl Checker {
             &selected.slots,
             &selected.conventions,
             &selected.ref_params,
-            selected.ref_return.as_ref(),
+            self.bind_ref_sig_pack_origin(
+                selected.ref_return.as_ref(),
+                &selected.positional_overflow,
+                args,
+            )?
+            .as_ref(),
             args,
             kwargs,
             true,

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A signature names a `read` collector's pack origin as the pin spells
+  it, `ref[args.origin]` or `ref[type_of(args).origin]`, and each call
+  binds it to the places the collector gathers, so `first(x, s)` over
+  `def first[*Ts: Writable](*args: *Ts) -> ref[args.origin] Ts[0]`
+  prints `x` as at the pin (`assets/ok/variadic_pack_origin_ref_return.mojo`,
+  R2287). A register-passable temporary collected into such a call is
+  rejected for now (R2290).
+
 - A conformance or refinement list entry may be a trait composition:
   `struct S(A & B)` conforms to each trait, `A & B where C` conditions
   each, and `not (A & B)` (or `not A & B`) opts out of each, as the pin

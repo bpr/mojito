@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2290**.
+Next free ID: **R2291**.
 
 ## Ordered Work
 
@@ -7299,22 +7299,27 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2287 `ref[args.origin]` in a signature is rejected, where the pin
-  binds a collector's pack origin at the call**
+- [ ] **R2290 A register-passable temporary a `read` pack collects is not
+  kept alive for a reference its call returns through the pack origin**
 
-  `def first[*Ts: Writable](*args: *Ts) -> ref[args.origin] Ts[0]` stops
-  with "Undefined variable 'args'", and `ref[type_of(args).origin]` with
-  "invalid origin place", where the pin prints `1` over `first(x, s)`.
-  - The body already types `args` as `VariadicPack[origin=args, ...]`
-    over `OriginParamId::pack_binder()`; only the signature cannot name it.
-  - Lever: resolve `args.origin` and `type_of(args).origin` in
-    `lower_sig_origin_expression` (`checker/origins/subst.rs`) to the pack
-    origin, then bind it at the call in the callee origin pre-pass
-    (`substitute_callee_pointer_origins`, `checker/call_inference.rs`) to
-    the union of the argument places.
-  - Probe: both spellings above print `1` over `var x = 1; var s =
-    String("a")`.
-  - Found while landing R2264 (2026-11-17).
+  `first(n + 1, s)` and `first(5, s)` over `def first[*Ts: Writable](*args:
+  *Ts) -> ref[args.origin] Ts[0]` are rejected ("a register-passable
+  temporary collected by a pack whose origin the call's result borrows"),
+  where the pin prints `4` and `5`.
+  - The call lowering passes a register-passable `read` operand by value
+    (`register_passable_read_binding`, `mir/calls.rs`), so
+    `build_variadic_pack` (`mir/variadics.rs`) stores it in a fresh
+    `$pack_element` slot it keeps alive only through the call, not in the
+    checker's materialized borrow owner the result's origin names.
+  - A literal's span already carries another adjustment, so
+    `materialize_borrow_owner` cannot mint it an owner at all.
+  - Lever: let `Checker::bind_pack_origin` (`checker/origins/solve.rs`)
+    materialize these as it does a memory-only temporary, and have the pack
+    construction store a materialized element in its owner's slot.
+  - Probe: `print(first(n + 1, s))` prints `4` and `print(first(5, s))`
+    prints `5`, with `var n = 3; var s = String("a")`; before the
+    rejection, the first printed `0`.
+  - Found while landing R2287 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

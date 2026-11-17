@@ -527,6 +527,45 @@ impl Checker {
     }
 }
 
+/// The name of a callable's `read` heterogeneous collector (`*args: *Ts`),
+/// the one collector whose `VariadicPack` type carries the callable's
+/// implicit pack origin.
+pub(in crate::checker) fn pack_collector(params: &[FnParam]) -> Option<&str> {
+    params
+        .iter()
+        .find(|param| {
+            param.kind == mojito_ast::ast::ParamKind::Variadic
+                && matches!(param.convention, None | Some(ArgConvention::Imm))
+                && matches!(&param.ty, mojito_ast::ast::Type::Named(name, _) if name.starts_with('*'))
+        })
+        .map(|param| param.name.as_str())
+}
+
+/// Whether an origin-clause member names `collector`'s pack origin, as
+/// upstream spells it: `args.origin` or `type_of(args).origin`.
+pub(in crate::checker) fn names_pack_origin(member: &Expr, collector: &str) -> bool {
+    let ExprKind::Member { object, field } = &member.kind else {
+        return false;
+    };
+    let names_collector = |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if name == collector);
+    field == "origin"
+        && match &object.kind {
+            ExprKind::Identifier(_) => names_collector(object),
+            ExprKind::Call {
+                name,
+                args,
+                kwargs,
+                param_args,
+            } => {
+                name == "type_of"
+                    && kwargs.is_empty()
+                    && param_args.is_empty()
+                    && matches!(args.as_slice(), [argument] if names_collector(argument))
+            }
+            _ => false,
+        }
+}
+
 pub(in crate::checker) fn lower_ref_sig(
     spec: &mojito_ast::ast::OriginSpec,
     type_params: &[mojito_ast::ast::TypeParam],

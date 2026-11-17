@@ -1714,6 +1714,7 @@ assets/ok/variadic_method_type_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_overload_collector_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_element_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_forwarding_generic_def.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variadic_pack_origin_ref_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_pointer_maps.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_read_collector_destroy_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_upstream_spellings.mojo	-	ineligible	no-scalar-entry-shape

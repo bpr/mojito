@@ -486,6 +486,95 @@ impl Checker {
         }
         Ok((effective, returned, bool_bindings))
     }
+
+    /// A free call's result type: `referent`, or the reference `returned`
+    /// to it.
+    #[must_use]
+    pub(in crate::checker) fn call_result_ty(
+        returned: Option<mojito_types::origin::RefTy>,
+        referent: Ty,
+    ) -> Ty {
+        match returned {
+            Some(mut reference) => {
+                reference.referent = referent;
+                TyKind::Ref(reference).into()
+            }
+            None => referent,
+        }
+    }
+
+    /// A callee's ref-return signature with its implicit pack origin
+    /// (`ref[args.origin]`) bound to the places of the arguments its `read`
+    /// collector gathers (`overflow`, positions in `args`), as upstream's
+    /// call binds the collector's `VariadicPack` origin.
+    pub(in crate::checker) fn bind_ref_sig_pack_origin(
+        &self,
+        signature: Option<&mojito_types::origin::RefSig>,
+        overflow: &[usize],
+        args: &[Expr],
+    ) -> Result<Option<mojito_types::origin::RefSig>, TypeError> {
+        signature
+            .map(|signature| {
+                Ok(mojito_types::origin::RefSig {
+                    origin: self.bind_sig_pack_origin(&signature.origin, overflow, args)?,
+                    mutability: signature.mutability.clone(),
+                })
+            })
+            .transpose()
+    }
+
+    /// See [`Self::bind_ref_sig_pack_origin`]: bind the pack origin within
+    /// one declared signature origin. Only the callee's declaration names
+    /// its own pack origin; one reaching the call through an actual is the
+    /// caller's. A memory-only collected temporary the result borrows
+    /// (`first(String("q"), s)`) lives as long as the reference, as at a
+    /// `read` parameter: lowering stores it in a hidden slot the pack
+    /// element reads through.
+    pub(in crate::checker) fn bind_sig_pack_origin(
+        &self,
+        signature: &mojito_types::origin::SigOrigin,
+        overflow: &[usize],
+        args: &[Expr],
+    ) -> Result<mojito_types::origin::SigOrigin, TypeError> {
+        use mojito_types::origin::{Origin, OriginPlace};
+        if !sig_mentions_pack_binder(signature) {
+            return Ok(signature.clone());
+        }
+        let collected = overflow
+            .iter()
+            .map(|&position| {
+                let expression = &args[position];
+                if !crate::checker::places::is_place_expr(expression)
+                    && self.infer_reference_value(expression).is_none()
+                {
+                    // A register-passable temporary passes by value, so
+                    // the pack element's slot dies with the call (R2290).
+                    if !self.memory_only(&self.infer(expression)?) {
+                        return Err(TypeError::Unsupported(
+                            "a register-passable temporary collected by a pack whose origin \
+                             the call's result borrows"
+                                .to_string(),
+                        ));
+                    }
+                    let root = self.materialize_borrow_owner(expression, false)?;
+                    return Ok(Some(Origin::Place(OriginPlace {
+                        root,
+                        path: Vec::new(),
+                    })));
+                }
+                Ok(self
+                    .reference_actual(expression)
+                    .ok()
+                    .map(|actual| actual.origin))
+            })
+            .collect::<Result<Vec<_>, TypeError>>()?;
+        let collected = Origin::union(collected.into_iter().flatten());
+        Ok(map_sig_bound_origins(signature, &|origin| {
+            substitute_origin_params(origin.clone(), &|id| {
+                id.is_pack_binder().then(|| collected.clone())
+            })
+        }))
+    }
 }
 
 impl Checker {
@@ -745,6 +834,49 @@ fn body_place_origin(origin: &mojito_types::origin::Origin) -> bool {
         Origin::Place(_) => true,
         Origin::Union(members) => members.iter().all(body_place_origin),
         Origin::Immutable(inner) => body_place_origin(inner),
+        _ => false,
+    }
+}
+
+/// Whether a declared signature origin names the callable's implicit pack
+/// origin.
+fn sig_mentions_pack_binder(signature: &mojito_types::origin::SigOrigin) -> bool {
+    use mojito_types::origin::SigOrigin;
+    match signature {
+        SigOrigin::Bound(origin) => mentions_pack_binder(origin),
+        SigOrigin::Projected(base, _) => sig_mentions_pack_binder(base),
+        SigOrigin::Union(members) => members.iter().any(sig_mentions_pack_binder),
+        _ => false,
+    }
+}
+
+/// Rewrite every `Bound` origin within a declared signature origin.
+fn map_sig_bound_origins(
+    signature: &mojito_types::origin::SigOrigin,
+    map: &impl Fn(&mojito_types::origin::Origin) -> mojito_types::origin::Origin,
+) -> mojito_types::origin::SigOrigin {
+    use mojito_types::origin::SigOrigin;
+    match signature {
+        SigOrigin::Bound(origin) => SigOrigin::Bound(map(origin)),
+        SigOrigin::Projected(base, path) => {
+            SigOrigin::Projected(Box::new(map_sig_bound_origins(base, map)), path.clone())
+        }
+        SigOrigin::Union(members) => SigOrigin::union(
+            members
+                .iter()
+                .map(|member| map_sig_bound_origins(member, map)),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Whether `origin` names a callable's implicit pack origin.
+fn mentions_pack_binder(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Param(id) => id.is_pack_binder(),
+        Origin::Union(members) => members.iter().any(mentions_pack_binder),
+        Origin::Immutable(inner) => mentions_pack_binder(inner),
         _ => false,
     }
 }
