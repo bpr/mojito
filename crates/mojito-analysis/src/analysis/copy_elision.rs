@@ -18,8 +18,9 @@
 //! copy and the source still dies, as at the pin.
 //!
 //! A copy an owned parameter or owned receiver takes is bound in place to
-//! its call-result slot ([`CALL_RESULT_SLOT`]), whose forwarding use sits at
-//! the call's setup, after the later operands. When its source dies there
+//! its call-result slot ([`CALL_RESULT_SLOT`]), whose forwarding use, or
+//! for a memory-only `deinit` receiver the `ref.make` the call consumes,
+//! sits at the call's setup, after the later operands. When its source dies there
 //! and nothing from the source's death to the call can raise or names the
 //! source, the construction, the slot, and the source's death all go, and the call takes the source's storage itself: no
 //! move initializer runs, as Mojo's lifetime checker hands a dying source to
@@ -360,7 +361,8 @@ fn copy_construction(instruction: &MirInstr) -> Option<(&Reg, &Reg)> {
 }
 
 /// Where the call takes the call-result slot the dying copy is bound to:
-/// the slot's one forwarding use later in the block, before any region op, when
+/// the slot's one forwarding use later in the block, or the `ref.make` of
+/// it a `deinit` receiver call consumes, before any region op, when
 /// nothing past the
 /// source's death up to the call that consumes the slot can raise, names
 /// the source, or names the slot.
@@ -387,9 +389,21 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, elision: &Elision) -> 
                 mode: UseMode::Forward,
                 ..
             } if *var == slot => Some((at, *dest)),
+            MirInstr::MakeRef { dest, place }
+                if place.root == slot && place.proj.is_empty() && place.through.is_none() =>
+            {
+                Some((at, *dest))
+            }
             _ => None,
         })?;
     let consumer_at = first_reader(instrs, forward_at + 1..end, forwarded)?;
+    if matches!(instrs[forward_at], MirInstr::MakeRef { .. })
+        && instrs[consumer_at]
+            .consumed_receiver(&elision.addresses)
+            .is_none_or(|place| place.root != slot)
+    {
+        return None;
+    }
     (source.drop_at + 1..consumer_at)
         .all(|at| {
             let instruction = &instrs[at];
@@ -401,10 +415,13 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, elision: &Elision) -> 
 
 /// Hand the dying source to the call that takes the call-result slot: the
 /// load, the construction, the slot's binding, and the source's death go,
-/// and the slot's forwarding use forwards the source instead.
+/// and the slot's forwarding use forwards, or its `ref.make` addresses,
+/// the source instead.
 fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at: usize) {
-    if let MirInstr::UseVar { var, .. } = &mut instrs[forward_at] {
-        *var = source.var;
+    match &mut instrs[forward_at] {
+        MirInstr::UseVar { var, .. } => *var = source.var,
+        MirInstr::MakeRef { place, .. } => place.root = source.var,
+        _ => {}
     }
     instrs.remove(source.drop_at);
     if let Some(binding) = source.binding_at.or(source.held_at) {

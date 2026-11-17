@@ -9667,22 +9667,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2273 A dying memory-only slot is forwarded to its destructor
-  rather than addressed**
-
-  Upstream's destructor call takes the dead variable's address as its
-  `DeinitMem` operand. `mir::lower_drops` (`drop_calls.rs`) lowers a
-  named `drop.var` to a forwarding `var.use` of the slot and the call on
-  that value, whatever the slot's type.
-  - Probe: `var s = String("a")` dying at the end of `main` lowers to
-    `var.use … forward` and `String.__del__` on the value.
-  - `verify/drops.rs`'s `RegisterDestroys` keeps a `forwarded` exception
-    for this shape.
-  - Fix: a mutable `ref.make` of the whole slot for a memory-only type,
-    a forward for a register-passable one; then delete the exception.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2275 Four MIR pass cases fail at HEAD because their input or
   expectation predates a later MIR change**
 

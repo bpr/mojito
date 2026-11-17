@@ -7,16 +7,16 @@
 //! initialized there, since the move scan rejects every use of one only
 //! some paths initialize, so a `drop.var` or `drop.place` naming its
 //! destructor destroys unconditionally. This pass writes the call, as
-//! `copy_calls.rs` writes a copy's: a dying slot becomes a forwarding use of
-//! it, which ends it and hands its storage to the callee as Mojo's owned
-//! argument convention does, and a call of the named destructor on it as the
-//! `deinit self` receiver, which is what an explicit `x^.finish()` lowers
-//! to; a dying memory-only part becomes a `ref.make` of the part, the call's
-//! `DeinitMem` operand, whose call consumes the referenced storage as
-//! upstream's call consumes the field's address, and a register-passable
-//! one is moved out of its storage into the owned value the call takes; a
-//! dying register is the call's receiver itself, as upstream's destructor
-//! call consumes an owned SSA value.
+//! `copy_calls.rs` writes a copy's, as a call of the named destructor on
+//! the `deinit self` receiver. A dying memory-only slot or part becomes a
+//! mutable `ref.make` of its storage, the call's `DeinitMem` operand, whose
+//! call consumes the referenced storage as upstream's destructor call
+//! consumes the dead variable's or field's address. A dying
+//! register-passable slot becomes a forwarding use of it, which ends it and
+//! hands its value over as Mojo's owned argument convention does, and a
+//! register-passable part is moved out of its storage into the owned value
+//! the call takes. A dying register is the call's receiver itself, as
+//! upstream's destructor call consumes an owned SSA value.
 
 use super::legacy_places::{LegacyCursor, LegacyOperandTables};
 use super::{
@@ -31,8 +31,8 @@ use mojito_types::types::{Ty, TyKind};
 ///
 /// A destructor `unconditional` does not hold of, one available only where
 /// a `where` clause holds, stays a drop for the elaborator to name per
-/// instance. `register_passable` judges a dying part's type, which decides
-/// whether the call takes it by address or as a value moved out of it.
+/// instance. `register_passable` judges a dying slot's or part's type,
+/// which decides whether the call takes it by address or as a value.
 pub fn lower_drops(
     function: &mut MirFunction,
     unconditional: &dyn Fn(&str) -> bool,
@@ -119,14 +119,19 @@ fn lowered(
         Dying::Var(var) => {
             let ty = function.var_tys.get(&var).cloned()?;
             let span = death_span(function, var);
-            let recv = fresh_register(function, ty, span.as_ref());
-            let load = MirInstr::UseVar {
-                dest: recv,
-                var,
-                mode: UseMode::Forward,
-                constructor: None,
-            };
-            (recv, Some(load))
+            if (judge.register_passable)(&ty) {
+                let recv = fresh_register(function, ty, span.as_ref());
+                let load = MirInstr::UseVar {
+                    dest: recv,
+                    var,
+                    mode: UseMode::Forward,
+                    constructor: None,
+                };
+                (recv, Some(load))
+            } else {
+                let place = MirPlace::root(var, Some(ty.clone()));
+                consumed_by_address(function, place, ty, span.as_ref())
+            }
         }
         Dying::Place(place) => {
             let ty = place.ty.clone()?;
@@ -135,13 +140,7 @@ fn lowered(
                 let recv = fresh_register(function, ty, span.as_ref());
                 (recv, Some(MirInstr::take_place(recv, place.clone())))
             } else {
-                let handle = consumed_place_handle(place, ty);
-                let recv = fresh_register(function, handle, span.as_ref());
-                let make = MirInstr::MakeRef {
-                    dest: recv,
-                    place: place.clone(),
-                };
-                (recv, Some(make))
+                consumed_by_address(function, place.clone(), ty, span.as_ref())
             }
         }
     };
@@ -168,6 +167,20 @@ fn lowered(
         refined_bound: None,
     };
     Some(load.into_iter().chain([call]).collect())
+}
+
+/// The register holding the mutable `ref.make` of `place`, of the
+/// memory-only type `ty`, that a `deinit` call consumes it through: the
+/// call's `DeinitMem` operand.
+fn consumed_by_address(
+    function: &mut MirFunction,
+    place: MirPlace,
+    ty: Ty,
+    span: Option<&SourceSpan>,
+) -> (Reg, Option<MirInstr>) {
+    let handle = consumed_place_handle(&place, ty);
+    let recv = fresh_register(function, handle, span);
+    (recv, Some(MirInstr::MakeRef { dest: recv, place }))
 }
 
 /// The type of the mutable reference a `deinit` call consumes `place`,

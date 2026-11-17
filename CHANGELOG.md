@@ -1073,6 +1073,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A memory-only slot's drop now passes the slot's address to its
+  destructor, a mutable `ref.make` the call consumes, as upstream's
+  destructor call takes the dead variable's address as its `DeinitMem`
+  operand; an explicit `x^.f()` over a `deinit self` method and a
+  `deinit` receiver held in a call-result slot do too, and copy elision
+  hands a dying copy's source to such a call by address. The MIR
+  verifier no longer excuses a memory-only `deinit` receiver forwarded
+  out of a slot, and MIR's register-passability now decides
+  `IsTrivially*[T]` row conditions, so it agrees with the checker on
+  `MaybeUninit[Int]`. No program output changes. (R2273)
+
 - `inline-parametric` again inlines a `nodebug` destructor whose `deinit`
   receiver is passed by address, as upstream's inliner maps `deinit self`
   to the `DeinitMem` operand's address: a field's drop (`S.__deinit__`

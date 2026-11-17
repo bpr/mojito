@@ -1964,7 +1964,9 @@ impl<'a> Flatten<'a> {
 
     /// [`Self::lower_call_receiver`] for the receiver of method call `call`.
     /// A temporary receiver returned through memory is used in its
-    /// call-result slot: a `var`/`deinit` receiver takes it, a declared
+    /// call-result slot: a `var` receiver takes it, a `deinit` one reads it
+    /// with the slot's place, which [`Self::consume_receiver`] passes as
+    /// the storage the call consumes, a declared
     /// `read` receiver reads it, with the slot's place when it is
     /// memory-only, whose address [`Self::lower_receiver_value`]
     /// passes as upstream's `lit.call` takes a `!lit.ref` of the rvalue it
@@ -1985,6 +1987,9 @@ impl<'a> Flatten<'a> {
             .and_then(|contract| OperandBinding::of_receiver(&contract));
         self.bind_operand(receiver, binding);
         let owned = binding == Some(OperandBinding::Owned);
+        let deinit = call.call_contract().is_some_and(|contract| {
+            contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Deinit)
+        });
         // `^` over a temporary transfers nothing: the owned receiver is the
         // temporary itself (`pk(x^)^.release()`).
         if owned
@@ -1992,6 +1997,14 @@ impl<'a> Flatten<'a> {
             && inner.is_fresh_temporary()
         {
             return self.lower_method_receiver(call, inner);
+        }
+        // A `deinit` receiver transferred out of a named slot (`x^.f()`)
+        // is that slot, whose address the call consumes.
+        if deinit
+            && let Some(inner) = receiver.transfer_operand()
+            && matches!(inner.checked.op, CheckedOp::Identifier(_))
+        {
+            return self.lower_call_receiver(inner);
         }
         let (value, place) = self.lower_call_receiver(receiver);
         if place.is_some() {
@@ -2004,7 +2017,7 @@ impl<'a> Flatten<'a> {
                 (value, None)
             }
             CValue::Value(value) => self.materialize_receiver(receiver, value),
-            slot @ CValue::Slot(_) if owned => (self.take_c(receiver, slot), None),
+            slot @ CValue::Slot(_) if owned && !deinit => (self.take_c(receiver, slot), None),
             slot @ CValue::Slot(_) if read => {
                 let (value, place) = self.read_c(receiver, slot);
                 (value, place.filter(|_| receiver.indirect_result()))

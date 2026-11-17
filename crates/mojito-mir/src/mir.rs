@@ -645,13 +645,45 @@ impl MirDeclarations {
     /// Whether `ty` conforms to `trait_name` where the trait is one
     /// register-passability decides: `RegisterPassable` by
     /// [`Self::register_passable`], `TrivialRegisterPassable` by
-    /// [`Self::copy_is_identity`]; `None` for any other trait.
+    /// [`Self::copy_is_identity`], and an `IsTrivially*` predicate by
+    /// [`Self::trivial_lifecycle`]; `None` for any other trait.
     fn passability_conformance(&self, ty: &Ty, trait_name: &str) -> Option<bool> {
         match trait_name {
             "RegisterPassable" => Some(self.register_passable(ty)),
             "TrivialRegisterPassable" => Some(self.copy_is_identity(ty)),
-            _ => None,
+            _ => mojito_types::types::trivial_predicate_name(trait_name)
+                .and_then(|kind| self.trivial_lifecycle(ty, kind)),
         }
+    }
+
+    /// Whether `ty`'s `kind` lifecycle operation is trivial, as upstream's
+    /// `IsTrivially*[T]` answers: yes for a `TrivialRegisterPassable` type
+    /// ([`Self::copy_is_identity`]), and for a struct whose row for the
+    /// predicate holds at its arguments; `None` where the arguments, or a
+    /// type parameter, leave it open.
+    fn trivial_lifecycle(
+        &self,
+        ty: &Ty,
+        kind: mojito_types::types::TrivialLifecycle,
+    ) -> Option<bool> {
+        if self.copy_is_identity(ty) {
+            return Some(true);
+        }
+        let (name, arguments) = ty.kind().as_non_simd_struct()?;
+        let declaration = self.structure(name)?;
+        let spelling = mojito_types::types::trivial_predicate_spelling(kind);
+        declaration
+            .conformances
+            .iter()
+            .find(|row| row.trait_name == spelling)
+            .map_or(Some(false), |row| {
+                row_holds_at(
+                    &row.conditions,
+                    &declaration.param_decls,
+                    arguments,
+                    &|ty, trait_name| self.passability_conformance(ty, trait_name),
+                )
+            })
     }
 
     /// Record each struct's declaration-level register-passability
@@ -6054,6 +6086,14 @@ impl Judge<'_> {
                 .try_fold(true, |all, element| {
                     Some(all && (self.conforms)(element, trait_name)?)
                 }),
+            GenericConstraint::Trivial(kind, operand) => {
+                let ty = match operand {
+                    ConstraintOperand::Param(param) => bindings.types().get(&param.id)?,
+                    ConstraintOperand::Type(ty) => ty,
+                    _ => return None,
+                };
+                (self.conforms)(ty, mojito_types::types::trivial_predicate_spelling(*kind))
+            }
             GenericConstraint::WithMessage(inner, _) => holds(inner),
             GenericConstraint::Bool(value) => Some(*value),
             GenericConstraint::Not(inner) => holds(inner).map(|value| !value),

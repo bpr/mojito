@@ -54,7 +54,7 @@ use super::{
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
     MirDeclarations, MirPlace, OperandAddresses, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds,
-    TryLabel, UseMode, VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
+    TryLabel, VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -95,9 +95,7 @@ pub(super) fn verify_slot_ends(
 /// `CheckLifetimes` tracks only a register-passable value as an SSA value
 /// (`ValueSet::addValue`'s `numValueBits = 1`) and destroys a memory-only
 /// one through its storage: a `deinit` receiver addressing that storage is
-/// a reference, which passes. A receiver a forwarding `var.use` defines is
-/// that storage handed over, the form `lower_drops` gives every slot drop.
-/// A `deinit`-receiver call names the storage it consumes by its operand
+/// a reference, which passes. A `deinit`-receiver call names the storage it consumes by its operand
 /// alone, never by a receiver place.
 pub(super) fn verify_register_destroys(
     name: &str,
@@ -105,13 +103,10 @@ pub(super) fn verify_register_destroys(
     declarations: &MirDeclarations,
     errors: &mut Vec<String>,
 ) {
-    let mut forwarded = HashSet::new();
-    collect_forwarded(&function.body, &mut forwarded);
     let check = RegisterDestroys {
         name,
         function,
         declarations,
-        forwarded,
     };
     check.block(&function.body, errors);
 }
@@ -880,8 +875,6 @@ struct RegisterDestroys<'a> {
     name: &'a str,
     function: &'a MirFunction,
     declarations: &'a MirDeclarations,
-    /// The registers a forwarding `var.use` defines.
-    forwarded: HashSet<u32>,
 }
 
 impl RegisterDestroys<'_> {
@@ -894,9 +887,7 @@ impl RegisterDestroys<'_> {
             }
             let (reg, what) = match instruction {
                 MirInstr::Drop { reg, .. } => (*reg, "drop.reg"),
-                MirInstr::MethodCall { recv, .. }
-                    if instruction.deinit_receiver() && !self.forwarded.contains(&recv.0) =>
-                {
+                MirInstr::MethodCall { recv, .. } if instruction.deinit_receiver() => {
                     (*recv, "call.method deinit receiver")
                 }
                 _ => continue,
@@ -912,24 +903,6 @@ impl RegisterDestroys<'_> {
                     self.name, reg.0
                 ));
             }
-        }
-    }
-}
-
-/// The registers a forwarding `var.use` of `block`, at any depth,
-/// defines: a slot's storage handed over.
-fn collect_forwarded(block: &MirBlock, forwarded: &mut HashSet<u32>) {
-    for instruction in &block.instrs {
-        if let MirInstr::UseVar {
-            dest,
-            mode: UseMode::Forward,
-            ..
-        } = instruction
-        {
-            forwarded.insert(dest.0);
-        }
-        for region in instruction_regions(instruction) {
-            collect_forwarded(region, forwarded);
         }
     }
 }
