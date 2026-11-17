@@ -739,18 +739,25 @@ impl Checker {
     /// The symbol of the capture-free nested `def` or lambda `expr` reads as
     /// a compile-time value, generic or not, applied to the binders in scope
     /// where it is declared with its own binders left open
-    /// ([`Self::nested_function_ref`]). `None` for any other expression and
-    /// for a body whose binders in scope are unknown.
+    /// ([`Self::nested_function_ref`]), or a bracket over such a `def`
+    /// (`inner[5]`): that symbol applied next to the arguments the bracket
+    /// bound, upstream's `#kgen.func.symbol` of the specialization. `None`
+    /// for any other expression and for a body whose binders in scope are
+    /// unknown.
     pub(super) fn nested_callable_symbol(&self, expr: &Expr) -> Option<FuncSymbolRef> {
+        if let Some((name, _)) = expr.bracket_application() {
+            let mut symbol = self.nested_binding_symbol(name)?;
+            let bound = self.fact(&expr.source_span(), |facts| {
+                facts
+                    .generic_instantiation
+                    .as_ref()
+                    .map(|instantiation| &instantiation.arguments)
+            })?;
+            symbol.arguments.extend(bound);
+            return Some(symbol);
+        }
         match &expr.kind {
-            ExprKind::Identifier(name)
-                if self.compile_time_callee(name)
-                    && self.lookup(name).is_some_and(|ty| {
-                        matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-                    }) =>
-            {
-                self.nested_symbols.get(&self.lookup_owner(name)?).cloned()
-            }
+            ExprKind::Identifier(name) => self.nested_binding_symbol(name),
             ExprKind::Lambda { def } => match &def.kind {
                 StmtKind::Def { captures: None, .. } => self.nested_function_ref(def.syntax_id),
                 _ => None,
@@ -849,6 +856,18 @@ impl Checker {
         self.nested_applications
             .get(&self.lookup_owner(name)?)
             .map(Vec::as_slice)
+    }
+
+    /// The symbol of the capture-free nested `def` the binding `name` holds
+    /// ([`Self::record_nested_symbol`]), its own binders left open.
+    fn nested_binding_symbol(&self, name: &str) -> Option<FuncSymbolRef> {
+        let function = self
+            .lookup(name)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)));
+        if !function || !self.compile_time_callee(name) {
+            return None;
+        }
+        self.nested_symbols.get(&self.lookup_owner(name)?).cloned()
     }
 }
 

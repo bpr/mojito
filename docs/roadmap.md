@@ -9555,22 +9555,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2313 A bracket over a nested generic `def` at a `def(...)`
-  bound stays a thin function value**
-
-  `apply(inner[5], x)`, with `inner[m: Int]` nested in the caller, binds
-  `F` as `def(Int) thin -> Int` and rides a register, where the pin binds
-  the generator's symbol applied to the enclosing binders and then the
-  bracket's arguments.
-  - `callable_value_symbol` answers `None` for a local binding, and
-    `Checker::nested_callable_symbol` matches only a bare identifier.
-  - Probe: `assets/ok/generic_def_bracket_function_value.mojo` prints
-    unchanged on both backends and no longer reaches the
-    `Bindings::callables` insert (`native/mono/infer.rs`).
-  - Found while planning R2292 (2026-11-17).
-  - Depends on R2316.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2314 A lambda with an empty capture list is a thin function
   value, where the pin types it as capture-free**
 
@@ -9625,7 +9609,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `Int` placeholder.
   - Still load-bearing (2026-11-17): the `Bindings::callables` insert
     fires for `Optional`'s and `Tuple`'s `init_with`, and the shapes
-    R2313, R2314, and R2315 own.
+    R2314 and R2315 own.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
     seeding in `specializer.rs`), the `callable_arguments` instance-key

@@ -1113,12 +1113,17 @@ impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
 
 /// The rewrite [`CheckedProgram::rename_nested_references`] applies at
 /// every value the program records: a reference to a nested body by its
-/// check-time symbol becomes the lifted reference.
+/// check-time symbol becomes the lifted reference, applied next to the
+/// arguments a bracket bound to the body's own binders (`inner[5]`), which
+/// follow the enclosing ones.
 struct NestedReferences<'a>(&'a HashMap<String, FuncSymbolRef>);
 
 impl mojito_types::types::TyRewrite for NestedReferences<'_> {
     fn func_symbol(&mut self, function: &FuncSymbolRef) -> Option<FuncSymbolRef> {
-        self.0.get(&function.symbol).cloned()
+        let mut lifted = self.0.get(&function.symbol)?.clone();
+        let own = function.arguments.iter().skip(lifted.arguments.len());
+        lifted.arguments.extend(own.cloned());
+        Some(lifted)
     }
 
     fn expr(

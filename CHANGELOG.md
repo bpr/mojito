@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket over a capture-free nested generic `def` passed at a
+  `def(...)` bound (`apply(inner[5], x)`) now binds as its generator's
+  inflated symbol, applied to the enclosing binders and then the bracket's
+  arguments, as at the pin, instead of riding a register as a thin function
+  value (`assets/ok/generic_def_bracket_function_value.mojo`, R2313).
+
 - A generic function at a `def[...] thin` value binder is now its
   generator's symbol with its own binders left open, as at the pin, instead
   of a register the elaborator erased: a module function, its callable

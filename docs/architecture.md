@@ -4948,7 +4948,8 @@ synthesized tier, `DeclarationTable::synthesize`), and records
 `MakeStruct` and declares the struct from (`inflated_function_declarations`,
 `mir.rs`). A capture-free nested `def` or lambda inflates too, its
 `__CALL__` the nested generator applied to the enclosing binders
-(`Checker::nested_callable_symbol`); the elaborator names the requirement
+(`Checker::nested_callable_symbol`), and a bracket over a generic one
+(`inner[5]`) applied next to the arguments the bracket bound; the elaborator names the requirement
 call's callee as that generator under the instance the arguments spell
 (`Specializer::apply_nested_generator`). The ownership analyses bind its arguments
 to the bound's signature (`register_ends::Callee::Contract`). A generic
@@ -5220,7 +5221,8 @@ renames each such reference to the lifted symbol applied to the binders its
 lowered generator closes over, as `liftClosure` replaces every use of the
 nested op's symbol: the enclosing binders for an ordinary body, the storage's
 parameters inside a closure's storage method, and the lifted function's
-parameters inside a compile-time expression lifted to one. A lambda
+parameters inside a compile-time expression lifted to one, the arguments
+a bracket bound to the body's own binders kept after them. A lambda
 so bound still declares its hidden `def` in its scope, the attribute reaching
 its node (`CheckedParamArg::Attribute`). The elaborator closes the arguments
 under the caller's instance and names the nested body's instance from them
