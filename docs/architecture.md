@@ -5208,15 +5208,23 @@ either binder is its storage's method, the storage taking the binder as a
 parameter. A capture-free nested `def` or lambda is the symbol of its
 generator applied to the binders in scope where it is declared
 (`Checker::nested_callable_symbol`, recorded when the `def` is bound), as
-upstream's symbol of `outer::inner` applied to `outer`'s parameters; a lambda
+upstream's symbol of `outer::inner` applied to `outer`'s parameters. The
+check names the body by a check-time symbol keyed by its declaration
+(`mojito_symbol::symbol::nested_check_name`), and the collection of closure
+uses (`CheckedProgram::collect_closure_uses`), which names every nested body,
+renames each such reference to the lifted symbol applied to the binders its
+lowered generator closes over, as `liftClosure` replaces every use of the
+nested op's symbol: the enclosing binders for an ordinary body, the storage's
+parameters inside a closure's storage method, and the lifted function's
+parameters inside a compile-time expression lifted to one. A lambda
 so bound still declares its hidden `def` in its scope, the attribute reaching
 its node (`CheckedParamArg::Attribute`). The elaborator closes the arguments
 under the caller's instance and names the nested body's instance from them
 (`Specializer::function_value_instance`), the one a `closure.make` of the
 body in that instance names, and a callable binder bound to such a symbol
 reads as it directly, since a closed application among its arguments is no
-folded constant. A nested body the check cannot name yet (R2308), one over a
-variadic or callable binder (R2309), and a generic function argument (R2088)
+folded constant. A nested body over a variadic or callable binder (R2309)
+and a generic function argument (R2088)
 keep the slot `CtValue::Deferred`, bound from the argument's register. A
 function named where a compile-time
 value is read (`comptime h = sq`, `comptime f: OptionalReg[F] = sq`) is the

@@ -1,4 +1,6 @@
+use mojito::ct::CtValue;
 use mojito::mir::{MirInstr, lower_checked_program, nested_instructions};
+use mojito::types::TyArg;
 use mojito::{BackendKind, Compiler, LinkOptions, elaborate};
 
 const PARAMETRIC_CAPTURE: &str = r"
@@ -27,6 +29,8 @@ def main():
 
 const CALLABLE_PARAMETER_DEFAULTS: &str =
     include_str!("../conformance/fixtures/callable_parameter_defaults.mojo");
+const NESTED_CALLABLE_SYMBOL_SCOPES: &str =
+    include_str!("../assets/ok/nested_callable_symbol_scopes.mojo");
 const GENERIC_ANONYMOUS_CONFORMANCE: &str =
     include_str!("../conformance/fixtures/generic_anonymous_callables.mojo");
 
@@ -79,6 +83,63 @@ fn callable_value_parameter_is_a_hidden_typed_mir_local() {
         instruction,
         MirInstr::CallIndirect { callee, .. } if *callee == callback
     )));
+}
+
+#[test]
+fn nested_callable_symbol_is_named_wherever_declared() {
+    let linked = mojito::link_source(
+        NESTED_CALLABLE_SYMBOL_SCOPES,
+        std::path::Path::new("nested_callable_symbol_scopes.mojo"),
+    )
+    .expect("link nested callable symbols");
+    let elaborated = elaborate(linked).expect("elaborate nested callable symbols");
+    let checked = mojito::check_program(&elaborated).expect("check nested callable symbols");
+    let mir = lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let mut named = 0;
+    for (_, function) in &mir.functions {
+        for instruction in nested_instructions(&function.body) {
+            let MirInstr::Call {
+                func,
+                instantiated_args,
+                ..
+            } = instruction
+            else {
+                continue;
+            };
+            if func.0 != "g" && func.0 != "apply" {
+                continue;
+            }
+            // Every nested body at a callable slot is its lifted symbol,
+            // never the deferred marker read back from a register.
+            for argument in instantiated_args {
+                match argument {
+                    TyArg::Val(CtValue::FuncSymbol(function)) => {
+                        assert!(
+                            mir.functions
+                                .iter()
+                                .any(|(name, _)| *name == function.symbol),
+                            "`{}` names no lowered function",
+                            function.symbol
+                        );
+                        named += 1;
+                    }
+                    TyArg::Val(CtValue::Deferred(_)) => {
+                        panic!("a nested body at `{}` stays deferred", func.0)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!(
+        named, 4,
+        "`spelled_twice`, `in_lambda`, `in_closure`, `lifted`"
+    );
 }
 
 #[test]

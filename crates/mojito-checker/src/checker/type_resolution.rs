@@ -683,8 +683,8 @@ impl Checker {
     /// instance. A capture-free nested `def` or lambda is the symbol of
     /// its generator applied to the binders in scope where it is declared
     /// ([`Self::nested_callable_symbol`]). A run-time local is the pin's
-    /// dynamic-value rejection. A nested body whose symbol the check does
-    /// not know, a static read through a parametric struct, and any
+    /// dynamic-value rejection. A nested body over a binder no application
+    /// argument holds, a static read through a parametric struct, and any
     /// argument at a generic callable slot keep the deferred marker, which
     /// the elaborator binds from the argument's register.
     fn resolve_callable_param_arg(

@@ -593,16 +593,21 @@ pub(super) struct ApplicableDeclaration<'a> {
     type_params: &'a [mojito_ast::ast::TypeParam],
 }
 
-/// A body being checked, as a nested `def` it declares is applied at
-/// compile time ([`Checker::list_nested_application`]): the pin applies
-/// the nested function's generator to the enclosing parameters.
+/// A body being checked, as a nested `def` or lambda it declares is
+/// referred to as a compile-time value ([`Checker::nested_function_ref`])
+/// or applied by a compile-time call ([`Checker::list_nested_application`]):
+/// the pin applies the nested function's generator to the enclosing
+/// parameters.
 pub(in crate::checker) struct NestedScope {
     /// The symbol the body lowers to, which names each `def` nested in it
-    /// (`outer$mk`); `None` for a body none of whose nested `def`s a
-    /// compile-time call names: a lambda's, one its scope spells more than
-    /// once, one with a capture list, or one over a binder no application
-    /// argument holds.
+    /// a compile-time call applies (`outer$mk`); `None` for a body none of
+    /// whose nested `def`s such a call names: a lambda's, one its scope
+    /// spells more than once, one with a capture list, or one that is not
+    /// [`Self::applicable`].
     symbol: Option<String>,
+    /// Whether every binder in scope is one an application argument
+    /// holds, so that a body nested here is its generator applied to them.
+    applicable: bool,
     /// The binders in scope in the body, as the elaborator reads a nested
     /// body's generator: a method's struct's, then each enclosing
     /// declaration's `comptime for` indices and own binders, outermost
@@ -619,22 +624,26 @@ pub(in crate::checker) struct NestedScope {
 
 impl Checker {
     /// Open the body `body` lowering to `symbol`, whose binders in scope are
-    /// `binders` ([`NestedScope`]), before its function scope opens.
+    /// `binders` ([`NestedScope`]), before its function scope opens; `None`
+    /// for a body declared where no open body names its binders.
     pub(super) fn enter_nested_scope(
         &mut self,
         symbol: Option<String>,
-        binders: Vec<ParamDecl>,
+        binders: Option<Vec<ParamDecl>>,
         body: &[Stmt],
     ) {
-        let applicable = binders.iter().all(|decl| match decl {
-            ParamDecl::Type { variadic, .. } => !variadic,
-            ParamDecl::Value {
-                variadic,
-                callable_default,
-                ..
-            } => !variadic && callable_default.is_none() && !decl.binds_callables(),
-            ParamDecl::Origin { .. } => true,
-        });
+        let known = binders.is_some();
+        let binders = binders.unwrap_or_default();
+        let applicable = known
+            && binders.iter().all(|decl| match decl {
+                ParamDecl::Type { variadic, .. } => !variadic,
+                ParamDecl::Value {
+                    variadic,
+                    callable_default,
+                    ..
+                } => !variadic && callable_default.is_none() && !decl.binds_callables(),
+                ParamDecl::Origin { .. } => true,
+            });
         let mut binders: Vec<ParamDecl> = binders
             .into_iter()
             .filter(|decl| !matches!(decl, ParamDecl::Origin { .. }))
@@ -646,6 +655,7 @@ impl Checker {
         self.nested_scopes.retain(|scope| scope.depth <= depth);
         self.nested_scopes.push(NestedScope {
             symbol: symbol.filter(|_| applicable),
+            applicable,
             binders,
             spellings: nested_def_spellings(body),
             loops: Vec::new(),
@@ -661,21 +671,19 @@ impl Checker {
     /// The symbol and binders of the body of the nested `def` `name`, whose
     /// own binders are `decls`, declared in the body being checked: under
     /// that body's symbol, as the check names it once its uses are
-    /// collected (`nested_lifted_name`).
+    /// collected (`nested_lifted_name`), for the compile-time calls of the
+    /// `def`s nested in it. `None` where no body being checked declares it.
     pub(super) fn nested_body_scope(
         &self,
         name: &str,
         lambda: bool,
         capture_list: bool,
         decls: &[ParamDecl],
-    ) -> (Option<String>, Vec<ParamDecl>) {
-        let Some(parent) = self
+    ) -> Option<(Option<String>, Vec<ParamDecl>)> {
+        let parent = self
             .nested_scopes
             .last()
-            .filter(|scope| scope.depth == self.function_bases.len())
-        else {
-            return (None, Vec::new());
-        };
+            .filter(|scope| scope.depth == self.function_bases.len())?;
         let symbol = parent
             .symbol
             .as_deref()
@@ -688,28 +696,26 @@ impl Checker {
             .chain(decls)
             .cloned()
             .collect();
-        (symbol, binders)
+        Some((symbol, binders))
     }
 
-    /// The symbol the nested `def` `name`, or the lambda whose hidden `def`
-    /// is `name` when `lambda` holds, declared in the body being checked
-    /// lowers to, applied to the binders in scope there: the pin's
-    /// `#kgen.func.symbol` of the nested generator applied to the enclosing
-    /// instance. `None` where the check does not know the name MIR gives
-    /// the body (a `def` its scope spells more than once, one nested in a
-    /// lambda or a capture-list closure), or a binder in scope is one no
-    /// application argument holds ([`NestedScope::symbol`]).
-    pub(super) fn nested_function_ref(&self, name: &str, lambda: bool) -> Option<FuncSymbolRef> {
+    /// The nested `def` or lambda whose (hidden) declaration is the node
+    /// `syntax`, declared in the body being checked, applied to the binders
+    /// in scope there: the pin's `#kgen.func.symbol` of the nested
+    /// generator applied to the enclosing instance. The check names it by
+    /// its check-time symbol
+    /// ([`mojito_symbol::symbol::nested_check_name`]), which the
+    /// collection of closure uses renames to the symbol the body is lifted
+    /// to, as upstream's `liftClosure` renames every use of the nested op.
+    /// `None` where a binder in scope is one no application argument holds
+    /// ([`NestedScope::applicable`]).
+    pub(super) fn nested_function_ref(&self, syntax: SyntaxId) -> Option<FuncSymbolRef> {
         let parent = self
             .nested_scopes
             .last()
-            .filter(|scope| scope.depth == self.function_bases.len())?;
-        let symbol = parent
-            .symbol
-            .as_deref()
-            .filter(|_| lambda || parent.spellings.get(name) == Some(&1))?;
+            .filter(|scope| scope.depth == self.function_bases.len() && scope.applicable)?;
         Some(FuncSymbolRef {
-            symbol: mojito_symbol::symbol::nested_lifted_name(symbol, name),
+            symbol: mojito_symbol::symbol::nested_check_name(syntax),
             arguments: parent
                 .binders
                 .iter()
@@ -733,7 +739,7 @@ impl Checker {
             return;
         };
         if let Some(binding) = self.lookup_owner(name)
-            && let Some(symbol) = self.nested_function_ref(name, false)
+            && let Some(symbol) = self.nested_function_ref(stmt.syntax_id)
         {
             self.nested_symbols.insert(binding, symbol);
         }
@@ -742,8 +748,8 @@ impl Checker {
     /// The symbol of the capture-free nested `def` or lambda `expr` reads as
     /// a compile-time value, applied to the binders in scope where it is
     /// declared ([`Self::nested_function_ref`]). `None` for any other
-    /// expression, a generic body among them, and for a body whose symbol
-    /// the check does not know.
+    /// expression, a generic body among them, and for a body over a binder
+    /// no application argument holds.
     pub(super) fn nested_callable_symbol(&self, expr: &Expr) -> Option<FuncSymbolRef> {
         match &expr.kind {
             ExprKind::Identifier(name)
@@ -756,11 +762,10 @@ impl Checker {
             }
             ExprKind::Lambda { def } => match &def.kind {
                 StmtKind::Def {
-                    name,
                     captures: None,
                     type_params,
                     ..
-                } if type_params.is_empty() => self.nested_function_ref(name, true),
+                } if type_params.is_empty() => self.nested_function_ref(def.syntax_id),
                 _ => None,
             },
             _ => None,
@@ -799,7 +804,7 @@ impl Checker {
         let StmtKind::Def { name, captures, .. } = &stmt.kind else {
             return;
         };
-        let (Some(symbol), enclosing) =
+        let Some((Some(symbol), enclosing)) =
             self.nested_body_scope(name, false, captures.is_some(), &[])
         else {
             return;

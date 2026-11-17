@@ -6063,6 +6063,15 @@ pub trait TyRewrite {
     /// Observe a compile-time value before it is rebuilt.
     fn value(&mut self, _value: &CtValue) {}
 
+    /// The replacement for a function reference, if any, taken before its
+    /// arguments are rebuilt.
+    fn func_symbol(
+        &mut self,
+        _function: &crate::ct::FuncSymbolRef,
+    ) -> Option<crate::ct::FuncSymbolRef> {
+        None
+    }
+
     /// A generic callable's own binders come into scope: they shadow
     /// same-spelled outer names and sit one signature level further in.
     fn enter_signature(&mut self, _decls: &[ParamDecl]) {}
@@ -7524,6 +7533,9 @@ fn rewrite_func_ref(
     function: &crate::ct::FuncSymbolRef,
     rewrite: &mut dyn TyRewrite,
 ) -> Result<crate::ct::FuncSymbolRef, ParamError> {
+    if let Some(replacement) = rewrite.func_symbol(function) {
+        return Ok(replacement);
+    }
     Ok(crate::ct::FuncSymbolRef {
         symbol: function.symbol.clone(),
         arguments: rewrite_tyargs(&function.arguments, rewrite)?,

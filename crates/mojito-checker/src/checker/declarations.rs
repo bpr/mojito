@@ -1979,7 +1979,7 @@ impl Checker {
                 .chain(&method_decls)
                 .cloned()
                 .collect();
-            self.enter_nested_scope(Some(effect_key.clone()), binders, &m.body);
+            self.enter_nested_scope(Some(effect_key.clone()), Some(binders), &m.body);
             let checked =
                 self.bind_and_check_method(self_ty, m, owner, &ret_ty, ref_return, effect_key);
             self.leave_nested_scope();

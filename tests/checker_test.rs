@@ -10060,7 +10060,8 @@ fn scalar_construction_from_a_literal_binds_the_declared_initializer() {
         expression.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
-                SemanticAdjustment::MaterializeLiteral(_) | SemanticAdjustment::ConvertedArgument
+                SemanticAdjustment::MaterializeLiteral { .. }
+                    | SemanticAdjustment::ConvertedArgument
             )
         })
     }));

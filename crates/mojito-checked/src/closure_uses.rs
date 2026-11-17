@@ -12,9 +12,12 @@
 //! declaration and storage struct as it goes ([`CheckedDef::symbol`],
 //! [`CheckedClosureStorage::name`]), under the symbol of the body declaring
 //! it, as upstream's front end names a lifted closure where it lifts it.
-//! Last, as `liftClosure` replaces every reference to the nested storage
-//! struct, it types each closure by its storage struct throughout the
-//! program and points each call through one at the struct's `__call__`.
+//! Last, as `liftClosure` replaces every use of a nested op's symbol, it
+//! renames each reference the check made to a capture-free nested body
+//! ([`mojito_symbol::symbol::nested_check_name`]) to the lifted symbol
+//! applied to the binders its lowered generator closes over, types each
+//! closure by its storage struct throughout the program, and points each
+//! call through one at the struct's `__call__`.
 
 use crate::checked::{
     CheckedClosureStorage, CheckedClosureUses, CheckedDef, CheckedNodeId, CheckedOp,
@@ -22,7 +25,7 @@ use crate::checked::{
     ComptimeIteration, GenericSite, SemanticAdjustment, WalkResult, Walked,
 };
 use crate::unit::LoweringUnit;
-use mojito_types::ct::CtValue;
+use mojito_types::ct::{CtValue, FuncSymbolRef};
 use mojito_types::origin::OwnerId;
 use mojito_types::param_expr::{ParamExpr, ParamId, ParamRef};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
@@ -307,12 +310,15 @@ impl CheckedProgram {
     /// initializer at module scope, a parameter default's lifted function
     /// for a lambda in it, the function a compile-time expression is
     /// lifted to for a lambda in that ([`CheckedTables::lifted_function`]),
-    /// and a storage's method for a body that is one.
+    /// and a storage's method for a body that is one. Each reference the
+    /// check made to a capture-free nested body by its check-time symbol
+    /// becomes the lifted one ([`Self::rename_nested_references`]).
     pub(crate) fn collect_closure_uses(&mut self) {
-        let found = {
+        let (found, references) = {
             let mut collector = Collector {
                 tables: self.tables(),
                 found: Vec::new(),
+                references: HashMap::new(),
             };
             for unit in self.lowering_units() {
                 self.collect_unit(unit, &mut collector);
@@ -340,14 +346,26 @@ impl CheckedProgram {
                 &BinderScope::default(),
                 &HashMap::new(),
             );
-            collector.found
+            (collector.found, collector.references)
         };
         let tables = std::sync::Arc::get_mut(self.tables_mut())
             .expect("the check's tables are unshared while it records closure uses");
         for (id, lifted) in found {
             tables.set_lifted(id, lifted);
         }
+        self.rename_nested_references(&references);
         self.type_closures_by_storage();
+    }
+
+    /// Rename each function reference naming a nested body by its
+    /// check-time symbol to the reference `references` lifts it to, as
+    /// upstream's `liftClosure` replaces every use of the nested op's
+    /// symbol. A body in code no lowering reaches keeps its check-time
+    /// symbol, as nothing lowers it.
+    fn rename_nested_references(&mut self, references: &HashMap<String, FuncSymbolRef>) {
+        if !references.is_empty() {
+            self.rewrite_types(&mut NestedReferences(references));
+        }
     }
 
     /// Type each closure by its storage struct, applied to the binders
@@ -473,6 +491,12 @@ impl CheckedProgram {
 struct BinderScope {
     /// The binders, in scope order.
     declarations: Vec<ParamDecl>,
+    /// The binders the lowered generator of a body nested here closes
+    /// over, as the elaborator reads its scope (`binder_scope`): these, but
+    /// restarted at a closure's storage parameters in its storage's method
+    /// and at a lifted function's parameters in a compile-time expression
+    /// lifted to one.
+    applied: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
     loop_bindings: Vec<(OwnerId, ParamRef)>,
@@ -486,8 +510,36 @@ impl BinderScope {
     /// These binders, then those of a declaration nested inside them.
     fn with<'a>(&self, declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
         let mut scope = self.clone();
-        scope.declarations.extend(declarations.into_iter().cloned());
+        let declarations: Vec<ParamDecl> = declarations.into_iter().cloned().collect();
+        scope.applied.extend(declarations.iter().cloned());
+        scope.declarations.extend(declarations);
         scope
+    }
+
+    /// These binders, with a body nested here closing over `applied`
+    /// alone.
+    fn applying(&self, applied: Vec<ParamDecl>) -> Self {
+        Self {
+            applied,
+            ..self.clone()
+        }
+    }
+
+    /// The reference to the body `symbol` declared here, its generator
+    /// applied to the binders it closes over, origins erased and each
+    /// once, as the elaborator binds a nested body's enclosing binders.
+    fn reference(&self, symbol: &str) -> FuncSymbolRef {
+        let mut seen = HashSet::new();
+        FuncSymbolRef {
+            symbol: symbol.to_string(),
+            arguments: self
+                .applied
+                .iter()
+                .filter(|decl| !matches!(decl, ParamDecl::Origin { .. }))
+                .filter(|decl| seen.insert(decl.id().clone()))
+                .map(ParamDecl::own_argument)
+                .collect(),
+        }
     }
 
     /// These binders, then the indices of the `comptime for` loops
@@ -508,6 +560,9 @@ impl BinderScope {
 struct Collector<'t> {
     tables: &'t CheckedTables,
     found: Vec<(CheckedStmtId, Lifted)>,
+    /// The lifted reference to each capture-free nested body, by its
+    /// check-time symbol ([`mojito_symbol::symbol::nested_check_name`]).
+    references: HashMap<String, FuncSymbolRef>,
 }
 
 /// An expression of one lexical scope the check lifted to a function of
@@ -593,8 +648,47 @@ impl Collector<'_> {
                     loops: site.loops.clone(),
                 })
                 .collect();
-            self.scope(sites, &site.function, scope, &HashMap::new());
+            let applied = self.lifted_parameters(site.node, scope);
+            self.scope(
+                sites,
+                &site.function,
+                &scope.applying(applied),
+                &HashMap::new(),
+            );
         }
+    }
+
+    /// The parameters of the function the expression of node `node` is
+    /// lifted to, among the binders `scope` declares: those its
+    /// application names, in argument order, as MIR declares the lifted
+    /// function's.
+    fn lifted_parameters(&self, node: CheckedNodeId, scope: &BinderScope) -> Vec<ParamDecl> {
+        let Some(expression) = self.tables.expression(node) else {
+            return Vec::new();
+        };
+        expression
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                SemanticAdjustment::ComptimeApplication { application, .. } => {
+                    match application.kind() {
+                        mojito_types::param_expr::ParamKind::Apply { args, .. } => Some(args),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .into_iter()
+            .flatten()
+            .filter_map(|arg| {
+                let reference = arg.as_decl_ref()?;
+                scope
+                    .declarations
+                    .iter()
+                    .find(|declaration| declaration.binder().id == reference.id)
+                    .cloned()
+            })
+            .collect()
     }
 
     /// Collect the uses of the declarations `sites` one lexical scope of
@@ -641,6 +735,12 @@ impl Collector<'_> {
                 mojito_symbol::symbol::nested_lifted_name(parent, name)
             };
             let in_scope = scope.with(loops.iter().map(|index| &index.declaration));
+            if let Some(statement) = tables.statement(*node) {
+                self.references.insert(
+                    mojito_symbol::symbol::nested_check_name(statement.syntax_id),
+                    in_scope.reference(&symbol),
+                );
+            }
             let uses = def.storage.as_ref().and_then(|storage| {
                 closure_uses(
                     tables,
@@ -674,15 +774,22 @@ impl Collector<'_> {
             } else {
                 symbol.clone()
             };
-            bodies.push(body);
+            // Its storage's parameters stand for the binders it names,
+            // which lead the scope of the method and of what is nested in it.
+            let applied = uses.as_ref().map(|uses| uses.binders.clone());
+            bodies.push((body, applied));
             self.found.push((*node, Lifted { symbol, uses }));
         }
-        for ((def, loops, _), body) in sites.into_iter().zip(bodies) {
+        for ((def, loops, _), (body, applied)) in sites.into_iter().zip(bodies) {
+            let enclosing = match applied {
+                Some(applied) => scope.with_loops(&loops).applying(applied),
+                None => scope.with_loops(&loops),
+            };
             self.declaration(
                 &def.body,
                 defaults(&def.params),
                 &body,
-                &scope.with_loops(&loops).with(&def.signature.parameters),
+                &enclosing.with(&def.signature.parameters),
                 &registry,
             );
         }
@@ -990,6 +1097,28 @@ impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
             )
             .into(),
         )
+    }
+
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
+    }
+}
+
+/// The rewrite [`CheckedProgram::rename_nested_references`] applies at
+/// every value the program records: a reference to a nested body by its
+/// check-time symbol becomes the lifted reference.
+struct NestedReferences<'a>(&'a HashMap<String, FuncSymbolRef>);
+
+impl mojito_types::types::TyRewrite for NestedReferences<'_> {
+    fn func_symbol(&mut self, function: &FuncSymbolRef) -> Option<FuncSymbolRef> {
+        self.0.get(&function.symbol).cloned()
     }
 
     fn expr(

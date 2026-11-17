@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2311**.
+Next free ID: **R2312**.
 
 ## Ordered Work
 
@@ -4122,31 +4122,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2308 The check does not know the lowered symbol of every nested
-  body it could pass to a callable parameter**
-
-  A capture-free nested `def` or lambda at a callable slot is the symbol
-  of its generator applied to the enclosing binders
-  (`Checker::nested_callable_symbol`), but only where the check names the
-  body as `closure_uses::scope` will; elsewhere the slot stays
-  `CtValue::Deferred` and the elaborator reads the function back from
-  its register, unlike the pin.
-  - Where: `Checker::nested_function_ref` (`checker/comptime_validation.rs`)
-    answers only under a `NestedScope::symbol`, which is `None` in a
-    lambda's body and a capture-list closure's, and only for a name its
-    scope spells once.
-  - `closure_uses::scope` names a duplicate spelling by its ordinal among
-    the *live* statements (`nested_lifted_declaration_name`), and a body
-    nested in a closure under its storage method
-    (`closure_method_name`); share that naming with the check.
-  - Probe: `g[h]()` in both arms of a `comptime if flag:` that each
-    declare `def h() -> Int`, over `def g[f: def() thin -> Int]()`,
-    prints `1 2` but carries `ct_deferred`.
-  - Probe: `g[lambda -> Int: 11]()` inside a lambda's body, and `g[inner]()`
-    inside a `def cl() {imm}:` closure, both carry `ct_deferred`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2309 A nested body's symbol cannot carry a variadic or callable
   enclosing binder**
 
@@ -7327,6 +7302,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `ctfe-body-print`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2311 Same-spelled nested `def`s with one signature in sibling
+  blocks are accepted, where the pin rejects them**
+
+  A nested `def`'s identity is scoped to its enclosing function at the pin,
+  though its name is looked up in its block, so a second `def h() -> Int`
+  in another block of the same body is "redefinition of function 'h' with
+  identical signature". Mojito's check compares only the open block scope
+  (`declare_with_mutability`, `checker/scopes.rs`) and lifts the two as
+  `run$h$decl0` and `run$h$decl1`.
+  - Probe: `def h() -> Int` in both arms of a `comptime if flag:` inside
+    `run[flag: Bool]()`, each followed by `g[h]()`; Mojito prints `1 2`.
+  - Probe: the same pair in two `for i in range(1):` bodies.
+  - Overloads by signature in sibling blocks stay accepted, as at the pin
+    (`assets/ok/nested_callable_symbol_scopes.mojo`).
+  - Add a `type_error` fixture with its `conformance/assets-mojo-errors.tsv`
+    row.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2230 `reflect[T].name()` spells a struct-valued parameter as its
   construction, where the pin prints the value**

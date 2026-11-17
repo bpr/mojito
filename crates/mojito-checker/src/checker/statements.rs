@@ -3399,10 +3399,11 @@ impl Checker {
         let (nested_symbol, nested_binders) = if module_level {
             (
                 Some(symbol.clone()),
-                self.self_decls.iter().chain(&decls).cloned().collect(),
+                Some(self.self_decls.iter().chain(&decls).cloned().collect()),
             )
         } else {
             self.nested_body_scope(name, lambda, captures.is_some(), &decls)
+                .map_or((None, None), |(symbol, binders)| (symbol, Some(binders)))
         };
         self.enter_nested_scope(nested_symbol, nested_binders, body);
         self.push_scope();

@@ -1539,8 +1539,10 @@ fn generic_def_declares_no_clone() {
         Some("IntLiteral[7]")
     );
     assert!(
-        node.adjustments
-            .contains(&SemanticAdjustment::MaterializeLiteral(Ty::int())),
+        node.adjustments.iter().any(|adjustment| matches!(
+            adjustment,
+            SemanticAdjustment::MaterializeLiteral { target, .. } if *target == Ty::int()
+        )),
         "the literal keeps its materialization: {:?}",
         node.adjustments
     );

@@ -1179,6 +1179,17 @@ pub fn nested_closure_storage_name(syntax: mojito_common::token::SyntaxId) -> St
     closure_storage_name(&format!("$closure${}", syntax.0))
 }
 
+/// The check-time symbol of the nested `def` or lambda the node `syntax`
+/// declares.
+///
+/// It names the body while the check types a reference to it, before its
+/// lift names it ([`nested_lifted_name`]), as upstream's emitter refers to
+/// the nested op's own symbol until `liftClosure` renames every use.
+/// Unique within one checked program.
+pub fn nested_check_name(syntax: mojito_common::token::SyntaxId) -> String {
+    format!("$nested${}", syntax.0)
+}
+
 /// The method of its storage struct a closure's body is.
 ///
 /// The closure is lifted as `lifted` and declared `source`; its storage is
@@ -3485,6 +3496,14 @@ const INFLATED_PREFIX: &str = "$inflated$";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_check_name_is_keyed_by_syntax_and_no_lifted_name() {
+        let first = nested_check_name(mojito_common::token::SyntaxId(7));
+        assert_eq!(first, "$nested$7");
+        assert_ne!(first, nested_check_name(mojito_common::token::SyntaxId(8)));
+        assert!(!is_closure_storage_name(&first));
+    }
 
     #[test]
     fn declaration_owner_names_its_declaration_and_owns_its_overloads_binders() {
