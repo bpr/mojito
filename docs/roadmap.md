@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2317**.
+Next free ID: **R2318**.
 
 ## Ordered Work
 
@@ -3952,10 +3952,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bound call (`emit_indirect_invocation`) from source.
   - Probe: the shape above.
   - Probe: `var f = twice; Holder(f)` must then be rejected, as the pin
-    does ("no matching function in initialization"): the constructor's
-    argument solve (`declarations.rs`) does not yet call
-    `reject_run_time_function_value`, which free and method calls do.
+    does ("no matching function in initialization"), which the generic
+    construction's `callable_bound_argument` should already do.
   - Found while landing R1933 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2317 A generic callable contract naming a pack element by its own
+  binder rejects an alpha-equivalent function over the caller's pack**
+
+  A contract whose result is the callee's pack indexed by the contract's
+  own binder (`F: def[idx: Int]() -> Us[idx]`), once the call binds `Us`
+  to the caller's pack `Ts`, rejects `lambda [i: Int]() -> Ts[i]` ("declared
+  callable contract ... is incompatible"), where the pin accepts it.
+  - The same lambda conforms where contract and lambda name one pack
+    (`Tuple`'s own default initializer, over `Self.Ts`), so the gap is the
+    substituted pack inside the dependent result, as
+    `callable_bound_accepts` (`mojito-types/src/types.rs`) compares it
+    after `erase_generic_callable_binders`.
+  - Probe: `first[*Ts](lambda [i: Int]() -> Ts[i]: Ts[i]())` over `def
+    first[*Us: Movable & Defaultable & Deinitable, F: def[idx: Int]() ->
+    Us[idx]](f: F) -> Int` inside `outer3[*Ts: ...]`, called as
+    `outer3[Int, Bool]()`, prints `1` at the pin.
+  - Probe: `Tuple[*Ts](init_with=lambda [i: Int]() -> Ts[i]: Ts[i]())` in
+    `outer2[*Ts: Movable & Defaultable & Deinitable]`, with `len` of the
+    result returned, prints `2` at the pin.
+  - Found while landing R2315 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9555,33 +9577,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2315 A function at an applied generic struct's initializer bound
-  stays a thin function value**
-
-  `S[Int](init_with=make)` over `__init__[F: def() -> Self.T]` binds `F`
-  to a thin function type and rides a register, where a non-generic
-  struct's `S(init_with=make)` already inflates as at the pin.
-  - The generic-struct construction paths in `checker/declarations.rs`
-    (the single-signature fast path and the matched-slot path) build the
-    argument types with `solving_argument_ty` alone, never
-    `callable_bound_argument`, as `generics.rs` and `call_inference.rs`
-    do.
-  - Probe: `Optional[Int](init_with=make)`, `Variant[Pinned,
-    Int](init_with=make)`, `Cell[Int, String](init_with=...)`, through
-    `assets/ok/optional_owning_api.mojo`,
-    `collection_handler_closure_traits.mojo`,
-    `variant_init_with_constructor.mojo`, and
-    `variadic_method_type_params.mojo`, unchanged on both backends and no
-    longer reaching the `Bindings::callables` insert.
-  - Probe: `Tuple.__init__`'s generic `init_with` lambda (`lambda [i:
-    Int]() -> Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`), through
-    `initializer_list_contextual.mojo` and
-    `string_default_construction.mojo`; once construction reaches
-    `callable_bound_argument`, the generic lambda inflates as any other.
-  - Found while planning R2292 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2292 The elaborator still folds a `def(...)` bound's callee from
   register dataflow**
 
@@ -9589,9 +9584,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `def(...)` bound, yet the elaborator still keys an instance by a callee
   it traces through registers, and erases a generic callable's slot to an
   `Int` placeholder.
-  - Still load-bearing (2026-11-17): the `Bindings::callables` insert
-    fires for `Optional`'s and `Tuple`'s `init_with`, the shapes R2315
-    owns.
+  - No longer load-bearing (2026-11-17): the `Bindings::callables` insert
+    fires for no fixture in `assets/ok` or `assets/ownership_ok`.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
     seeding in `specializer.rs`), the `callable_arguments` instance-key

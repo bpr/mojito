@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function at an applied generic struct's initializer `def(...)` bound
+  (`Optional[Int](init_with=make)`, `Tuple`'s default initializer's generic
+  `init_with` lambda) now binds as its inflated type, as at the pin, instead
+  of riding a register as a thin function value, and a run-time function
+  value there fails the initializer. A lambda nested in an initializer and
+  passed at such a bound, or assigned straight into a field
+  (`self.n = apply(lambda ...)`), no longer stops the compiler
+  (`assets/ok/generic_struct_initializer_callable_bound.mojo`, R2315).
+
 - A lambda or nested `def` with an empty capture list (`{}`) passed at a
   `def(...)` bound now binds as its generator's symbol, as at the pin,
   instead of riding a register as a thin function value, so `size_of[F]()`

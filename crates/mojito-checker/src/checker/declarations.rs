@@ -3350,13 +3350,20 @@ impl Checker {
                 let params = sig.params.clone();
                 let decls = info.decls().into_owned();
                 let explicit = self.explicit_type_args(name, &decls, param_args)?;
-                let arg_tys = args
+                let bound_slots: Vec<(usize, &Expr, &Ty)> = args
+                    .iter()
+                    .zip(&params)
+                    .enumerate()
+                    .map(|(index, (expression, pattern))| (index, expression, pattern))
+                    .collect();
+                let solved = args
                     .iter()
                     .zip(&params)
                     .map(|(argument, pattern)| {
                         self.solving_argument_ty(argument, pattern, &decls, &explicit.subst)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let arg_tys = self.bound_construction_arguments(name, sig, &bound_slots, solved)?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &params)?;
                 let (instance_patterns, instance_actuals) =
                     self.constructed_unification(name, constructed, &params, &arg_tys);
@@ -3383,12 +3390,6 @@ impl Checker {
                 {
                     return Err(unavailable);
                 }
-                let bound_slots: Vec<(usize, &Expr, &Ty)> = args
-                    .iter()
-                    .zip(&params)
-                    .enumerate()
-                    .map(|(index, (expression, pattern))| (index, expression, pattern))
-                    .collect();
                 let pointer_origins = self.bind_constructor_origins(
                     name,
                     "__init__",
@@ -3468,7 +3469,7 @@ impl Checker {
                         // constructor (`Box[Float64](2.5)` stores a Float64,
                         // not the exact literal).
                         self.record_literal_materializations(&args[i], &actual, &expected)?;
-                    } else if !self.record_constructor_conversion(&args[i], &actual, &expected)? {
+                    } else if !self.record_constructor_argument(&args[i], &actual, &expected)? {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
                             found: actual.to_string(),
@@ -3586,7 +3587,7 @@ impl Checker {
                 // The forwarded pack is the one overflow argument, so the
                 // last bound.
                 let forwarded_index = forwarded.as_ref().map(|_| bound.len() - 1);
-                let arg_tys = bound
+                let solved = bound
                     .iter()
                     .enumerate()
                     .map(|(index, (expression, pattern, _))| match &forwarded {
@@ -3594,6 +3595,16 @@ impl Checker {
                         _ => self.solving_argument_ty(expression, pattern, &decls, &explicit.subst),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A run-time function value at a `def(...)` bound fails the
+                // candidate, as at the pin.
+                let arg_tys =
+                    match self.bound_construction_arguments(name, sig, &bound_slots, solved) {
+                        Ok(arg_tys) => arg_tys,
+                        Err(error) => {
+                            bound_failure.get_or_insert(error);
+                            continue;
+                        }
+                    };
                 let patterns: Vec<Ty> = bound
                     .iter()
                     .map(|(_, pattern, _)| pattern.clone())
@@ -3786,21 +3797,12 @@ impl Checker {
                             matches!(pty.kind(), TyKind::Param { .. })
                                 && mojito_types::types::simd_shape(&actual).is_some(),
                         );
-                        if coerces(&actual, &expected) {
-                            if actual != expected {
-                                score += CONVERSION_UNIT;
-                            }
-                        } else if self
-                            .implicit_conversion_target(&actual, &expected)?
-                            .is_some()
-                        {
-                            // An implicit conversion ranks below any direct
-                            // coercion so exact overloads keep winning.
-                            score += 2 * CONVERSION_UNIT;
-                        } else {
+                        let Some(cost) = self.construction_argument_cost(&actual, &expected)?
+                        else {
                             ok = false;
                             break;
-                        }
+                        };
+                        score += cost;
                         expected_tys.push((index, expected));
                     }
                     if ok
@@ -5283,6 +5285,71 @@ impl Checker {
             &expected,
             &DependentValues::named(&self.param_context, values),
         )
+    }
+
+    /// The overload cost of passing `actual` where a constructor candidate
+    /// expects `expected`: none for an exact match or a function at the
+    /// inflated type its `def(...)` bound took, as at the pin, one unit for a
+    /// coercion, and two for an implicit conversion, so exact overloads keep
+    /// winning; `None` when the argument does not convert.
+    fn construction_argument_cost(
+        &self,
+        actual: &Ty,
+        expected: &Ty,
+    ) -> Result<Option<usize>, TypeError> {
+        if coerces(actual, expected) {
+            return Ok(Some(if actual == expected {
+                0
+            } else {
+                CONVERSION_UNIT
+            }));
+        }
+        if self.inflates_to(actual, expected) {
+            return Ok(Some(0));
+        }
+        Ok(self
+            .implicit_conversion_target(actual, expected)?
+            .map(|_| 2 * CONVERSION_UNIT))
+    }
+
+    /// Record the conversion of a constructor's `argument`, typed `actual`,
+    /// to its solved parameter `expected`: a function's reference at the
+    /// inflated type its `def(...)` bound took, or an implicit converting
+    /// constructor. `false` when neither applies.
+    fn record_constructor_argument(
+        &self,
+        argument: &Expr,
+        actual: &Ty,
+        expected: &Ty,
+    ) -> Result<bool, TypeError> {
+        if self.inflates_to(actual, expected) {
+            return self.record_implicit_conversion(argument, actual, expected);
+        }
+        self.record_constructor_conversion(argument, actual, expected)
+    }
+
+    /// `solved`, the solved types of a construction's arguments selecting
+    /// `sig`, the first of which fill its parameters `slots`, with each
+    /// function binding a `def(...)` bound at its inflated type
+    /// ([`Self::callable_bound_argument`]); the collected arguments after
+    /// them as solved.
+    fn bound_construction_arguments(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        slots: &[(usize, &Expr, &Ty)],
+        mut solved: Vec<Ty>,
+    ) -> Result<Vec<Ty>, TypeError> {
+        for (&(slot, expression, pattern), actual) in slots.iter().zip(solved.iter_mut()) {
+            *actual = self.callable_bound_argument(
+                name,
+                &sig.names[slot],
+                expression,
+                actual.clone(),
+                pattern,
+            )?;
+        }
+        Ok(solved)
     }
 
     /// An `__init__`'s own compile-time parameters (`__init__[other_dtype:

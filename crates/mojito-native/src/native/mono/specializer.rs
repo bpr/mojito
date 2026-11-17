@@ -3418,8 +3418,10 @@ impl<'a> Specializer<'a> {
                     }
                     // A direct constructor call's destination is its
                     // `out self`, not the declared `None` return — bind
-                    // it as the receiver.
+                    // it as the receiver. A body nested in an initializer
+                    // shares its symbol's prefix but takes no receiver.
                     let receiver = (mojito_symbol::symbol::is_initializer_symbol(&func.0)
+                        && !self.is_nested(&func.0)
                         && function.reg_types.contains_key(&dest.0))
                     .then_some(*dest);
                     // A nested `def`'s direct call binds its enclosing

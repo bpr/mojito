@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1218
+# swept-count	1219
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -557,6 +557,7 @@ assets/type_error/generic_result_origin_mut_span_tail.mojo	compile-reject	agree	
 assets/type_error/generic_result_origin_optional_param.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type
 assets/type_error/generic_result_origin_read_param.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type
 assets/type_error/generic_result_origin_var_ref_clause.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type
+assets/type_error/generic_struct_initializer_run_time_function_value.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/hashable_bound_value_hash.mojo	compile-reject	agree	error: invalid call to '__hash__': missing required argument: 'hasher'
 assets/type_error/hashable_no_equality.mojo	compile-reject	agree	error: 'K' does not implement the '__eq__' method
 assets/type_error/hasher_missing_finish.mojo	compile-reject	agree	error: no matching function in call to 'hash'

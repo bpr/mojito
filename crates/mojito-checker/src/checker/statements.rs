@@ -2196,7 +2196,11 @@ impl Checker {
             // The context-manager protocol is a checked desugar (`with_stmt.rs`).
             StmtKind::With { items, body } => self.check_with(stmt, items, body, ret, in_loop),
 
-            StmtKind::SetPlace { place, value } => self.check_set_place(place, value).map(drop),
+            StmtKind::SetPlace { place, value } => {
+                self.register_named_bindings(place)?;
+                self.register_named_bindings(value)?;
+                self.check_set_place(place, value).map(drop)
+            }
 
             // `raises` is parsed but its effect is not analyzed (deferred).
             StmtKind::Def { .. } => self.check_def(stmt, false),

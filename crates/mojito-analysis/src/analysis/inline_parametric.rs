@@ -4287,11 +4287,24 @@ fn instantiated<'c>(
 /// a method call takes the member's own compile-time parameter
 /// declarations, which its arguments bind by position as they bound the
 /// requirement's. A call whose result the checker adapts, or whose result
-/// ABI or parameter count differs from the member's, keeps the dispatch.
+/// ABI or parameter count differs from the member's, keeps the dispatch,
+/// and so does a call on an inflated function type whose callee is a nested
+/// body: its leading arguments apply the body's generator to the instance
+/// it is declared in, which the elaborator names wherever the call lands.
 fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &MirDeclarations) {
     for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             fold_witnesses(region, function, declarations);
+        }
+        if let MirInstr::MethodCall { recv, .. } = instruction
+            && function
+                .reg_types
+                .get(&recv.0)
+                .and_then(mojito_symbol::symbol::inflated_callee)
+                .and_then(|callee| declarations.function(&callee.symbol))
+                .is_some_and(|declaration| declaration.enclosing.is_some())
+        {
+            continue;
         }
         // An inflated function type's witness is its callee.
         if let Some(bound) = mojito_mir::mir::direct_from_inflated_bound_call(instruction, function)
