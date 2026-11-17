@@ -160,12 +160,12 @@ impl FnLowering<'_> {
                 continue;
             }
             let slot = slots.next().expect("matched named indirect slot");
-            if matches!(expected, LowerTy::ZeroSized) {
+            let by_ref = abi.ref_params.get(index).copied().unwrap_or(false);
+            if !expected.has_slot(by_ref) {
                 continue;
             }
             let expected = expected.clone();
             let owned = abi.owned_params.get(index).copied().unwrap_or(false);
-            let by_ref = abi.ref_params.get(index).copied().unwrap_or(false);
             let value = match slot {
                 ArgSlot::Positional(p) if by_ref => self.by_address_operand(ctx, args[*p], dest)?,
                 ArgSlot::Keyword(k) if by_ref => {

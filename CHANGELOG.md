@@ -1145,6 +1145,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Natively, an empty register-passable value (a field-less
+  `TrivialRegisterPassable` struct, a function's inflated type) passed
+  by value is no argument and a returned one is `void`, as at the pin:
+  `take[R]`, `apply(dbl)`'s instance, `R.__init__`, and a
+  `RegisterPassable` `D.__deinit__` take nothing, while a `mut` slot and
+  a memory-only empty struct keep their pointer
+  (`assets/ok/zero_sized_register_passable_argument.mojo`, R2293).
+
 - A homogeneous collector's `VariadicList` now names the callable's
   implicit pack origin in its `origin` parameter, as the pin's `*xs: T` is
   `VariadicList[origin=xs, T, is_owned]`; a caller-built list leaves it

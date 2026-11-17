@@ -187,6 +187,12 @@ Rules:
   the next offset aligned for it; aggregate alignment is the maximum field
   alignment (at least 1); total size pads to that alignment. No reordering.
 - A zero-sized type has size 0, alignment 1, and forces no padding.
+- A register-passable struct or tuple of size 0 (a field-less
+  `TrivialRegisterPassable` struct, a function's inflated type, a tuple of
+  such) has no runtime representation, as upstream's `LowerKGENToLLVM`
+  lowers an empty register-passable `!kgen.struct` to a type holding no
+  bits. A memory-only struct of size 0 keeps its (empty) storage, since
+  upstream passes a memory-only value by `!lit.ref` whatever its size.
 - Scalars: `Int`/`UInt`/`Float64` are 8/8, `Bool` and `DType` are 1/1, `None` is a ZST.
 - A generator value (`__generator_type[...]`, upstream's `!kgen.generator`)
   is a ZST: its trivial register value holds nothing at run time.
@@ -327,7 +333,7 @@ Rules:
   physical signature with the environment pointer prepended **after** the
   out-pointer: `[outcome*|sret*], env*, params...` — parameter kinds classify
   exactly as a compiled callee's (scalars by value, aggregates and `mut`/`ref`
-  places by pointer, zero-sized parameters skipped). A raising contract's
+  places by pointer, by-value zero-sized parameters skipped). A raising contract's
   tagged outcome flows through the thunk untouched: the thunk forwards its
   out-pointer to the target and the **caller** branches on the tag.
 - A reference-returning contract (`ref_return`) returns the referent's
@@ -377,10 +383,22 @@ Rules:
   as upstream passes such a value by value: the caller's storage is a
   register's value, which other readers may share. Every other owned
   aggregate parameter binds the caller's storage.
+- A zero-sized value passed by value (a literal, `None`, an empty
+  register-passable struct or tuple) is no physical parameter, as upstream
+  drops a by-value argument whose LLVM type holds no bits: `take[T](e: T)`
+  at a field-less `TrivialRegisterPassable` `R`, and `apply(dbl)`'s
+  instance over `dbl`'s inflated type, take no argument. That covers a
+  `read` or `deinit self` receiver (`R.tag()`, `D.__deinit__()`, whose
+  drop still runs) and an owned argument. A zero-sized result is `void`. A
+  by-address slot keeps its pointer even when the pointee is empty: a
+  `mut`/`ref` argument (`mut r: R` is a `ptr`), and any memory-only
+  argument (`take[E]` at a field-less memory-only `E` takes a `ptr`).
 - An initializer's `out self` receiver (`__init__`, `__copyinit__`,
   `__moveinit__`) is a pointer to the caller's result storage, a scalar one
   (a one-lane `SIMD`, a held struct) included: the caller allocates it, and
-  reads a scalar result back after the call.
+  reads a scalar result back after the call. A zero-sized register-passable
+  receiver passes nothing (`R.__init__()` returns `void`), and the
+  constructed value erases.
 - The synthesized executable wrapper is the plain C `main() -> i32`: it calls
   `mjrt_version`, then the mangled `__toplevel__` (when present), then the
   mangled `main`, then returns 0.

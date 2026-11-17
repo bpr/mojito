@@ -1935,7 +1935,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_get_field` (`lower/places.rs`), frozen value
   (`held_parameter_value`, `lower/consts.rs`), borrow (`lower_use_var` over
   `FnLowering::holds_struct_value`), and closure-storage capture
-  (`emit_thunk_body`, `lower/support.rs`) are its field's value.
+  (`emit_thunk_body`, `lower/support.rs`) are its field's value. An empty
+  register-passable struct or tuple classifies as `LowerTy::ZeroSized`, and
+  `LowerTy::has_slot` (`lower.rs`) is the one physical-slot rule every
+  signature, thunk, entry binding, and call site applies: a by-value
+  zero-sized parameter is none, a by-address one keeps its pointer.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
   dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`; every resolved method call on a declared struct is a pushed frame too, `prepare_method_call`, its result adapter applied as the frame returns, `adapt_returned_result`; a pushed frame binds each operand as the call passes it, and a `deinit` receiver's call consumes its place), which steps
   each frame's `RegionCursor`, and a raising instruction's raise edge:

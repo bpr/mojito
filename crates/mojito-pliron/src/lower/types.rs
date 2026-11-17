@@ -122,8 +122,10 @@ impl ScalarTy {
 /// sees ([`MirDeclarations::translated_type`]): a vector classifies as its
 /// `!kgen.simd` storage, and a one-field `TrivialRegisterPassable` struct as
 /// its field, as upstream's `LowerKGENToLLVM` type converter unwraps both;
-/// scalars (a one-lane storage) stay SSA; `None` and the field-less
-/// literals are zero-sized; struct, tuple, and `!kgen.string`-descriptor aggregates take
+/// scalars (a one-lane storage) stay SSA; `None`, the field-less literals,
+/// and a register-passable struct or tuple of size zero are zero-sized, as
+/// the converter lowers an empty register-passable `!kgen.struct` to a type
+/// holding no bits; struct, tuple, and `!kgen.string`-descriptor aggregates take
 /// their shared-engine layout, as does the two-word `{ invoke, env }`
 /// retained-callable value. A multi-lane storage keeps the lane-aligned
 /// aggregate as its storage and ABI form; `lower/simd.rs` computes on it as
@@ -186,6 +188,15 @@ pub fn lower_ty(
             if !ty.is_simd() =>
         {
             match layout.layout_of(ty) {
+                // An empty register-passable `!kgen.struct` lowers to a type
+                // that holds nothing, so it has no runtime representation.
+                Ok(computed)
+                    if computed.size == 0
+                        && matches!(ty.kind(), TyKind::Struct(..) | TyKind::Tuple(_))
+                        && declarations.register_passable(ty) =>
+                {
+                    Ok(LowerTy::ZeroSized)
+                }
                 Ok(computed) => Ok(LowerTy::Aggregate {
                     ty: ty.clone(),
                     layout: computed,

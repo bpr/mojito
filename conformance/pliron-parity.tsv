@@ -1769,6 +1769,7 @@ assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ok/writable_string_writer_type.mojo	main	exe-differential	sanitized
 assets/ok/writable_trait_library.mojo	main	exe-differential	sanitized
 assets/ok/writer_write_override.mojo	main	exe-differential	sanitized
+assets/ok/zero_sized_register_passable_argument.mojo	main	exe-differential	sanitized
 assets/ownership_ok/abort_after_mut_parameter_move.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_break_continue.mojo	main	exe-differential	sanitized

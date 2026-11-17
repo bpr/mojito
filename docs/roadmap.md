@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2303**.
+Next free ID: **R2307**.
 
 ## Ordered Work
 
@@ -956,6 +956,29 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R2304 Every `pliron_backend_test` compile fails MIR verification
+  in `Tuple.deinit_with`**
+
+  `native_compile` in `tests/pliron_backend_test.rs` panics for every
+  source, `held_struct_lowers_as_its_field` included, with "after
+  pre-elaboration pass `inline-parametric`: MIR function
+  'Tuple.deinit_with': a generic `def[...]` bound's call does not carry
+  the bound's compile-time parameters".
+  - The test hands `compiled.drop_elaborated_mir()` to
+    `native::compile_mir`, which runs the pre-elaboration pipeline over
+    every library body; the CLI's `run --backend pliron` never reaches
+    this body and compiles the same sources.
+  - `deinit_with[F: def[idx: Int](var elt: Self.Ts[idx])]` inlines
+    `consume_elements`, whose `deinit_func[idx](...)` call reaches the
+    verifier's `generic_callable_decls` check without the bound's
+    `param_decls`.
+  - Probe: `cargo nextest run --features backend-pliron
+    held_struct_lowers_as_its_field`, and R2293's
+    `zero_sized_register_passable_argument_has_no_slot`.
+  - Found while landing R2293 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 
@@ -1356,24 +1379,24 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2293 A zero-sized argument is still passed natively**
+- [ ] **R2303 A field-less element read through a collection traps
+  natively as a dangling pointer**
 
-  Upstream drops every zero-sized argument from a compiled callee's
-  signature, `memoryOnly` or not, so `apply(dbl)`'s instance over an
-  inflated function type takes no parameter. Mojito passes a pointer to
-  the empty value.
-  - Probe: `take[T: G](e: T)` over a field-less `struct E(Copyable, G)`,
-    and the same `E` declared `TrivialRegisterPassable`: the pin defines
-    each instance with no parameter, where Mojito's `--emit ll` defines
-    `mj_take$mono$TE(ptr %0)`.
-  - Probe: `apply(dbl)` over `@no_inline def apply[F: def(Int) -> Int](f:
-    F) -> Int` defines `mj_apply$mono$T$inflated$...$Vdbl(ptr %0)`.
-  - Owner: the physical signature classification
-    (`mojito-native-core` rt_abi) and `mojito-pliron`'s signature and call
-    lowering, with the rule stated in `docs/native-abi.md` beside the
-    thunk's "zero-sized parameters skipped".
+  `List[E]` with one `append(E())` and `rs[0].me()`, and
+  `Optional(E()).value().me()`, over a field-less struct, stop natively
+  with "vm: dereference of dangling Pointer" (trap 8), where the VM and
+  the pin print `1`.
+  - The element storage is a zero-size allocation, and the pointer the
+    runtime returns for it fails `mjrt_pointer_status`'s liveness check
+    at the dereference guard.
+  - It traps for a memory-only `E(Copyable)` and for a
+    `TrivialRegisterPassable` one alike, so it predates R2293's
+    zero-sized classification.
+  - Probe: the two reads above, over `struct E(Copyable)` and over
+    `struct R(TrivialRegisterPassable)`, each with `def me(self) -> Int`.
+  - Found while landing R2293 (2026-11-17).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Ownership, Origins, And Destruction
 
@@ -9411,6 +9434,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R2305 A run-time parameter of a non-`thin` `def(...)` type is
+  accepted**
+
+  `def via(f: def(R, Int) -> Int, r: R) -> Int: return f(r, 5)`, called
+  as `via(plus, r)`, runs, where the pin rejects the call ("parameter
+  '_Self' has 'def(R, Int) -> Int' type, but value has type
+  'AnyTrait[def(R, Int) -> Int]'", and "value passed to 'f' cannot be
+  converted from 'def plus(r: R, x: Int) thin -> Int'").
+  - At the pin a non-`thin` `def(...)` names a trait, so a run-time
+    parameter typed by one has no value type; only `def(...) thin` or a
+    binder `F: def(...)` with `f: F` is a value.
+  - `reject_stored_callable_type` (`checker/type_resolution.rs`) already
+    rejects the same type at a struct field; the parameter position
+    has no such check.
+  - Probe: the shape above over any thin `plus`.
+  - Found while landing R2293 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -12472,6 +12514,23 @@ follow-ups the landed producer stages filed come last.
   - Updates `docs/architecture.md` and `docs/symbol-map.md`.
   - Depends on R2136.
   - Model: Fable, Not Planned.
+
+- [ ] **R2306 An instance's argument its body stops reading after
+  inlining stays in its signature**
+
+  At the default level the pin's `take[E]` instance, over `@no_inline def
+  take[T: G](e: T) -> Int: return e.tag()` at a field-less memory-only
+  `E`, takes no parameter once `E.tag` is inlined, and keeps its name
+  without `_REMOVED_ARG`. Mojito defines `take[E]` with its `ptr`.
+  - Mojito's `remove-unused-params` runs only before elaboration, over
+    the template, where `e` is read; upstream's `RemoveUnusedParams` also
+    runs on instances after inlining.
+  - At `-O0` the pin keeps the `ptr`, as Mojito does, so this is an
+    optimization gap, not an ABI one.
+  - Probe: the shape above under `--emit ll`.
+  - Found while planning R2293 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

@@ -92,6 +92,24 @@ impl FnLowering<'_> {
                 self.reg_span(dest),
             )? {
                 LowerTy::Aggregate { layout, .. } => (layout, None),
+                // An empty register-passable receiver has no `out self`
+                // slot, as upstream's `R::__init__()` takes none: the call
+                // binds the remaining arguments, and its result erases.
+                LowerTy::ZeroSized => {
+                    let lowered = self.bind_call_slots(
+                        ctx,
+                        dest,
+                        name,
+                        &params[1..],
+                        owned.get(1..).unwrap_or_default(),
+                        by_reference.get(1..).unwrap_or_default(),
+                        args,
+                        kwargs,
+                    )?;
+                    self.emit_bound_call(ctx, dest, name, lowered)?;
+                    self.erased.insert(dest.0);
+                    return Ok(());
+                }
                 LowerTy::Scalar(scalar) if by_reference.first().copied().unwrap_or(false) => {
                     let layout = self.layout.layout_of(&struct_ty).map_err(|error| {
                         self.unsupported_reg(
@@ -101,7 +119,7 @@ impl FnLowering<'_> {
                     })?;
                     (layout, Some(scalar))
                 }
-                _ => {
+                LowerTy::Scalar(_) => {
                     return Err(
                         self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest)
                     );
@@ -129,7 +147,7 @@ impl FnLowering<'_> {
                     // A zero-sized argument (the `NoneType` of the `@implicit`
                     // `Optional.__init__(out self, value: NoneType)`) has no
                     // physical operand: the compiled signature erased its slot.
-                    if matches!(expected, LowerTy::ZeroSized) {
+                    if !expected.has_slot(false) {
                         continue;
                     }
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
@@ -164,10 +182,11 @@ impl FnLowering<'_> {
                 let mut lowered = Vec::with_capacity(args.len());
                 for (i, (arg, expected)) in args.iter().zip(&params).enumerate() {
                     let by_ref = by_reference.get(i).copied().unwrap_or(false);
-                    // A zero-sized argument (a numeric literal, a
-                    // `NoneType`) has no physical operand: the compiled
-                    // signature erased its slot.
-                    if matches!(expected, LowerTy::ZeroSized) && !by_ref {
+                    // A by-value zero-sized argument (a numeric literal, a
+                    // `NoneType`, an empty register-passable struct) has no
+                    // physical operand: the compiled signature erased its
+                    // slot.
+                    if !expected.has_slot(by_ref) {
                         continue;
                     }
                     let owned = owned.get(i).copied().unwrap_or(false);
@@ -343,13 +362,14 @@ impl FnLowering<'_> {
                 ));
             };
             let expected = param.clone();
-            // A zero-sized marker parameter (`__list_literal__`) has no
-            // physical operand; its slot is consumed and skipped.
-            if matches!(expected, LowerTy::ZeroSized) {
-                continue;
-            }
             let owned = owned.get(i).copied().unwrap_or(false);
             let by_ref = by_reference.get(i).copied().unwrap_or(false);
+            // A by-value zero-sized parameter (the `__list_literal__`
+            // marker) has no physical operand; its slot is consumed and
+            // skipped.
+            if !expected.has_slot(by_ref) {
+                continue;
+            }
             let value = match slot {
                 ArgSlot::Positional(p) if by_ref => self.by_address_operand(ctx, args[*p], dest)?,
                 ArgSlot::Keyword(k) if by_ref => {
@@ -491,7 +511,7 @@ impl FnLowering<'_> {
         let params = signature.params.clone();
         let owned_params = signature.owned_params.clone();
         let filled: Vec<usize> = (1..params.len())
-            .filter(|index| !matches!(params[*index], LowerTy::ZeroSized))
+            .filter(|index| params[*index].has_slot(false))
             .collect();
         if filled.len() > 1 {
             return Err(self.unsupported_reg(

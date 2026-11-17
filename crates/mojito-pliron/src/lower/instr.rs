@@ -51,23 +51,29 @@ impl FnLowering<'_> {
                 || (param_ty.is_some() && ref_params.get(var).copied().unwrap_or(false))
         };
         let one = self.int_constant(ctx, 1);
-        // Zero-sized parameters have no physical argument; later parameters'
-        // argument indexes shift left past them.
+        let by_reference = |var: usize| ref_params.get(var).copied().unwrap_or(false);
+        // By-value zero-sized parameters have no physical argument; later
+        // parameters' argument indexes shift left past them.
         let physical_index = |var: usize| {
             arg_offset
                 + param_tys[..var]
                     .iter()
-                    .filter(|ty| !matches!(ty, Some(LowerTy::ZeroSized)))
+                    .enumerate()
+                    .filter(|(index, ty)| {
+                        ty.as_ref()
+                            .is_some_and(|ty| ty.has_slot(by_reference(*index)))
+                    })
                     .count()
         };
         for (var, param_ty) in param_tys.iter().enumerate() {
             match param_ty {
-                // A zero-sized parameter has no physical argument and its
-                // value uses erase, but a reference to it is still an
-                // address: its slot is one-byte storage, as a fieldless
+                // A by-value zero-sized parameter has no physical argument
+                // and its value uses erase, but a reference to it is still
+                // an address: its slot is one-byte storage, as a fieldless
                 // struct's is, never a null pointer that a dereference guard
-                // would classify as dangling.
-                Some(LowerTy::ZeroSized) => {
+                // would classify as dangling. A by-address one aliases its
+                // incoming pointer below.
+                Some(LowerTy::ZeroSized) if !by_reference(var) => {
                     let slot = self.entry_alloca(ctx, 0, 1);
                     self.var_slots.push(slot);
                 }

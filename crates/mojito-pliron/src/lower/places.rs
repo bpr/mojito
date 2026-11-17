@@ -403,6 +403,21 @@ impl FnLowering<'_> {
                 LowerTy::Aggregate { .. } => {}
             }
         }
+        // An empty register-passable value holds nothing, so neither do its
+        // fields.
+        if matches!(
+            lower_ty(
+                self.name,
+                &base_ty,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(dest),
+            )?,
+            LowerTy::ZeroSized
+        ) {
+            self.erased.insert(dest.0);
+            return Ok(());
+        }
         while let TyKind::Ref(reference) = base_ty.kind() {
             base_ty = reference.referent.clone();
         }

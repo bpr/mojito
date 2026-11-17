@@ -321,14 +321,26 @@ pub enum ScalarTy {
 
 /// The backend lowering of one checked type: scalars stay SSA values,
 /// aggregates are memory-resident — registers hold a pointer to storage laid
-/// out by the shared `native::layout` engine — and zero-sized values have no
-/// runtime representation. The aggregate's checked type is boxed to keep the
-/// enum scalar-cheap.
+/// out by the shared `native::layout` engine — and zero-sized values (a
+/// literal, `None`, an empty register-passable struct or tuple) have no
+/// runtime representation: a by-value slot of one is no physical parameter,
+/// though a by-address slot keeps its pointer. The aggregate's checked type
+/// is boxed to keep the enum scalar-cheap.
 #[derive(Clone)]
 pub enum LowerTy {
     Scalar(ScalarTy),
     Aggregate { ty: Ty, layout: Layout },
     ZeroSized,
+}
+
+impl LowerTy {
+    /// Whether a parameter of this lowering takes a physical argument: every
+    /// by-address slot keeps its pointer, and only a by-value zero-sized
+    /// value passes nothing, as upstream drops a by-value argument whose
+    /// LLVM type holds no bits.
+    pub(crate) const fn has_slot(&self, by_reference: bool) -> bool {
+        by_reference || !matches!(self, Self::ZeroSized)
+    }
 }
 
 // A string literal register is zero-sized and its text is its type's; a

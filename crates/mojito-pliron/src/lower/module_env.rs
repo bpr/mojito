@@ -453,9 +453,10 @@ pub fn declare_function(
             _ if by_reference => param_handles.push(PointerType::get(ctx, 0).into()),
             LowerTy::Scalar(scalar) => param_handles.push(scalar.handle(ctx)),
             LowerTy::Aggregate { .. } => param_handles.push(PointerType::get(ctx, 0).into()),
-            // A zero-sized parameter (a `NoneType` overload marker like
-            // `__list_literal__`) carries no runtime data: it keeps its
-            // signature entry but no physical argument.
+            // A by-value zero-sized parameter (a `NoneType` overload marker
+            // like `__list_literal__`, an empty register-passable struct)
+            // carries no runtime data: it keeps its signature entry but no
+            // physical argument.
             LowerTy::ZeroSized => {}
         }
         params.push(lowered);

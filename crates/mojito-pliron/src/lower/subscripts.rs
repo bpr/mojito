@@ -77,9 +77,11 @@ impl FnLowering<'_> {
             receiver_convention,
             Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
         ) {
-            self.by_address_operand(ctx, recv, anchor)?
+            Some(self.by_address_operand(ctx, recv, anchor)?)
+        } else if !params[0].has_slot(false) {
+            None
         } else {
-            self.call_operand_value(ctx, recv, &params[0], recv_owned, anchor)?
+            Some(self.call_operand_value(ctx, recv, &params[0], recv_owned, anchor)?)
         };
         let rest = &params[1..];
         let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
@@ -107,7 +109,7 @@ impl FnLowering<'_> {
                 anchor,
             ));
         }
-        let mut operands = vec![recv_value];
+        let mut operands: Vec<Value> = recv_value.into_iter().collect();
         let mut slots = matched.slots.iter().enumerate();
         for (param, expected) in rest.iter().enumerate() {
             if Some(param) == collector
@@ -123,11 +125,11 @@ impl FnLowering<'_> {
                 ));
             };
             let expected = expected.clone();
-            if matches!(expected, LowerTy::ZeroSized) {
+            let by_ref = rest_by_reference.get(param).copied().unwrap_or(false);
+            if !expected.has_slot(by_ref) {
                 continue;
             }
             let owned = rest_owned.get(param).copied().unwrap_or(false);
-            let by_ref = rest_by_reference.get(param).copied().unwrap_or(false);
             let actual = match slot {
                 ArgSlot::Positional(p) => Some(&positional[*p]),
                 ArgSlot::Keyword(k) => Some(&keywords[*k].1),

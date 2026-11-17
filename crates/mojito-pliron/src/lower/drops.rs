@@ -51,7 +51,15 @@ impl<'a> FnLowering<'a> {
             return self.drop_function_error(ctx);
         }
         match self.var_lower_ty(var)? {
-            LowerTy::ZeroSized => Ok(()),
+            // An empty register-passable value holds nothing, but a
+            // destructor it names still runs.
+            LowerTy::ZeroSized => match self.func.var_tys.get(&var).cloned() {
+                Some(ty) if self.needs_named_drop(&ty, destructor) => {
+                    let ptr = self.var_slots[var as usize];
+                    self.emit_drop(ctx, ptr, &ty, destructor)
+                }
+                _ => Ok(()),
+            },
             LowerTy::Scalar(_) => match self.func.var_tys.get(&var).cloned() {
                 Some(ty) if self.held_struct_needs_drop(&ty, destructor) => {
                     let ptr = self.var_slots[var as usize];
@@ -90,7 +98,13 @@ impl<'a> FnLowering<'a> {
             self.mir_declarations,
             self.reg_span(reg),
         )? {
-            LowerTy::ZeroSized => Ok(()),
+            LowerTy::ZeroSized => {
+                if !self.needs_named_drop(&ty, destructor) {
+                    return Ok(());
+                }
+                let ptr = self.entry_alloca(ctx, 0, 1);
+                self.emit_drop(ctx, ptr, &ty, destructor)
+            }
             LowerTy::Scalar(scalar) => {
                 if !self.held_struct_needs_drop(&ty, destructor) {
                     return Ok(());
@@ -224,17 +238,24 @@ impl<'a> FnLowering<'a> {
                         .try_into()
                         .expect("mangled names are identifier-safe");
                     let func_ty = signature.func_ty;
-                    let operand = match signature.params.first() {
+                    // An empty register-passable receiver has no slot, as
+                    // upstream's `D::__deinit__()` takes none.
+                    let receiver_by_reference = signature.ref_params.first().copied();
+                    let operands = match signature.params.first() {
                         Some(LowerTy::Scalar(scalar)) => {
                             let handle = scalar.handle(ctx);
                             let load = LoadOp::new(ctx, ptr, handle);
                             self.append(ctx, load.get_operation(), None);
-                            load.get_result(ctx)
+                            vec![load.get_result(ctx)]
                         }
-                        _ => ptr,
+                        Some(receiver)
+                            if !receiver.has_slot(receiver_by_reference.unwrap_or(false)) =>
+                        {
+                            Vec::new()
+                        }
+                        _ => vec![ptr],
                     };
-                    let call =
-                        CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![operand]);
+                    let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
                     self.append(ctx, call.get_operation(), None);
                     return Ok(());
                 }

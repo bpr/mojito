@@ -132,13 +132,13 @@ impl FnLowering<'_> {
         // An aggregate `deinit` receiver that is a reference consumes the
         // storage it addresses in place, and a scalar one passes the value
         // read through it. A `mut`/`ref` receiver passes the reference its
-        // operand is, and a zero-sized one (a numeric literal) has no
-        // physical operand: the compiled signature erased its slot.
+        // operand is, and a by-value zero-sized one (a numeric literal, an
+        // empty register-passable struct) has no physical operand: the compiled signature erased its slot.
         let deinit_reference = deinit_receiver && self.is_reference_operand(recv);
         let aggregate_deinit = deinit_reference && matches!(params[0], LowerTy::Aggregate { .. });
         let recv_value = if aggregate_deinit || by_reference.first().copied().unwrap_or(false) {
             Some(self.by_address_operand(ctx, recv, dest)?)
-        } else if matches!(params[0], LowerTy::ZeroSized) {
+        } else if !params[0].has_slot(false) {
             None
         } else {
             Some(self.call_operand_value(
@@ -159,14 +159,15 @@ impl FnLowering<'_> {
         let mut lowered: Vec<Value> = recv_value.into_iter().collect();
         if kwargs.is_empty() && args.len() == rest.len() && !self.variadic_callee(resolved) {
             for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
-                // A zero-sized argument (the `NoneType` operand of
+                // A by-value zero-sized argument (the `NoneType` operand of
                 // `Optional.__is__`) has no physical operand: the compiled
                 // signature erased its slot.
-                if matches!(expected, LowerTy::ZeroSized) {
+                let by_ref = rest_by_reference.get(i).copied().unwrap_or(false);
+                if !expected.has_slot(by_ref) {
                     continue;
                 }
                 let owned = rest_owned.get(i).copied().unwrap_or(false);
-                let value = if rest_by_reference.get(i).copied().unwrap_or(false) {
+                let value = if by_ref {
                     self.by_address_operand(ctx, *arg, dest)?
                 } else {
                     self.call_operand_value(ctx, *arg, expected, owned, dest)?

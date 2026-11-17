@@ -399,6 +399,104 @@ def main():
     }
 }
 
+/// An empty register-passable value passed by value is no physical
+/// parameter, and returned is `void`, as upstream lowers an empty
+/// register-passable `!kgen.struct` to a type holding no bits; a memory-only
+/// empty struct and a `mut` slot keep their pointer.
+#[test]
+fn zero_sized_register_passable_argument_has_no_slot() {
+    const EMPTY: &str = r"
+trait G:
+    def tag(self) -> Int: ...
+    def bump(mut self, x: Int) -> Int: ...
+
+struct E(Copyable, G):
+    def __init__(out self):
+        pass
+    def tag(self) -> Int:
+        return 7
+    def bump(mut self, x: Int) -> Int:
+        return x + 1
+
+struct R(TrivialRegisterPassable, G):
+    def __init__(out self):
+        pass
+    def tag(self) -> Int:
+        return 9
+    def bump(mut self, x: Int) -> Int:
+        return x + 2
+
+struct D(RegisterPassable, Movable):
+    def __init__(out self):
+        pass
+    def __deinit__(deinit self):
+        print(1)
+
+@no_inline
+def take[T: G](e: T) -> Int:
+    return e.tag()
+
+@no_inline
+def mg[T: G](mut t: T, x: Int) -> Int:
+    return t.bump(x)
+
+def dbl(x: Int) -> Int:
+    return x * 2
+
+@no_inline
+def apply[F: def(Int) -> Int](f: F) -> Int:
+    return f(21)
+
+@no_inline
+def ret_r(x: Int) -> R:
+    return R()
+
+def main():
+    var r = R()
+    var e = E()
+    _ = ret_r(1)
+    _ = D()
+    print(take(E()), take(r), apply(dbl), mg(r, 1), mg(e, 1))
+";
+    let module = native_compile(EMPTY, &["main"]);
+    let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
+    let define = |name: &str| {
+        llvm_function(&ir, name)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    };
+    for name in [
+        "take_24mono_24TR(",
+        "apply_24mono_24T_24inflated",
+        "D_2e_u_udeinit_u_u(",
+        "D_2e_u_uinit_u_u(",
+    ] {
+        let line = define(name);
+        assert!(
+            line.ends_with("() #0 {"),
+            "`{name}` still takes a slot: {line}"
+        );
+    }
+    let ret = define("ret_ur");
+    assert!(
+        ret.starts_with("define void @") && !ret.contains("ptr"),
+        "an empty register-passable result is not `void`: {ret}"
+    );
+    for (name, params) in [
+        ("take_24mono_24TE(", "(ptr %0)"),
+        ("mg_24mono_24TR(", "(ptr %0, i64 %1)"),
+        ("mg_24mono_24TE(", "(ptr %0, i64 %1)"),
+    ] {
+        let line = define(name);
+        assert!(
+            line.contains(params),
+            "`{name}` lost its by-address slot: {line}"
+        );
+    }
+}
+
 /// Runtime arguments distinguish lane insertion from constructor insertion,
 /// while mutable parameters keep the ABI's lane-aligned memory observable.
 #[test]

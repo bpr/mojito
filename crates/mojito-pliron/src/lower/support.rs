@@ -70,8 +70,7 @@ pub fn emit_thunk_body(
         .enumerate()
         .skip(captures + usize::from(receiver != ThunkReceiver::Forwarded))
         .filter(|(index, param)| {
-            !matches!(param, LowerTy::ZeroSized)
-                || target.ref_params.get(*index).copied().unwrap_or(false)
+            param.has_slot(target.ref_params.get(*index).copied().unwrap_or(false))
         })
         .count();
     while remaining > 0 {
