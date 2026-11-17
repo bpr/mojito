@@ -1073,6 +1073,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `lower-arg-conventions` now takes a `deinit` receiver an elaborated
+  instance makes register-passable out of its storage and passes the owned
+  value, as upstream's `LowerArgConventions` passes a `DeinitMem` operand:
+  `o^.or_else(d)` over `var o: Optional[T]` at `T = Int` no longer passes
+  a reference to `o`'s slot, so that slot stays promotable (R2272).
+
 - The MIR verifier now rejects a value at a by-address `read` slot of a
   call bound by its callee's declaration, as upstream's `lit.call`
   verifier rejects a value where the signature takes a `!lit.ref`; an

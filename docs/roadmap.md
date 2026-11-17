@@ -9667,24 +9667,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2272 An instance's register-passable `deinit` receiver stays a
-  reference**
-
-  Upstream's `LowerArgConventions` passes a `deinit` receiver an instance
-  proves register-passable as an owned value taken from its storage.
-  Mojito lowers a template's `deinit` receiver of a memory-only type
-  (`Optional[T]`) as a `ref.make`, and the elaborator keeps that reference
-  at an instance where the type is register-passable (`T = Int`).
-  - Probe: `def pick[T: Copyable & ImplicitlyCopyable & Movable &
-    Deinitable](var o: Optional[T], d: T) -> T: return o^.or_else(d)`
-    called as `pick[Int](Optional(4), 7)`.
-  - Fix: `mir::load_register_passable_operands` (`call_addresses.rs`)
-    splices a `MirInstr::take_place` of the made place ahead of a
-    `Deinit` contract's call whose `ref.make` receiver is register-passable
-    at the instance, and passes that register.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2274 The inliner does not inline a call whose `deinit` receiver
   is passed by address**
 

@@ -21,7 +21,10 @@
 //! instance's substitution makes register-passable (a `read x: T` at
 //! `T = Int`) is upstream's `imm_mem`: it stays an address until
 //! `LowerArgConventions`' caller half reads it through its reference once
-//! elaborated ([`load_register_passable_operands`]).
+//! elaborated ([`load_register_passable_operands`]). That half also takes a
+//! `deinit` receiver an instance makes register-passable (`Optional[T]` at
+//! `T = Int`) out of the storage its `ref.make` addresses, as upstream's
+//! pass passes a `DeinitMem` operand as an owned value there.
 //! An artifact written before lowering passed by-address operands as
 //! references has its calls addressed by that contract as it loads
 //! ([`upgrade_call_operands`]).
@@ -114,7 +117,11 @@ pub fn operand_value_ty(ty: &Ty) -> &Ty {
 ///
 /// `function` is an elaborated instance, and the read is a `ref.read`, as
 /// upstream's `LowerArgConventions` loads a register-passable argument at
-/// the call. Returns whether any operand was read.
+/// the call. A `deinit` receiver the instance makes register-passable is
+/// instead taken out of the storage its `ref.make` addresses
+/// ([`MirInstr::take_place`]) just before the call, as upstream's pass
+/// passes a `DeinitMem` operand as an owned value there, and a `ref.make`
+/// the call alone read is retired. Returns whether any operand was read.
 pub fn load_register_passable_operands(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
@@ -122,6 +129,11 @@ pub fn load_register_passable_operands(
     let callees = Callees::of(declarations);
     let mut next = function.n_regs;
     let mut types = Vec::new();
+    let mut made = HashMap::new();
+    collect_made_places(&function.body, &mut made);
+    let mut reads = vec![0; function.n_regs as usize];
+    count_register_reads(&mut function.body, &mut reads);
+    let mut retired = Vec::new();
     let changed = load_in_blocks(
         &mut function.body,
         &function.reg_types,
@@ -130,6 +142,9 @@ pub fn load_register_passable_operands(
             callees: &callees,
             next: &mut next,
             types: &mut types,
+            made: &made,
+            reads: &reads,
+            retired: &mut retired,
         },
     );
     function.n_regs = next;
@@ -137,6 +152,13 @@ pub fn load_register_passable_operands(
         function.reg_types.insert(register, ty);
         if let Some(span) = function.spans.0.get(&from).cloned() {
             function.spans.0.insert(register, span);
+        }
+    }
+    if !retired.is_empty() {
+        retire_made_references(&mut function.body, &retired);
+        for register in retired {
+            function.reg_types.remove(&register);
+            function.spans.0.remove(&register);
         }
     }
     changed
@@ -1413,6 +1435,12 @@ struct LoadContext<'a, 'b> {
     callees: &'a Callees<'b>,
     next: &'a mut u32,
     types: &'a mut Vec<(u32, Ty, u32)>,
+    /// The place each `ref.make` of the body addresses, by its register.
+    made: &'a HashMap<u32, MirPlace>,
+    /// Each register's read count over the body.
+    reads: &'a [u32],
+    /// The `ref.make` registers whose one reader took their place instead.
+    retired: &'a mut Vec<u32>,
 }
 
 fn load_in_blocks(
@@ -1453,6 +1481,7 @@ fn load_in_blocks(
                     .collect();
                 Some((receiver, operands))
             });
+        take_register_passable_receiver(&mut block.instrs[index], reg_types, context, &mut loads);
         if let Some((receiver, operands)) = by_value {
             let instruction = &mut block.instrs[index];
             let (receiver_register, registers) = operand_registers_mut(instruction);
@@ -1471,6 +1500,53 @@ fn load_in_blocks(
         index += inserted + 1;
     }
     changed
+}
+
+/// Take a `deinit` receiver an instance makes register-passable out of
+/// the storage its `ref.make` addresses, the take going to `loads` and the
+/// receiver becoming the owned value, as upstream's `LowerArgConventions`
+/// passes a `DeinitMem` operand of a register-passable type by value.
+///
+/// The pass runs before `automatic-inline`, so a receiver is still the
+/// local `ref.make` lowering formed; any other reference is left as is.
+fn take_register_passable_receiver(
+    instruction: &mut MirInstr,
+    reg_types: &HashMap<u32, Ty>,
+    context: &mut LoadContext<'_, '_>,
+    loads: &mut Vec<MirInstr>,
+) {
+    if !instruction.deinit_receiver() {
+        return;
+    }
+    let declared = matches!(
+        bound_call(instruction, context.callees, reg_types),
+        Some(BoundCall {
+            contract: Contract::Declared(declaration),
+            ..
+        }) if declaration.receiver_convention == Some(ArgConvention::Deinit)
+    );
+    let MirInstr::MethodCall { recv, .. } = instruction else {
+        return;
+    };
+    let Some(TyKind::Ref(reference)) = reg_types.get(&recv.0).map(Ty::kind) else {
+        return;
+    };
+    let Some(place) = context.made.get(&recv.0) else {
+        return;
+    };
+    if !declared || !context.declarations.register_passable(&reference.referent) {
+        return;
+    }
+    let taken = Reg(*context.next);
+    *context.next += 1;
+    context
+        .types
+        .push((taken.0, reference.referent.clone(), recv.0));
+    loads.push(MirInstr::take_place(taken, place.clone()));
+    if context.reads.get(recv.0 as usize) == Some(&1) {
+        context.retired.push(recv.0);
+    }
+    *recv = taken;
 }
 
 /// Whether a callee receives its regular parameter `parameter` by value
@@ -1527,4 +1603,30 @@ fn read_operand(
         reference: *register,
     });
     *register = loaded;
+}
+
+/// Record the place each `ref.make` of `block`, its regions included,
+/// addresses.
+fn collect_made_places(block: &MirBlock, made: &mut HashMap<u32, MirPlace>) {
+    for instruction in &block.instrs {
+        if let MirInstr::MakeRef { dest, place } = instruction {
+            made.insert(dest.0, place.clone());
+        }
+        for region in instruction_regions(instruction) {
+            collect_made_places(region, made);
+        }
+    }
+}
+
+/// Remove the `ref.make` of each register in `retired` from `block`, its
+/// regions included.
+fn retire_made_references(block: &mut MirBlock, retired: &[u32]) {
+    block.instrs.retain(
+        |instruction| !matches!(instruction, MirInstr::MakeRef { dest, .. } if retired.contains(&dest.0)),
+    );
+    for instruction in &mut block.instrs {
+        for region in instruction_regions_mut(instruction) {
+            retire_made_references(region, retired);
+        }
+    }
 }

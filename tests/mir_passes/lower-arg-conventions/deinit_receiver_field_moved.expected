@@ -1,0 +1,30 @@
+  functions: [
+      fn {
+        name: "H.take",
+        registers: 5,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: H, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: H, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: struct_type { name: "__module$std$string$String", arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: struct_type { name: R, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 335, end: 352, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 335, end: 341, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 335, end: 341, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 335, end: 341, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.move { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: H, arguments: [] }), projections: [projection { op: field(r), type: struct_type { name: R, arguments: [] } }], type: present(struct_type { name: R, arguments: [] }), through: absent } },
+              call.method { dest: %r1, recv: %r4, method: consume, resolved: present("R.consume"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: true, receiver_convention: present(deinit), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

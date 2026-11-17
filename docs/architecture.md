@@ -2591,7 +2591,12 @@ reads the addressed storage at the `ref.make`, copy elision reads a
 reads through the reference (`mir::load_register_passable_operands`)
 where an instance's substitution makes the parameter or a `read`
 receiver register-passable (`read x: T` at `T = Int`), as upstream's pass
-loads such an argument at the call; the move check and the inliner's
+loads such an argument at the call, and takes a `deinit` receiver the
+instance makes register-passable (`o^.or_else(d)` over `var o:
+Optional[T]` at `T = Int`) out of the storage its `ref.make` addresses
+(`MirInstr::take_place`, retiring a `ref.make` the call alone read), as
+upstream's pass passes a `DeinitMem` operand as an owned value; the move
+check and the inliner's
 receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
 referent. The VM binds each operand as the call passes it,
