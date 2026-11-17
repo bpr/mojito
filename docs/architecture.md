@@ -2554,9 +2554,16 @@ whose types name its origin (`RegisterLoanStep`'s `origin_operands`,
 `types::named_origins`), as upstream keeps an origin's memory live while a
 value whose type names it is, and copy elision's `lend` re-roots the
 operand's `ref.make`. The verifier
-(`verify_direct_call`) rejects a value at a `mut`/`ref` slot of a `call`
-or `call.method` binding by its callee's declaration; the same rule at a
-by-address `read` slot waits on the shapes above (R2251). A MIR text
+(`verify_direct_call`) rejects a value at every slot of a `call` or
+`call.method` binding by its callee's declaration that
+`mir::by_address_parameter` takes by address, a `mut`/`ref` one and a
+`read` one whose declared type is not proven register-passable, as
+upstream's `lit.call` takes a `!lit.ref` wherever the signature does; an
+elaborated instance's declaration names its substituted types, so a `read`
+its instance proves register-passable takes the value
+`load_register_passable_operands` reads. Its receivers, keyword operands,
+and a `call.indirect`'s operands are not yet checked this way (R2280,
+R2281, R2282). A MIR text
 artifact older than 1.192 is upgraded as it loads
 (`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded

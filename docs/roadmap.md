@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2280**.
+Next free ID: **R2283**.
 
 ## Ordered Work
 
@@ -2907,7 +2907,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
   `assets/ok/mut_pointer_parameter_reassign.mojo` stopped compiling: the
   verifier rejects `main` with "argument 0 of 'write_back' is a `mut` or
-  `ref` parameter but passes a Pointer[Int, ...] value", beside "MakeRef
+  `ref` parameter but passes a Pointer[Int, ...] value" (now "is received
+  by address but passes a …"), beside "MakeRef
   destination targets Int, incompatible with place storage Pointer[Int,
   ...]".
   - The `ref.make` for the argument is typed as the pointee rather than the
@@ -9622,19 +9623,59 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2278, since inflation makes that rejection fall out.
   - Model: Fable, Planned.
 
-- [ ] **R2251 The verifier accepts a value at a by-address `read` slot**
+- [ ] **R2280 The verifier checks no by-address receiver**
 
-  Upstream's `lit.call` verifier rejects a value where the callee's
-  signature takes a `!lit.ref`. `verify_direct_call` still requires a
-  reference only at a `mut`/`ref` slot.
-  - Fix: require a reference wherever `by_address_parameter` takes the
-    slot by address. On elaborated MIR the instance's declaration names
-    its substituted types, so a `read` the instance proves
-    register-passable may pass the value `load_register_passable_operands`
-    reads, which needs no row rewrite.
-  - Stop when std packages and `scripts/smoke` is clean with the rule on.
-  - Depends on R2187, R2248.
-  - Model: Fable, Planned.
+  Upstream's `lit.call` verifier rejects a value wherever the callee's
+  signature takes a `!lit.ref`, the receiver included.
+  `verify_direct_call` checks only a call's positional operands, so a
+  `call.method` whose receiver the declaration takes by address may still
+  pass a value.
+  - Fix: require a reference at the receiver where
+    `mir::by_address_receiver(declaration, receiver_ty, declarations)`
+    holds, in `verify_call_instruction`'s `call.method` arm.
+  - Probes (found while landing R2251, before its chain fix): the lambda
+    storage `__call__` receivers in `assets/ok/capturing_lambda_storage.mojo`
+    and `assets/ok/conditional_expression_transfer.mojo`, `Tagged.total`
+    in `assets/ok/struct_value_param_application.mojo`, and `M.show`,
+    `S.copy`, and pointer-subscript receivers. The list is a lower bound.
+  - Stop when `scripts/smoke` and those fixtures run clean with the rule
+    on.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2281 The pre-elaboration passes turn a `copy=` operand's
+  reference into a value**
+
+  Upstream's `read copy: Self` takes a `!lit.ref`. After
+  `inline-parametric`, `imm-arguments`, `mem-2-reg`, `sroa`, and
+  `canonicalize`, each `copy=` operand of a `__copyinit__` call is a
+  value, so `verify_direct_call` skips keyword operands.
+  - Probe: check keyword operands by `mir::call_operand_parameters` in
+    `verify_direct_call`. Nearly every program fails, std's own
+    `_ZeroStartingRange.__copyinit__` and `Optional.__copyinit__` calls
+    included.
+  - Fix: make those passes keep or re-form the operand's `ref.make`, then
+    turn the keyword check on.
+  - If one pass's fix outgrows the session, land it alone and file the
+    rest per pass.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2282 A `call.indirect`'s by-address `read` operands are not
+  verified**
+
+  Upstream's `lit.call` through a function value takes a `!lit.ref` at
+  each slot its signature takes by address. The verifier checks a
+  `call.indirect`'s operands only at `mut`/`ref` slots
+  (`verify_callable_contract_call`, `verify/intrinsics.rs`), and calls
+  `verify_direct_call` on its `__call__` target with `addressed: false`.
+  - Fix: require a reference at every slot `CallShape::Signature`
+    (`call_addresses.rs`) decides by address, a memory-only `read` one
+    included.
+  - Probe: `f(b)` over `f: def(Big) -> Int` with a memory-only `b`.
+  - Stop when `scripts/smoke` runs clean with the rule on.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2253 The VM represents a place pointer by the same handle as a
   reference to its slot**

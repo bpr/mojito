@@ -1045,6 +1045,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier now rejects a value at a by-address `read` slot of a
+  call bound by its callee's declaration, as upstream's `lit.call`
+  verifier rejects a value where the signature takes a `!lit.ref`; an
+  elaborated instance's register-passable `read` still takes the value.
+  The producers that passed values there now pass addresses: a generic
+  static method called through its type, an implicit conversion's source
+  (judged by the converting constructor's declared parameter), a
+  register-passable temporary, a field or intrinsic subscript read through
+  a reference, and each link of a chained comparison. `t[0] += "tail"` on
+  a `Tuple` element now calls `String.__iadd__` on the element in place,
+  as at the pin (R2251).
+
 - A function name, nested `def`, or capture-free lambda passed to a
   `def(...)`-bound `read` parameter (`apply(dbl)`, `Tuple()`'s
   `init_with` lambda) is now materialized in a hidden slot and passed by

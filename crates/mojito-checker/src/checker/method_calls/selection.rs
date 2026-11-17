@@ -197,7 +197,7 @@ impl Checker {
             |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
                 let value_source = expression.source_span();
                 let facts = records.get(&value_source).unwrap_or(&NodeFacts::EMPTY);
-                let adjustments = call_value_adjustments(facts, |ty| self.memory_only(ty));
+                let adjustments = call_value_adjustments(facts);
                 let prior = before
                     .invalidations
                     .get(&value_source)
@@ -535,13 +535,10 @@ impl Checker {
 
 /// The adaptations `facts` record at one source operand, as a call's
 /// boundary freezes them for that call alone. A conversion reads its
-/// source by address when its constructor reads it and `memory_only`
-/// holds of the source's type, the rule
-/// `Checker::record_result_conventions` applies to the node's own
-/// `ConversionReadsSource`.
+/// source by address when its constructor's declared parameter does, the
+/// node's own `ConversionReadsSource`.
 pub(in crate::checker) fn call_value_adjustments(
     facts: &NodeFacts,
-    memory_only: impl Fn(&Ty) -> bool,
 ) -> Vec<mojito_checked::checked::CheckedCallValueAdjustment> {
     use mojito_checked::checked::CheckedCallValueAdjustment;
     if matches!(facts.ty.as_ref().map(Ty::kind), Some(TyKind::Overload(_)))
@@ -564,8 +561,7 @@ pub(in crate::checker) fn call_value_adjustments(
                 .chain([CheckedCallValueAdjustment::ImplicitConversion {
                     target: target.clone(),
                     instantiated_args: facts.conversion_instantiation.clone().unwrap_or_default(),
-                    source_by_address: facts.conversion_reads_source
-                        && facts.ty.as_ref().is_some_and(memory_only),
+                    source_by_address: facts.conversion_reads_source,
                 }])
                 .collect()
         }

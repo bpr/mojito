@@ -604,7 +604,7 @@ impl Checker {
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
                     declared_return: None,
-                    declared_params: Vec::new(),
+                    declared_params: sig.params.clone(),
                     nested_origins: NestedOrigins::AsDeclared,
                     bracket_attributes,
                     refined_bound: None,

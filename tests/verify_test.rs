@@ -833,8 +833,72 @@ fn verifier_requires_a_reference_at_a_mut_argument() {
     main.reg_types.insert(argument.0, Ty::int());
     expect_finding(
         &mir,
-        "argument 0 of 'inc' is a `mut` or `ref` parameter but passes a Int value",
+        "argument 0 of 'inc' is received by address but passes a Int value",
     );
+}
+
+/// A memory-only `read` argument of a direct call is its place's address,
+/// as upstream's `lit.call` takes a `!lit.ref` wherever the callee's
+/// signature does; the verifier rejects the value read from the place.
+#[test]
+fn verifier_requires_a_reference_at_a_memory_only_read_argument() {
+    let source = "def show(s: String):\n    print(s)\n\ndef main():\n    var s = String(\"a\")\n    show(s)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(
+        errors.is_empty(),
+        "the call through ref.make verifies: {errors:?}"
+    );
+    let main = function_named(&mut mir, "main");
+    let argument = leaf_instructions_mut(&mut main.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == "show" => Some(args[0]),
+            _ => None,
+        })
+        .expect("main calls show");
+    load_in_place_of_address(main, argument);
+    expect_finding(
+        &mir,
+        "argument 0 of 'show' is received by address but passes a",
+    );
+}
+
+/// A generic `read x: T` takes its argument by address in the template,
+/// as the declared `T` is not proven register-passable, a static method
+/// called through its type included; the `Int` instance takes the value,
+/// which the concrete program's verification accepts.
+#[test]
+fn verifier_accepts_a_value_at_a_register_passable_instance_read() {
+    let source = "@fieldwise_init\nstruct S(Copyable):\n    @staticmethod\n    def show[T: Copyable](x: T):\n        pass\n\ndef main():\n    S.show(3)\n";
+    let compiled = mojito::Compiler::default()
+        .compile_source(source, Path::new("verify_test.mojo"))
+        .expect("compile");
+    let template = compiled.elaborated_mir();
+    assert_eq!(verify(template), Vec::<String>::new());
+    let main = template
+        .functions
+        .iter()
+        .find_map(|(name, function)| (name == "main").then_some(function))
+        .expect("main is lowered");
+    let mut body = main.body.clone();
+    let passed = leaf_instructions_mut(&mut body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == "S.show" => Some(args[0]),
+            _ => None,
+        })
+        .expect("main calls S.show");
+    assert!(
+        matches!(
+            main.reg_types.get(&passed.0).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ),
+        "the template passes the declared `T` slot by address"
+    );
+    compiled
+        .concrete_mir()
+        .expect("the Int instance takes the value");
 }
 
 /// Turn the `ref.make` defining `function`'s `argument` into a load of

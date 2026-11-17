@@ -391,6 +391,27 @@ impl<'a> Flatten<'a> {
             (e.conversion_reads_source() || materialized.is_some()).then_some(Mutability::Immutable)
         };
         let place = materialized.or_else(|| source_place.clone()).or(read_place);
+        // A source with no storage to lend (a register-passable temporary
+        // at a declared `read x: T`) is bound to a hidden slot whose
+        // `ref.make` is passed, as upstream's `lit.call` takes a
+        // `!lit.ref` of a materialized temporary.
+        let (argument, place) = match (wanted, place) {
+            (Some(_), None) => {
+                match self
+                    .f
+                    .reg_types
+                    .get(&argument.0)
+                    .cloned()
+                    .or_else(|| e.ty())
+                {
+                    Some(ty) if self.materializable(e, argument, &ty) => {
+                        self.materialize_operand_in_slot(e, argument, ty)
+                    }
+                    _ => (argument, None),
+                }
+            }
+            (_, place) => (argument, place),
+        };
         let argument = match wanted {
             Some(wanted) => self.address_operand(e, (argument, place), wanted).0,
             None => argument,

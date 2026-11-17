@@ -74,15 +74,7 @@ pub(super) fn verify_call_instruction(
                 let binds =
                     crate::mir::call_operand_parameters(callee, declaration, args.len(), kwargs)
                         .is_some();
-                verify_direct_call(
-                    prefix,
-                    cx.function,
-                    declaration,
-                    args,
-                    kwargs,
-                    binds,
-                    errors,
-                );
+                verify_direct_call(cx, declaration, args, kwargs, binds, errors);
                 let owner = receiver
                     .as_ref()
                     .and_then(|receiver| owner_arguments(cx.declarations, receiver));
@@ -202,7 +194,7 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
-                verify_direct_call(prefix, cx.function, declaration, args, kwargs, true, errors);
+                verify_direct_call(cx, declaration, args, kwargs, true, errors);
                 let result_abi_matches =
                     match reference_result {
                         Some(reference) => {
@@ -355,19 +347,22 @@ fn verify_collector_passed(
 /// verifier does not replicate.
 ///
 /// `addressed` says whether the call binds its operands by `declaration`
-/// (a direct `call` or a resolved `call.method`): each operand of a `mut`
-/// or `ref` parameter must then be a reference, as upstream's `lit.call`
-/// takes a `!lit.ref` of the caller's storage for it, the reference a
-/// place holding one stores included.
+/// (a direct `call` or a resolved `call.method`): each operand of a slot
+/// `by_address_parameter` takes by address, a `mut`/`ref` one or a `read`
+/// one of a type not proven register-passable, must then be a reference,
+/// as upstream's `lit.call` takes a `!lit.ref` wherever the signature does,
+/// the reference a place holding one stores included. An elaborated
+/// instance's declaration names its substituted types, so a `read` its
+/// instance proves register-passable takes the value.
 pub(super) fn verify_direct_call(
-    prefix: &str,
-    function: &MirFunction,
+    cx: &InstrCx<'_>,
     declaration: &MirFunctionDeclaration,
     args: &[Reg],
     kwargs: &[(String, Reg)],
     addressed: bool,
     errors: &mut Vec<String>,
 ) {
+    let (prefix, function) = (cx.prefix, cx.function);
     let plain = kwargs.is_empty()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
@@ -403,13 +398,13 @@ pub(super) fn verify_direct_call(
             ));
         }
         if addressed
-            && declaration.ref_params.get(index).copied().unwrap_or(false)
+            && crate::mir::by_address_parameter(declaration, cx.declarations, index).is_some()
             && !matches!(expected.kind(), TyKind::Ref(_))
             && let Some(found) = function.reg_types.get(&argument.0)
             && !matches!(found.kind(), TyKind::Ref(_))
         {
             errors.push(format!(
-                "{prefix}: argument {index} of '{}' is a `mut` or `ref` parameter but passes a {found} value",
+                "{prefix}: argument {index} of '{}' is received by address but passes a {found} value",
                 declaration.lowered_name
             ));
         }
@@ -1180,15 +1175,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             ));
         }
         if let Some(declaration) = declared(cx.declarations, target) {
-            verify_direct_call(
-                prefix,
-                cx.function,
-                declaration,
-                args,
-                kwargs,
-                false,
-                errors,
-            );
+            verify_direct_call(cx, declaration, args, kwargs, false, errors);
         }
     }
 }

@@ -829,6 +829,18 @@ impl<'a> Flatten<'a> {
                 debug_assert_eq!(descriptors, vec![None]);
                 self.lower_augmented_index(&store, object, index);
             }
+            // An element a compile-time index selects (`t[0]` of a `Tuple`)
+            // is a place: its in-place dunder runs on it there, as upstream
+            // calls `__iadd__` on the referent `__getitem__[0]` returns.
+            CheckedOp::Index { .. }
+                if store.plan.setter.is_none()
+                    && let Some(inplace) = &store.plan.inplace =>
+            {
+                let receiver = self.lower_call_receiver(target);
+                let operand = self.lower_in_place_operand(inplace, rhs_expression);
+                self.emit_interior_invalidations(target, None);
+                self.emit_in_place_dunder(target, receiver, inplace, op, operand);
+            }
             CheckedOp::Slice {
                 lower, upper, step, ..
             } if let Some(object) = target.object() => {

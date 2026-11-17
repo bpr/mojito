@@ -439,7 +439,7 @@ impl<'a> Flatten<'a> {
     /// Whether `expression` is none of the identifier lowerings that are
     /// values rather than reads of its place: a callable, a closure, a
     /// pointer handle, a folded constant, or a materialized borrow slot.
-    fn reads_value(&self, expression: Node<'a>) -> bool {
+    pub(super) fn reads_value(&self, expression: Node<'a>) -> bool {
         !(expression.resolved_callable().is_some()
             || self.nested_info(expression).is_some()
             || expression.is_origin_bearing_pointer()
@@ -579,7 +579,7 @@ impl<'a> Flatten<'a> {
 
     /// Whether the body defines `value` as a fresh value of its own: a call
     /// or getter result not returned by reference, a copy, a construction,
-    /// or a constant. A slot's forward or move is not: its loans stay with
+    /// a pointer formed from a place, or a constant. A slot's forward or move is not: its loans stay with
     /// the slot.
     fn owned_temporary(&self, value: Reg) -> bool {
         self.f
@@ -612,6 +612,16 @@ impl<'a> Flatten<'a> {
                             .is_some_and(|call| call.reference_result.is_none())
                 }
                 MirInstr::UseVar { dest, mode, .. } => *dest == value && *mode == UseMode::Copy,
+                // `Pointer(to=x)` is a pointer value formed from a place,
+                // not a reference to one.
+                MirInstr::MakeRef { dest, .. } => {
+                    *dest == value
+                        && self
+                            .f
+                            .reg_types
+                            .get(&value.0)
+                            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_)))
+                }
                 _ => false,
             })
     }
@@ -935,6 +945,30 @@ impl<'a> Flatten<'a> {
                 && let Some(place) = self.simple_place(expression)
             {
                 return (self.expr(expression), Some(place));
+            }
+            // A by-address `read` of a field read through a reference (an
+            // accessor's returned reference or a pointer's pointee) is the
+            // projected place's address, as upstream's `lit.call` takes the
+            // `!lit.ref` of `p[].items`.
+            if !converted
+                && self.read_by_address_binding(expression)
+                && self.reads_value(expression)
+                && let Some(place) = self.projected_read_place(expression)
+            {
+                let value = self.fresh_typed(
+                    expression.location(),
+                    Some(place.root),
+                    place
+                        .ty
+                        .clone()
+                        .or_else(|| expression.ty())
+                        .unwrap_or_else(Ty::error),
+                );
+                self.emit(MirInstr::LoadPlace {
+                    dest: value,
+                    place: place.clone(),
+                });
+                return (value, Some(place));
             }
             // A reference result's read, and the temporary binding of its
             // copy, are setup work too.
@@ -3047,6 +3081,28 @@ impl<'a> Flatten<'a> {
         self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true })
     }
 
+    /// The place a field chain or intrinsic subscript over a reference
+    /// (`p[unsafe_offset=i]` included) names: the projection below an
+    /// accessor's returned reference
+    /// ([`Self::lower_projected_reference_place`]) or through a pointer's
+    /// pointee ([`Self::try_place`]). A bare name, a temporary, a
+    /// projection of one (`R(6).x`, which the call's temporary lowering
+    /// keeps alive through it), and a subscript the checker resolved to a
+    /// call name no such place.
+    fn projected_read_place(&mut self, expression: Node<'a>) -> Option<MirPlace> {
+        let projected = match expression.op() {
+            CheckedOp::Member { .. } => true,
+            CheckedOp::Index { .. } => expression.call_contract().is_none(),
+            CheckedOp::MultiIndex { .. } => expression.pointer_keyword_subscript().is_some(),
+            _ => false,
+        };
+        if !projected || expression.is_fresh_temporary() || rooted_in_temporary(expression) {
+            return None;
+        }
+        self.lower_projected_reference_place(expression)
+            .or_else(|| self.try_place(expression))
+    }
+
     /// Whether call operand `expression` binds a `read` parameter by value
     /// and the check proved its type register-passable
     /// (`RegisterPassableRead`), as upstream passes it with no storage.
@@ -3084,11 +3140,41 @@ impl<'a> Flatten<'a> {
         }
     }
 
+    /// Whether `value`, of type `ty`, which operand `expression` produced,
+    /// is a temporary a hidden slot may own and destroy: a fresh temporary,
+    /// a `^` transfer, or a value the body defines fresh
+    /// ([`Self::owned_temporary`]). A read through a reference, or out of a
+    /// temporary that outlives the read, owns nothing a slot may destroy.
+    pub(in crate::mir) fn materializable(&self, expression: Node<'a>, value: Reg, ty: &Ty) -> bool {
+        !matches!(ty.kind(), TyKind::Ref(_))
+            && (expression.is_fresh_temporary()
+                || matches!(expression.op(), CheckedOp::Transfer(_))
+                || self.owned_temporary(value))
+    }
+
+    /// [`Self::materialize_in_slot`] for the temporary operand `expression`
+    /// lowered to `value`: the slot carries the loans the temporary holds
+    /// (a view's of the storage it borrows), so that storage outlives every
+    /// read through the slot, as [`Self::loaned_call_result`]'s slot does.
+    pub(in crate::mir) fn materialize_operand_in_slot(
+        &mut self,
+        expression: Node<'a>,
+        value: Reg,
+        ty: Ty,
+    ) -> (Reg, Option<MirPlace>) {
+        let (read, place) = self.materialize_in_slot(expression.location(), value, ty);
+        if let Some(place) = &place {
+            let loans = self.aggregate_borrows(expression);
+            self.establish_storage_loans(expression, place.root, loans);
+        }
+        (read, place)
+    }
+
     /// Bind `value`, of type `ty`, a temporary no storage holds, to a
     /// hidden `$mat_r` slot and read it back with the slot's place, as
     /// upstream's IR generation gives an rvalue `anonymous` storage where a
     /// `!lit.ref` is wanted. The slot is destroyed at its last use.
-    fn materialize_in_slot(
+    pub(in crate::mir) fn materialize_in_slot(
         &mut self,
         location: SourceSpan,
         value: Reg,
@@ -3110,6 +3196,23 @@ impl<'a> Flatten<'a> {
         });
         (loaded, Some(place))
     }
+}
+
+/// Whether projection chain `expression` (fields and subscripts) is rooted
+/// in a fresh temporary rather than in a place or a returned reference.
+fn rooted_in_temporary(expression: Node<'_>) -> bool {
+    let mut node = expression;
+    while matches!(
+        node.op(),
+        CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
+    ) && node.reference_result().is_none()
+    {
+        match node.object() {
+            Some(object) => node = object,
+            None => return false,
+        }
+    }
+    node.is_fresh_temporary() && node.reference_result().is_none()
 }
 
 /// The place whose `ref.make` forwards the reference `place` holds, with

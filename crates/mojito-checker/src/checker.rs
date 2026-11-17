@@ -2008,7 +2008,10 @@ impl Checker {
         Ok(Some(SelectedConversion {
             materialization: Some(mojito_checked::checked::ConversionMaterialization {
                 constructor: materialize.target,
-                by_address: !selected.consumes_source && self.memory_only(&target),
+                by_address: !selected.consumes_source
+                    && selected
+                        .declared_by_address
+                        .unwrap_or_else(|| self.memory_only(&target)),
                 ty: target,
                 instantiated_args,
                 reads: !selected.consumes_source,
@@ -2178,12 +2181,16 @@ impl Checker {
                 let error = sig
                     .raises
                     .then(|| sig.error.clone().unwrap_or_else(Ty::error));
+                let declared_by_address = sig.params.first().map(|declared| {
+                    self.declared_by_address(sig.conventions.first().copied().flatten(), declared)
+                });
                 Ok(Some(SelectedConversion {
                     target,
                     source_borrow,
                     consumes_source,
                     error,
                     parameter: parameter.clone(),
+                    declared_by_address,
                     own_arguments: own_arguments.clone(),
                     materialization: None,
                 }))
@@ -2234,6 +2241,7 @@ impl Checker {
             consumes_source,
             error,
             parameter,
+            declared_by_address,
             own_arguments,
             materialization,
         } = selected;
@@ -2262,7 +2270,10 @@ impl Checker {
         // A materialized source is the conversion's own temporary.
         if materialization.is_some() {
             self.record_at(span.clone()).conversion_materialization = materialization.map(Box::new);
-        } else if !consumes_source && source_borrow.is_none() {
+        } else if !consumes_source
+            && source_borrow.is_none()
+            && declared_by_address.unwrap_or_else(|| self.memory_only(from))
+        {
             self.record_at(span.clone()).conversion_reads_source = true;
         }
         if let Some(error) = error {
@@ -2506,7 +2517,7 @@ impl Checker {
                 .filter(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
                 .and_then(|(name, _)| self.self_instance_ty(name))
         };
-        let judged: Vec<(SourceSpan, bool, bool, bool, bool, bool)> = {
+        let judged: Vec<(SourceSpan, bool, bool, bool, bool)> = {
             let records = self.node_facts.borrow();
             records
                 .iter()
@@ -2542,25 +2553,17 @@ impl Checker {
                     let converted = conversion
                         .as_ref()
                         .is_some_and(|ty| memory_only(ty) || facts.conversion_raises.is_some());
-                    let reads_source =
-                        facts.conversion_reads_source && facts.ty.as_ref().is_some_and(memory_only);
                     let consumed_by_value = facts.consumed_receiver
                         && facts.ty.as_ref().is_some_and(|ty| !memory_only(ty));
-                    (indirect
-                        || converted
-                        || by_value
-                        || consumed_by_value
-                        || facts.conversion_reads_source)
-                        .then(|| {
-                            (
-                                span.clone(),
-                                indirect,
-                                converted,
-                                by_value,
-                                consumed_by_value,
-                                reads_source,
-                            )
-                        })
+                    (indirect || converted || by_value || consumed_by_value).then(|| {
+                        (
+                            span.clone(),
+                            indirect,
+                            converted,
+                            by_value,
+                            consumed_by_value,
+                        )
+                    })
                 })
                 .collect()
         };
@@ -2568,7 +2571,7 @@ impl Checker {
             let records = self.node_facts.borrow();
             judged
                 .iter()
-                .filter(|(_, _, _, by_value, _, _)| *by_value)
+                .filter(|(_, _, _, by_value, _)| *by_value)
                 .filter_map(
                     |(span, ..)| match records.get(span)?.adjustment.as_deref() {
                         Some(
@@ -2582,13 +2585,12 @@ impl Checker {
                 .collect()
         };
         let mut records = self.node_facts.borrow_mut();
-        for (span, indirect, converted, by_value, consumed_by_value, reads_source) in judged {
+        for (span, indirect, converted, by_value, consumed_by_value) in judged {
             if let Some(facts) = records.get_mut(&span) {
                 facts.indirect_result = indirect;
                 facts.conversion_indirect_result = converted;
                 facts.register_passable_read = by_value;
                 facts.register_passable_consume = consumed_by_value;
-                facts.conversion_reads_source = reads_source;
             }
         }
         for span in spelled {
@@ -3325,6 +3327,11 @@ struct SelectedConversion {
     error: Option<Ty>,
     /// The constructor's parameter, at the converted-to type's arguments.
     parameter: Ty,
+    /// Whether the constructor reads its source by address, judged on its
+    /// declared parameter ([`Checker::declared_by_address`]) as upstream's
+    /// `lit.call` takes a `!lit.ref` wherever the signature does; `None`
+    /// for a collector, whose element is judged by the source's own type.
+    declared_by_address: Option<bool>,
     /// The constructor's own compile-time arguments, solved from the
     /// source, in declaration order.
     own_arguments: Vec<TyArg>,

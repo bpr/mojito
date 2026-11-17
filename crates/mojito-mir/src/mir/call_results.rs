@@ -136,14 +136,18 @@ impl<'a> Flatten<'a> {
     }
 
     /// Named place `e` read where it lies, with its place, as a `read`
-    /// parameter binds a memory-only argument's address: `None` for a
-    /// temporary or a value with no slot to lend.
+    /// parameter binds a by-address argument's address: `None` for a
+    /// temporary or a value with no slot to lend. A field read the borrowed
+    /// shortcut does not cover is read unconverted, as a call operand's
+    /// place read is.
     pub(super) fn read_in_place(&mut self, e: Node<'a>) -> Option<(Reg, MirPlace)> {
-        if e.is_fresh_temporary() {
+        if e.is_fresh_temporary() || !self.reads_value(e) {
             return None;
         }
         let place = self.simple_place(e)?;
-        let value = self.lower_borrowed_read_argument(e)?;
+        let value = self
+            .lower_borrowed_read_argument(e)
+            .unwrap_or_else(|| self.expr_unconverted(e));
         Some((value, place))
     }
 

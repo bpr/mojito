@@ -9,6 +9,7 @@ use mojito_checked::checked::{
     CheckedCallArgumentSource, CheckedComprehensionClause, CheckedExpr, CheckedOp, DictLiteral,
     SemanticAdjustment,
 };
+use mojito_types::origin::Mutability;
 
 /// The construction the checker selected for display or comprehension
 /// `node`. Collection syntax is deliberately absent from this decision:
@@ -1065,6 +1066,64 @@ impl<'a> Flatten<'a> {
         ChainMiddle::Slot(variable, ty)
     }
 
+    /// The address link argument `value`, of chain operand `operand`, passes
+    /// at a slot the link's dunder takes by address, as upstream's `lit.call`
+    /// takes a `!lit.ref` of each comparison's operand: the place `value`
+    /// was read from where it lies, else a hidden slot holding the
+    /// temporary, which is returned with its type so a middle operand's next
+    /// link reads it there.
+    fn chain_link_address(
+        &mut self,
+        operand: Node<'a>,
+        value: Reg,
+        site: &SourceSpan,
+    ) -> (Reg, Option<(VarId, Ty)>) {
+        let ty = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| operand.ty());
+        let Some(ty) = ty.filter(|ty| !matches!(ty.kind(), TyKind::Ref(_))) else {
+            return (value, None);
+        };
+        let read = self
+            .f
+            .body
+            .instrs
+            .iter()
+            .rev()
+            .find_map(|instruction| match instruction {
+                MirInstr::LoadPlace { dest, place } if *dest == value => Some(place.clone()),
+                _ => None,
+            });
+        // The read stays: a middle's next link reads `value` again.
+        if let Some(place) = read {
+            let address = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+                self.address_lowered_operand(
+                    site.clone(),
+                    (value, Some(place)),
+                    Mutability::Immutable,
+                )
+                .0
+            } else {
+                self.place_address(site.clone(), &place, Mutability::Immutable)
+            };
+            return (address, None);
+        }
+        if !self.materializable(operand, value, &ty) {
+            return (value, None);
+        }
+        let (read, place) = self.materialize_operand_in_slot(operand, value, ty.clone());
+        let Some(place) = place else {
+            return (read, None);
+        };
+        let root = place.root;
+        let address =
+            self.address_lowered_operand(site.clone(), (read, Some(place)), Mutability::Immutable);
+        (address.0, Some((root, ty)))
+    }
+
     /// `value`, a middle operand read unconverted, as one link takes it:
     /// through `adjustments`, the adaptations that link's check froze.
     fn chain_link_operand(
@@ -1148,6 +1207,7 @@ impl<'a> Flatten<'a> {
         let cur = self.lower_operator_operand(chain, operand);
         self.close_call_setup(None);
         let link = links.get(index);
+        let mut materialized_middle = None;
         let (left, argument) = match link {
             Some(link) => {
                 let parameter_ty = link
@@ -1158,6 +1218,18 @@ impl<'a> Flatten<'a> {
                 let left = self.chain_link_operand(&link.left_adjustments, None, left, &sp);
                 let argument =
                     self.chain_link_operand(&link.right_adjustments, parameter_ty, cur, &sp);
+                let by_address = link.call.as_ref().and_then(|contract| {
+                    OperandBinding::of_argument(contract, CheckedCallArgumentSource::Positional(0))
+                }) == Some(OperandBinding::Read { by_address: true });
+                let argument = if by_address {
+                    let (address, slot) = self.chain_link_address(operand, argument, &sp);
+                    if argument == cur {
+                        materialized_middle = slot;
+                    }
+                    address
+                } else {
+                    argument
+                };
                 (left, argument)
             }
             None => (left, cur),
@@ -1187,7 +1259,10 @@ impl<'a> Flatten<'a> {
         if index + 1 == rest.len() {
             return cmp;
         }
-        let middle = self.chain_middle(operand, cur, index == 0);
+        let middle = match materialized_middle {
+            Some((variable, ty)) => ChainMiddle::Slot(variable, ty),
+            None => self.chain_middle(operand, cur, index == 0),
+        };
         let then = self.region(|this| {
             MirTerm::Yield(vec![this.chain_link(
                 chain,
