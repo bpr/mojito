@@ -2597,39 +2597,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2289 A struct's `ImmOrigin(...)` slot converts to and from the
-  uncast origin**
-
-  `var w: View[origin_of(x)] = v^`, over `v: View[ImmOrigin(origin_of(x))]`
-  and a `var x`, is accepted and `w.p[].v = 3` writes `x`, where the pin
-  rejects the conversion ("cannot implicitly convert 'View[origin_of(x)]'
-  value to 'View[origin_of(x)]'").
-  - `Origin::coerces_to` (`mojito-types/src/origin.rs`) compares a cast
-    slot by the storage below it, because whether `ImmOrigin(o)` changes
-    `o`'s `mut` turns on the owner's mutability, which only the checker
-    knows: `ImmOrigin(origin_of(s))` over a read `s` is upstream's
-    `origin_of(s)` itself.
-  - Fix: compare only cast against cast (`Immutable(a)` with
-    `Immutable(b)` by `a` and `b`) in `Origin::coerces_to`, and fold an
-    already-immutable origin's cast in the checker before a struct type
-    coerces (`value_coerces`), using `bound_origin_mutability` for a place
-    whose owner is in scope (`owner_scope`), a binder declared
-    `mut=False`, and a union with one immutable member.
-  - That fix rejects the probe and its reverse (`View[origin_of(x)]` into
-    `View[ImmOrigin(origin_of(x))]`, which the pin rejects too) and keeps
-    a `read` owner's `ImmOrigin(origin_of(s))` equal to `origin_of(s)`.
-    The bundled library still packages: `StringSpan.split_at_grapheme`
-    now converts through `as_imm`, as upstream's does.
-  - `assets/ok/immutable_origin_struct_argument_exclusivity.mojo`'s
-    `Span(xs)` then converts into its cast slot through the bundled
-    `Span`'s implicit immutable constructor, which the strict comparison
-    was tried against and selects.
-  - Probe: the program above (`View[mut: Bool, //, o: Origin[mut=mut]]`
-    holding a `Pointer[Noisy, Self.o]`).
-  - Found while landing R2276 (2026-11-17).
-  - Depends on R2307.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1300 A method's origin parameter bound by `ref[o] self` is not
   the receiver's origin inside the body**
 

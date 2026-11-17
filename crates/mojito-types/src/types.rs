@@ -4452,13 +4452,20 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
     ty: &Ty,
     origins: &HashMap<u32, crate::origin::Origin, S>,
 ) -> Ty {
-    let recur = |ty: &Ty| substitute_origin_params(ty, origins);
+    map_origins(ty, &|origin| origin.substitute_params(origins))
+}
+
+/// The type with every struct and associated-type origin argument, and
+/// every reference's origin, replaced by `map` of it, through type
+/// arguments, tuples, packs, and referents.
+pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::origin::Origin) -> Ty {
+    let recur = |ty: &Ty| map_origins(ty, map);
     let map_args = |args: &[TyArg]| -> Vec<TyArg> {
         args.iter()
             .map(|argument| match argument {
                 TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
                 TyArg::Val(value) => TyArg::Val(value.clone()),
-                TyArg::Origin(origin) => TyArg::Origin(origin.substitute_params(origins)),
+                TyArg::Origin(origin) => TyArg::Origin(map(origin)),
             })
             .collect()
     };
@@ -4489,7 +4496,7 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
-            reference.origin = reference.origin.substitute_params(origins);
+            reference.origin = map(&reference.origin);
             TyKind::Ref(reference).into()
         }
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),

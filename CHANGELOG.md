@@ -715,6 +715,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's `ImmOrigin(o)` origin slot no longer converts to or from
+  the uncast `o` slot unless `o` is already immutable, as at the pin:
+  `var w: View[origin_of(x)] = v^` over a `View[ImmOrigin(origin_of(x))]`
+  and a `var x` is now rejected instead of handing out a view that writes
+  `x`, while a `read` owner's or an `ImmOrigin` binder's cast still
+  converts (`assets/ok/immutable_origin_struct_cast_of_immutable_origin.mojo`,
+  R2289). A diagnostic spells the cast's provenance, as the pin does.
+
 - An `@implicit` constructor generic over its own origin binder, whose
   refined `out self` names it (`other: V[Self.T, src], out self:
   V[Self.T, ImmOrigin(src)]`), is now selected: a conversion or an

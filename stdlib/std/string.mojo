@@ -2005,14 +2005,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def bytes(self) -> _BytesIter[Self.origin]:
         return _BytesIter(self, 0)
 
-    # The views before and after the `n`-th grapheme-cluster boundary
-    # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`): the
-    # immutable versions of this view, keeping its provenance (upstream's
-    # `Self.Immutable`).
+    # The immutable version of this view, keeping its provenance
+    # (upstream's `Self.Immutable`).
     @inline(.always)
     def as_imm(self) -> Self.Immutable:
         return rebind[Self.Immutable](self)
 
+    # The views before and after the `n`-th grapheme-cluster boundary
+    # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`), as
+    # immutable views keeping this one's provenance.
     def split_at_grapheme(self, n: Int) -> Tuple[Self.Immutable, Self.Immutable]:
         if n < 0:
             _mojito_abort("grapheme split index must be non-negative")

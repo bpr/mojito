@@ -4866,11 +4866,12 @@ impl Checker {
     /// Upstream's spelling of a checked type in a diagnostic, with each struct
     /// origin argument rendered as `origin_of(<place>)` through the names in
     /// scope (`P[origin_of(xs)]`), `Self.o`-style binders as `origin#N`, and an
-    /// unbound slot as `_`.
+    /// unbound slot as `_`. An `ImmOrigin(o)` cast spells as `o`, as
+    /// upstream prints the cast's provenance.
     pub(super) fn display_ty_with_origin_names(&self, ty: &Ty) -> String {
         use mojito_types::origin::{Origin, OriginSeg};
         let origin_text = |origin: &Origin| -> String {
-            match origin {
+            match origin.uncast() {
                 Origin::Place(place) => {
                     let mut text = self
                         .owner_name(place.root)

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1215
+# swept-count	1217
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -569,6 +569,8 @@ assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	erro
 assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/immutable_mutation.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/immutable_origin_struct_cast_to_uncast.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(x)]' value to 'View[origin_of(x)]'
+assets/type_error/immutable_origin_struct_uncast_to_cast.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(x)]' value to 'View[origin_of(x)]'
 assets/type_error/implicit_conversion_literal_argument_past_default.mojo	compile-reject	agree	error: invalid call to 'consume': value passed to 'value' cannot be converted from 'IntLiteral[1]' to 'Number'
 assets/type_error/implicit_conversion_literal_parameter_past_default.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'w' has 'U' type, but value has type 'IntLiteral[3]'
 assets/type_error/implicit_conversion_literal_var_past_default.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'F'

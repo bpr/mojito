@@ -1009,6 +1009,14 @@ impl Checker {
         }
     }
 
+    /// `ty` with each `ImmOrigin(o)` origin argument whose `o` is already
+    /// immutable folded to `o`, as upstream's cast of an `Origin[mut=False]`
+    /// value is that value: a struct type converts between the two slots
+    /// only then.
+    pub(super) fn fold_immutable_origin_casts(&self, ty: &Ty) -> Ty {
+        mojito_types::types::map_origins(ty, &|origin| self.fold_immutable_origin_cast(origin))
+    }
+
     /// Split the source parameter list at an explicit specialization site.
     /// Origin arguments are erased from the ordinary list handed to the
     /// generic binder, which binds the list as this split does
@@ -2127,6 +2135,41 @@ impl Checker {
                 own_binders,
             },
         )
+    }
+
+    fn fold_immutable_origin_cast(
+        &self,
+        origin: &mojito_types::origin::Origin,
+    ) -> mojito_types::origin::Origin {
+        use mojito_types::origin::Origin;
+        match origin {
+            Origin::Immutable(inner) if self.origin_is_immutable(inner) => {
+                self.fold_immutable_origin_cast(inner)
+            }
+            Origin::Immutable(inner) => Origin::immutable(self.fold_immutable_origin_cast(inner)),
+            Origin::Union(members) => Origin::Union(
+                members
+                    .iter()
+                    .map(|member| self.fold_immutable_origin_cast(member))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    /// Whether `origin` is an `Origin[mut=False]` value: a place whose owner
+    /// in scope is read-only, a binder declared `mut=False`, a cast, an
+    /// immutable builtin origin, or a union with an immutable member.
+    fn origin_is_immutable(&self, origin: &mojito_types::origin::Origin) -> bool {
+        use mojito_types::origin::{Mutability, Origin};
+        match origin {
+            Origin::Static | Origin::Untracked { mutable: false } => true,
+            Origin::Place(place) if self.owner_scope(place.root).is_none() => false,
+            Origin::Union(members) => members
+                .iter()
+                .any(|member| self.origin_is_immutable(member)),
+            _ => self.bound_origin_mutability(origin) == Some(Mutability::Immutable),
+        }
     }
 }
 

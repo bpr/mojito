@@ -1710,6 +1710,12 @@ impl Checker {
         if coerces(from, to) || self.inflates_to(from, to) {
             return true;
         }
+        if coerces(
+            &self.fold_immutable_origin_casts(from),
+            &self.fold_immutable_origin_casts(to),
+        ) {
+            return true;
+        }
         if let TyKind::Param { bounds, .. } = to.kind()
             && bounds.iter().all(|bound| self.conforms_to(from, bound))
         {

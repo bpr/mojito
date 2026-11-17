@@ -211,11 +211,13 @@ impl Origin {
         if matches!(expected, Self::Unbound) || self == expected {
             return true;
         }
-        // A struct's identity compares the storage an `ImmOrigin(...)`
-        // slot designates: whether the cast changes the slot's `mut` turns
-        // on the storage's own mutability, which only the checker knows.
-        if self.is_immutable_cast() || expected.is_immutable_cast() {
-            return self.uncast().coerces_to(expected.uncast());
+        // An `ImmOrigin(...)` cast is a distinct origin value: it agrees
+        // only with another cast over agreeing storage. The checker folds a
+        // cast of storage that is already immutable before comparing.
+        match (self, expected) {
+            (Self::Immutable(actual), Self::Immutable(slot)) => return actual.coerces_to(slot),
+            (_, Self::Immutable(_)) => return false,
+            _ => {}
         }
         match expected {
             // A subtree projection refines the loan domain a pointer covers,
