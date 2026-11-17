@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-free nested `def` or lambda passed to a callable parameter is
+  the symbol of its generator applied to the enclosing body's parameters,
+  as the pin keys `g[inner]`: `S[inner](1).get()` inside `outer[n]` now
+  runs (`5 6` for `outer[4](), outer[5]()`), and at a `def(...)` bound
+  such a callee inflates, so `size_of[F]()` is `0` as at the pin
+  (`assets/ok/nested_callable_parameter_symbol.mojo`, R2087). A nested body
+  the check cannot name yet, or one over a variadic or callable binder,
+  still passes through a register (R2308, R2309).
+
 - A signature names a `read` collector's pack origin as the pin spells
   it, `ref[args.origin]` or `ref[type_of(args).origin]`, and each call
   binds it to the places the collector gathers, so `first(x, s)` over

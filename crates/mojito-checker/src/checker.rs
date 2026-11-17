@@ -779,6 +779,10 @@ pub struct Checker {
     /// by the binding each declares ([`Self::list_nested_application`]).
     nested_applications:
         HashMap<mojito_types::origin::OwnerId, Vec<comptime_validation::ApplicableFunction>>,
+    /// The symbol each capture-free nested `def` lowers to, applied to the
+    /// binders in scope where it is declared, by the binding it declares
+    /// ([`Self::record_nested_symbol`]).
+    nested_symbols: HashMap<mojito_types::origin::OwnerId, mojito_types::ct::FuncSymbolRef>,
     /// The loop and comprehension binders not declared `var`: each binds
     /// the yielded element by reference, as upstream, so it is no tracked
     /// root a `^` may move out of.
@@ -1227,6 +1231,7 @@ impl Checker {
             nested_function_owners: HashSet::new(),
             nested_scopes: Vec::new(),
             nested_applications: HashMap::new(),
+            nested_symbols: HashMap::new(),
             reference_binders: HashSet::new(),
             owned_collectors: declaration_table::DeclarationTable::default(),
             collector_names: declaration_table::DeclarationTable::default(),

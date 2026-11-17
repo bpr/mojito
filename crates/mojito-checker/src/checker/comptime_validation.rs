@@ -9,6 +9,7 @@
 use super::*;
 use mojito_ast::ast::{ParamArg, SourceType};
 use mojito_types::conformance::Conformance;
+use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 use mojito_types::types::{TyKind, is_simd_length};
 
@@ -688,6 +689,82 @@ impl Checker {
             .cloned()
             .collect();
         (symbol, binders)
+    }
+
+    /// The symbol the nested `def` `name`, or the lambda whose hidden `def`
+    /// is `name` when `lambda` holds, declared in the body being checked
+    /// lowers to, applied to the binders in scope there: the pin's
+    /// `#kgen.func.symbol` of the nested generator applied to the enclosing
+    /// instance. `None` where the check does not know the name MIR gives
+    /// the body (a `def` its scope spells more than once, one nested in a
+    /// lambda or a capture-list closure), or a binder in scope is one no
+    /// application argument holds ([`NestedScope::symbol`]).
+    pub(super) fn nested_function_ref(&self, name: &str, lambda: bool) -> Option<FuncSymbolRef> {
+        let parent = self
+            .nested_scopes
+            .last()
+            .filter(|scope| scope.depth == self.function_bases.len())?;
+        let symbol = parent
+            .symbol
+            .as_deref()
+            .filter(|_| lambda || parent.spellings.get(name) == Some(&1))?;
+        Some(FuncSymbolRef {
+            symbol: mojito_symbol::symbol::nested_lifted_name(symbol, name),
+            arguments: parent
+                .binders
+                .iter()
+                .chain(&parent.loops)
+                .map(ParamDecl::own_argument)
+                .collect(),
+        })
+    }
+
+    /// Record the symbol of the nested `def` `stmt`, just bound in the body
+    /// being checked, when it has no capture list
+    /// ([`Self::nested_function_ref`]), for a read of it as a compile-time
+    /// value ([`Self::nested_callable_symbol`]).
+    pub(super) fn record_nested_symbol(&mut self, stmt: &Stmt) {
+        let StmtKind::Def {
+            name,
+            captures: None,
+            ..
+        } = &stmt.kind
+        else {
+            return;
+        };
+        if let Some(binding) = self.lookup_owner(name)
+            && let Some(symbol) = self.nested_function_ref(name, false)
+        {
+            self.nested_symbols.insert(binding, symbol);
+        }
+    }
+
+    /// The symbol of the capture-free nested `def` or lambda `expr` reads as
+    /// a compile-time value, applied to the binders in scope where it is
+    /// declared ([`Self::nested_function_ref`]). `None` for any other
+    /// expression, a generic body among them, and for a body whose symbol
+    /// the check does not know.
+    pub(super) fn nested_callable_symbol(&self, expr: &Expr) -> Option<FuncSymbolRef> {
+        match &expr.kind {
+            ExprKind::Identifier(name)
+                if self.compile_time_callee(name)
+                    && self
+                        .lookup(name)
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_))) =>
+            {
+                self.nested_symbols.get(&self.lookup_owner(name)?).cloned()
+            }
+            ExprKind::Lambda { def } => match &def.kind {
+                StmtKind::Def {
+                    name,
+                    captures: None,
+                    type_params,
+                    ..
+                } if type_params.is_empty() => self.nested_function_ref(name, true),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// `f` run inside a `comptime for` of the body being checked whose

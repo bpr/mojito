@@ -3143,8 +3143,9 @@ impl Checker {
     /// the struct its signature names
     /// ([`Self::register_inflated_function`]) applied to the callee's
     /// symbol, bare or bracket-specialized, an overload selected at the
-    /// bound's contract. `None` for any other argument, a nested `def` or
-    /// a lambda among them, which binds the bound as it did before.
+    /// bound's contract, or a capture-free nested `def` or lambda's
+    /// ([`Self::nested_callable_symbol`]). `None` for any other argument,
+    /// which binds the bound as it did before.
     fn inflate_function_argument(&self, argument: &Expr, found: &Ty, expected: &Ty) -> Option<Ty> {
         let TyKind::Param {
             callable_bound: Some(contract),
@@ -3159,7 +3160,14 @@ impl Checker {
         ) {
             return None;
         }
-        let (signature, callee) = self.callable_value_symbol(argument, contract).ok()??;
+        // A capture-free nested `def` or lambda is its generator applied
+        // to the binders in scope where it is declared, which each
+        // instance of the enclosing body closes.
+        let (signature, callee, nested) =
+            match self.callable_value_symbol(argument, contract).ok()? {
+                Some((signature, callee)) => (signature, callee, false),
+                None => (found.clone(), self.nested_callable_symbol(argument)?, true),
+            };
         if !matches!(signature.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
             return None;
         }
@@ -3168,7 +3176,7 @@ impl Checker {
             vec![TyArg::Val(CtValue::FuncSymbol(callee))],
         )
         .into();
-        if mojito_types::types::is_symbolic(&inflated) {
+        if !nested && mojito_types::types::is_symbolic(&inflated) {
             return None;
         }
         self.register_inflated_function(&signature);

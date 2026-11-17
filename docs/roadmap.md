@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2308**.
+Next free ID: **R2311**.
 
 ## Ordered Work
 
@@ -4122,51 +4122,51 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2087 A callable parameter's argument that is no module function
-  has no symbol in the checked instance key**
+- [ ] **R2308 The check does not know the lowered symbol of every nested
+  body it could pass to a callable parameter**
 
-  The pin keys `g[inner]` over a capture-free nested `def` by the
-  generator applied to the enclosing instance, and `g[T.seven]` by the
-  static method's symbol; Mojito's check leaves those slots
-  `CtValue::Deferred` and passes the function through `param_arg_regs`,
-  which the elaborator reads back by dataflow (`callable_targets`).
-  - Where: `resolve_callable_param_arg` (`checker/type_resolution.rs`)
-    resolves only an identifier naming a module function to
-    `CtValue::FuncSymbol`; a nested `def`'s symbol is the lifted
-    closure's, which the check names only at its last step.
-  - The elaborator must rename a `FuncSymbol` naming a nested generator
-    to its instance, as `nested_generators` does for a call.
-  - Probe: `S[inner](1).get()` inside `def outer[n: Int]()`, over a
-    nested `def inner() -> Int: return n` and `struct S[f: def() thin ->
-    Int]`, stops with "solution for `f` is not constant"; the pin prints
-    `5 6` for `outer[4](), outer[5]()`.
-  - A static read through a non-parametric struct (`g[T.seven]()`, an
-    enum case) is its symbol already (`static_value_symbol`); one through
-    a parametric struct is not, since its symbol names the struct's
-    instance.
-  - Probe: `g[P[Int].seven]()` over `struct P[T: AnyType]` stops with
-    "unsupported value parameter `f` is not compile-time constant".
-  - Probe: `g[lambda -> Int: 3]()` runs, with `ct_deferred` the same way.
-  - Probe: a forwarded binder (`g[f]()` inside `fwd[f: ...]`) carries
-    `ct_expr(param_decl_ref fwd.f)` but still also passes the value in a
-    register (`param_arg { value: present(..) }`), since a symbolic
-    callable argument is no `CtValue::is_parameter_attribute`.
-  - A `CallableDefault::If` default stays `Deferred` at the check, and the
-    elaborator's `apply_defaults` (`native/mono/unify.rs`) evaluates it
-    per instance.
-  - The same gap keeps a nested `def` or capture-free lambda at a
-    `def(...)` bound from inflating, as a module function's reference
-    does (`inflate_function_argument`, `checker/constraints.rs`): upstream
-    binds `F` to `inflated$<signature>` with `#__CALL__#=b::g(...)`.
-  - Probe: `size_of[F]()` prints `16` for a nested `def h` and for
-    `lambda (x: Int) -> Int: x + 7` passed to
-    `def info[F: def(Int) -> Int](f: F)`, where the pin prints `0`.
-  - Probe: `Tuple[D, D]()` in
-    `assets/ok/callable_bound_function_value_address.mojo`, whose
-    `init_with` lambda sits in a generic method, must still print `7 7`
-    on both backends: the elaborator renames a nested body per enclosing
-    instance only at `closure.make` and `const function`
-    (`instantiate_nested_bodies`), not in a type argument.
+  A capture-free nested `def` or lambda at a callable slot is the symbol
+  of its generator applied to the enclosing binders
+  (`Checker::nested_callable_symbol`), but only where the check names the
+  body as `closure_uses::scope` will; elsewhere the slot stays
+  `CtValue::Deferred` and the elaborator reads the function back from
+  its register, unlike the pin.
+  - Where: `Checker::nested_function_ref` (`checker/comptime_validation.rs`)
+    answers only under a `NestedScope::symbol`, which is `None` in a
+    lambda's body and a capture-list closure's, and only for a name its
+    scope spells once.
+  - `closure_uses::scope` names a duplicate spelling by its ordinal among
+    the *live* statements (`nested_lifted_declaration_name`), and a body
+    nested in a closure under its storage method
+    (`closure_method_name`); share that naming with the check.
+  - Probe: `g[h]()` in both arms of a `comptime if flag:` that each
+    declare `def h() -> Int`, over `def g[f: def() thin -> Int]()`,
+    prints `1 2` but carries `ct_deferred`.
+  - Probe: `g[lambda -> Int: 11]()` inside a lambda's body, and `g[inner]()`
+    inside a `def cl() {imm}:` closure, both carry `ct_deferred`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2309 A nested body's symbol cannot carry a variadic or callable
+  enclosing binder**
+
+  `NestedScope` drops its symbol for a scope holding a variadic binder, a
+  callable binder, or a binder with a callable default, so a nested
+  `def` declared there stays `CtValue::Deferred` at a callable slot,
+  where the pin applies its generator to every enclosing parameter.
+  - Where: the applicability filter in `Checker::enter_nested_scope`
+    (`checker/comptime_validation.rs`); the elaborator's
+    `Specializer::bound_enclosing_arguments`
+    (`native/mono/specializer.rs`) binds a type or a plain value only.
+  - A pack binder's argument is its list (`ParamDecl::own_argument`), and
+    a callable binder's the enclosing instance's function symbol.
+  - Probe: `g[k]()` in `def pack[*Ts: AnyType]()` over a nested
+    `def k() -> Int: return 40` prints `40` but carries `ct_deferred`.
+  - Probe: `g[k]()` in `def fwd2[f: def() thin -> Int]()` over a nested
+    `def k() -> Int: return f() + 1` prints `8` for `fwd2[seven]()` but
+    carries `ct_deferred`.
+  - Probe: `Tuple`'s `init_with` lambda (`stdlib/std/builtin/tuple.mojo`)
+    sits in a scope over the `*Ts` pack; it is generic too (R2088).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9570,6 +9570,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2310 A forwarded callable binder still passes a register
+  operand beside its compile-time reference**
+
+  `g[f]()` inside `def fwd[f: def() thin -> Int]()` carries
+  `ct_expr(param_decl_ref fwd.f)` and also
+  `param_arg { value: present(..) }`, where the pin forwards the
+  parameter as an attribute alone.
+  - Where: `CtValue::is_parameter_attribute` (`mojito-types/src/ct.rs`)
+    rejects a symbolic `Expr`, so `folded_parameter_attributes`
+    (`checker/call_inference.rs`) and `param_arg_has_no_runtime_form`
+    (`mojito-mir/src/mir.rs`) keep the operand.
+  - Accept an `Expr` whose meta type is a `TyKind::Func` value (a binder
+    reference or `#kgen.bind_params` over one), not a `GenericFunc`
+    (R2088); then confirm no register-dataflow reader
+    (`callable_targets`, `Bindings::callables`) still needs it.
+  - Probe: `fwd[T.seven]()` prints `7` on both backends, with
+    `param_arg { value: absent }` in `emit-mir`.
+  - Probe: `assets/ok/def_callable_parameter_symbol.mojo` and
+    `callable_param_binder_application.mojo`, unchanged on both backends.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R2292 The elaborator still folds a `def(...)` bound's callee from
   register dataflow**
 
@@ -9590,8 +9612,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     rejection in `callable_bound_argument` into plain non-conformance,
     keeping the pin's wording
     (`assets/type_error/callable_bound_run_time_function_value.mojo`).
-  - Probe: every fixture R2087 names, unchanged on both backends.
-  - Depends on R2087, since a nested callee still needs the fold.
+  - Probe: `assets/ok/nested_callable_parameter_symbol.mojo` and every
+    callable-parameter fixture, unchanged on both backends.
+  - Depends on R2308, R2309, R2310, since a deferred nested callee and a
+    forwarded binder's register still need the fold.
   - Model: Fable, Not Planned.
 
 - [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a

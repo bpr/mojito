@@ -680,10 +680,13 @@ impl Checker {
     /// and a `def` alike: a function is its symbol, as the pin's
     /// `S[#kgen.func.symbol<@f>]`, and an enclosing callable binder (`f`,
     /// `Self.f`) or its application (`f[4]`) its reference, which the elaborator substitutes per
-    /// instance. A run-time local is the pin's dynamic-value rejection. A
-    /// capture-free nested `def`, a lambda, a member, and any argument at
-    /// a generic callable slot keep the deferred marker, which the
-    /// elaborator binds from the argument's register.
+    /// instance. A capture-free nested `def` or lambda is the symbol of
+    /// its generator applied to the binders in scope where it is declared
+    /// ([`Self::nested_callable_symbol`]). A run-time local is the pin's
+    /// dynamic-value rejection. A nested body whose symbol the check does
+    /// not know, a static read through a parametric struct, and any
+    /// argument at a generic callable slot keep the deferred marker, which
+    /// the elaborator binds from the argument's register.
     fn resolve_callable_param_arg(
         &self,
         decl: &ParamDecl,
@@ -746,6 +749,10 @@ impl Checker {
                 context: format!("callable-value parameter '{name}'"),
             });
         }
+        let symbolic = matches!(ty.kind(), TyKind::Func(_));
+        if symbolic && let Some(symbol) = self.nested_callable_symbol(expr) {
+            return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
+        }
         if let ExprKind::Identifier(local) = &expr.kind
             && self.is_local_binding(local)
         {
@@ -756,9 +763,7 @@ impl Checker {
                 return Err(TypeError::DynamicParameterValue);
             }
         }
-        if matches!(ty.kind(), TyKind::Func(_))
-            && let Some((_, symbol)) = self.callable_value_symbol(expr, ty)?
-        {
+        if symbolic && let Some((_, symbol)) = self.callable_value_symbol(expr, ty)? {
             return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
         }
         Ok(TyArg::Val(CtValue::Deferred(decl.binder())))

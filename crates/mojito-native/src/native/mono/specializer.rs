@@ -2518,6 +2518,15 @@ impl<'a> Specializer<'a> {
         {
             return Ok(None);
         }
+        // A callable binder bound to a function symbol is that symbol,
+        // whose arguments may keep a closed application unevaluated (a
+        // nested body's generator applied to the instance it is declared
+        // in), which no folded constant holds.
+        if let Some(reference) = value.as_decl_ref()
+            && let Some(function @ CtValue::FuncSymbol(_)) = bindings.values.get(reference)
+        {
+            return Ok(Const::of_parameter_value(function, ty));
+        }
         let proposition = match value.kind() {
             ParamKind::PackQuery { .. } => proposition_constraint(value),
             _ => None,
@@ -2795,8 +2804,13 @@ impl<'a> Specializer<'a> {
     /// parameters bound to `arguments`, closed under the instance being
     /// specialized, and defaulted past them, and a static's struct
     /// parameters bound from the struct instance `receiver` it is read
-    /// through. It removes no argument, as a call through the value passes
-    /// the whole signature.
+    /// through. A nested body's generator is applied to the binders in
+    /// scope where it is declared before its own parameters, as the pin's
+    /// `#kgen.func.symbol` of a nested `def` applies it to the enclosing
+    /// instance: its leading arguments bind those
+    /// ([`Self::nested_application_scope`]), and it names the instance a
+    /// closure of it made in that enclosing instance names. It removes no
+    /// argument, as a call through the value passes the whole signature.
     fn function_value_instance(
         &mut self,
         owner: &str,
@@ -2804,10 +2818,15 @@ impl<'a> Specializer<'a> {
         arguments: &[TyArg],
         receiver: Option<&Ty>,
     ) -> Result<String, MonoError> {
-        let decls = self
+        let (decls, nested) = self
             .declarations
             .get(target)
-            .map(|declaration| declaration.param_decls.clone())
+            .map(|declaration| {
+                (
+                    declaration.param_decls.clone(),
+                    declaration.enclosing.is_some(),
+                )
+            })
             .ok_or_else(|| {
                 self.error(
                     Some(owner),
@@ -2818,15 +2837,101 @@ impl<'a> Specializer<'a> {
             .iter()
             .map(|argument| substitute_arg(argument, &self.enclosing))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut bindings = self.base_bindings();
+        let (mut bindings, mut instance_arguments, own) = if nested {
+            let scope = self.nested_application_scope(target);
+            if arguments.len() < scope.len() {
+                return Err(self.error(
+                    Some(owner),
+                    format!(
+                        "function value `{target}` binds {} of its {} enclosing binders",
+                        arguments.len(),
+                        scope.len(),
+                    ),
+                ));
+            }
+            let (enclosing, own) = arguments.split_at(scope.len());
+            let bound = self.bound_enclosing_arguments(owner, target, &scope, enclosing)?;
+            let (bindings, instance_arguments) = self.nested_bindings(target, &bound, false)?;
+            (bindings, instance_arguments, own)
+        } else {
+            (self.base_bindings(), Vec::new(), &arguments[..])
+        };
         if let Some(receiver) = receiver {
             let receiver = substitute_ty(receiver, &self.enclosing)?;
             self.bind_static_receiver(owner, target, &receiver, &mut bindings)?;
         }
-        self.bind_instantiated_arguments(owner, target, &decls, &arguments, &mut bindings)?;
+        self.bind_instantiated_arguments(owner, target, &decls, own, &mut bindings)?;
         apply_defaults(&decls, &[], &mut bindings)?;
-        let instance_arguments = ordered_arguments(&decls, &bindings, target)?;
+        instance_arguments.extend(ordered_arguments(&decls, &bindings, target)?);
         self.enqueue(target, bindings, instance_arguments)
+    }
+
+    /// Name the call of the nested body `target` whose leading `arguments`
+    /// apply its generator to the binders in scope where it is declared (an
+    /// inflated function type's callee) as that generator under the
+    /// instance they spell ([`Self::nested_generator`]), its own arguments
+    /// left for the call to bind.
+    fn apply_nested_generator(
+        &mut self,
+        owner: &str,
+        target: &mut String,
+        arguments: &mut Vec<TyArg>,
+    ) -> Result<(), MonoError> {
+        let scope = self.nested_application_scope(target);
+        if arguments.len() < scope.len() {
+            return Err(self.error(
+                Some(owner),
+                format!(
+                    "call of `{target}` binds {} of its {} enclosing binders",
+                    arguments.len(),
+                    scope.len(),
+                ),
+            ));
+        }
+        let enclosing = arguments
+            .drain(..scope.len())
+            .map(|argument| substitute_arg(&argument, &self.enclosing))
+            .collect::<Result<Vec<_>, _>>()?;
+        let bound = self.bound_enclosing_arguments(owner, target, &scope, &enclosing)?;
+        let (bindings, instance_arguments) = self.nested_bindings(target, &bound, false)?;
+        *target = self.nested_generator(target, bindings, &instance_arguments);
+        Ok(())
+    }
+
+    /// The bindings of the binders `scope` in scope where the nested body
+    /// `target` is declared to the closed arguments `arguments` its value
+    /// applies its generator to ([`Self::function_value_instance`]).
+    fn bound_enclosing_arguments(
+        &self,
+        owner: &str,
+        target: &str,
+        scope: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Result<Bindings, MonoError> {
+        let mut bound = self.base_bindings();
+        for (decl, argument) in scope.iter().zip(arguments) {
+            let binder = decl.binder();
+            match (decl, argument) {
+                (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                    bound.types.insert(binder, ty.clone());
+                }
+                (ParamDecl::Value { .. }, TyArg::Val(value)) => {
+                    bound.values.insert(binder, value.clone());
+                }
+                (ParamDecl::Origin { .. }, _) => {}
+                _ => {
+                    return Err(self.error(
+                        Some(owner),
+                        format!(
+                            "function value `{target}` binds its enclosing binder `{}` to \
+                             `{argument}`",
+                            binder.name
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(bound)
     }
 
     /// Whether `target` is a closure's body as its storage's method
@@ -3035,15 +3140,22 @@ impl<'a> Specializer<'a> {
                 && let MirInstr::Call {
                     func,
                     param_arg_regs,
+                    instantiated_args,
                     ..
                 } = instruction
-                && let Some(declaration) = self.declarations.get(func.0.as_str())
             {
-                mojito_mir::mir::witness_arguments(
-                    &bound,
-                    &declaration.param_decls,
-                    param_arg_regs,
-                );
+                if let Some(declaration) = self.declarations.get(func.0.as_str()) {
+                    mojito_mir::mir::witness_arguments(
+                        &bound,
+                        &declaration.param_decls,
+                        param_arg_regs,
+                    );
+                }
+                // A nested callee's leading arguments apply its generator
+                // to the instance it is declared in.
+                if self.is_nested(&func.0) {
+                    self.apply_nested_generator(owner, &mut func.0, instantiated_args)?;
+                }
             }
             // A `def(...)` bound's `__call__` requirement called on a
             // function value is the value's own indirect call: a
@@ -3683,7 +3795,7 @@ impl<'a> Specializer<'a> {
                         let CtValue::FuncSymbol(target) = item else {
                             continue;
                         };
-                        if target.is_bare() {
+                        if target.is_bare() && !self.is_nested(&target.symbol) {
                             self.enqueue_function_value(&mut target.symbol)?;
                         } else {
                             let instance = self.function_value_instance(
@@ -3703,7 +3815,7 @@ impl<'a> Specializer<'a> {
                     k: Const::Value(value),
                     ..
                 } => value.visit_func_symbols_mut(&mut |target| {
-                    if target.is_bare() {
+                    if target.is_bare() && !self.is_nested(&target.symbol) {
                         self.enqueue_function_value(&mut target.symbol)
                     } else {
                         let instance = self.function_value_instance(
@@ -3872,6 +3984,15 @@ impl<'a> Specializer<'a> {
         }
 
         Ok(())
+    }
+
+    /// Whether the declaration `target` is a body nested in another,
+    /// whose value names its generator applied to the enclosing instance
+    /// ([`Self::function_value_instance`]).
+    fn is_nested(&self, target: &str) -> bool {
+        self.declarations
+            .get(target)
+            .is_some_and(|declaration| declaration.enclosing.is_some())
     }
 
     /// Enqueue the instance of the function value `target` names, a

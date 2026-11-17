@@ -4942,8 +4942,11 @@ struct per signature whose `__CALL__` value parameter names the callee
 synthesized tier, `DeclarationTable::synthesize`), and records
 `SemanticAdjustment::InflateFunction`, which MIR lowers as an empty
 `MakeStruct` and declares the struct from (`inflated_function_declarations`,
-`mir.rs`). A nested `def` or capture-free lambda still binds its thin
-function type (R2087). The ownership analyses bind its arguments
+`mir.rs`). A capture-free nested `def` or lambda inflates too, its
+`__CALL__` the nested generator applied to the enclosing binders
+(`Checker::nested_callable_symbol`); the elaborator names the requirement
+call's callee as that generator under the instance the arguments spell
+(`Specializer::apply_nested_generator`). The ownership analyses bind its arguments
 to the bound's signature (`register_ends::Callee::Contract`). A generic
 `def[...]` bound's call is the generic requirement call (R2005). Every call
 of a struct value is its `__call__` `MethodCall` from the check on, as
@@ -5202,9 +5205,20 @@ rather than a register, a body reads `f` or `Self.f` as the parameter constant
 the elaborator folds to `Const::Function`, and the elaborator binds a callable
 binder, a callable pack's list, and a callable default to it. A closure naming
 either binder is its storage's method, the storage taking the binder as a
-parameter. A capture-free nested `def`, a lambda, a static method, and a
-generic function argument keep the slot `CtValue::Deferred`, bound from the
-argument's register (R2087, R2088). A function named where a compile-time
+parameter. A capture-free nested `def` or lambda is the symbol of its
+generator applied to the binders in scope where it is declared
+(`Checker::nested_callable_symbol`, recorded when the `def` is bound), as
+upstream's symbol of `outer::inner` applied to `outer`'s parameters; a lambda
+so bound still declares its hidden `def` in its scope, the attribute reaching
+its node (`CheckedParamArg::Attribute`). The elaborator closes the arguments
+under the caller's instance and names the nested body's instance from them
+(`Specializer::function_value_instance`), the one a `closure.make` of the
+body in that instance names, and a callable binder bound to such a symbol
+reads as it directly, since a closed application among its arguments is no
+folded constant. A nested body the check cannot name yet (R2308), one over a
+variadic or callable binder (R2309), and a generic function argument (R2088)
+keep the slot `CtValue::Deferred`, bound from the argument's register. A
+function named where a compile-time
 value is read (`comptime h = sq`, `comptime f: OptionalReg[F] = sq`) is the
 same constant, typed by the function's signature
 (`Checker::function_symbol_value`, `checker/constraints.rs`): the check types

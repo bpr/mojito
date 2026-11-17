@@ -3232,6 +3232,7 @@ impl Checker {
             self.bind_def(stmt, lambda, &signature)?;
         }
         if !lambda && !self.function_bases.is_empty() {
+            self.record_nested_symbol(stmt);
             self.list_nested_application(stmt);
         }
         let DefSignature {

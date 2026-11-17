@@ -2123,7 +2123,8 @@ pub enum CheckedParamArg {
     /// or, at an instantiated call, to a closed value its value parameter
     /// takes (`s[1 + 2]()`, `tup[(1, Tag(8, "x"))]()`), which the call carries
     /// as Mojo's carries a parameter attribute, with no run-time form.
-    /// With the nodes of the applications the check lifted out of it.
+    /// With the nodes of the applications the check lifted out of it, or
+    /// of the lambda it is, whose hidden `def` its scope declares.
     Attribute {
         value: Option<mojito_types::types::TyArg>,
         applications: Vec<CheckedNodeId>,
@@ -6566,9 +6567,17 @@ impl<'a> ArenaBuilder<'a> {
                 value: attribute,
                 applications: self.type_applications(ty),
             },
+            // A lambda bound as a callable attribute (`g[lambda -> Int: 3]`)
+            // still declares its hidden `def` where it is spelled, which
+            // the attribute's symbol names: its node is reached, never
+            // evaluated.
             ParamArg::Value(value) if attribute.is_some() => CheckedParamArg::Attribute {
                 value: attribute,
-                applications: self.expression_applications(value),
+                applications: if matches!(value.kind, ExprKind::Lambda { .. }) {
+                    vec![self.expr(value)]
+                } else {
+                    self.expression_applications(value)
+                },
             },
             ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
             ParamArg::Named { name, value } => CheckedParamArg::Named {
