@@ -1020,8 +1020,38 @@ fn verifier_requires_a_reference_at_an_indirect_mut_argument() {
     load_in_place_of_address(apply, argument);
     expect_finding(
         &mir,
-        "argument 0 of indirect callable is a `mut` or `ref` parameter but passes a Int value",
+        "argument 0 of indirect callable is received by address but passes a Int value",
     );
+}
+
+#[test]
+fn verifier_requires_a_reference_at_an_indirect_memory_only_read_argument() {
+    // `Big` holds a `String`, so it is memory-only and `f`'s `read` slot
+    // takes a reference, positionally and by keyword alike.
+    let source = "struct Big(Movable):\n    var s: String\n    def __init__(out self):\n        self.s = String(\"x\")\n\ndef size(b: Big) -> Int:\n    return b.s.byte_length()\n\ndef apply(f: def(Big) -> Int, b: Big) -> Int:\n    return f(b)\n\ndef named(b: Big) -> Int:\n    var f = size\n    return f(b=b)\n\ndef main():\n    var b = Big()\n    print(apply(size, b) + named(b))\n";
+    for (caller, operand) in [("apply", 0usize), ("named", 0)] {
+        let mut mir = lower_linked_source(source);
+        let errors = verify(&mir);
+        assert!(errors.is_empty(), "the lowered call verifies: {errors:?}");
+        let body = function_named(&mut mir, caller);
+        let argument = leaf_instructions_mut(&mut body.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::CallIndirect { args, kwargs, .. } => args
+                    .first()
+                    .copied()
+                    .or_else(|| kwargs.first().map(|(_, register)| *register)),
+                _ => None,
+            })
+            .expect("the caller calls through its function value");
+        load_in_place_of_address(body, argument);
+        expect_finding(
+            &mir,
+            &format!(
+                "argument {operand} of indirect callable is received by address but passes a Big value"
+            ),
+        );
+    }
 }
 
 #[test]

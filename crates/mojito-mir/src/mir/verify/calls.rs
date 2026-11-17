@@ -964,6 +964,7 @@ fn verify_bound_call(
         raises,
         args,
         kwargs,
+        spread,
         param_arg_regs,
         param_decls,
         instantiated_args,
@@ -1030,13 +1031,13 @@ fn verify_bound_call(
         None => {}
     }
     verify_callable_contract_call(
-        prefix,
-        cx.function,
+        cx,
         instantiated.as_ref().unwrap_or(contract),
         raises.as_ref().map(|raises| &raises.ty),
         *dest,
         args,
         kwargs,
+        *spread,
         errors,
     );
 }
@@ -1050,6 +1051,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         raises,
         args,
         kwargs,
+        spread,
         capture_accesses,
         param_arg_regs,
         param_decls,
@@ -1138,13 +1140,13 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
     };
     if let Some(contract) = contract {
         verify_callable_contract_call(
-            prefix,
-            cx.function,
+            cx,
             contract,
             raises.as_ref().map(|raises| &raises.ty),
             *dest,
             args,
             kwargs,
+            *spread,
             errors,
         );
     }

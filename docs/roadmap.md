@@ -9750,29 +9750,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     through a new `pub` sibling in `call_addresses.rs`. Require a
     reference at every operand `by_address_parameter` takes by address.
   - Docs: drop "Keyword operands … are not yet checked this way" from
-    `docs/architecture.md` (keep R2282) and update `docs/symbol-map.md`'s
+    `docs/architecture.md` and update `docs/symbol-map.md`'s
     by-address row.
   - Tests: a `tests/verify_test.rs` case rejecting a MIR text `call` of
     an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
     and accepting the `ref.make` form.
   - Stop when `scripts/smoke` runs clean with the rule on.
   - Depends on R2296, R2297, R2298, R2299, and R1506.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2282 A `call.indirect`'s by-address `read` operands are not
-  verified**
-
-  Upstream's `lit.call` through a function value takes a `!lit.ref` at
-  each slot its signature takes by address. The verifier checks a
-  `call.indirect`'s operands only at `mut`/`ref` slots
-  (`verify_callable_contract_call`, `verify/intrinsics.rs`), and calls
-  `verify_direct_call` on its `__call__` target with `addressed: false`.
-  - Fix: require a reference at every slot `CallShape::Signature`
-    (`call_addresses.rs`) decides by address, a memory-only `read` one
-    included.
-  - Probe: `f(b)` over `f: def(Big) -> Int` with a memory-only `b`.
-  - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2283 MIR lowering assigns a `mut` pointer parameter by

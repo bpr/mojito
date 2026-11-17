@@ -715,6 +715,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The verifier now rejects a value at every slot a `call.indirect` or a
+  `def(...)` bound's `__call__` call takes by address under its function
+  type, a memory-only `read` one and a keyword operand included, where it
+  checked only positional `mut`/`ref` slots, as upstream's `lit.call`
+  takes a `!lit.ref` wherever the signature does
+  (`mir::signature_by_address_operands`, R2282).
+
 - A method call's or subscript accessor's memory-only `read self` now
   takes a reference to its receiver's storage wherever lowering found
   none, as upstream's `lit.call` takes a `!lit.ref`: a field of a

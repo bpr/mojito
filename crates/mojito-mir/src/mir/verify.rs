@@ -25,7 +25,8 @@
 //! - effects: a raising site (a `Raise`, or a call carrying a checked error
 //!   type) inside a nonraising function must be protected by a handler;
 //! - reference invariants: `StoreRef` initializes reference storage, and a
-//!   `mut`/`ref` argument of a call bound by its callee's declaration is a
+//!   by-address argument of a call bound by its callee's declaration, and
+//!   every by-address operand of a call through a function type, is a
 //!   reference to the caller's storage.
 //! - slot ends: a `drop.var` or `var.consume` of a slot every path reaching
 //!   it already dropped, consumed, or moved, and a destroy of a value a

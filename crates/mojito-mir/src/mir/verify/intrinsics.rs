@@ -248,27 +248,30 @@ pub(super) fn generic_argument_maps(
     reason = "TODO: take Option<&T>"
 )]
 pub(super) fn verify_callable_contract_call(
-    prefix: &str,
-    function: &MirFunction,
+    cx: &InstrCx<'_>,
     contract: &Ty,
     call_raises: Option<&Ty>,
     dest: Reg,
     args: &[Reg],
     kwargs: &[(String, Reg)],
+    spread: Option<usize>,
     errors: &mut Vec<String>,
 ) {
-    let Some(FuncTy {
-        params,
-        ret,
-        required,
-        variadic,
-        kw_variadic,
-        conventions,
-        ref_return,
-        raises,
-        error,
-        ..
-    }) = contract.callable()
+    let (prefix, function) = (cx.prefix, cx.function);
+    let Some(
+        signature @ FuncTy {
+            params,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            conventions,
+            ref_return,
+            raises,
+            error,
+            ..
+        },
+    ) = contract.callable()
     else {
         return;
     };
@@ -322,24 +325,35 @@ pub(super) fn verify_callable_contract_call(
                         "{prefix}: argument {index} of indirect callable has type {found}, contract declares {expected}"
                     ));
                 }
-                // A `mut` or `ref` parameter takes the caller's storage
-                // as a reference, which the operand is.
-                if matches!(
-                    conventions.get(index).copied().flatten(),
-                    Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
-                ) && let Some(found) = function.reg_types.get(&argument.0)
-                    && !matches!(found.kind(), TyKind::Ref(_))
-                {
-                    errors.push(format!(
-                        "{prefix}: argument {index} of indirect callable is a `mut` or `ref` parameter but passes a {found} value"
-                    ));
-                }
             }
         }
         if required.len() != params.len() {
             errors.push(format!(
                 "{prefix}: callable contract required-mask length does not match its parameters"
             ));
+        }
+    }
+    // A spread operand's slots are its pack's, which the elaborator expands.
+    if spread.is_none()
+        && let Some(addressed) = crate::mir::signature_by_address_operands(
+            signature,
+            args.len(),
+            kwargs,
+            cx.declarations,
+        )
+    {
+        let operands = args
+            .iter()
+            .chain(kwargs.iter().map(|(_, register)| register));
+        for (index, (argument, by_address)) in operands.zip(addressed).enumerate() {
+            if by_address.is_some()
+                && let Some(found) = function.reg_types.get(&argument.0)
+                && !matches!(found.kind(), TyKind::Ref(_))
+            {
+                errors.push(format!(
+                    "{prefix}: argument {index} of indirect callable is received by address but passes a {found} value"
+                ));
+            }
         }
     }
     if let Some(found) = function.reg_types.get(&dest.0) {

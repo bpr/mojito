@@ -103,6 +103,34 @@ pub fn by_address_receiver(
     by_address(convention, reference, receiver_ty, declarations)
 }
 
+/// How a call through a function value, or a `def(...)` bound's
+/// `__call__`, of function type `signature` receives each operand by
+/// address.
+///
+/// One entry per positional operand, then one per keyword operand, `None`
+/// for one received by value or taken by a collector. `None` overall when
+/// the operands do not bind.
+#[must_use]
+pub fn signature_by_address_operands(
+    signature: &FuncTy,
+    positional: usize,
+    kwargs: &[(String, Reg)],
+    declarations: &MirDeclarations,
+) -> Option<Vec<Option<Mutability>>> {
+    let contract = Contract::Signature(signature);
+    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    let parameters = operand_parameters(&contract.shape()?, positional, &keywords)?;
+    Some(
+        parameters
+            .into_iter()
+            .map(|parameter| {
+                let parameter = parameter?;
+                contract.parameter(parameter, signature.params.get(parameter)?, declarations)
+            })
+            .collect(),
+    )
+}
+
 /// The value an operand of `ty` passes: the referent of a reference.
 #[must_use]
 pub fn operand_value_ty(ty: &Ty) -> &Ty {
