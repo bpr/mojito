@@ -6503,7 +6503,7 @@ fn bind_instance_origins(
     let slots = source_params
         .iter()
         .enumerate()
-        .filter(|(_, param)| !param.infer_only && super::is_origin_type_param(param));
+        .filter(|(_, param)| super::is_origin_type_param(param));
     for (tail, ((slot, _), origin)) in slots.zip(origins).enumerate() {
         let id = OriginParamId(u32::try_from(slot).unwrap_or(u32::MAX));
         if matches!(origin, Origin::Unbound | Origin::SelfParam)

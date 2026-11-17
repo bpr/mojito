@@ -993,8 +993,9 @@ impl Checker {
     }
 
     /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes
-    /// when bound to `origin`: a place's owner's, or a caller's own binder's
-    /// declared one (itself, when that is parametric too).
+    /// when bound to `origin`: a place's owner's, a caller's own binder's
+    /// declared one (itself, when that is parametric too), or its pack
+    /// origin's.
     pub(super) fn bound_origin_mutability(
         &self,
         origin: &mojito_types::origin::Origin,
@@ -1002,6 +1003,9 @@ impl Checker {
         use mojito_types::origin::{Mutability, Origin};
         match origin {
             Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
+            // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
+            // a `read` collector, the only `VariadicPack` one, binds `False`.
+            Origin::Param(id) if id.is_pack_binder() => Some(Mutability::Immutable),
             Origin::Param(id) => {
                 let binder = self.enclosing_type_params.get(id.0 as usize)?;
                 (binder.bounds.as_slice() == ["Origin"]).then(|| {

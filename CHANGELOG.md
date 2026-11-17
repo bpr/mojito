@@ -707,6 +707,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A heterogeneous `read` collector's `VariadicPack` now carries the
+  function's implicit pack origin, as upstream's `args.origin`, and every
+  infer-only origin parameter of a struct is part of its type: `args[0]`
+  no longer names the function's own second origin binder, so returning
+  it through `ref[o1]` is rejected as at the pin instead of returning a
+  wrong value, and the bundled `_VariadicListIter` spells upstream's
+  `VariadicList[origin=Self.elt_origin, ...]`
+  (`assets/type_error/variadic_pack_return_origin_collision.mojo`,
+  `assets/ok/variadic_pack_element_origin.mojo`, R2264, R1301).
+
 - The VM holds a place pointer (`Pointer(to=x)`) as its own value,
   distinct from a reference to the slot holding it, as upstream's
   `!kgen.pointer` is from `!lit.ref`. Assigning a `mut` pointer parameter

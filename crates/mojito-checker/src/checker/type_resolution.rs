@@ -2133,11 +2133,12 @@ impl Checker {
         result
     }
 
-    /// Keep back the keyword arguments naming a parameter the struct type
-    /// does not carry — an infer-only origin slot (`origin=_`) or the
-    /// `mut` binder an origin slot's mutability names (`mut=Self.mut`) —
-    /// as upstream binds every declared parameter by keyword, then
-    /// partition the rest ([`Self::partition_carried_struct_args`]).
+    /// Keep back the keyword arguments naming a parameter the origin-erased
+    /// binder does not see — an infer-only origin slot (`origin=o`), which
+    /// binds its tail slot, or the `mut` binder an origin slot's mutability
+    /// names (`mut=Self.mut`) — as upstream binds every declared parameter
+    /// by keyword, then partition the rest
+    /// ([`Self::partition_carried_struct_args`]).
     fn partition_struct_origin_args_uncollected(
         &self,
         name: &str,
@@ -2158,6 +2159,7 @@ impl Checker {
         }
         let mut kept = DeclaredAttributes::default();
         let mut binders = Vec::new();
+        let mut inferred = Vec::new();
         let mut carried = Vec::new();
         let mut carried_positions = Vec::new();
         for (position, argument) in args.iter().enumerate() {
@@ -2182,14 +2184,41 @@ impl Checker {
                     }
                 };
                 let attribute =
-                    self.accept_origin_argument(name, param, argument, origin, mutability)?;
+                    self.accept_origin_argument(name, param, argument, origin.clone(), mutability)?;
                 kept.bind(declared_slot(source_params, param), position, attribute);
+                if origin != mojito_types::origin::Origin::Unbound {
+                    inferred.push(ExplicitStructOrigin {
+                        id: mojito_types::origin::OriginParamId(
+                            declared_slot(source_params, param) as u32,
+                        ),
+                        origin,
+                        mutability,
+                    });
+                }
             } else {
                 binders.push((param, argument));
                 kept.bind(declared_slot(source_params, param), position, None);
             }
         }
         let mut partitioned = self.partition_carried_struct_args(name, source_params, &carried)?;
+        // An infer-only origin bound by keyword fills its own tail slot.
+        let tail_ids: Vec<mojito_types::origin::OriginParamId> = source_params
+            .iter()
+            .filter(|param| super::is_origin_type_param(param))
+            .map(|param| {
+                mojito_types::origin::OriginParamId(declared_slot(source_params, param) as u32)
+            })
+            .collect();
+        for origin in inferred {
+            if let Some(entry) = tail_ids
+                .iter()
+                .position(|id| *id == origin.id)
+                .and_then(|at| partitioned.tail.get_mut(at))
+            {
+                *entry = origin.origin.clone();
+            }
+            partitioned.explicit_origins.push(origin);
+        }
         for (binder, argument) in binders {
             check_origin_mutability_argument(
                 name,
@@ -2227,9 +2256,11 @@ impl Checker {
         let explicit: Vec<&mojito_ast::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
-        // The tail in slot order: each slot's explicit origin, or unbound.
+        // The tail in slot order — every declared origin, infer-only ones
+        // included: each slot's bound origin, or unbound.
+        let tail_len = source_params.iter().filter(|p| is_origin(p)).count();
         let tail_of = |explicit_origins: &[ExplicitStructOrigin]| -> Vec<Origin> {
-            explicit
+            source_params
                 .iter()
                 .filter(|param| is_origin(param))
                 .map(|param| {
@@ -2247,7 +2278,7 @@ impl Checker {
             kept: DeclaredAttributes::default(),
             slots: slots.clone(),
             explicit_origins: Vec::new(),
-            tail: vec![Origin::Unbound; origin_slots],
+            tail: vec![Origin::Unbound; tail_len],
         };
         let strict = self.application_strictness();
         // No origin slots — or a variadic explicit list, whose positional

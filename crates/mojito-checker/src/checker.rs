@@ -3014,9 +3014,9 @@ impl StructInfo {
         self.fields.len() == self.declared_field_names.len()
     }
 
-    /// The struct's origin tail slots — every explicit (non-infer-only)
-    /// `Origin`/`OriginSet` source parameter with its full-index binder id, in
-    /// source order. A struct instance's `TyKind::Struct` arguments carry one
+    /// The struct's origin tail slots — every `Origin`/`OriginSet` source
+    /// parameter, infer-only ones included, with its full-index binder id, in
+    /// source order, as upstream binds every declared origin. A struct instance's `TyKind::Struct` arguments carry one
     /// `TyArg::Origin` per slot after the `decls`-aligned prefix.
     fn origin_slots(
         &self,
@@ -3248,7 +3248,7 @@ fn struct_origin_slots(
     source_params
         .iter()
         .enumerate()
-        .filter(|(_, param)| !param.infer_only && is_origin_type_param(param))
+        .filter(|(_, param)| is_origin_type_param(param))
         .map(|(index, param)| (mojito_types::origin::OriginParamId(index as u32), param))
         .collect()
 }

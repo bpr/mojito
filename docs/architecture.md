@@ -3129,8 +3129,9 @@ and arity-validate.
 
 A struct's own origin arguments are part of its checked identity: `TyKind::Struct`
 carries its declared type and value arguments first and then an **origin tail**,
-one `TyArg::Origin` per explicit `Origin`/`OriginSet` source parameter in source
-order (`P[origin_of(xs)]` and `P[origin_of(ys)]` are different types, as
+one `TyArg::Origin` per declared `Origin`/`OriginSet` source parameter, infer-only
+ones included (bound by keyword, `VariadicList[origin=o, T, owned]`, or left
+unbound), in source order (`P[origin_of(xs)]` and `P[origin_of(ys)]` are different types, as
 upstream). `Origin::Unbound` marks a slot the use site infers (a bare or `_`
 parameter or initialized-local annotation, an alias body); `Origin::Param` in a
 tail is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
@@ -5534,7 +5535,10 @@ That parametric mutability is upstream's inferred `Origin[mut=m]` binder, and
 the checker spells it as one: binding a bare `ref` parameter records
 `Mutability::Param(OriginParamId::reference_binder(slot))` for its owner
 (`register_reference_binder`, the receiver counted in `slot`, ids above every
-declared binder's index), so a reference reached through it (`self.n`,
+declared binder's index; a heterogeneous `read` collector's
+`VariadicPack[origin=args, ...]` type carries the callable's implicit pack
+origin `OriginParamId::pack_binder()` above those, so `args[i]` names it, as
+upstream's `args.origin`, never a declared binder), so a reference reached through it (`self.n`,
 `self.entries[i]`, `pick(x)`, `self._unsafe_unchecked_value()`) carries the
 binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
 result whose contributing arguments all carry one binder). A write through it

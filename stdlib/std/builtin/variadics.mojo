@@ -27,9 +27,7 @@
 # - `__deinit__` reaches each element pointer through the span where
 #   upstream's takes `Pointer(to=self[i])`;
 # - `_VariadicListIter` writes its constructor out (no `@fieldwise_init`
-#   beside it), its `variadic_list_type` names no `origin` (an alias's
-#   keyword argument for an infer-only parameter does not resolve yet), and
-#   `__iter__` takes `ref self` and names the iterator's origin arguments,
+#   beside it), and `__iter__` takes `ref self` and names the iterator's origin arguments,
 #   which a positional origin argument before a value one cannot be yet;
 # - `consume_elements` and `_annihilate` are not declared yet.
 # `get_span` addresses the elements through the compiler-private
@@ -387,7 +385,9 @@ struct _VariadicListIter[
                   passed as an 'var' argument.
     """
 
-    comptime variadic_list_type = VariadicList[Self.elt_type, Self.is_owned]
+    comptime variadic_list_type = VariadicList[
+        origin=Self.elt_origin, Self.elt_type, Self.is_owned
+    ]
 
     comptime Element = Self.elt_type
 

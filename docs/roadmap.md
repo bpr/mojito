@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2286**.
+Next free ID: **R2288**.
 
 ## Ordered Work
 
@@ -6835,6 +6835,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a heterogeneous `mut *args: *Ts` parses the same way. Past the
     parser, `build_variadic_pack` (`mir/variadics.rs`) already builds a
     mutable reference pack for a `mut` collector, which nothing has run.
+  - `Checker::bound_origin_mutability` answers the pack origin
+    (`OriginParamId::pack_binder`) `Immutable`, a `read` collector's
+    `elt_is_mutable`; a `mut` collector's must answer `Mutable`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6926,20 +6929,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R793 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1301 A struct alias applying a keyword argument to an infer-only
-  parameter does not resolve**
-
-  Problem: the bundled `_VariadicListIter` spelling upstream's `comptime
-  variadic_list_type = VariadicList[origin=Self.elt_origin, Self.elt_type,
-  Self.is_owned]` makes the library fail to check ("type
-  '_VariadicListIter[elt_type, is_owned]' has no associated type
-  'variadic_list_type'"), so it names no `origin`.
-  - The keyword names `VariadicList`'s infer-only `origin`, which the
-    associated-alias resolution does not bind.
-  - Found while landing R743 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1680 `reflect[T].name()` spells an origin-parametric type with
   Mojito's parameter list, not upstream's**
@@ -7314,6 +7303,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `ctfe-body-print`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2287 `ref[args.origin]` in a signature is rejected, where the pin
+  binds a collector's pack origin at the call**
+
+  `def first[*Ts: Writable](*args: *Ts) -> ref[args.origin] Ts[0]` stops
+  with "Undefined variable 'args'", and `ref[type_of(args).origin]` with
+  "invalid origin place", where the pin prints `1` over `first(x, s)`.
+  - The body already types `args` as `VariadicPack[origin=args, ...]`
+    over `OriginParamId::pack_binder()`; only the signature cannot name it.
+  - Lever: resolve `args.origin` and `type_of(args).origin` in
+    `lower_sig_origin_expression` (`checker/origins/subst.rs`) to the pack
+    origin, then bind it at the call in the callee origin pre-pass
+    (`substitute_callee_pointer_origins`, `checker/call_inference.rs`) to
+    the union of the argument places.
+  - Probe: both spellings above print `1` over `var x = 1; var s =
+    String("a")`.
+  - Found while landing R2264 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2230 `reflect[T].name()` spells a struct-valued parameter as its
   construction, where the pin prints the value**
@@ -10026,6 +10034,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     take[*Ts: Writable & Movable](var *a: *Ts): print("in take", a[0])`
     before the print (`del 10`, `in take M10`); Mojito prints the
     reverse.
+  - Probe: `def held[*Ts: Writable & Movable](var *args: *Ts): ref r =
+    args[0]; print("before"); print(r)` over two moved `Noisy` prints
+    `before`, `Noisy(1)`, `del 2`, `del 1` here; the pin ends `args` at
+    the subscript and prints `del 2`, `del 1`, `before`, `Noisy(1)`. The
+    owned arms must pass `OriginParamId::pack_binder()` to the pack type,
+    so `r` names the pack origin rather than `args`.
   - Absorbs R2025, the `Tuple.__init__` body, which cannot land apart
     from the flip.
   - Split from R1927 (2026-11-14), which landed the closure witness's
@@ -10058,24 +10072,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2197.
   - Model: Fable, Not Planned.
 
-- [ ] **R2264 A `VariadicPack`'s type drops upstream's `elt_is_mutable`
-  and `origin` arguments**
+- [ ] **R2286 A homogeneous collector's `VariadicList` names no origin,
+  where upstream's names the function's implicit pack origin**
 
-  `types::variadic_pack_type` and `variadic_pack_over` build
-  `VariadicPack[element_trait, is_owned, *Ts]`, where the pin's is
-  `VariadicPack[elt_is_mutable, origin, element_trait, is_owned, *Ts]`, so
-  `__getitem_param__`'s `ref[Self.origin]` result names the unsubstituted
-  struct parameter `OriginParamId(1)`.
-  - That id can collide with the enclosing function's own origin
-    parameter 1, so no pass can match the result's origin against an
-    operand's.
-  - Probe: `def held(var *args: *Ts): ref r = args[0]; print("before");
-    print(r)` over two `Noisy` arguments prints `before` ahead of the
-    destructors here; the pin ends `args` at the subscript and prints
-    `del 2`, `del 1`, `before`, `Noisy(1)`.
-  - Found while landing R2259 (2026-11-16).
-  - Depends on R2262.
-  - Model: Fable, Not Planned.
+  `types::variadic_list_type` builds `VariadicList[element, is_owned]`
+  with no origin tail, where the pin's `*xs: T` is `VariadicList[origin=xs,
+  T, is_owned]`, so the list's `origin` parameter stays unbound in the body.
+  - Lever: give `variadic_list_type` the
+    `OriginParamId::pack_binder()` origin a heterogeneous collector's
+    `VariadicPack` already carries, and bind a caller-built list's
+    (`build_variadic_list`, `mir/call_defaults.rs`) as `Unbound`.
+  - `__getitem__` returns `ref[origin_of(self)]` here and at the pin, so
+    the visible effect is the iterator's `elt_origin`: `for ref x in xs`
+    names the pack origin rather than nothing.
+  - Probe: `def total(*xs: Int) -> Int: var t = 0; for x in xs: t += x;
+    return t` keeps printing `6` over `total(1, 2, 3)` on both backends.
+  - Found while landing R2264 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1929 A read collector cannot keep alive the owner of an element
   read through a call's reference result**
@@ -10590,6 +10604,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Self` carries every parameter.
   - The instance's prefix also lacks the `mut=` binder's `Bool`
     argument, which upstream's carries in place (`Span[mut=True, T, o]`).
+  - A collector's `VariadicPack` lacks its `elt_is_mutable` the same way;
+    once it is in place, `types::variadic_pack_owned` must read the
+    `is_owned` position rather than scan for any `Bool(true)` argument.
   - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
     Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
     the enclosing struct"), where the pin reads it.

@@ -1359,7 +1359,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `origin_of(self)` resolved to the named source by
   `resolve_iterator_origin`. A homogeneous collector is the bundled
   `VariadicList` (`mojito_types::types::variadic_collector_type`, which the
-  checker's body bindings and MIR's `body_parameter_ty` share; its field is
+  checker's body bindings and MIR's `body_parameter_ty` share, and which
+  types a heterogeneous `read` collector as a `VariadicPack` whose origin is
+  `mojito_types::origin::OriginParamId::pack_binder()`; its field is
   upstream's `Span` of element pointers, which the list's `@implicit`
   constructor builds from the array every call builds through
   `mojito_mir::mir::variadics::build_variadic_list`), so

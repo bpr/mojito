@@ -1002,7 +1002,12 @@ fn build_collector(
             TyKind::Tuple(types) => types.clone(),
             _ => return,
         };
-        let pack_ty = mojito_types::types::bound_variadic_pack_type(element, &element_types, false);
+        let pack_ty = mojito_types::types::bound_variadic_pack_type(
+            element,
+            &element_types,
+            false,
+            mojito_types::origin::Origin::Unbound,
+        );
         let mutable = shape.variadic_convention == Some(ArgConvention::Mut);
         // A value read shallowly (a reference result's referent) belongs to
         // its owner, which the slot the pack binds it to must not destroy,

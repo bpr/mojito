@@ -1711,6 +1711,7 @@ assets/ok/variadic_list_members.mojo	main	exe-differential	sanitized
 assets/ok/variadic_list_writable.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
+assets/ok/variadic_pack_element_origin.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_pointer_maps.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_read_collector_destroy_order.mojo	main	exe-differential	sanitized

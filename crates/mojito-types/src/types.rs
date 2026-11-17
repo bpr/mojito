@@ -2204,26 +2204,35 @@ pub fn variadic_list_type(element: Ty, is_owned: bool) -> Ty {
 /// collector.
 pub const VARIADIC_PACK_TYPE_NAME: &str = "VariadicPack";
 
-/// `VariadicPack[element_trait=trait, is_owned, *Ts]` over the type pack
-/// `pack` (`*Ts`), a `read` heterogeneous collector's type in its body.
+/// `VariadicPack[origin=origin, element_trait=trait, is_owned, *Ts]` over
+/// the type pack `pack` (`*Ts`), a `read` heterogeneous collector's type in
+/// its body.
 ///
 /// It is spelled as the checker resolves that spelling: the infer-only
 /// element trait and pack list, the ownership flag, and the pack's
-/// zero-sized `TypeList` binder. The trait is the pack binder's bound.
-pub fn variadic_pack_type(pack: Ty, is_owned: bool) -> Ty {
+/// zero-sized `TypeList` binder, then the origin tail holding `origin`,
+/// the struct's infer-only `origin` parameter. The trait is the pack
+/// binder's bound.
+pub fn variadic_pack_type(pack: Ty, is_owned: bool, origin: crate::origin::Origin) -> Ty {
     let traits = pack_traits(&pack);
-    variadic_pack_over(traits, TyArg::Ty(pack), is_owned)
+    variadic_pack_over(traits, TyArg::Ty(pack), is_owned, origin)
 }
 
 /// [`variadic_pack_type`] with the pack `pack` bound to `elements`, the
 /// list an instance's arguments hold in its place.
-pub fn bound_variadic_pack_type(pack: &Ty, elements: &[Ty], is_owned: bool) -> Ty {
+pub fn bound_variadic_pack_type(
+    pack: &Ty,
+    elements: &[Ty],
+    is_owned: bool,
+    origin: crate::origin::Origin,
+) -> Ty {
     variadic_pack_over(
         pack_traits(pack),
         TyArg::Val(CtValue::Tuple(
             elements.iter().cloned().map(CtValue::Type).collect(),
         )),
         is_owned,
+        origin,
     )
 }
 
@@ -2283,7 +2292,8 @@ pub fn collector_pack_spread(ty: &Ty) -> Option<&Ty> {
 /// its callee's body.
 ///
 /// A `read` or `mut` heterogeneous one (`*args: *Ts`) is upstream's
-/// `VariadicPack` over the pack; an owned one (`var *args: *Ts`) the
+/// `VariadicPack` over the pack, whose origin is the callable's implicit
+/// pack origin ([`crate::origin::OriginParamId::pack_binder`]); an owned one (`var *args: *Ts`) the
 /// compiler's pack storage, the tuple of its elements once specialized
 /// (`$pack`); and a homogeneous one upstream's `VariadicList[element,
 /// is_owned]`, owned for a `var` collector.
@@ -2291,11 +2301,12 @@ pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -
     let owned = matches!(convention, Some(ArgConvention::Var));
     let heterogeneous = matches!(element.kind(), TyKind::RuntimePack(_))
         || pack_spread(std::slice::from_ref(&element)).is_some();
+    let origin = crate::origin::Origin::Param(crate::origin::OriginParamId::pack_binder());
     match element.kind() {
         TyKind::RuntimePack(elements) if !owned => {
-            bound_variadic_pack_type(&element, elements, false)
+            bound_variadic_pack_type(&element, elements, false, origin)
         }
-        _ if heterogeneous && !owned => variadic_pack_type(element, false),
+        _ if heterogeneous && !owned => variadic_pack_type(element, false, origin),
         TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
         _ if heterogeneous => TyKind::VariadicPack(element).into(),
         _ => variadic_list_type(element, owned),
@@ -8242,8 +8253,13 @@ fn bind_reowned(bindings: &mut ParamBindings, decl: &ParamDecl, reowned: &ParamR
 }
 
 /// The `VariadicPack` with the element trait `traits` over `pack`, the
-/// pack's argument.
-fn variadic_pack_over(traits: Vec<String>, pack: TyArg, is_owned: bool) -> Ty {
+/// pack's argument, whose `origin` tail slot holds `origin`.
+fn variadic_pack_over(
+    traits: Vec<String>,
+    pack: TyArg,
+    is_owned: bool,
+    origin: crate::origin::Origin,
+) -> Ty {
     TyKind::Struct(
         VARIADIC_PACK_TYPE_NAME.to_string(),
         vec![
@@ -8251,6 +8267,7 @@ fn variadic_pack_over(traits: Vec<String>, pack: TyArg, is_owned: bool) -> Ty {
             pack,
             TyArg::Val(CtValue::Bool(is_owned)),
             TyArg::Val(ParamDecl::type_list_value()),
+            TyArg::Origin(origin),
         ],
     )
     .into()
@@ -9218,5 +9235,27 @@ mod type_pack_decl_tests {
         }
 
         assert_eq!(Decls(type_pack()).to_string(), "[n: Int, *Ts: Movable]");
+    }
+}
+
+#[cfg(test)]
+mod variadic_pack_origin_tests {
+    use super::*;
+    use crate::origin::{Origin, OriginParamId};
+
+    #[test]
+    fn a_read_collector_s_pack_carries_the_pack_origin_last() {
+        let elements = vec![Ty::int(), Ty::bool()];
+        let collector = variadic_collector_type(TyKind::RuntimePack(elements.clone()).into(), None);
+        let TyKind::Struct(name, arguments) = collector.kind() else {
+            panic!("a read collector is a VariadicPack: {collector}");
+        };
+        assert_eq!(name, VARIADIC_PACK_TYPE_NAME);
+        assert_eq!(
+            arguments.last(),
+            Some(&TyArg::Origin(Origin::Param(OriginParamId::pack_binder())))
+        );
+        assert_eq!(variadic_pack_owned(collector.kind()), Some(false));
+        assert_eq!(variadic_pack_elements(collector.kind()), Some(elements));
     }
 }

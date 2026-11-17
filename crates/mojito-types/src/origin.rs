@@ -73,6 +73,25 @@ impl OriginParamId {
     pub const fn reference_binder(slot: u32) -> Self {
         Self(Self::REFERENCE_BINDER_BASE + slot)
     }
+
+    /// The implicit origin upstream gives a callable's heterogeneous
+    /// collector (`*args: *Ts`), above every reference binder: the
+    /// collector's `VariadicPack[origin=args, ...]` type carries it, so an
+    /// element reference (`args[i]`, `ref[Self.origin]`) names it
+    /// (`args.origin`) rather than any binder the callable declares. A
+    /// callable has at most one positional collector, so one id serves.
+    #[must_use]
+    pub const fn pack_binder() -> Self {
+        Self(Self::PACK_BINDER_ID)
+    }
+
+    /// Whether this is [`Self::pack_binder`].
+    #[must_use]
+    pub const fn is_pack_binder(self) -> bool {
+        self.0 == Self::PACK_BINDER_ID
+    }
+
+    const PACK_BINDER_ID: u32 = 1 << 17;
 }
 
 #[derive(

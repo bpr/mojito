@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1209
+# swept-count	1210
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
@@ -1213,6 +1213,7 @@ assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agre
 assets/type_error/variadic_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'show' call
 assets/type_error/variadic_list_not_copyable.mojo	compile-reject	agree	error: value of type 'VariadicList[Int, False]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/variadic_pack_return_origin_collision.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(args.origin)' vs 'origin_of(o1)'
 assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
 assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/variant_operation_non_member.mojo	compile-reject	agree	error: function instantiation failed
