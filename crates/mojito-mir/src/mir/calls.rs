@@ -2938,7 +2938,10 @@ impl<'a> Flatten<'a> {
     /// for the pass. A reference-returning accessor, a container's or a
     /// view's, lends its referent through the receiver path. Tuple and pack
     /// storage loads the element place, whatever the element: the ordinary
-    /// read would copy the whole storage to index it.
+    /// read would copy the whole storage to index it. A pointer's pointee
+    /// (`p[]`, `p[i]`) at a by-address `read` is its place, projected
+    /// through the pointer, as upstream's `lit.call` takes the `!lit.ref`
+    /// the pointer's `__getitem__` yields.
     fn lower_borrowed_element_read(
         &mut self,
         expression: Node<'a>,
@@ -2955,14 +2958,18 @@ impl<'a> Flatten<'a> {
         if expression.reference_result().is_some() {
             return self.lower_borrowed_reference_result(expression);
         }
-        if expression.call_contract().is_some()
-            || !matches!(
-                object.intrinsic_index_dispatch(),
-                Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage)
-            )
-        {
+        if expression.call_contract().is_some() {
             return None;
         }
+        let pointee = match object.intrinsic_index_dispatch() {
+            Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage) => {
+                false
+            }
+            Some(MirIntrinsicSubscript::Pointer) if self.read_by_address_binding(expression) => {
+                true
+            }
+            _ => return None,
+        };
         let place = self.try_place(expression)?;
         let dest = self.fresh_typed(
             expression.location(),
@@ -2973,22 +2980,28 @@ impl<'a> Flatten<'a> {
                 .or_else(|| expression.ty())
                 .unwrap_or_else(Ty::error),
         );
-        self.emit(MirInstr::LoadPlace { dest, place });
-        Some((dest, None))
+        self.emit(MirInstr::LoadPlace {
+            dest,
+            place: place.clone(),
+        });
+        Some((dest, pointee.then_some(place)))
     }
 
     /// A borrowed reference result (`show(o.value())`, `show(pick(a))`,
     /// `f(d[k])` at a read slot): the referent is read through the returned reference, as
     /// upstream binds the `read` parameter to it, so its `__copyinit__`
     /// never runs for the pass. A referent owning no droppable storage is
-    /// an ordinary value read.
+    /// an ordinary value read, unless the check judged the slot by address
+    /// (a generic `T` or a pack element): its call then takes the returned
+    /// reference whatever the referent.
     fn lower_borrowed_reference_result(
         &mut self,
         expression: Node<'a>,
     ) -> Option<(Reg, Option<MirPlace>)> {
         let reference = expression.reference_result()?;
         (owns_droppable_storage(&reference.referent)
-            || matches!(reference.referent.kind(), TyKind::Dependent(_)))
+            || matches!(reference.referent.kind(), TyKind::Dependent(_))
+            || self.read_by_address_binding(expression))
         .then(|| self.lower_call_receiver(expression))
     }
 

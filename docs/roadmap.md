@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2277**.
+Next free ID: **R2278**.
 
 ## Ordered Work
 
@@ -9567,31 +9567,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2248 A by-address `read` argument read through a reference or a
-  variant payload passes the referent's value**
+- [ ] **R2277 A copy of a slot passes the slot's loaded value to
+  `__copyinit__`**
 
-  Upstream's `lit.call` takes the `!lit.ref` a dereference, a
-  `ref`-returning getter, or a payload access yields. Mojito lowers the
-  operand to a `ref.read` (or the getter's `index.get`, or `variant.get`)
-  and passes the value, since materializing a borrowed read in a slot
-  would destroy what it borrows (`Flatten::materialize_operand` leaves it).
-  - Probe: `len(self.src[])` over a `Pointer` field (`_DictEntryIter`,
-    `_SetIter`, `_VariadicListIter.__next__`): a `ref.read` of the pointer.
-  - Probe: `repr(self.data[i])` in `Array`/`List`/`Optional.write_repr_to`,
-    and `self[i] != other[i]` in `Array.__eq__`/`Span.__eq__`: an
-    `index.get` whose getter returns a reference.
-  - Probe: `self._storage.unsafe_get[T]()` at `repr`, `update`, and
-    `__eq__` in `Variant`: a `variant.get` of a dependent payload.
-  - Probe: `String.write(x)` in `_atof_to_integer`, a reference result's
-    copy deferred to call setup.
-  - Fix: pass the reference the read consumed (a pointer's `!lit.ref`, the
-    getter's handle, a `Proj::Variant` place's `ref.make`) instead of its
-    referent.
-  - Then the inliner's `read_through_register` (`argument_binding`,
-    `inline_parametric.rs`), which recovers these operands' storage from
-    the read, has nothing left to bind and goes.
-  - Depends on R2187.
-  - Model: Fable, Planned.
+  Upstream's copy insertion passes the source's `!lit.ref` as the
+  constructor's `read copy: Self`. `mir::lower_copies_and_moves`
+  (`copy_calls.rs`, `call_of`) turns a `var.use copy` naming its
+  constructor into a `place.load` of the slot and passes the loaded value.
+  - Probe: `var c = a` over `a: String`: the `String.__copyinit__` call's
+    `copy` operand is a `place.load` of `a`'s slot
+    (`copy_of_reference_read_passes_the_reference`, `tests/mir_test.rs`,
+    pins the value today).
+  - Fix: emit a `ref.make` of the slot's root place instead of the load.
+  - Then the inliner's `loaded_place` (`argument_binding`,
+    `inline_parametric.rs`) no longer sees these operands.
+  - Found while landing R2248 (2026-11-16).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2249 A forwarded slot at a by-address `read` slot passes the
   slot's value**
@@ -9637,8 +9629,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   Upstream's `lit.call` verifier rejects a value where the callee's
   signature takes a `!lit.ref`. `verify_direct_call` still requires a
-  reference only at a `mut`/`ref` slot, because R2187, R2248, R2249, and
-  R2250's operands pass values.
+  reference only at a `mut`/`ref` slot, because R2249's and R2250's
+  operands pass values.
   - Fix: require a reference wherever `by_address_parameter` takes the
     slot by address. On elaborated MIR the instance's declaration names
     its substituted types, so a `read` the instance proves

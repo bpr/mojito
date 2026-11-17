@@ -2167,6 +2167,15 @@ impl<'a> Flatten<'a> {
                 p.project(Proj::Variant(index), ty);
                 Some(p)
             }
+            // `unsafe_get[T]()`, the method spelling of `v[T]`, is the same
+            // payload place, as upstream's accessor returns a reference into
+            // it.
+            (CheckedOp::Invoke { .. }, _) if let Some(index) = e.variant_projection_index() => {
+                let mut p = self.simple_place(e.callee()?.member_object()?)?;
+                let ty = e.place_ty().or_else(|| e.ty())?;
+                p.project(Proj::Variant(index), ty);
+                Some(p)
+            }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if e.is_dtype_constant()
@@ -2257,6 +2266,12 @@ impl<'a> Flatten<'a> {
                 }
                 let mut p = self.try_place(object)?;
                 e.project_member(&mut p, field);
+                Some(p)
+            }
+            (CheckedOp::Invoke { .. }, _) if let Some(index) = e.variant_projection_index() => {
+                let mut p = self.try_place(e.callee()?.member_object()?)?;
+                let ty = e.place_ty().or_else(|| e.ty())?;
+                p.project(Proj::Variant(index), ty);
                 Some(p)
             }
             (CheckedOp::Index { .. }, Some(object)) if let Some(index) = e.index() => {

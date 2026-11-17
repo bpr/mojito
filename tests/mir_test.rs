@@ -3736,6 +3736,178 @@ def main():
     );
 }
 
+/// The place the first call of `callee` in `function` passes its first
+/// operand's address of, `None` when that operand is a value.
+fn first_operand_place<'f>(
+    function: &MirFunction,
+    addresses: &'f mojito::mir::OperandAddresses,
+    callee: &str,
+) -> Option<&'f MirPlace> {
+    nested_instructions(&function.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == callee => {
+                Some(args.first().and_then(|arg| addresses.made(*arg)))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a call of `{callee}`"))
+}
+
+#[test]
+fn pointer_pointee_read_passes_its_place_address() {
+    // A pointer's pointee at a by-address `read` (`total(h.src[])`,
+    // `show(h.data[0])`) passes a `ref.make` of the place projected through
+    // the pointer, as upstream's `lit.call` takes the `!lit.ref` the
+    // pointer's `__getitem__` yields; a register-passable one stays a value.
+    let source = r#"
+from std.memory.alloc import unsafe_alloc
+
+struct Holder[o: Origin[mut=False]]:
+    var src: Pointer[List[String], Self.o]
+    var data: UnsafePointer[String, MutUntrackedOrigin]
+    var ints: UnsafePointer[Int, MutUntrackedOrigin]
+
+    def __init__(out self, ref [Self.o] l: List[String]):
+        self.src = Pointer(to=l)
+        self.data = unsafe_alloc[String](1)
+        self.data[0] = String("hey")
+        self.ints = unsafe_alloc[Int](1)
+        self.ints[0] = 3
+
+@no_inline
+def total(l: List[String]) -> Int:
+    return len(l)
+
+@no_inline
+def show(s: String) -> Int:
+    return s.byte_length()
+
+@no_inline
+def bump(x: Int) -> Int:
+    return x + 1
+
+def use_holder(h: Holder) -> Int:
+    return total(h.src[]) + show(h.data[0]) + bump(h.ints[0])
+
+def main():
+    var l: List[String] = ["a", "bb"]
+    print(use_holder(Holder(l)))
+"#;
+    let (_, function) = checked_function(source, "use_holder");
+    let addresses = mojito::mir::operand_addresses(&function.body, &function.reg_types);
+    for callee in ["total", "show"] {
+        let place = first_operand_place(&function, &addresses, callee)
+            .unwrap_or_else(|| panic!("`{callee}` passes its pointee's address"));
+        assert!(
+            matches!(place.proj.as_slice(), [Proj::Field(_), Proj::Index(_)]),
+            "{callee}: {place:?}"
+        );
+        assert!(
+            place.projection_tys.first().is_some_and(Ty::is_pointer),
+            "{callee}: {place:?}"
+        );
+    }
+    assert!(
+        first_operand_place(&function, &addresses, "bump").is_none(),
+        "an `Int` pointee stays a value"
+    );
+}
+
+#[test]
+fn reference_result_at_pack_read_passes_its_handle() {
+    // A `ref` getter's result at a by-address pack element
+    // (`text.write(digits[0])`, `*args: Ts`) passes the returned reference
+    // whatever the referent, as upstream's `lit.call` takes the `!lit.ref`
+    // the getter returned; at a by-value `Int` slot it stays a value.
+    let source = r#"
+@no_inline
+def bump(x: Int) -> Int:
+    return x + 1
+
+def main():
+    var digits: List[Int] = [1, 2, 3]
+    var text = String()
+    text.write(digits[0])
+    print(text, bump(digits[1]))
+"#;
+    let (_, main) = checked_main(source);
+    let is_reference = |reg: &Reg| {
+        matches!(
+            main.reg_types.get(&reg.0).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        )
+    };
+    let operands = |callee: &str| {
+        nested_instructions(&main.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call { func, args, .. } if func.0.contains(callee) => Some(args.clone()),
+                MirInstr::MethodCall { method, args, .. } if method == callee => Some(args.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a call of `{callee}`"))
+    };
+    let write = operands("write");
+    assert!(write.iter().any(is_reference), "{write:?}");
+    let bump = operands("bump");
+    assert!(!bump.iter().any(is_reference), "{bump:?}");
+}
+
+#[test]
+fn copy_of_reference_read_passes_the_reference() {
+    // A copy of a value read through a reference (a tuple element's `ref`
+    // accessor under destructuring) calls `__copyinit__` with the
+    // reference, as upstream's `copy: Self` takes the source's `!lit.ref`;
+    // a copy of a slot still passes its loaded value.
+    let source = r#"
+@no_inline
+def pair() -> Tuple[String, String]:
+    return (String("left"), String("right"))
+
+def main():
+    var a, b = pair()
+    var c = a
+    print(a, b, c)
+"#;
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = &compiled
+        .elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let copies: Vec<bool> = nested_instructions(&main.body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, args, kwargs, ..
+            } if func.0.ends_with("__copyinit__") => {
+                let source = args
+                    .first()
+                    .or_else(|| kwargs.first().map(|(_, reg)| reg))?;
+                Some(matches!(
+                    main.reg_types.get(&source.0).map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        copies.contains(&true),
+        "a copy passes its reference: {copies:?}"
+    );
+    assert!(
+        copies.contains(&false),
+        "a slot's copy passes its value: {copies:?}"
+    );
+}
+
 #[test]
 fn short_circuit_argument_anchor_dies_in_its_arm() {
     // A temporary an `or`'s right operand makes for a call argument is

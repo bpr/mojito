@@ -1045,6 +1045,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A by-address `read` argument read through a pointer, a `ref` getter,
+  or a variant payload (`len(self.src[])`, `repr(self.data[i])`,
+  `text.write(digits[j])`, `self._storage.unsafe_get[T]()`) now passes the
+  reference it reads through rather than the referent's value, and a
+  copy of a value read through a reference passes the reference to
+  `__copyinit__`, as upstream's `lit.call` takes the `!lit.ref`. The
+  inliner binds such a reference as the parameter's handle, so its
+  `read_through_register` fallback is gone. No program output changes.
+  (R2248)
+
 - No call-shaped instruction carries a place table beside its operands any
   more, as upstream's `lit.call` names no storage beside its operands: an
   operand its callee takes by address is the `ref.make` of the caller's

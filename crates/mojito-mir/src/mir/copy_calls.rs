@@ -11,7 +11,9 @@
 //! the constructor's borrowed argument, the shape `S(copy=x)` lowers to; a
 //! move forwards the slot, which ends it and hands its storage to the
 //! callee as Mojo's owned argument convention does, and passes it as the
-//! constructor's `deinit` argument; a register copy passes its register.
+//! constructor's `deinit` argument; a register copy passes its register,
+//! and a copy of a value read through a reference passes the reference,
+//! as upstream's `copy: Self` takes the source's `!lit.ref`.
 //! The call passes the value's struct arguments as the constructor's
 //! compile-time arguments, which its declaration restates, as a
 //! construction does.
@@ -25,8 +27,8 @@ use super::{
     VarId, fresh_register, instruction_regions_mut,
 };
 use mojito_ast::ast::ArgConvention;
-use mojito_types::types::{ParamDecl, Ty, TyArg};
-use std::collections::HashSet;
+use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
+use std::collections::{HashMap, HashSet};
 
 /// A function's declaration, by the function's name.
 pub type FunctionDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirFunctionDeclaration> + 'd;
@@ -66,16 +68,29 @@ fn lower_blocks(
         })
         .collect();
     let mut lowered = Vec::with_capacity(block.instrs.len());
+    let mut read_through = HashMap::new();
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
             lower_blocks(region, function, declarations);
         }
         let kept = matches!(&instruction,
             MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
-        match (!kept)
-            .then(|| call_of(&instruction, function, declarations))
-            .flatten()
-        {
+        let call = (!kept)
+            .then(|| call_of(&instruction, function, declarations, &read_through))
+            .flatten();
+        match &instruction {
+            MirInstr::ReadRef { dest, reference }
+                if matches!(
+                    function.reg_types.get(&reference.0).map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ) =>
+            {
+                read_through.insert(dest.0, *reference);
+            }
+            instruction if !writes_nothing(instruction) => read_through.clear(),
+            _ => {}
+        }
+        match call {
             Some((read, call)) => {
                 lowered.extend(read);
                 lowered.push(call);
@@ -88,11 +103,13 @@ fn lower_blocks(
 
 /// The read of the source, if the source is a slot, and the call of the
 /// constructor `instruction` names, when it names one taking the value as
-/// its one parameter.
+/// its one parameter. A copied register `read_through` maps, read through
+/// a reference with nothing written since, passes that reference.
 fn call_of(
     instruction: &MirInstr,
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
+    read_through: &HashMap<u32, Reg>,
 ) -> Option<(Option<MirInstr>, MirInstr)> {
     match instruction {
         MirInstr::UseVar {
@@ -130,7 +147,8 @@ fn call_of(
         } => {
             let argument =
                 constructor_argument(constructor, declarations, function.reg_types.get(&value.0)?)?;
-            Some((None, constructor_call(*dest, constructor, *value, argument)))
+            let source = read_through.get(&value.0).copied().unwrap_or(*value);
+            Some((None, constructor_call(*dest, constructor, source, argument)))
         }
         _ => None,
     }
@@ -194,6 +212,23 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
         _ => Vec::new(),
     };
     (arguments.len() == decls.len()).then_some(arguments)
+}
+
+/// Whether `instruction` only reads, so a referent read before it still
+/// holds the value read.
+const fn writes_nothing(instruction: &MirInstr) -> bool {
+    matches!(
+        instruction,
+        MirInstr::LoadPlace { .. }
+            | MirInstr::ReadRef { .. }
+            | MirInstr::Const { .. }
+            | MirInstr::MakeRef { .. }
+            | MirInstr::MaterializeLiteral { .. }
+            | MirInstr::UseVar {
+                mode: UseMode::Copy,
+                ..
+            }
+    )
 }
 
 /// A fresh register of the slot `var`'s type holding what the use `dest`

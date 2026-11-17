@@ -2487,10 +2487,13 @@ default as its call-result slot's `ref.make` (`Omitted::by_address`, by
 `by_address_parameter` on the callee's declared parameter) and adds the
 filled argument's row to the call's convention record; a construction
 keeps its record, renumbered by `MirArgConventions::remap` when a
-fieldwise one passes its keywords positionally. A borrowed read (a
-`ref.read` through a pointer or a `ref`-returning getter, a variant
-payload), a forwarded slot, and a function value are not materialized and
-still pass a value (R2248, R2249, R2250). A retained place that holds a
+fieldwise one passes its keywords positionally. A borrowed read is not
+materialized: a pointer's pointee (`p[]`, `p[i]`) passes a `ref.make` of
+its place projected through the pointer, a `ref` getter's result the
+getter's handle whatever the referent, and a `__VariantStorage` payload
+(`unsafe_get[T]()`) a `ref.make` of its `Proj::Variant` place, as
+upstream passes the `!lit.ref` each yields. A forwarded slot and a
+function value still pass a value (R2249, R2250). A retained place that holds a
 reference (a `ref` field, a `ref` binding's slot) passes the reference it
 holds, as upstream passes the `!lit.ref` the field or binding is
 (`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`):
@@ -6150,7 +6153,9 @@ shape `S(copy=x)` lowers to; a `var.use move` becomes a forwarding
 `var.use` of the slot, which ends it and hands its storage to the callee
 as Mojo's owned-argument convention does, and a `Call` of the named
 `__moveinit__` passing it as the `deinit` argument; a `value.copy` becomes
-the call alone over its register. The constructor's declaration decides
+the call alone over its register, or, where its block read the register
+through a reference with nothing written since, over that reference, as
+upstream's `copy: Self` takes the source's `!lit.ref`. The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration
@@ -7218,13 +7223,15 @@ point where a slot declared in a loop is uninitialized again.
   `loaded_place`), or as a whole slot past region ops that never name it
   (`loaded_slot_across_regions`: a temporary receiver loaded before a later
   argument's inlined body), composed into each of the callee's places
-  rooted at it, as upstream substitutes the borrowed address. One read
-  through a `ref`- or pointer-typed register (`read_through_register`,
-  only shallow reads between) binds that register as its handle, as below,
-  a pointer's value being the address upstream passes for its pointee
-  (`len(self.src[])`): a pointer-typed root read `through` itself
-  designates its pointee, in `verify::place_base_ty`, the VM's
-  `hold_register_fields`, and Pliron's place walker. A `mut` or `ref` parameter
+  rooted at it, as upstream substitutes the borrowed address. A `read`
+  parameter passed a reference with no place of its own (a `ref` getter's
+  result, a copy's source read through a reference) binds that reference
+  as its handle, as below, as upstream maps the callee's `!lit.ref`
+  argument to the caller's value; a pointer's pointee reaches the inliner
+  as a `ref.make` of the place projected through the pointer, which a
+  pointer-typed root read `through` itself designates, in
+  `verify::place_base_ty`, the VM's `hold_register_fields`, and Pliron's
+  place walker. A `mut` or `ref` parameter
   is the caller's place the call passes, except a `ref` field reached
   directly (a projected place of a `ref` type with no `through`), whose
   address is the handle the field stores: the parameter is then its own

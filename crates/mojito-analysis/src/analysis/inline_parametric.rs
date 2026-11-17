@@ -2445,12 +2445,14 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// body to consume;
 /// an owned parameter, or a `read` one of a type no destructor tears down,
 /// is a fresh slot the argument initializes, and so is a `read` one passed
-/// a trivial copy of a slot; any other `read` parameter binds the caller's
-/// place the call retained for it or the argument was loaded from, through
-/// a reference the block made included, as upstream substitutes the
-/// argument's address. `None` when the call retains no place for a `mut`
-/// or `ref` one, or a `read` one of a droppable type is read through a
-/// reference the block did not make.
+/// a trivial copy of a slot; a `read` parameter passed a reference with
+/// no place (a getter's `ref` result, a copy's source read through a
+/// reference) binds that reference as its handle; any other `read`
+/// parameter binds the caller's place the call retained for it or the
+/// argument was loaded from, through a reference the block made included,
+/// as upstream substitutes the argument's address. `None` when the call
+/// retains no place for a `mut` or `ref` one, or a `read` one of a
+/// droppable type is a value no place holds.
 fn argument_binding(
     caller: &MirFunction,
     callee: &MirFunction,
@@ -2490,6 +2492,20 @@ fn argument_binding(
     if reference {
         return None;
     }
+    // A reference the caller passes with no place of its own (a getter's
+    // `ref` result, a copy's source read through a reference) is the
+    // handle the parameter binds, as upstream maps the callee's `!lit.ref`
+    // argument to the caller's value.
+    if !owned
+        && place.is_none()
+        && passes_address(caller, callee, param, argument)
+        && let Some(ty) = caller.reg_types.get(&argument.0)
+    {
+        return Some(Binding::Handle(HandleSource::Register(
+            argument,
+            ty.clone(),
+        )));
+    }
     // A `read` argument an instance of a generic caller still passes by
     // the address its template passed (`ref.make` of the place) binds that
     // place, not the address as a value.
@@ -2509,11 +2525,6 @@ fn argument_binding(
         .or_else(|| loaded_place(block, index, argument))
         .or_else(|| loaded_slot_across_regions(block, index, argument))
         .map(Binding::Place)
-        .or_else(|| {
-            read_through_register(caller, block, index, argument).map(|(reference, ty)| {
-                Binding::Handle(HandleSource::Register(reference, ty.clone()))
-            })
-        })
 }
 
 /// Whether the call passes `argument` for the `read` parameter `param` as
@@ -2568,48 +2579,6 @@ fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
         ty: referent,
         through: Some(slot),
     }
-}
-
-/// The reference or pointer register, of its type, the register `argument`
-/// is read through in `block` before the call at `index`, in its run
-/// ([`run_start`]), when only shallow reads and constants lie between the
-/// read and the call, so nothing writes the referent: the address
-/// upstream passes for a `read` argument reached through a reference, or
-/// through a pointer (`len(self.src[])`), whose value is that address.
-fn read_through_register<'f>(
-    caller: &'f MirFunction,
-    block: &MirBlock,
-    index: usize,
-    argument: Reg,
-) -> Option<(Reg, &'f Ty)> {
-    let run = run_start(block, index);
-    let (read, reference) =
-        block.instrs[run..index]
-            .iter()
-            .enumerate()
-            .find_map(|(position, instruction)| match instruction {
-                MirInstr::ReadRef { dest, reference } if *dest == argument => {
-                    Some((run + position, *reference))
-                }
-                _ => None,
-            })?;
-    let ty = caller.reg_types.get(&reference.0)?;
-    ((ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
-        && block.instrs[read + 1..index].iter().all(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::LoadPlace { .. }
-                    | MirInstr::ReadRef { .. }
-                    | MirInstr::Const { .. }
-                    | MirInstr::MakeRef { .. }
-                    | MirInstr::MaterializeLiteral { .. }
-                    | MirInstr::UseVar {
-                        mode: UseMode::Copy,
-                        ..
-                    }
-            )
-        }))
-    .then_some((reference, ty))
 }
 
 /// Where the straight-line run holding `block`'s instruction `index`
