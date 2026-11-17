@@ -1032,10 +1032,6 @@ impl Checker {
                 scope_names(&self.storage_origin_demand_scopes),
             ),
             (
-                "immutable origin binders",
-                scope_names(&self.immutable_origin_binder_scopes),
-            ),
-            (
                 "reference parameters",
                 scope_names(&self.reference_parameter_scopes),
             ),

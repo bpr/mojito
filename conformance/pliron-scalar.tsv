@@ -530,6 +530,7 @@ assets/ok/if_to_select.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/if_unread_elif_call_runs.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_cast_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/immutable_origin_struct_argument_exclusivity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_bound_on_declaration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_exact_source.mojo	-	ineligible	no-scalar-entry-shape
@@ -1363,6 +1364,7 @@ assets/ok/struct_operator_method_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_operand_owner_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_subscript_operand_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_temporary_operand_drop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_origin_cast_binds_call_results.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_origin_pointer_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_pack_parameterized_type_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_parameter_comptime_read.mojo	-	ineligible	no-scalar-entry-shape

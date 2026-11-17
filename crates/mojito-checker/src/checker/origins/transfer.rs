@@ -874,6 +874,7 @@ fn named_place_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
         match origin {
             Origin::Place(_) if !into.contains(origin) => into.push(origin.clone()),
             Origin::Union(members) => members.iter().for_each(|member| places(member, into)),
+            Origin::Immutable(inner) => places(inner, into),
             _ => {}
         }
     }

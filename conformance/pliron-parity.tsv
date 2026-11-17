@@ -531,6 +531,7 @@ assets/ok/if_to_select.mojo	main	exe-differential	sanitized
 assets/ok/if_unread_elif_call_runs.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
+assets/ok/immutable_origin_struct_argument_exclusivity.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
@@ -1364,6 +1365,7 @@ assets/ok/struct_operator_method_call.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_operand_owner_drop.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_subscript_operand_in_place.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_temporary_operand_drop.mojo	main	exe-differential	sanitized
+assets/ok/struct_origin_cast_binds_call_results.mojo	main	exe-differential	sanitized
 assets/ok/struct_origin_pointer_result.mojo	main	exe-differential	sanitized
 assets/ok/struct_pack_parameterized_type_member.mojo	main	exe-differential	sanitized
 assets/ok/struct_parameter_comptime_read.mojo	main	exe-differential	sanitized

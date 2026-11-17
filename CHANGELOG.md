@@ -707,6 +707,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An `ImmOrigin(...)` origin argument is now part of a struct's type, as
+  the pin's `Origin[mut=False]` value is: `View[ImmOrigin(origin_of(x))]`
+  binds the slot's `mut` to `False`, so a free function's `Pointer[T, o]`
+  result over such an argument names it immutably, a static method over an
+  explicit `View[origin_of(x)]` binds `Self.o` in its signature, and the
+  exclusivity check reads a `Span[Int, ImmOrigin(origin_of(xs))]` argument
+  as an immutable loan (`assets/ok/struct_origin_cast_binds_call_results.mojo`,
+  `assets/ok/immutable_origin_struct_argument_exclusivity.mojo`, R2276,
+  R124). The side table that recorded casts per binding is gone.
+
 - A heterogeneous `read` collector's `VariadicPack` now carries the
   function's implicit pack origin, as upstream's `args.origin`, and every
   infer-only origin parameter of a struct is part of its type: `args[0]`

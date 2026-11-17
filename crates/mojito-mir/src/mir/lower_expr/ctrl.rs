@@ -445,6 +445,7 @@ impl<'a> Flatten<'a> {
                         flatten(origin, out);
                     }
                 }
+                mojito_types::origin::Origin::Immutable(inner) => flatten(inner, out),
                 _ => {}
             }
         }

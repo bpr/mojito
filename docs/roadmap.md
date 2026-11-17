@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2288**.
+Next free ID: **R2290**.
 
 ## Ordered Work
 
@@ -2335,22 +2335,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R124 A struct argument over an immutable origin counts as mutable
-  in the exclusivity check**
-
-  Problem: `b.push(s)` with `s: Span[Int, ImmOrigin(origin_of(xs))]` on a
-  `Bag` over the same type prints `1 2` at the pin and is rejected in Mojito
-  with "aliasing values passed mutably to 'self' argument and passed mutably
-  to 'value' argument".
-  - The same call over `Pointer[List[Int], ImmOrigin(origin_of(xs))]` is
-    accepted.
-  - The check reads a struct's origin argument without the `ImmOrigin` cast's
-    mutability.
-  - Probe:
-    `conformance/probes/immutable_origin_struct_argument_exclusivity.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1156 An argument bound to an unbound-origin parameter carries no
   origin into argument exclusivity**
 
@@ -2571,32 +2555,43 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2276 A struct type's origin argument drops its binder's `mut`**
+- [ ] **R2288 A static method's pointer result does not keep its argument's
+  pointee alive**
 
-  `var p: Pointer[Noisy, ImmOrigin(origin_of(x))] = through(v)`, over `var
-  v = View[ImmOrigin(origin_of(x))](Pointer(to=x))` and `def through[mut:
-  Bool, //, o: Origin[mut=mut]](v: View[o]) -> Pointer[Noisy, o]`, is
-  rejected ("expected Pointer[Noisy, ImmOrigin(origin@…)], found
-  Pointer[Noisy, origin#1]"), where the pin prints `7`.
-  - Upstream's `View[ImmOrigin(origin_of(x))]` binds the infer-only `mut`
-    to `False`; Mojito's origin tail keeps only `Origin::Place`, and the
-    cast lives in a side table keyed by the holder expression
-    (`immutable_origin_binders`).
-  - A parametric (`Origin[mut=mut]`) binder bound through a struct tail
-    therefore cannot take its pointer mutability from the type:
-    `ConstructorOriginBindings::substitute_result` leaves it unbound when
-    any argument carries a recorded cast, and a receiver's member result
-    (`Checker::substitute_at_receiver`) reads the side table.
-  - Probe: `View[origin_of(x)].same(Pointer(to=x))`, a static method
-    taking and returning `Pointer[Noisy, Self.o]`, is rejected ("no
-    overload matches the supplied arguments"), where the pin prints `7`:
-    `statics.rs` binds the explicit type arguments through `substitute_at`,
-    which binds no pointer provenance without a receiver's cast table.
-  - R124's exclusivity check misreads the same cast.
-  - Fix: carry the binder's `mut` in the struct type (a tail origin with
-    its mutability, or the infer-only `mut` argument), and bind every
-    member result and free-call result from it.
-  - Found while landing R2262 (2026-11-16).
+  `var t = S.same(Pointer(to=z))`, over a static `same[m: Bool, //, o2:
+  Origin[mut=m]](p: Pointer[Noisy, o2]) -> Pointer[Noisy, o2]`, destroys `z`
+  right after the call, so `t[].v` fails on the VM ("field access on
+  non-struct None"), where the pin prints `9`.
+  - The same call through an instance method (`s.isame(Pointer(to=y))`) or
+    a module `def` keeps the pointee alive; the emitted `call` and its
+    register types are identical, so the static call loses the loan before
+    drop elaboration sees it.
+  - Probe: `conformance/probes/static_method_pointer_result_keeps_argument.mojo`.
+  - Probe: `View[origin_of(x)].same(Pointer(to=x))` over `-> Pointer[Noisy,
+    Self.o]` with no later use of `x` (now type-checked by R2276).
+  - Found while landing R2276 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2289 A struct's `ImmOrigin(...)` slot converts to and from the
+  uncast origin**
+
+  `var w: View[origin_of(x)] = v^`, over `v: View[ImmOrigin(origin_of(x))]`
+  and a `var x`, is accepted and `w.p[].v = 3` writes `x`, where the pin
+  rejects the conversion ("cannot implicitly convert 'View[origin_of(x)]'
+  value to 'View[origin_of(x)]'").
+  - `Origin::coerces_to` (`mojito-types/src/origin.rs`) compares a cast
+    slot by the storage below it, because whether `ImmOrigin(o)` changes
+    `o`'s `mut` turns on the owner's mutability, which only the checker
+    knows: `ImmOrigin(origin_of(s))` over a read `s` is upstream's
+    `origin_of(s)` itself.
+  - Fix: fold the cast in the checker wherever a tail origin is formed or
+    substituted (`Origin::immutable` with an owner-mutability oracle), so
+    an immutable owner's cast is its plain origin and the remaining casts
+    compare strictly.
+  - Probe: the program above (`View[mut: Bool, //, o: Origin[mut=mut]]`
+    holding a `Pointer[Noisy, Self.o]`).
+  - Found while landing R2276 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

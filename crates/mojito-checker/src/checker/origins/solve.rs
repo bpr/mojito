@@ -77,7 +77,7 @@ impl Checker {
         };
         let fits = |actual: &Origin, bound: &Origin| {
             actual.coerces_to(bound)
-                || match (actual, bound) {
+                || match (actual.uncast(), bound.uncast()) {
                     (Origin::Place(place), Origin::SelfParam) => {
                         interior_only(place) && self_owner == Some(place.root)
                     }
@@ -149,6 +149,7 @@ impl Checker {
                 })
             }
             Origin::SelfParam => Some(SigOrigin::Self_),
+            Origin::Immutable(inner) => self.abstract_body_origin(inner, param_owners, self_owner),
             Origin::Union(origins) => {
                 let members: Vec<_> = origins
                     .iter()
@@ -188,6 +189,7 @@ impl Checker {
             Origin::Union(origins) => origins
                 .iter()
                 .any(|origin| self.aggregate_origin_escapes(origin)),
+            Origin::Immutable(inner) => self.aggregate_origin_escapes(inner),
             Origin::Param(_)
             | Origin::SelfParam
             | Origin::Static
@@ -742,6 +744,7 @@ fn body_place_origin(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Place(_) => true,
         Origin::Union(members) => members.iter().all(body_place_origin),
+        Origin::Immutable(inner) => body_place_origin(inner),
         _ => false,
     }
 }

@@ -463,7 +463,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rule and its multi-element interior-domain lift), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
   symbolic origin binder — through a call result's recorded
-  `call_result_origins` and an `ImmOrigin` cast's field path too — also the
+  `call_result_origins` and a holder type's `ImmOrigin` slot
+  (`holder_slot_is_immutable_cast`) too — also the
   source of a dereference place's mutability in `origins/actuals.rs`, where
   `record_call_result_origins` resolves a callee's `ViewReturnOrigin`
   contract, `materialize_temporary_holder` gives a call-result holder —

@@ -702,6 +702,7 @@ fn origin_place_roots(
         mojito_types::origin::Origin::Union(members) => members
             .iter()
             .for_each(|member| origin_place_roots(member, roots)),
+        mojito_types::origin::Origin::Immutable(inner) => origin_place_roots(inner, roots),
         _ => {}
     }
 }

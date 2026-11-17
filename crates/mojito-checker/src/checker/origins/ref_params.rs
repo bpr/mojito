@@ -793,6 +793,7 @@ impl Checker {
         let slots = recorded.get(&expression.source_span())?;
         let mut origins = Vec::new();
         for (_, origin, _) in slots {
+            let origin = origin.uncast();
             if !origins.contains(origin) {
                 origins.push(origin.clone());
             }

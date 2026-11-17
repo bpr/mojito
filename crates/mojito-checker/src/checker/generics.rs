@@ -963,45 +963,34 @@ fn solve_simd_slot_values(
 
 /// Callable specialization and method-generic instantiation moved from `checker.rs`.
 impl Checker {
-    /// [`substitute_at`] for a member read through a receiver: the
-    /// receiver's origin tail binds the struct's origin binders in pointer
+    /// [`substitute_at`] for a member of the instance `targs` names (a
+    /// receiver's type, or a static call's explicit `View[o]`): the
+    /// instance's origin tail binds the struct's origin binders in pointer
     /// provenances too, so `get` declared `-> Pointer[T, Self.o]` on a
     /// `View[origin_of(x)]` names `origin_of(x)`, as upstream substitutes
-    /// every parameter of the receiver's type into the member's signature.
-    /// A binder `receiver` bound through an `ImmOrigin(...)` cast binds
-    /// immutably, as the cast's `mut=False` does upstream.
-    pub(super) fn substitute_at_receiver(
-        &self,
-        ty: &Ty,
-        info: &StructInfo,
-        targs: &[TyArg],
-        receiver: &Expr,
-    ) -> Ty {
-        let immutable = self.immutable_origin_binders(receiver);
+    /// every parameter of the instance type into the member's signature. A
+    /// slot holding an `ImmOrigin(...)` cast binds immutably, as the cast's
+    /// `mut=False` does upstream.
+    pub(super) fn substitute_at_instance(&self, ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
         substitute_at_with(
             ty,
             info,
             targs,
-            Some(&|id, origin| {
-                if immutable.contains(&id) {
-                    Some(mojito_types::origin::Mutability::Immutable)
-                } else {
-                    self.bound_origin_mutability(origin)
-                }
-            }),
+            Some(&|_, origin| self.bound_origin_mutability(origin)),
         )
     }
 
     /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes
-    /// when bound to `origin`: a place's owner's, a caller's own binder's
-    /// declared one (itself, when that is parametric too), or its pack
-    /// origin's.
+    /// when bound to `origin`: an `ImmOrigin(...)` cast's `False`, a
+    /// place's owner's, a caller's own binder's declared one (itself, when
+    /// that is parametric too), or its pack origin's.
     pub(super) fn bound_origin_mutability(
         &self,
         origin: &mojito_types::origin::Origin,
     ) -> Option<mojito_types::origin::Mutability> {
         use mojito_types::origin::{Mutability, Origin};
         match origin {
+            Origin::Immutable(_) => Some(Mutability::Immutable),
             Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
@@ -2267,7 +2256,7 @@ pub(super) fn method_instantiation_arguments(
 
 /// [`substitute_at`], binding the receiver's origin tail into pointer
 /// provenances too when `binder_mutability` resolves a parametric binder's
-/// mutability (see [`Checker::substitute_at_receiver`]).
+/// mutability (see [`Checker::substitute_at_instance`]).
 fn substitute_at_with(
     ty: &Ty,
     info: &StructInfo,

@@ -307,7 +307,7 @@ fn origin_in_owned_interior(
     destination: &mojito_types::origin::OriginPlace,
 ) -> bool {
     use mojito_types::origin::{Origin, OriginSeg};
-    match origin {
+    match origin.uncast() {
         Origin::Place(place) => {
             place.root == destination.root
                 && place.path.starts_with(&destination.path)
@@ -329,7 +329,7 @@ fn origin_overlaps_place(
     place: &mojito_types::origin::OriginPlace,
 ) -> bool {
     use mojito_types::origin::Origin;
-    match origin {
+    match origin.uncast() {
         Origin::Place(borrowed) => {
             let (shorter, longer) = if borrowed.path.len() <= place.path.len() {
                 (&borrowed.path, &place.path)

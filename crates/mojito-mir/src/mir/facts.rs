@@ -396,6 +396,7 @@ impl<'a> Node<'a> {
                         collect(member, places);
                     }
                 }
+                mojito_types::origin::Origin::Immutable(inner) => collect(inner, places),
                 _ => {}
             }
         }

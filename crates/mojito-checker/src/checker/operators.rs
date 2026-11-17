@@ -1596,7 +1596,7 @@ fn union_subtree_place(
     use mojito_types::origin::{Origin, OriginPlace, OriginSeg};
     let places = members
         .iter()
-        .map(|member| match member {
+        .map(|member| match member.uncast() {
             Origin::Place(place) => Some(place),
             _ => None,
         })

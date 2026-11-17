@@ -7760,6 +7760,7 @@ fn write_callable(
                         write!(f, "origin-union")?;
                     }
                     crate::origin::Origin::Unbound => write!(f, "_")?,
+                    crate::origin::Origin::Immutable(_) => write!(f, "imm-cast")?,
                 }
             }
             write!(f, "]")?;

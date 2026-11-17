@@ -1612,7 +1612,7 @@ impl Checker {
                 let ExprKind::Member { object, .. } = &pointer.kind else {
                     return None;
                 };
-                if self.immutable_origin_binders(object).contains(id) {
+                if self.holder_slot_is_immutable_cast(object, *id) {
                     return Some(false);
                 }
                 let resolved = self.resolve_receiver_origin_arguments(Origin::Param(*id), object);
@@ -1992,7 +1992,7 @@ impl Checker {
             {
                 // The receiver's arguments — origin tail included — bind the
                 // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
-                let value = self.substitute_at_receiver(fty, info, targs, object);
+                let value = self.substitute_at_instance(fty, info, targs);
                 return Ok(match value.kind() {
                     TyKind::Ref(reference) => reference.referent.clone(),
                     _ => value,

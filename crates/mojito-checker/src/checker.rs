@@ -475,15 +475,6 @@ pub struct Checker {
     /// origin_of(xs)]`), parallel to the lexical value scopes, so a later
     /// reassignment is judged against the same demand as the declaration.
     storage_origin_demand_scopes: Vec<HashMap<String, Vec<(String, mojito_types::origin::Origin)>>>,
-    /// The origin binders a binding's construction bound immutably — through
-    /// an `ImmOrigin(o)` cast (`Cell[ImmOrigin(origin_of(xs))](...)`), or by
-    /// a callee's read parameter or receiver in a view it returns — parallel
-    /// to the lexical value scopes, each with the field path below the
-    /// binding at which the cast construction sits (`["cell"]` for
-    /// `Wrap(Cell[ImmOrigin(…)](…))`, empty for the binding's own): the cast
-    /// drops the source's mutable capability, which the construction-time
-    /// origins alone cannot show.
-    immutable_origin_binder_scopes: Vec<HashMap<String, Vec<ImmutableOriginBinder>>>,
     aggregate_field_origin_scopes:
         Vec<HashMap<String, HashMap<String, Vec<mojito_types::origin::Origin>>>>,
     /// Reference-parameter handle types. Parameter expression typing still
@@ -943,12 +934,6 @@ pub struct Checker {
     /// origin)`), so the binding site can judge the initializer against them
     /// after they are erased from the type. `None` = not collecting.
     storage_origin_demands: RefCell<Option<Vec<(String, mojito_types::origin::Origin)>>>,
-    /// Per construction or view-returning call expression, the origin
-    /// binders it bound immutably (see `immutable_origin_binder_scopes`),
-    /// nested constructions' included under their field path; a `var`
-    /// binding of the expression copies them into
-    /// `immutable_origin_binder_scopes`.
-    construction_immutable_binders: RefCell<FactMap<SourceSpan, Vec<ImmutableOriginBinder>>>,
     /// Per view-returning call, the concrete origin each origin slot of the
     /// returned struct binds (`make(xs)` over `-> P[origin_of(xs)]` binds
     /// `P`'s slot to `xs`), from the callee's [`ViewReturnOrigin`] contract
@@ -1169,8 +1154,6 @@ impl Checker {
             aggregate_origin_scopes: vec![HashMap::new()],
             aggregate_field_origin_scopes: vec![HashMap::new()],
             storage_origin_demand_scopes: vec![HashMap::new()],
-            immutable_origin_binder_scopes: vec![HashMap::new()],
-            construction_immutable_binders: RefCell::new(FactMap::default()),
             call_result_origins: RefCell::new(FactMap::default()),
             reference_parameter_scopes: vec![HashMap::new()],
             reference_parameter_binders: HashMap::new(),
@@ -3622,11 +3605,6 @@ struct ViewReturnOrigin {
     slot: mojito_types::origin::OriginParamId,
     sig: mojito_types::origin::RefSig,
 }
-
-/// An origin binder a construction bound immutably, with the field path
-/// below the constructed value at which the binding construction sits
-/// (empty for the value's own explicit application).
-type ImmutableOriginBinder = (Vec<String>, mojito_types::origin::OriginParamId);
 
 /// The initializer's own list an explicit `T.__init__[ks](…)` spells, with
 /// the flag a construction sets once it binds the list.

@@ -3106,6 +3106,7 @@ fn origin(value: &Origin) -> String {
             record("origin_untracked", &[("mutable", mutable.to_string())])
         }
         Origin::Unbound => "origin_unbound".into(),
+        Origin::Immutable(inner) => positional("origin_immutable", &origin(inner)),
     }
 }
 fn pointer_origin(value: &PointerOrigin) -> String {

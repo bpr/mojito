@@ -263,10 +263,8 @@ impl Checker {
                 .ref_return
                 .as_ref()
                 .map(|reference| instantiated.bound_ref_return(self, reference));
-            let declared_ret = instantiated.bound_result(
-                self,
-                self.substitute_at_receiver(&sig.ret, info, targs, object),
-            );
+            let declared_ret =
+                instantiated.bound_result(self, self.substitute_at_instance(&sig.ret, info, targs));
             let MethodInstantiation {
                 params,
                 variadic,

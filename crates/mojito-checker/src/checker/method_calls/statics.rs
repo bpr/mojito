@@ -371,10 +371,19 @@ impl Checker {
                 Err(_) => continue,
             };
             let tyargs = &bound.arguments;
+            // The explicit application's origin tail binds the struct's
+            // origin binders in the member's signature, as a receiver's
+            // type does (`View[origin_of(x)].same(p)` over `p: Pointer[T,
+            // Self.o]`).
+            let instance: Vec<TyArg> = tyargs
+                .iter()
+                .cloned()
+                .chain(partitioned.tail_arguments())
+                .collect();
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, tyargs)))
+                .map(|t| self.resolve_assoc_ty(&self.substitute_at_instance(t, info, &instance)))
                 .collect();
             let receiver_variadic = sig
                 .variadic
@@ -383,7 +392,7 @@ impl Checker {
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, tyargs)));
+                .map(|ty| self.resolve_assoc_ty(&self.substitute_at_instance(ty, info, &instance)));
             // A default reading the struct's own binder (`[m: Int =
             // Self.n + 1]`) reads the receiver's argument, as a method
             // call's does.
@@ -409,8 +418,8 @@ impl Checker {
                 .ref_return
                 .as_ref()
                 .map(|reference| instantiated.bound_ref_return(self, reference));
-            let declared_ret =
-                instantiated.bound_result(self, substitute_at(&sig.ret, info, tyargs));
+            let declared_ret = instantiated
+                .bound_result(self, self.substitute_at_instance(&sig.ret, info, &instance));
             let MethodInstantiation {
                 params,
                 variadic,

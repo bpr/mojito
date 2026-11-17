@@ -22,11 +22,6 @@ pub(in crate::checker) struct ConstructorOriginBindings {
     /// The first binder this binding binds: a method's own binders follow
     /// its struct's, which its receiver or construction binds instead.
     own_from: u32,
-    /// Whether an argument binds through an `ImmOrigin(...)` cast, which a
-    /// struct's origin tail does not record: a parametric binder bound
-    /// through a tail then stays unbound in the result
-    /// ([`Self::substitute_result`]).
-    pub(in crate::checker) immutable_cast: bool,
 }
 
 impl ConstructorOriginBindings {
@@ -43,7 +38,7 @@ impl ConstructorOriginBindings {
     /// only through a struct argument's origin tail (`v: View[o]` over
     /// `-> Pointer[T, o]`) rebinds the result's pointer provenances too,
     /// taking a parametric binder's mutability from `binder_mutability`
-    /// unless an argument was cast immutably ([`bind_pointer_origin_tails`]).
+    /// ([`bind_pointer_origin_tails`]).
     /// The tail binding goes in first, so a caller binder the pointer
     /// bindings substitute is never captured.
     pub(in crate::checker) fn substitute_result(
@@ -60,7 +55,7 @@ impl ConstructorOriginBindings {
         self.substitute(&bind_pointer_origin_tails(
             ty,
             &tails,
-            (!self.immutable_cast).then_some(binder_mutability),
+            Some(binder_mutability),
         ))
     }
 
@@ -413,7 +408,6 @@ impl Checker {
             pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, own_from)?,
             origins: HashMap::new(),
             own_from,
-            immutable_cast: false,
         };
         for (id, provenance) in &bindings.pointers {
             if let Some(origin) = provenance
@@ -780,6 +774,7 @@ fn tail_origin(origin: Origin) -> Origin {
     match origin {
         Origin::Place(place) => Origin::Place(place.without_subtree()),
         Origin::Union(members) => Origin::union(members.into_iter().map(tail_origin)),
+        Origin::Immutable(inner) => Origin::immutable(tail_origin(*inner)),
         other => other,
     }
 }
@@ -797,7 +792,7 @@ fn origin_mutability(
         } else {
             Mutability::Immutable
         }),
-        Origin::Static => Some(Mutability::Immutable),
+        Origin::Static | Origin::Immutable(_) => Some(Mutability::Immutable),
         Origin::Union(members) if !members.is_empty() => {
             let mut all = members
                 .iter()

@@ -187,6 +187,9 @@ impl Checker {
                     self.record_aggregate_origin_invalidation_except(site.clone(), member, except);
                 }
             }
+            mojito_types::origin::Origin::Immutable(inner) => {
+                self.record_aggregate_origin_invalidation_except(site, *inner, except);
+            }
             mojito_types::origin::Origin::Param(_)
             | mojito_types::origin::Origin::SelfParam
             | mojito_types::origin::Origin::Static
@@ -311,6 +314,7 @@ impl Checker {
                     });
                 if carries {
                     let origins = result.entry(field.clone()).or_default();
+                    let origin = origin.uncast();
                     if !origins.contains(origin) {
                         origins.push(origin.clone());
                     }
@@ -320,96 +324,30 @@ impl Checker {
         result
     }
 
-    /// The origin binders `name`'s initializer bound immutably, each under
-    /// its field path (empty for any other binding).
-    pub(in crate::checker) fn lookup_immutable_origin_binders(
-        &self,
-        name: &str,
-    ) -> Vec<ImmutableOriginBinder> {
-        self.immutable_origin_binder_scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).cloned())
-            .unwrap_or_default()
-    }
-
-    /// The origin binders a value expression bound immutably: those its
-    /// construction or view-returning call recorded, seen through a transfer
-    /// or a named argument.
-    pub(in crate::checker) fn construction_immutable_binders(
-        &self,
-        value: &Expr,
-    ) -> Vec<ImmutableOriginBinder> {
-        match &value.kind {
-            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
-                self.construction_immutable_binders(inner)
-            }
-            _ => self
-                .construction_immutable_binders
-                .borrow()
-                .get(&value.source_span())
-                .cloned()
-                .unwrap_or_default(),
-        }
-    }
-
-    /// The origin binders the value `holder` designates bound immutably, at
-    /// the holder itself (an empty path): a binding's recorded casts, a
-    /// construction's or view-returning call's own, and through a field
-    /// chain the casts recorded under that field (`w.cell` finds `Wrap`'s
-    /// `(["cell"], o)`).
-    pub(in crate::checker) fn immutable_origin_binders(
+    /// Whether the struct value `holder` designates holds an `ImmOrigin(...)`
+    /// cast in its origin slot `id`, as its type records: the slot's `mut`
+    /// is `False`, so a pointer field over it does not write.
+    pub(in crate::checker) fn holder_slot_is_immutable_cast(
         &self,
         holder: &Expr,
-    ) -> Vec<mojito_types::origin::OriginParamId> {
-        self.recorded_immutable_origin_binders(holder)
-            .into_iter()
-            .filter_map(|(path, id)| path.is_empty().then_some(id))
-            .collect()
-    }
-
-    /// The immutable origin binders recorded for the value `holder`
-    /// designates, with their field paths below it: a binding's, a
-    /// construction's or view-returning call's own, and through a field
-    /// chain those recorded under that field.
-    pub(in crate::checker) fn recorded_immutable_origin_binders(
-        &self,
-        holder: &Expr,
-    ) -> Vec<ImmutableOriginBinder> {
-        match &holder.kind {
-            ExprKind::Identifier(name) => self.lookup_immutable_origin_binders(name),
-            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
-                self.recorded_immutable_origin_binders(inner)
-            }
-            ExprKind::Member { object, field } => self
-                .recorded_immutable_origin_binders(object)
-                .into_iter()
-                .filter_map(|(mut path, id)| {
-                    (path.first().is_some_and(|head| head == field)).then(|| {
-                        path.remove(0);
-                        (path, id)
-                    })
-                })
-                .collect(),
-            _ => self.construction_immutable_binders(holder),
-        }
-    }
-
-    /// Record the binders `name`'s initializer bound immutably; recorded
-    /// unconditionally so a re-declaration clears a stale one.
-    pub(in crate::checker) fn set_immutable_origin_binders(
-        &mut self,
-        name: &str,
-        binders: Vec<ImmutableOriginBinder>,
-    ) {
-        let Some(scope) = self.binding_scope(name) else {
-            return;
+        id: mojito_types::origin::OriginParamId,
+    ) -> bool {
+        let Ok(ty) = self.infer(holder) else {
+            return false;
         };
-        if binders.is_empty() {
-            self.immutable_origin_binder_scopes[scope].remove(name);
-        } else {
-            self.immutable_origin_binder_scopes[scope].insert(name.to_string(), binders);
-        }
+        ty.kind()
+            .as_non_simd_struct()
+            .and_then(|(name, arguments)| {
+                self.structs
+                    .get(name)
+                    .map(|info| info.tail_origin_bindings(arguments))
+            })
+            .and_then(|tails| {
+                tails
+                    .get(&id)
+                    .map(mojito_types::origin::Origin::is_immutable_cast)
+            })
+            .unwrap_or(false)
     }
 
     /// The explicit origin demands recorded for an annotated local binding

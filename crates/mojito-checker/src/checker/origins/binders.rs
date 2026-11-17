@@ -244,7 +244,7 @@ impl Checker {
                 verdict
             }
             Origin::Untracked { mutable } => Some(*mutable),
-            Origin::Static => Some(false),
+            Origin::Static | Origin::Immutable(_) => Some(false),
             Origin::Param(_) | Origin::SelfParam | Origin::Unbound => None,
         }
     }
@@ -434,10 +434,17 @@ impl Checker {
                 });
             }
         };
-        // `ImmOrigin(o)`: `o`'s provenance, known immutable, so an
-        // `Origin[mut=True]` slot rejects it.
+        // `ImmOrigin(o)`: `o`'s provenance as an `Origin[mut=False]` value,
+        // so an `Origin[mut=True]` slot rejects it and the slot's `mut`
+        // binds `False`. An origin already immutable is its own cast.
         if let Some(inner) = super::immutable_origin_cast(expression) {
-            let (origin, _) = self.resolve_origin_param_arg(&ParamArg::Value(inner?.clone()))?;
+            let (origin, mutability) =
+                self.resolve_origin_param_arg(&ParamArg::Value(inner?.clone()))?;
+            let origin = if mutability == Some(Mutability::Immutable) {
+                origin
+            } else {
+                Origin::immutable(origin)
+            };
             return Ok((origin, Some(Mutability::Immutable)));
         }
         let named_param_mutability = |name: &str| match self.enclosing_origin_type_param(name) {

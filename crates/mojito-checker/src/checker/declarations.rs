@@ -2690,63 +2690,6 @@ impl Checker {
         Ok(())
     }
 
-    /// The immutable origin binders a construction's struct-typed arguments
-    /// recorded, each under the field it initializes (`Wrap(Cell[ImmOrigin(o)](…))`
-    /// gives `(["cell"], o)`): a fieldwise initializer's arguments land in
-    /// declaration order, and a handwritten `__init__` conventionally forwards
-    /// a same-named parameter into each field, as `aggregate_field_origins`
-    /// assumes too.
-    fn nested_immutable_binders(
-        &self,
-        info: &StructInfo,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Vec<ImmutableOriginBinder> {
-        let field_argument = |field: &str, position: usize| {
-            args.get(position).or_else(|| {
-                kwargs
-                    .iter()
-                    .find(|argument| argument.name == field)
-                    .map(|argument| &argument.value)
-            })
-        };
-        let mut nested = Vec::new();
-        for (field, ty) in &info.fields {
-            if !ty.kind().is_non_simd_struct() {
-                continue;
-            }
-            let position = if info.fieldwise_init {
-                info.fields.iter().position(|(name, _)| name == field)
-            } else {
-                info.methods.get("__init__").and_then(|signatures| {
-                    signatures
-                        .iter()
-                        .find(|signature| signature.params.len() >= args.len())
-                        .and_then(|signature| signature.names.iter().position(|name| name == field))
-                })
-            };
-            let Some(argument) = position.and_then(|position| field_argument(field, position))
-            else {
-                continue;
-            };
-            // The argument's own construction records its casts when it is
-            // typed, which the outer construction's argument typing has not
-            // yet done at this point.
-            if self.infer(argument).is_err() {
-                continue;
-            }
-            nested.extend(
-                self.recorded_immutable_origin_binders(argument)
-                    .into_iter()
-                    .map(|(mut path, id)| {
-                        path.insert(0, field.clone());
-                        (path, id)
-                    }),
-            );
-        }
-        nested
-    }
-
     /// The pack a bare construction of a variadic struct (`Pair((1, True))`,
     /// no `[...]` arguments on a struct keyed by exactly one type pack) must
     /// infer from the constructor it selects; `None` for every other call.
@@ -3158,21 +3101,6 @@ impl Checker {
             bind_instance_origins(&mut partitioned, &info.source_params, instance);
         }
         let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
-        // An `ImmOrigin(o)` argument binds its slot immutably whatever the
-        // source allows; the binding site keeps that fact for writes, and a
-        // nested construction's casts ride along under their field.
-        let mut immutable_binders = partitioned
-            .explicit_origins
-            .iter()
-            .filter(|explicit| {
-                explicit.mutability == Some(mojito_types::origin::Mutability::Immutable)
-            })
-            .map(|explicit| (Vec::new(), explicit.id))
-            .collect::<Vec<_>>();
-        immutable_binders.extend(self.nested_immutable_binders(info, args, kwargs));
-        self.construction_immutable_binders
-            .borrow_mut()
-            .insert(span.clone(), immutable_binders);
         // The initializer's own list of an explicit `T.__init__[ks](…)`:
         // the construction's bracket is always the type's.
         let own_args = self.spelled_initializer_args_at(span);

@@ -165,9 +165,44 @@ pub enum Origin {
     /// annotation position permits omission). Any origin coerces into it; it
     /// coerces into nothing concrete and designates no storage.
     Unbound,
+    /// Upstream's `ImmOrigin(o)` in a struct origin slot: the same storage
+    /// as `o`, as an `Origin[mut=False]` value, so the slot's infer-only
+    /// `mut` binds `False` and a `Pointer[T, Self.o]` member names it
+    /// immutably. Never nested, and never an immutable origin's cast.
+    Immutable(Box<Self>),
 }
 
 impl Origin {
+    /// The `ImmOrigin(origin)` cast of `origin`: an origin that is already
+    /// immutable (a cast, the static origin, an untracked immutable one)
+    /// is its own cast, and an unbound slot stays unbound.
+    #[must_use]
+    pub fn immutable(origin: Self) -> Self {
+        match origin {
+            Self::Immutable(_)
+            | Self::Static
+            | Self::Unbound
+            | Self::Untracked { mutable: false } => origin,
+            Self::Untracked { mutable: true } => Self::Untracked { mutable: false },
+            other => Self::Immutable(Box::new(other)),
+        }
+    }
+
+    /// The storage this origin designates, below an `ImmOrigin(...)` cast.
+    #[must_use]
+    pub fn uncast(&self) -> &Self {
+        match self {
+            Self::Immutable(inner) => inner,
+            other => other,
+        }
+    }
+
+    /// Whether this is an `ImmOrigin(...)` cast.
+    #[must_use]
+    pub const fn is_immutable_cast(&self) -> bool {
+        matches!(self, Self::Immutable(_))
+    }
+
     /// Whether a struct origin argument `self` satisfies the slot `expected`
     /// when a struct type coerces into another: an unbound slot accepts any
     /// origin, a struct binder or a concrete place demands identity, and an
@@ -176,6 +211,12 @@ impl Origin {
         if matches!(expected, Self::Unbound) || self == expected {
             return true;
         }
+        // A struct's identity compares the storage an `ImmOrigin(...)`
+        // slot designates: whether the cast changes the slot's `mut` turns
+        // on the storage's own mutability, which only the checker knows.
+        if self.is_immutable_cast() || expected.is_immutable_cast() {
+            return self.uncast().coerces_to(expected.uncast());
+        }
         match expected {
             // A subtree projection refines the loan domain a pointer covers,
             // not the storage's identity.
@@ -183,7 +224,11 @@ impl Origin {
                 self,
                 Self::Place(place) if place.without_subtree() == expected_place.without_subtree()
             ),
-            Self::Unbound | Self::Param(_) | Self::SelfParam | Self::Static => false,
+            Self::Unbound
+            | Self::Param(_)
+            | Self::SelfParam
+            | Self::Static
+            | Self::Immutable(_) => false,
             Self::Untracked { .. } => !matches!(self, Self::Unbound),
             Self::Union(members) => match self {
                 Self::Unbound => false,
@@ -208,6 +253,7 @@ impl Origin {
                     .map(|member| member.substitute_params(origins))
                     .collect(),
             ),
+            Self::Immutable(inner) => Self::immutable(inner.substitute_params(origins)),
             _ => self.clone(),
         }
     }
@@ -241,6 +287,7 @@ impl std::fmt::Display for Origin {
                 Ok(())
             }
             Self::Static => write!(f, "ImmStaticOrigin"),
+            Self::Immutable(inner) => write!(f, "ImmOrigin({inner})"),
             Self::Untracked { mutable } => {
                 write!(
                     f,
@@ -794,6 +841,8 @@ impl Origin {
     /// Whether two origins may designate overlapping storage.
     pub fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Immutable(left), right) => left.overlaps(right),
+            (left, Self::Immutable(right)) => left.overlaps(right),
             (Self::Union(left), right) => left.iter().any(|item| item.overlaps(right)),
             (left, Self::Union(right)) => right.iter().any(|item| left.overlaps(item)),
             (Self::Place(left), Self::Place(right)) => places_overlap(left, right),
@@ -857,6 +906,7 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             Origin::Union(_) => 4,
             Origin::SelfParam => 5,
             Origin::Unbound => 6,
+            Origin::Immutable(_) => 7,
         }
     }
     tag(left)
@@ -865,6 +915,7 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             (Origin::Param(a), Origin::Param(b)) => a.cmp(b),
             (Origin::Place(a), Origin::Place(b)) => a.cmp(b),
             (Origin::Untracked { mutable: a }, Origin::Untracked { mutable: b }) => a.cmp(b),
+            (Origin::Immutable(a), Origin::Immutable(b)) => cmp_origin(a, b),
             (Origin::Union(a), Origin::Union(b)) => a.len().cmp(&b.len()).then_with(|| {
                 a.iter()
                     .zip(b)

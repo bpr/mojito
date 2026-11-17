@@ -4787,6 +4787,7 @@ fn concrete_sig_origin(origin: &Origin) -> SigOrigin {
         Origin::Static => SigOrigin::Static,
         Origin::Untracked { mutable } => SigOrigin::Untracked { mutable: *mutable },
         Origin::Union(members) => SigOrigin::union(members.iter().map(concrete_sig_origin)),
+        Origin::Immutable(inner) => concrete_sig_origin(inner),
         Origin::Param(_) | Origin::SelfParam | Origin::Place(_) | Origin::Unbound => {
             SigOrigin::Infer
         }

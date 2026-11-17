@@ -1760,8 +1760,6 @@ impl Checker {
                 self.set_storage_origin_demands(name, origin_demands);
                 self.set_aggregate_origins(name, aggregate_origins);
                 self.set_aggregate_field_origins(name, aggregate_field_origins);
-                let immutable_binders = self.construction_immutable_binders(value);
-                self.set_immutable_origin_binders(name, immutable_binders);
                 Ok(())
             }
 
@@ -1963,8 +1961,6 @@ impl Checker {
                         self.record_statement_binding(stmt, name);
                         self.set_aggregate_origins(name, aggregate_origins);
                         self.set_aggregate_field_origins(name, aggregate_field_origins);
-                        let immutable_binders = self.construction_immutable_binders(value);
-                        self.set_immutable_origin_binders(name, immutable_binders);
                         Ok(())
                     }
                     // Mojito requires `var` to introduce a new binding; a bare
@@ -4842,9 +4838,6 @@ impl Checker {
     /// at a synthesized receiver.
     fn remove_occurrence_facts(&self, span: &SourceSpan) {
         self.node_facts.borrow_mut().remove(span);
-        self.construction_immutable_binders
-            .borrow_mut()
-            .remove(span);
         self.call_result_origins.borrow_mut().remove(span);
         self.view_result_interiors.borrow_mut().remove(span);
         self.call_parameters.borrow_mut().remove(span);

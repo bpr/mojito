@@ -549,6 +549,7 @@ impl Checker {
                     self.record_origin_places(access, member, mutable);
                 }
             }
+            Origin::Immutable(inner) => self.record_origin_places(access, inner, Some(false)),
             Origin::Param(_)
             | Origin::SelfParam
             | Origin::Static

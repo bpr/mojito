@@ -2572,18 +2572,13 @@ impl Checker {
             .iter()
             .map(|(index, ty)| (*index, ty))
             .collect();
-        let mut bindings = Self::bind_callee_origins(
+        let bindings = Self::bind_callee_origins(
             name,
             &pattern_names,
             &patterns,
             &bound,
             arguments.own_binders,
         )?;
-        bindings.immutable_cast = arguments
-            .args
-            .iter()
-            .chain(arguments.kwargs.iter().map(|argument| &argument.value))
-            .any(|argument| !self.recorded_immutable_origin_binders(argument).is_empty());
         if bindings.is_empty() {
             let declared = params.clone();
             return Ok((params, declared, None, None));

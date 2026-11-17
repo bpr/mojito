@@ -36,6 +36,7 @@ impl Decoder {
             ValueKind::Atom(tag) if tag == "origin_unbound" => Some(Origin::Unbound),
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "origin_param" => self.uint32(inner).map(|v| Origin::Param(OriginParamId(v))),
+                "origin_immutable" => self.origin(inner).map(Origin::immutable),
                 "origin_union" => {
                     let members = self
                         .list(inner)

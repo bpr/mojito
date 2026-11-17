@@ -358,6 +358,7 @@ pub(in crate::checker) fn origin_rooted_at(
     match origin {
         Origin::Place(place) => place.root == owner,
         Origin::Union(members) => members.iter().any(|member| origin_rooted_at(member, owner)),
+        Origin::Immutable(inner) => origin_rooted_at(inner, owner),
         _ => false,
     }
 }
@@ -486,7 +487,7 @@ pub(in crate::checker) fn bind_pointer_origin_tails(
             Mutability::Param(_) => binder_mutability?(*id, tail)?,
             fixed => *fixed,
         };
-        match tail {
+        match tail.uncast() {
             Origin::Place(place) => {
                 let mut place = place.clone();
                 place.path.extend(
@@ -613,6 +614,9 @@ pub(in crate::checker) fn bind_self_origin_arguments(
     use mojito_types::origin::Origin;
     let bind = |argument: &TyArg| match argument {
         TyArg::Origin(Origin::SelfParam) => TyArg::Origin(origin.clone()),
+        TyArg::Origin(Origin::Immutable(inner)) if **inner == Origin::SelfParam => {
+            TyArg::Origin(Origin::immutable(origin.clone()))
+        }
         TyArg::Ty(ty) => TyArg::Ty(bind_self_origin_arguments(ty, origin)),
         other => other.clone(),
     };
@@ -643,6 +647,7 @@ pub(in crate::checker) fn substitute_origin_params(
                 .into_iter()
                 .map(|member| substitute_origin_params(member, concrete)),
         ),
+        Origin::Immutable(inner) => Origin::immutable(substitute_origin_params(*inner, concrete)),
         other => other,
     }
 }

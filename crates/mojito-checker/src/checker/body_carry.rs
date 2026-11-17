@@ -137,7 +137,6 @@ pub struct InternalStores {
     transfer_effects: FactMap<String, Vec<TransferEffect>>,
     call_through_effects: FactMap<String, Vec<CallThroughEffect>>,
     transferred_origins: FactMap<OwnerId, Vec<mojito_types::origin::Origin>>,
-    construction_immutable_binders: FactMap<SourceSpan, Vec<super::ImmutableOriginBinder>>,
     call_result_origins: FactMap<SourceSpan, Vec<super::CallResultOrigin>>,
     comprehension_iterables: FactMap<SourceSpan, Vec<SourceSpan>>,
     nested_def_params: FactMap<SourceSpan, Vec<OwnerId>>,
@@ -220,7 +219,6 @@ macro_rules! carried_stores {
             internal map transfer_effects = transfer_effects;
             internal map call_through_effects = call_through_effects;
             internal map transferred_origins = transferred_origins;
-            internal map construction_immutable_binders = construction_immutable_binders;
             internal map call_result_origins = call_result_origins;
             internal map comprehension_iterables = comprehension_iterables;
             internal map nested_def_params = nested_def_params;
@@ -361,7 +359,6 @@ macro_rules! define_carry_ops {
                     transfer_effects: self.transfer_effects.into_inner(),
                     call_through_effects: self.call_through_effects.into_inner(),
                     transferred_origins: self.transferred_origins.into_inner(),
-                    construction_immutable_binders: self.construction_immutable_binders.into_inner(),
                     call_result_origins: self.call_result_origins.into_inner(),
                     comprehension_iterables: self.comprehension_iterables.into_inner(),
                     nested_def_params: self.nested_def_params.into_inner(),

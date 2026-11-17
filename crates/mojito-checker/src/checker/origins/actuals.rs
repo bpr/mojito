@@ -48,6 +48,9 @@ impl Checker {
                     ) {
                         match origin {
                             mojito_types::origin::Origin::Place(place) => places.push(place),
+                            mojito_types::origin::Origin::Immutable(inner) => {
+                                collect_places(*inner, places);
+                            }
                             mojito_types::origin::Origin::Union(members) => {
                                 for member in members {
                                     collect_places(member, places);
@@ -429,7 +432,6 @@ impl Checker {
                 .map(|reference| reference.origin)
         });
         let mut resolved = Vec::new();
-        let mut immutable = Vec::new();
         for ViewReturnOrigin { slot, sig } in contract {
             let origin = super::subst::substitute_sig_origin_with_self(
                 &sig.origin,
@@ -455,9 +457,14 @@ impl Checker {
                 SigMutability::Immutable => Some(Mutability::Immutable),
                 SigMutability::BoolParam(_) | SigMutability::Infer => None,
             };
-            if mutability == Some(Mutability::Immutable) {
-                immutable.push((Vec::new(), *slot));
-            }
+            // A slot the callee binds over a read parameter or receiver is
+            // an `Origin[mut=False]` value, whatever the caller's place
+            // allows.
+            let origin = if mutability == Some(Mutability::Immutable) {
+                Origin::immutable(origin)
+            } else {
+                origin
+            };
             resolved.push((*slot, origin, mutability));
         }
         if resolved.is_empty() {
@@ -466,11 +473,6 @@ impl Checker {
         self.call_result_origins
             .borrow_mut()
             .insert(span.clone(), resolved);
-        if !immutable.is_empty() {
-            self.construction_immutable_binders
-                .borrow_mut()
-                .insert(span.clone(), immutable);
-        }
     }
 
     /// The hidden owner a call result has been materialized as, if any.
@@ -665,6 +667,7 @@ impl Checker {
             match origin {
                 Origin::Place(_) => false,
                 Origin::Union(members) => !members.is_empty() && members.iter().all(is_abstract),
+                Origin::Immutable(inner) => is_abstract(inner),
                 Origin::Param(_)
                 | Origin::SelfParam
                 | Origin::Static
