@@ -5481,6 +5481,38 @@ pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, 
     ))
 }
 
+/// Whether two generic callables are one signature up to their own binders.
+///
+/// [`erase_generic_callable_binders`] of each is equal, so a signature
+/// owned by one declaration and the same signature owned by another (or
+/// spelled with other binder names) are one type, as upstream's positional
+/// binders make them.
+pub fn same_generic_callable(left: &Ty, right: &Ty) -> bool {
+    erase_generic_callable_binders(left)
+        .zip(erase_generic_callable_binders(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
+/// A generic callable with its own binders alpha-normalized; any other
+/// type unchanged.
+///
+/// The canonical form ([`erase_generic_callable_binders`]) spells one
+/// signature the same whichever declaration owns its binders.
+pub fn canonical_generic_callable(callable: &Ty) -> Ty {
+    erase_generic_callable_binders(callable)
+        .and_then(|(decls, erased)| match erased.kind() {
+            TyKind::Func(func) => Some(
+                TyKind::GenericFunc(Box::new(GenericFuncTy {
+                    decls,
+                    func: (**func).clone(),
+                }))
+                .into(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_else(|| callable.clone())
+}
+
 pub fn canonical_generic_signature(
     decls: &[ParamDecl],
     params: &[Ty],
@@ -9286,5 +9318,68 @@ mod variadic_pack_origin_tests {
         );
         assert_eq!(variadic_pack_owned(collector.kind()), Some(false));
         assert_eq!(variadic_pack_elements(collector.kind()), Some(elements));
+    }
+}
+
+#[cfg(test)]
+mod generic_callable_identity_tests {
+    use super::*;
+    use crate::param_expr::{MetaTy, ParamId};
+
+    /// `def[name: binder](Array[Int, name]) -> param` with its binder
+    /// owned by `owner`.
+    fn signature(owner: &str, name: &str, binder: Ty, param: Ty) -> Ty {
+        let context = ParamContext::new();
+        let width = context.decl_ref(ParamId::new(owner, 0), name, MetaTy::int());
+        let array = Ty::new(TyKind::Struct(
+            "Array".to_string(),
+            vec![TyArg::Ty(Ty::int()), TyArg::Val(CtValue::Expr(width))],
+        ));
+        TyKind::GenericFunc(Box::new(GenericFuncTy {
+            decls: vec![ParamDecl::Value {
+                id: ParamId::new(owner, 0),
+                name: name.to_string(),
+                ty: binder,
+                default: None,
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            }],
+            func: FuncTy {
+                environment: crate::origin::CallableEnvironment::Default,
+                params: vec![array],
+                names: vec!["xs".to_string()],
+                ret: param,
+                required: vec![true],
+                variadic: None,
+                kw_variadic: None,
+                positional_only: None,
+                keyword_only: None,
+                raises: false,
+                error: None,
+                conventions: vec![None],
+                ref_params: vec![None],
+                ref_return: None,
+                transfers: TransferSet::default(),
+            },
+        }))
+        .into()
+    }
+
+    #[test]
+    fn same_generic_callable_is_identity_up_to_its_own_binders() {
+        let add = signature("add_fn", "width", Ty::int(), Ty::int());
+        let max = signature("max_fn", "w", Ty::int(), Ty::int());
+        assert!(same_generic_callable(&add, &max));
+        assert_eq!(
+            canonical_generic_callable(&add).to_string(),
+            canonical_generic_callable(&max).to_string()
+        );
+        let bool_binder = signature("max_fn", "width", Ty::bool(), Ty::int());
+        assert!(!same_generic_callable(&add, &bool_binder));
+        let bool_result = signature("max_fn", "width", Ty::int(), Ty::bool());
+        assert!(!same_generic_callable(&add, &bool_result));
+        assert!(!same_generic_callable(&Ty::int(), &Ty::int()));
     }
 }

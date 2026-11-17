@@ -1209,9 +1209,13 @@ pub fn is_closure_storage_name(name: &str) -> bool {
 ///
 /// As upstream's `inflated$<signature>|<hash>`, it is one declaration per
 /// signature, parameterized by the callee it calls ([`INFLATED_CALLEE`]).
-/// The name digests the signature's spelling.
+/// The name digests the signature's spelling with its own binders
+/// alpha-normalized, so a generic signature names one type whichever
+/// declaration owns (and spells) its binders, as upstream's positional
+/// binders make it.
 pub fn inflated_function_name(signature: &Ty) -> String {
-    let digest = Sha256::digest(signature.to_string().as_bytes());
+    let canonical = mojito_types::types::canonical_generic_callable(signature);
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
     format!("{INFLATED_PREFIX}{}", hex_digest(&digest[..8]))
 }
 

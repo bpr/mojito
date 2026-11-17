@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1217
+# swept-count	1218
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -551,6 +551,7 @@ assets/type_error/generic_abandoned_temporary.mojo	compile-reject	agree	error: '
 assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/generic_constructor_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'G[Int]' initializer call
 assets/type_error/generic_constructor_keyword_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'G[Int]' initializer call
+assets/type_error/generic_def_callable_bound_binder_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': value passed to 'f' cannot be converted from 'def body[w: Bool]() thin -> Int' to 'F'
 assets/type_error/generic_display_argument_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/generic_result_origin_mut_span_tail.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type
 assets/type_error/generic_result_origin_optional_param.mojo	compile-reject	agree	error: cannot return 'items's origin, because it might expand to a RegisterPassable type

@@ -2036,7 +2036,9 @@ fn struct_declaration(
 /// ([`mojito_checked::checked::SemanticAdjustment::InflateFunction`]), as
 /// upstream declares `inflated$<signature>`: one value parameter naming
 /// the callee, which is its `__call__` witness, no field, no member, and
-/// trivial lifecycles.
+/// trivial lifecycles. Every signature recorded under one name is equal up
+/// to its own binders (`mojito_symbol::symbol::inflated_function_name`), so
+/// any one of them declares it.
 fn inflated_function_declarations(checked: &CheckedProgram) -> Vec<MirStructDeclaration> {
     let signatures: std::collections::BTreeMap<String, Ty> = checked
         .expressions()

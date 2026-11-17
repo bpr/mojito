@@ -4122,40 +4122,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2316 A generic callee at a `def[...]` callable bound has no
-  symbol in the checked instance key**
-
-  A nested generic `def` or a generic lambda passed at a generic callable
-  bound (`F: def[width: SIMDLength](...)`) stays a thin function value, so
-  the elaborator traces its callee through registers
-  (`Bindings::callables`, `native/mono/infer.rs`), where the pin binds the
-  generator's symbol as the argument's type.
-  - `Checker::nested_callable_symbol` (`checker/comptime_validation.rs`)
-    admits only `TyKind::Func` identifiers and lambdas without
-    `type_params`.
-  - Mojo shape: the generator's symbol, applied to its enclosing binders
-    with its own binders left open, is the inflated struct's `FuncSymbol`
-    argument (`inflate_function_argument`, `checker/constraints.rs`), as
-    R2087 and R2309 did for non-generic bodies.
-    `direct_from_inflated_bound_call` already chains the callee's
-    arguments ahead of the call's own.
-  - Probe: `assets/ok/simd_reductions_int.mojo` and
-    `simd_reduce_tree.mojo` (`SIMD.reduce_add` passes the nested
-    `add_fn[width]`).
-  - Probe: `assets/ok/nested_generic_def_callable_binder_argument.mojo`.
-  - Probe: `Tuple`'s `init_with` lambda (`lambda [i: Int]() ->
-    Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`), through
-    `initializer_list_contextual.mojo` and
-    `string_default_construction.mojo`.
-  - Probe: `tuple_consume_elements_{print,len,discard}.mojo`, whose
-    `show[index]` names a local's type; if that is a capture, file it
-    apart.
-  - Done when the probes print unchanged on both backends and none
-    reaches the `Bindings::callables` insert.
-  - Found while planning R2292 (2026-11-17).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2088 A generic function at a `def[...] thin` value binder has no
   symbol in the checked instance key**
 
@@ -9663,6 +9629,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `variant_init_with_constructor.mojo`, and
     `variadic_method_type_params.mojo`, unchanged on both backends and no
     longer reaching the `Bindings::callables` insert.
+  - Probe: `Tuple.__init__`'s generic `init_with` lambda (`lambda [i:
+    Int]() -> Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`), through
+    `initializer_list_contextual.mojo` and
+    `string_default_construction.mojo`; once construction reaches
+    `callable_bound_argument`, the generic lambda inflates as any other.
   - Found while planning R2292 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9675,8 +9646,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   it traces through registers, and erases a generic callable's slot to an
   `Int` placeholder.
   - Still load-bearing (2026-11-17): the `Bindings::callables` insert
-    fires for `SIMD.reduce_add`, `Optional`'s `init_with`, and the shapes
-    R2088, R2313, R2314, R2315, and R2316 own.
+    fires for `Optional`'s and `Tuple`'s `init_with`, and the shapes
+    R2088, R2313, R2314, and R2315 own.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
     seeding in `specializer.rs`), the `callable_arguments` instance-key

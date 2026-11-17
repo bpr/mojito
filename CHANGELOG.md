@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-free generic lambda or nested generic `def` passed at a generic
+  callable bound (`F: def[n: Int]() -> Int`, `SIMD.reduce_add`'s nested
+  `add_fn[width]`) now binds as its generator's inflated symbol, as at the
+  pin, instead of being rejected ("does not conform to trait
+  'RegisterPassable'") or traced through a register. One inflated type
+  serves signatures equal up to their own binders, and the bundled package
+  holds each library-inflated type as its own record
+  (`assets/ok/generic_lambda_callable_bound_argument.mojo`, R2316).
+
 - A capture-free nested `def` or lambda declared over a type, value, or
   callable pack, a callable binder, or a binder with a callable default is
   now its generator's symbol applied to those binders, as at the pin,

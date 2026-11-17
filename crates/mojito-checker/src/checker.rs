@@ -31,7 +31,9 @@ use declarations::*;
 use generics::*;
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_types::types::TyKind;
-use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet, VariantIndex};
+use mojito_types::types::{
+    FuncTy, GenericFuncTy, TransferSet, VariantIndex, same_generic_callable,
+};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use origins::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -1706,7 +1708,10 @@ impl Checker {
                 TyKind::Overload(candidates) => candidates
                     .iter()
                     .any(|candidate| coerces(candidate, &signature)),
-                TyKind::Func(_) | TyKind::GenericFunc(_) => coerces(from, &signature),
+                TyKind::Func(_) => coerces(from, &signature),
+                TyKind::GenericFunc(_) => {
+                    coerces(from, &signature) || same_generic_callable(from, &signature)
+                }
                 _ => false,
             })
     }
@@ -1863,9 +1868,16 @@ impl Checker {
                 });
             };
             if !callable_bound_accepts(&actual_contract, &contract) {
+                // An inflated function type is spelled as the signature it
+                // inflates, as the pin names the function passed.
+                let shown = if mojito_symbol::symbol::inflated_callee(actual).is_some() {
+                    &actual_contract
+                } else {
+                    actual
+                };
                 return Err(TypeError::TraitNotSatisfied {
                     param: name.clone(),
-                    ty: actual.to_string(),
+                    ty: shown.to_string(),
                     trait_name: contract.to_string(),
                     reason: Some(format!(
                         "declared callable contract '{actual_contract}' is incompatible"

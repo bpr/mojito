@@ -207,7 +207,10 @@ import (every compilation that links the bundled library):
   `InterfaceExport::records` places every MIR declaration and summary in
   the record of the declaration its name belongs to
   (`DeclaringModules::declaration_of`, lifted names through
-  `symbol::lifted_owner`), and strips from each struct row its parameters,
+  `symbol::lifted_owner`) — a function's inflated type, which its
+  signature alone determines, is its own record under no module
+  (`package::SYNTHESIZED_MODULE`), found by name and reached by no
+  link — and strips from each struct row its parameters,
   fields, fieldwise initializer, destructors, and explicit-destruction
   obligation, from each method its signature apart from what MIR does not
   carry, and from a `def`'s type the same, after comparing each, byte for

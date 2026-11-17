@@ -3143,8 +3143,9 @@ impl Checker {
     /// the struct its signature names
     /// ([`Self::register_inflated_function`]) applied to the callee's
     /// symbol, bare or bracket-specialized, an overload selected at the
-    /// bound's contract, or a capture-free nested `def` or lambda's
-    /// ([`Self::nested_callable_symbol`]). `None` for any other argument,
+    /// bound's contract, or a capture-free nested `def` or lambda's,
+    /// generic or not, applied to its enclosing binders with its own left
+    /// open ([`Self::nested_callable_symbol`]). `None` for any other argument,
     /// which binds the bound as it did before.
     fn inflate_function_argument(&self, argument: &Expr, found: &Ty, expected: &Ty) -> Option<Ty> {
         let TyKind::Param {

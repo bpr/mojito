@@ -742,6 +742,15 @@ pub struct PackagedModule {
     pub link: Vec<u8>,
 }
 
+/// The module-table position of a synthesized declaration's record.
+///
+/// That is a function's inflated type
+/// (`mojito_symbol::symbol::inflated_function_name`), which its signature
+/// alone determines and no library module declares, as upstream's
+/// `inflated$<signature>` belongs to no source declaration. No link reaches
+/// it, and it makes no module binding; its struct is found by name.
+pub const SYNTHESIZED_MODULE: u32 = u32::MAX;
+
 /// One library declaration, read from the directory: its name, its module,
 /// and where its record lies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1729,10 +1738,14 @@ impl DeclarationRecords {
             self.declarations.into_iter().zip(function_rows).enumerate()
         {
             let position = position as u32;
-            let module = positions
-                .get(record.module.as_str())
-                .copied()
-                .ok_or_else(|| format!("`{name}` has no module record"))?;
+            let module = if record.module.is_empty() {
+                SYNTHESIZED_MODULE
+            } else {
+                positions
+                    .get(record.module.as_str())
+                    .copied()
+                    .ok_or_else(|| format!("`{name}` has no module record"))?
+            };
             record.lowered.refuse_unjoinable(&name)?;
             record.lowered.function_rows = rows;
             record.lowered.struct_names = record
@@ -1775,7 +1788,10 @@ impl DeclarationRecords {
             }
             for (table, key) in declared {
                 if table == InterfaceTable::Bindings {
-                    bindings[module as usize].push(key.clone());
+                    bindings
+                        .get_mut(module as usize)
+                        .ok_or_else(|| format!("synthesized `{name}` makes a module binding"))?
+                        .push(key.clone());
                 }
                 keys.push((table, key, position));
             }
@@ -1865,14 +1881,20 @@ impl DeclarationRecords {
     }
 
     /// The record of the declaration `name` belongs to, opened empty when
-    /// the check left the declaration no row.
+    /// the check left the declaration no row. A function's inflated type
+    /// is its own module-less record ([`SYNTHESIZED_MODULE`]).
     fn record_of(&mut self, name: &str) -> Result<&mut DeclarationRecord, String> {
-        let declaration = self
-            .declaring
-            .declaration_of(name)
-            .ok_or_else(|| format!("no library declaration owns `{name}`"))?
-            .to_string();
-        let module = self.declaring.names[&declaration].clone();
+        let (declaration, module) = if mojito_symbol::symbol::is_inflated_function_name(name) {
+            (name.to_string(), String::new())
+        } else {
+            let declaration = self
+                .declaring
+                .declaration_of(name)
+                .ok_or_else(|| format!("no library declaration owns `{name}`"))?
+                .to_string();
+            let module = self.declaring.names[&declaration].clone();
+            (declaration, module)
+        };
         let record = self
             .declarations
             .entry(declaration.clone())

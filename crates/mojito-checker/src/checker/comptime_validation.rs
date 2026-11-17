@@ -737,26 +737,22 @@ impl Checker {
     }
 
     /// The symbol of the capture-free nested `def` or lambda `expr` reads as
-    /// a compile-time value, applied to the binders in scope where it is
-    /// declared ([`Self::nested_function_ref`]). `None` for any other
-    /// expression, a generic body among them, and for a body whose binders
-    /// in scope are unknown.
+    /// a compile-time value, generic or not, applied to the binders in scope
+    /// where it is declared with its own binders left open
+    /// ([`Self::nested_function_ref`]). `None` for any other expression and
+    /// for a body whose binders in scope are unknown.
     pub(super) fn nested_callable_symbol(&self, expr: &Expr) -> Option<FuncSymbolRef> {
         match &expr.kind {
             ExprKind::Identifier(name)
                 if self.compile_time_callee(name)
-                    && self
-                        .lookup(name)
-                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_))) =>
+                    && self.lookup(name).is_some_and(|ty| {
+                        matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                    }) =>
             {
                 self.nested_symbols.get(&self.lookup_owner(name)?).cloned()
             }
             ExprKind::Lambda { def } => match &def.kind {
-                StmtKind::Def {
-                    captures: None,
-                    type_params,
-                    ..
-                } if type_params.is_empty() => self.nested_function_ref(def.syntax_id),
+                StmtKind::Def { captures: None, .. } => self.nested_function_ref(def.syntax_id),
                 _ => None,
             },
             _ => None,
