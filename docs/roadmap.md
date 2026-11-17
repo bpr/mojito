@@ -9545,24 +9545,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2277 A copy of a slot passes the slot's loaded value to
-  `__copyinit__`**
-
-  Upstream's copy insertion passes the source's `!lit.ref` as the
-  constructor's `read copy: Self`. `mir::lower_copies_and_moves`
-  (`copy_calls.rs`, `call_of`) turns a `var.use copy` naming its
-  constructor into a `place.load` of the slot and passes the loaded value.
-  - Probe: `var c = a` over `a: String`: the `String.__copyinit__` call's
-    `copy` operand is a `place.load` of `a`'s slot
-    (`copy_of_reference_read_passes_the_reference`, `tests/mir_test.rs`,
-    pins the value today).
-  - Fix: emit a `ref.make` of the slot's root place instead of the load.
-  - Then the inliner's `loaded_place` (`argument_binding`,
-    `inline_parametric.rs`) no longer sees these operands.
-  - Found while landing R2248 (2026-11-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2279 A function name at a `def(...)` bound is not inflated into
   the bound's type**
 

@@ -4071,9 +4071,9 @@ def main():
 #[test]
 fn copy_of_reference_read_passes_the_reference() {
     // A copy of a value read through a reference (a tuple element's `ref`
-    // accessor under destructuring) calls `__copyinit__` with the
-    // reference, as upstream's `copy: Self` takes the source's `!lit.ref`;
-    // a copy of a slot still passes its loaded value.
+    // accessor under destructuring) and a copy of a slot both call
+    // `__copyinit__` with a reference, as upstream's `copy: Self` takes the
+    // source's `!lit.ref`.
     let source = r#"
 @no_inline
 def pair() -> Tuple[String, String]:
@@ -4113,12 +4113,8 @@ def main():
         })
         .collect();
     assert!(
-        copies.contains(&true),
-        "a copy passes its reference: {copies:?}"
-    );
-    assert!(
-        copies.contains(&false),
-        "a slot's copy passes its value: {copies:?}"
+        copies.len() >= 2 && copies.iter().all(|reference| *reference),
+        "every copy passes a reference: {copies:?}"
     );
 }
 

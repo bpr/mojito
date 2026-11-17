@@ -715,6 +715,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A copy of a slot naming its constructor now passes `__copyinit__` a
+  `ref.make` of the slot instead of a `place.load` of its value, as
+  upstream's copy insertion passes the source's `!lit.ref` to
+  `read copy: Self` (`mir::lower_copies_and_moves`, R2277).
+
 - A run-time value of a thin function type no longer binds a
   `def(...)` bound: `var f = dbl; apply(f)` over
   `def apply[F: def(Int) -> Int](f: F)` is rejected as at the pin

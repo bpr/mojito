@@ -7,13 +7,12 @@
 //! name that constructor but stay a use, which each backend runs by a copy
 //! or move path of its own. Where a use names its constructor, and the
 //! constructor takes the value as its one parameter after `out self`, the
-//! use is the call: a copy reads the slot (`place.load`) and passes it as
-//! the constructor's borrowed argument, the shape `S(copy=x)` lowers to; a
-//! move forwards the slot, which ends it and hands its storage to the
-//! callee as Mojo's owned argument convention does, and passes it as the
-//! constructor's `deinit` argument; a register copy passes its register,
+//! use is the call: a copy of a slot passes a reference to it (`ref.make`)
 //! and a copy of a value read through a reference passes the reference,
-//! as upstream's `copy: Self` takes the source's `!lit.ref`.
+//! as upstream's `copy: Self` takes the source's `!lit.ref`; a register
+//! copy passes its register; a move forwards the slot, which ends it and
+//! hands its storage to the callee as Mojo's owned argument convention
+//! does, and passes it as the constructor's `deinit` argument.
 //! The call passes the value's struct arguments as the constructor's
 //! compile-time arguments, which its declaration restates, as a
 //! construction does.
@@ -101,9 +100,9 @@ fn lower_blocks(
     block.instrs = lowered;
 }
 
-/// The read of the source, if the source is a slot, and the call of the
-/// constructor `instruction` names, when it names one taking the value as
-/// its one parameter. A copied register `read_through` maps, read through
+/// The reference to, or the forward of, the source, if the source is a
+/// slot, and the call of the constructor `instruction` names, when it
+/// names one taking the value as its one parameter. A copied register `read_through` maps, read through
 /// a reference with nothing written since, passes that reference.
 fn call_of(
     instruction: &MirInstr,
@@ -121,19 +120,31 @@ fn call_of(
             let argument =
                 constructor_argument(constructor, declarations, function.var_tys.get(var)?)?;
             let ty = function.var_tys.get(var)?.clone();
-            let source = source_register(function, *dest, *var);
-            let read = if *mode == UseMode::Copy {
-                MirInstr::LoadPlace {
-                    dest: source,
-                    place: MirPlace::root(*var, Some(ty)),
-                }
+            let (source, read) = if *mode == UseMode::Copy {
+                let place = MirPlace::root(*var, Some(ty));
+                let handle = crate::mir::mir_place_handle_ty(
+                    &place,
+                    Some(mojito_types::origin::Mutability::Immutable),
+                )?;
+                let source = source_register(function, *dest, *var, handle);
+                (
+                    source,
+                    MirInstr::MakeRef {
+                        dest: source,
+                        place,
+                    },
+                )
             } else {
-                MirInstr::UseVar {
-                    dest: source,
-                    var: *var,
-                    mode: UseMode::Forward,
-                    constructor: None,
-                }
+                let source = source_register(function, *dest, *var, ty);
+                (
+                    source,
+                    MirInstr::UseVar {
+                        dest: source,
+                        var: *var,
+                        mode: UseMode::Forward,
+                        constructor: None,
+                    },
+                )
             };
             Some((
                 Some(read),
@@ -231,10 +242,9 @@ const fn writes_nothing(instruction: &MirInstr) -> bool {
     )
 }
 
-/// A fresh register of the slot `var`'s type holding what the use `dest`
-/// read of it, located where the use was and read from the slot.
-fn source_register(function: &mut MirFunction, dest: Reg, var: VarId) -> Reg {
-    let ty = function.var_tys[&var].clone();
+/// A fresh register of type `ty` holding the slot `var`, or a reference to
+/// it, for the use `dest`, located where the use was and read from the slot.
+fn source_register(function: &mut MirFunction, dest: Reg, var: VarId, ty: Ty) -> Reg {
     let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
     let source = fresh_register(function, ty, span.as_ref());
     if let Some((_, origin)) = function.spans.0.get_mut(&source.0) {
