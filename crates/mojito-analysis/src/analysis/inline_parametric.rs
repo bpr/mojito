@@ -3494,7 +3494,8 @@ fn composed_place(outer: &MirPlace, inner: &MirPlace) -> MirPlace {
 /// `blocks`, `callee`'s body with its slots renumbered, and their regions,
 /// into a load of that place and a copy of the loaded value, which names
 /// the copy constructor the parameter's instantiated type has once the
-/// splice names constructors, as a copy of a slot does: upstream's copy of
+/// splice names constructors, as a copy of a slot does. Lowering that copy
+/// passes the constructor a reference to the place, as upstream's copy of
 /// a `read` argument reads it through its address.
 fn copy_bound_parameters<'b>(
     block: &mut MirBlock,

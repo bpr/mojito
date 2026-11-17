@@ -4119,6 +4119,89 @@ def main():
 }
 
 #[test]
+fn copy_of_loaded_place_passes_the_place() {
+    // A copy of a field loaded from a place, in a user `__copyinit__`
+    // (`self.s = copy.s`) and at a `var` argument (`own(h.c)`), calls
+    // `__copyinit__` with a reference to the place, as upstream's
+    // `copy: Self` takes the source's `!lit.ref`.
+    let source = r#"
+struct C(ImplicitlyCopyable):
+    var a: Int
+
+    def __init__(out self, a: Int):
+        self.a = a
+
+    def __init__(out self, *, copy: Self):
+        self.a = copy.a
+
+@fieldwise_init
+struct H(Copyable):
+    var c: C
+    var s: String
+
+    def __init__(out self, *, copy: Self):
+        self.c = copy.c
+        self.s = copy.s
+
+def own(var x: C):
+    print(x.a)
+
+def main():
+    var h = H(C(2), "s")
+    own(h.c)
+    var g = h.copy()
+    print(g.s)
+"#;
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    for function in ["main", "H.__copyinit__"] {
+        let copies = copy_sources_are_references(&compiled, function);
+        assert!(
+            !copies.is_empty() && copies.iter().all(|reference| *reference),
+            "every copy in {function} passes a reference: {copies:?}"
+        );
+    }
+}
+
+#[test]
+fn copy_of_value_loaded_before_a_call_passes_the_value() {
+    // A chained comparison's middle operand (`k < holder.s < l`) is loaded
+    // before the first link's call and copied after it, which may write
+    // the place, so its copy passes the loaded value (R2298).
+    let source = r#"
+struct S(ImplicitlyCopyable, Movable):
+    var v: Int
+
+    def __init__(out self, v: Int):
+        self.v = v
+
+    def __init__(out self, *, copy: Self):
+        self.v = copy.v
+
+    def __lt__(self, o: Self) -> Bool:
+        return self.v < o.v
+
+@fieldwise_init
+struct H(Movable):
+    var s: S
+
+def main():
+    var k = S(1)
+    var holder = H(S(2))
+    var l = S(3)
+    print(k < holder.s < l)
+"#;
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let copies = copy_sources_are_references(&compiled, "main");
+    assert_eq!(copies, [false], "the middle's copy passes its value");
+}
+
+#[test]
 fn short_circuit_argument_anchor_dies_in_its_arm() {
     // A temporary an `or`'s right operand makes for a call argument is
     // defined in the `or`'s else region and dies there, as upstream's
@@ -7561,4 +7644,36 @@ fn read_builtin_operand_is_its_storage_reference_or_a_value() {
         !made.contains(literal) && !literal_place,
         "the literal is a value"
     );
+}
+
+/// Whether each `__copyinit__` call in `function` of `compiled`'s
+/// elaborated MIR passes its source as a reference.
+fn copy_sources_are_references(
+    compiled: &mojito::compiler::CompiledProgram,
+    function: &str,
+) -> Vec<bool> {
+    let function = &compiled
+        .elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == function)
+        .unwrap_or_else(|| panic!("{function} MIR"))
+        .1;
+    nested_instructions(&function.body)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, args, kwargs, ..
+            } if func.0.ends_with("__copyinit__") => {
+                let source = args
+                    .first()
+                    .or_else(|| kwargs.first().map(|(_, reg)| reg))?;
+                Some(matches!(
+                    function.reg_types.get(&source.0).map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }

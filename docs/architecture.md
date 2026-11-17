@@ -2575,7 +2575,7 @@ operand its place (`Flatten::chain_link_address`). The later verify points
 do not yet apply the receiver rule, since the elaborator's truthiness
 rewrite and older MIR pass inputs still pass such receivers by value
 (R2294, R2295). Keyword operands and a `call.indirect`'s operands are not
-yet checked this way (R2281, R2282). A MIR text
+yet checked this way (R2300, R2282). A MIR text
 artifact older than 1.192 is upgraded as it loads
 (`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded
@@ -6221,15 +6221,22 @@ parameter leaves the caller's instance key
 
 A named copy or move is then the call upstream's copy/move insertion
 leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`): a `var.use
-copy` becomes a `place.load` of the slot and a `Call` of the named
+copy` becomes a `ref.make` of the slot and a `Call` of the named
 `__copyinit__` passing it as the constructor's borrowed argument, the
 shape `S(copy=x)` lowers to; a `var.use move` becomes a forwarding
 `var.use` of the slot, which ends it and hands its storage to the callee
 as Mojo's owned-argument convention does, and a `Call` of the named
 `__moveinit__` passing it as the `deinit` argument; a `value.copy` becomes
 the call alone over its register, or, where its block read the register
-through a reference with nothing written since, over that reference, as
-upstream's `copy: Self` takes the source's `!lit.ref`. The constructor's declaration decides
+through a reference with nothing written since, over that reference, or,
+where its block loaded the register from a place with nothing written
+since, over a `ref.make` of that place, as upstream's `copy: Self` takes
+the source's `!lit.ref`. Ending a reference binding writes nothing: drop
+elaboration may end the binding a loaded place goes through at the load,
+its last use, and the call then ends it after itself instead, since the
+call's reference now reaches the referent through it. A copy of a register
+with no place, or one loaded before an instruction that may write, still
+passes the value (R2296, R2297, R2298). The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration

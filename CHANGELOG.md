@@ -1123,6 +1123,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy of a value loaded from a place now passes `__copyinit__` a
+  reference to the place, as upstream's `read copy: Self` takes the
+  source's `!lit.ref`: a field copy (`self.s = copy.s`, `own(h.c)`), an
+  inlined copy of a `read` argument bound to a caller's place, and a copy
+  through a reference binding drop elaboration ended at the load, which
+  now ends after the call. Output is unchanged. A copy of a pointer
+  subscript, of a temporary's or reference result's field, of a chained
+  comparison's middle, of a walrus result, and a setter's `value=` still
+  pass a value (R2296, R2297, R2298, R1506, R2299), and the verifier does
+  not yet check keyword operands (R2300).
+
 - A module function's compile-time reference at a `def(...)` bound now
   binds the bound to the function's inflated type, as at the pin: an
   empty, trivially register-passable struct per signature whose

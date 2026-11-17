@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2296**.
+Next free ID: **R2301**.
 
 ## Ordered Work
 
@@ -2841,6 +2841,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     runs, where the pin rejects the implicit copy of the borrowed result.
   - The lever: the walrus result is read as its target is, a place the
     consumer copies or borrows, rather than a fresh temporary.
+  - Probe: the R2300 keyword check flags
+    `assets/ok/walrus_place_targets.mojo` (`main`, a `String` walrus),
+    whose copy of the stored call result passes a value, not the
+    target's reference.
   - Found while landing R1375 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9639,27 +9643,120 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Fix: drop `verify_staged`'s `receivers` switch so `verify` applies
     the rule, and retire `verify_lowered`.
   - Confirm no pre-elaboration pass turns a receiver's reference into a
-    value, as R2281 found the passes do for `copy=` operands.
+    value. The `copy=` values once blamed on the passes came from
+    `lower_copies_and_moves`, but R2299 shows one pass does it to a
+    setter's `value=` operand.
   - Stop when `scripts/smoke` and the R2294 probes run clean.
   - Depends on R2294 and R2285.
   - Model: Fable, Not Planned.
 
-- [ ] **R2281 The pre-elaboration passes turn a `copy=` operand's
-  reference into a value**
+- [ ] **R2296 A pointer subscript in copy position is copied by value,
+  not from its pointee's place**
 
-  Upstream's `read copy: Self` takes a `!lit.ref`. After
-  `inline-parametric`, `imm-arguments`, `mem-2-reg`, `sroa`, and
-  `canonicalize`, each `copy=` operand of a `__copyinit__` call is a
-  value, so `verify_direct_call` skips keyword operands.
-  - Probe: check keyword operands by `mir::call_operand_parameters` in
-    `verify_direct_call`. Nearly every program fails, std's own
-    `_ZeroStartingRange.__copyinit__` and `Optional.__copyinit__` calls
-    included.
-  - Fix: make those passes keep or re-form the operand's `ref.make`, then
-    turn the keyword check on.
-  - If one pass's fix outgrows the session, land it alone and file the
-    rest per pass.
+  Upstream's `p[]` and `ptr[i]` are the pointee's `!lit.ref`, so a copy of
+  one calls `__copyinit__` with that reference. Mojito lowers the subscript
+  to an `index.get` with `intrinsic: pointer` and copies its register, so
+  `mir::lower_copies_and_moves` (`copy_calls.rs`) has no place to pass.
+  - Fix: a pointer subscript in copy position copies from the pointee
+    place (`Flatten::pointee_place`, `mir/calls.rs`; `pointee_place_read`,
+    `lower_expr/expr_access.rs`), so the copy passes its `ref.make`.
+  - Probe: the R2300 keyword check. At lowering it flags
+    `assets/ok/call_result_pointer_argument_keeps_owner.mojo` (`read`) and
+    `pointer_subscript_reads_in_place.mojo` (`returned`, `main`).
+  - Probe: at the elaborator it flags std's `List`, `Array`, `Dict` and
+    `Optional` copy initializers copying an element, in
+    `dict_methods_growth`, `self_hosted_dict`, `nested_copy_lifecycle`,
+    `list_fill_copies_once`, `raising_iter_call_edge`,
+    `reflection_list_materialized_whole`,
+    `condition_truthiness_reads_in_place`, `ctfe_dict_set_result`,
+    `ctfe_module_display_constant_requests`,
+    `nonmaterializable_converts_through_target`, and the
+    `template_method_*` fixtures failing at `List$mono$TString` or
+    `Optional$mono$TString`.
+  - Probe: once those pass, check `nested_copy_lifecycle.mojo` for a
+    `ref.read` ahead of `Optional$mono$TInt.__copyinit__(copy=<value>)`
+    in an instance. If it is there, `load_register_passable_operands`
+    (`call_addresses.rs`) and `by_address_parameter` disagree about
+    `Optional[Int]`; fix the side that departs from the pin.
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2297 A field of a temporary or of a reference result is copied
+  from its register, not from a place**
+
+  Upstream's field of a temporary or of a returned reference is a
+  `!lit.ref` into that storage, and a copy of it takes that reference.
+  Mojito lowers such a field as `GetField` over the base's register
+  (`load_temporary_field`, `lower_expr/expr_access.rs`) plus `value.copy`,
+  so the copy has no place to pass.
+  - Fix: project the field through the reference result's place, or
+    through the temporary's materialized slot
+    (`Flatten::materialize_operand`), and copy from that place.
+  - Probe: the R2300 keyword check flags
+    `assets/ok/ref_result_field_value_copy.mojo`,
+    `ctfe_projection_of_temporary_in_body.mojo`,
+    `template_method_reference_receiver.mojo`, and
+    `template_method_subscript_store.mojo`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2298 A chained comparison copies its middle operand after the
+  first link's call, from a register loaded before it**
+
+  Upstream copies `holder.s` in `k < holder.s < l` from its place where
+  the copy runs. Mojito's `chain_link` (`lower_expr/ctrl.rs`) loads the
+  middle before the first link's `call.method` and copies the register
+  after it. The call may write the place, so `lower_copies_and_moves`
+  passes the stale value instead of a reference.
+  - Fix: the copy re-reads its place where it runs, a `place.load`
+    right before the `value.copy`.
+  - Probe: the R2300 keyword check flags
+    `assets/ok/chained_comparison_link_drop_order.mojo` and
+    `struct_operator_subscript_operand_in_place.mojo`.
+  - Probe: `copy_of_value_loaded_before_a_call_passes_the_value`
+    (`tests/mir_test.rs`) pins the value today and flips once this lands.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2299 A setter's `value=` operand reaches a memory-only `read`
+  parameter as a value after the pre-elaboration passes**
+
+  Upstream's `__setitem__(mut self, i: Int, value: W)` takes a memory-only
+  `value` by `!lit.ref`. With the pre-elaboration pipeline on, the
+  instance verify finds the `value=` keyword of a
+  `__setitem__$...$REMOVED$ARG` call passing a value; with it off
+  (`MOJITO_PRE_ELABORATION=0`) the operand is a reference.
+  - So a pass, `remove-unused-params` or one before it, drops the
+    operand's `ref.make`. Find which one and keep the reference.
+  - Probe: the R2300 check over `call.method` keyword operands flags
+    `assets/ok/augmented_store_copies_nothing.mojo`
+    (`Converting.__setitem__$REMOVED$ARG`) and
+    `subscript_store_setter_by_element_type.mojo`
+    (`S.__setitem__$ov$Int$W$REMOVED$ARG`).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2300 The verifier checks no keyword operand at a by-address
+  parameter**
+
+  Upstream's `lit.call` verifier requires a `!lit.ref` at every operand
+  its callee takes by address. `verify_direct_call`
+  (`mir/verify/calls.rs`) checks by-address operands only for a "plain"
+  positional call, so keyword operands, and operands of defaulted,
+  variadic, and `call.method` calls, go unchecked.
+  - Fix: keep the "plain" gate for the type comparison only. Map a
+    `call`'s operands by `mir::call_operand_parameters`, and a resolved
+    `call.method`'s by `operand_parameters(&CallShape::declared(..))`
+    through a new `pub` sibling in `call_addresses.rs`. Require a
+    reference at every operand `by_address_parameter` takes by address.
+  - Docs: drop "Keyword operands … are not yet checked this way" from
+    `docs/architecture.md` (keep R2282) and update `docs/symbol-map.md`'s
+    by-address row.
+  - Tests: a `tests/verify_test.rs` case rejecting a MIR text `call` of
+    an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
+    and accepting the `ref.make` form.
+  - Stop when `scripts/smoke` runs clean with the rule on.
+  - Depends on R2296, R2297, R2298, R2299, and R1506.
   - Model: Fable, Not Planned.
 
 - [ ] **R2282 A `call.indirect`'s by-address `read` operands are not

@@ -7,12 +7,15 @@
 //! name that constructor but stay a use, which each backend runs by a copy
 //! or move path of its own. Where a use names its constructor, and the
 //! constructor takes the value as its one parameter after `out self`, the
-//! use is the call: a copy of a slot passes a reference to it (`ref.make`)
-//! and a copy of a value read through a reference passes the reference,
-//! as upstream's `copy: Self` takes the source's `!lit.ref`; a register
-//! copy passes its register; a move forwards the slot, which ends it and
-//! hands its storage to the callee as Mojo's owned argument convention
-//! does, and passes it as the constructor's `deinit` argument.
+//! use is the call: a copy of a slot passes a reference to it (`ref.make`),
+//! a copy of a value read through a reference passes the reference, and a
+//! copy of a value loaded from a place with nothing written since passes a
+//! reference to the place, as upstream's `copy: Self` takes the source's
+//! `!lit.ref`; a reference binding the place goes through then ends after
+//! the call rather than at the load. Any other register copy passes its
+//! register. A move forwards the slot, which ends it and hands its storage
+//! to the callee as Mojo's owned argument convention does, and passes it
+//! as the constructor's `deinit` argument.
 //! The call passes the value's struct arguments as the constructor's
 //! compile-time arguments, which its declaration restates, as a
 //! construction does.
@@ -68,14 +71,19 @@ fn lower_blocks(
         .collect();
     let mut lowered = Vec::with_capacity(block.instrs.len());
     let mut read_through = HashMap::new();
+    let mut loaded = HashMap::new();
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
             lower_blocks(region, function, declarations);
         }
         let kept = matches!(&instruction,
             MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
+        let sources = Sources {
+            read_through: &read_through,
+            loaded: &loaded,
+        };
         let call = (!kept)
-            .then(|| call_of(&instruction, function, declarations, &read_through))
+            .then(|| call_of(&instruction, function, declarations, &sources))
             .flatten();
         match &instruction {
             MirInstr::ReadRef { dest, reference }
@@ -86,13 +94,25 @@ fn lower_blocks(
             {
                 read_through.insert(dest.0, *reference);
             }
-            instruction if !writes_nothing(instruction) => read_through.clear(),
+            MirInstr::LoadPlace { dest, place } => {
+                loaded.insert(dest.0, (place.clone(), lowered.len()));
+            }
+            instruction if !writes_nothing(instruction, function) => {
+                read_through.clear();
+                loaded.clear();
+            }
             _ => {}
         }
         match call {
-            Some((read, call)) => {
+            Some(Lowered::Read(read, call)) => {
                 lowered.extend(read);
                 lowered.push(call);
+            }
+            Some(Lowered::Loaded(load, binding, reference, call)) => {
+                let ended = end_after_call(&mut lowered, load, binding);
+                lowered.push(reference);
+                lowered.push(call);
+                lowered.extend(ended);
             }
             None => lowered.push(instruction),
         }
@@ -100,16 +120,18 @@ fn lower_blocks(
     block.instrs = lowered;
 }
 
-/// The reference to, or the forward of, the source, if the source is a
-/// slot, and the call of the constructor `instruction` names, when it
-/// names one taking the value as its one parameter. A copied register `read_through` maps, read through
-/// a reference with nothing written since, passes that reference.
+/// The call of the constructor `instruction` names, when it names one
+/// taking the value as its one parameter, with how its source is read: a
+/// slot's reference or forward, or a loaded place's reference, before the
+/// call. A copied register `sources` maps, read through a reference or
+/// loaded from a place with nothing written since, passes that reference
+/// or the place's.
 fn call_of(
     instruction: &MirInstr,
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
-    read_through: &HashMap<u32, Reg>,
-) -> Option<(Option<MirInstr>, MirInstr)> {
+    sources: &Sources<'_>,
+) -> Option<Lowered> {
     match instruction {
         MirInstr::UseVar {
             dest,
@@ -146,7 +168,7 @@ fn call_of(
                     },
                 )
             };
-            Some((
+            Some(Lowered::Read(
                 Some(read),
                 constructor_call(*dest, constructor, source, argument),
             ))
@@ -158,8 +180,35 @@ fn call_of(
         } => {
             let argument =
                 constructor_argument(constructor, declarations, function.reg_types.get(&value.0)?)?;
-            let source = read_through.get(&value.0).copied().unwrap_or(*value);
-            Some((None, constructor_call(*dest, constructor, source, argument)))
+            if let Some((place, load)) = sources.loaded.get(&value.0)
+                && place.ty.is_some()
+                && place.ty.as_ref() == function.reg_types.get(&value.0)
+            {
+                let handle = crate::mir::mir_place_handle_ty(
+                    place,
+                    Some(mojito_types::origin::Mutability::Immutable),
+                )?;
+                let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+                let source = fresh_register(function, handle, span.as_ref());
+                return Some(Lowered::Loaded(
+                    *load,
+                    place.root,
+                    MirInstr::MakeRef {
+                        dest: source,
+                        place: place.clone(),
+                    },
+                    constructor_call(*dest, constructor, source, argument),
+                ));
+            }
+            let source = sources
+                .read_through
+                .get(&value.0)
+                .copied()
+                .unwrap_or(*value);
+            Some(Lowered::Read(
+                None,
+                constructor_call(*dest, constructor, source, argument),
+            ))
         }
         _ => None,
     }
@@ -225,9 +274,20 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
     (arguments.len() == decls.len()).then_some(arguments)
 }
 
-/// Whether `instruction` only reads, so a referent read before it still
-/// holds the value read.
-const fn writes_nothing(instruction: &MirInstr) -> bool {
+/// Whether `instruction` only reads, so a referent read or a place loaded
+/// before it still holds the value read. Ending a reference binding, whose
+/// drop destroys nothing, writes no storage.
+fn writes_nothing(instruction: &MirInstr, function: &MirFunction) -> bool {
+    if let MirInstr::DropVar {
+        var,
+        destructor: None,
+    } = instruction
+    {
+        return matches!(
+            function.var_tys.get(var).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        );
+    }
     matches!(
         instruction,
         MirInstr::LoadPlace { .. }
@@ -289,4 +349,33 @@ struct ConstructorArgument {
     name: String,
     keyword: bool,
     struct_arguments: Vec<TyArg>,
+}
+
+/// Take out of `lowered`, after the load at `load`, the end of the
+/// reference binding `binding`, which drop elaboration placed at the
+/// load as the binding's last use: the copy's reference to the place
+/// through it is now that use, so the binding ends after the call.
+fn end_after_call(lowered: &mut Vec<MirInstr>, load: usize, binding: VarId) -> Vec<MirInstr> {
+    let (ended, kept): (Vec<_>, Vec<_>) = lowered.split_off(load + 1).into_iter().partition(
+        |instruction| matches!(instruction, MirInstr::DropVar { var, .. } if *var == binding),
+    );
+    lowered.extend(kept);
+    ended
+}
+
+/// What a copied register's source was read from, with nothing written
+/// since: the reference a `ref.read` read through, and the place a
+/// `place.load` loaded with the load's index among the lowered
+/// instructions.
+struct Sources<'s> {
+    read_through: &'s HashMap<u32, Reg>,
+    loaded: &'s HashMap<u32, (MirPlace, usize)>,
+}
+
+/// A use lowered to its constructor's call: after the source's read, if
+/// any, or after a reference to a place loaded at the index given, whose
+/// root slot must stay live through the call.
+enum Lowered {
+    Read(Option<MirInstr>, MirInstr),
+    Loaded(usize, VarId, MirInstr, MirInstr),
 }
