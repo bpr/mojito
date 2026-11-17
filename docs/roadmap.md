@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2285**.
+Next free ID: **R2286**.
 
 ## Ordered Work
 
@@ -9667,56 +9667,62 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2275 Four MIR pass cases fail at HEAD because their input or
-  expectation predates a later MIR change**
+- [ ] **R2045 Nine MIR pass test inputs destroy a memory-only value
+  through a `deinit` receiver register and fail at load**
 
-  `tests/mir_pass_test.rs` fails these cases without any change to the
-  pass they test. R2191's re-bless left their expectations at HEAD, minus
-  the deleted place-table fields, rather than bless the drift.
-  - `sroa/borrowed_kept` and `sroa/borrowed_field`: the only thing that
-    "borrows" the slot is a register-passable `read self` receiver
-    (`Pt.copy`), which upstream passes by value, naming no storage
-    (R2268). Before R2191, SROA panicked on the receiver's `recv_place`
-    naming the slot it retired ("a retired slot is still addressed").
-    Since then, SROA splits the slot, as it should. Each input needs a
-    real borrow, a `ref.make` operand of a `mut self` or memory-only
-    receiver, so the case still shows a borrowed slot being kept.
-  - `inline-parametric/ref_param_at_ref_field`: the 1.170 input is not
-    canonical. Since 1.198, the reader turns the `place.load` of the `ref`
-    field into the stored handle's `ref.make`
-    (`call_addresses::upgrade_stored_handles`). R2191 re-canonicalized the
-    input. The expectation still shows the load.
-  - `inline-parametric/pack_length_concrete`: the expectation spells a
-    `comptime.if` value as `param(param_constant(ct_bool(true)))`, and the
-    pass now prints `bool(true)`.
-  - Fix: rebuild the SROA inputs around a real borrow. Re-bless all four,
-    checking that each expectation shows what its case is about.
+  The MIR verifier rejects a `deinit` receiver call that destroys a
+  memory-only register (R1873), forwarded receivers included since R2273,
+  as upstream destroys such a value through its storage (`DeinitMem`).
+  These inputs predate that rule, so `tests/mir_pass_test.rs` fails before
+  the pass runs.
+  - `inline-parametric/destructor_drop.mir` and
+    `destructor_arm_entry_inlined.mir` (`D[n]`),
+    `field_destructor_place.mir` (`S[3]`, `S[2]`),
+    `owned_param_dropped.mir` (`Token`), `read_loaded_across_region.mir`
+    and `read_through_reference_register.mir` (`Res`),
+    `retained_place_read_param.mir` (`Box`), and `tuple_reverse_closed.mir`
+    (`_ZeroStartingRange[DType.int]`, in `$comptime$Tuple.__deinit__$c0`
+    and `$comptime$Tuple.reverse$c0`).
+  - `sroa/destructor_call_kept.mir` (`S`).
+  - Fix: pass the receiver as a `ref.make` of the slot that holds it, as
+    `elaborate-drops` now emits a memory-only slot's drop, or re-emit the
+    input with `emit-mir`, then re-bless and check each expectation still
+    shows what its case is about.
+  - `retained_place_read_param.mir` also passes a memory-only value at a
+    by-address `read` slot (R2285); fix both there.
+  - Probe: `mojito opt tests/mir_passes/sroa/destructor_call_kept.mir`
+    reports "call.method deinit receiver destroys %r13 of memory-only type
+    S".
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2045 Five MIR pass test inputs predate the verifier's
-  memory-only register rule and fail at load**
+- [ ] **R2285 Fifteen MIR pass test inputs pass a memory-only value at a
+  by-address `read` slot and fail at load**
 
-  Each input destroys a memory-only register directly, which the MIR
-  verifier has rejected since R1873 (`deinit` receiver calls) and R1932
-  (unnamed `drop.reg`), so `tests/mir_pass_test.rs` fails before the pass
-  runs.
-  - `tuple_reverse_closed`: `swapped`'s `deinit` receiver call destroys
-    a memory-only `Tuple` register.
-  - `elaborate-drops/register_drop_named.mir` ("drop.reg destroys %r2 of
-    memory-only type Noisy").
-  - `elaborate-drops/register_drop_unnamed.mir` drops a memory-only
-    `Error` register; it fails first with "unknown type `Error`", and
-    needs a register-passable value instead.
-  - `inline-parametric/deinit_register_receiver.mir` and
-    `read_owned_register_temporary.mir`: a `deinit` receiver call
-    destroys a memory-only `Box`/`Res` register.
-  - Fix: re-emit each input from current lowering with `emit-mir`, which
-    since R1934 (2026-11-08) ends such a register through a slot, and
-    re-bless the `.expected` files, which R1837 and R1849 rewrote by hand.
+  Since R2251 the MIR verifier rejects a value at a by-address `read` slot
+  of a declared call, as upstream's `lit.call` takes the `!lit.ref` of a
+  memory-only argument. These inputs predate that rule and pass the loaded
+  value, so `tests/mir_pass_test.rs` fails before the pass runs.
+  - `canonicalize/struct_copy_kept.mir` and `trivial_struct_copy.mir`
+    (`take`'s `Pt`).
+  - `elaborate-drops/handler_drop_call.mir` (`may_raise`'s `Bool`).
+  - `inline-parametric/bound_iteration.mir`, `bound_witness.mir`,
+    `copy_type_param.mir`, `default_wrapper.mir`, `generic_pack.mir`,
+    `generic_type.mir`, `read_collector_register.mir`,
+    `retained_place_read_param.mir`, `returned_if_merge.mir`, and
+    `struct_operator.mir`: most are a generic `read` parameter, which the
+    template passes by address whatever its instance.
+  - `remove-unused-params/forwarded_argument.mir` and
+    `recursive_argument.mir` (`Arr[n]`).
+  - Fix: pass each operand as a `ref.make` of the slot the value was
+    loaded from, as MIR lowering forms it (`Flatten::address_operand`), or
+    re-emit the input with `emit-mir`, then re-bless and check each
+    expectation still shows what its case is about.
+  - Probe: `mojito opt tests/mir_passes/canonicalize/trivial_struct_copy.mir`
+    reports "argument 0 of 'take' is received by address but passes a Pt
+    value".
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
 - [ ] **R2046 With the library linked from source, a compile-time call
   passing a `String` to a `ref` parameter reads an unresolved value**
 
@@ -13349,25 +13355,6 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
-
-- [ ] **R2013 The MIR pass-test inputs spell the removed `DType` and
-  `Error` type tags, so `tests/mir_pass_test.rs` cannot load them**
-
-  Schema 1.177 (R1936) and 1.178 (R1938) made both types library structs,
-  but 143 `tests/mir_passes/*/*.mir` cases still write `DType` and 26
-  write `Error` as bare type tags. `opt` rejects each at load.
-  - Respell each as `struct_type { name: DType, arguments: [] }` or
-    `struct_type { name: Error, arguments: [] }`, adding the struct rows
-    the verifier needs, or re-emit the case as `tests/mir_passes/README.md`
-    describes.
-  - The `Error` cases also call the retired builtin `func: Error`. Replace
-    it with a call of the library initializer, or re-emit.
-  - Probe: `mojito opt --pass mem-2-reg
-    tests/mir_passes/mem-2-reg/try_region.mir` reports "unknown type
-    `DType`".
-  - Found while landing R1938 (2026-11-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1954 An older artifact's parameterized associated type keeps
   its one-binder pack arguments**

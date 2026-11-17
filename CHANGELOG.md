@@ -1073,6 +1073,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The SROA `borrowed_kept` and `borrowed_field` MIR pass cases now borrow
+  their slot through a `mut self` receiver's `ref.make` operand, since a
+  register-passable `read self` receiver passes by value and names no
+  storage. They and fifteen other cases whose expectations predated the
+  `comptime.if` value spelling, the reader's stored-handle upgrade, and
+  `elaborate-drops`' by-address memory-only drops are re-blessed.
+  Inputs that fail a later verifier rule at load are filed as R2045 and
+  R2285. No program output changes. (R2275)
+
 - A memory-only slot's drop now passes the slot's address to its
   destructor, a mutable `ref.make` the call consumes, as upstream's
   destructor call takes the dead variable's address as its `DeinitMem`

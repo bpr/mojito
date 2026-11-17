@@ -45,7 +45,7 @@
         blocks: [
           bb0 {
             instructions: [
-              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [], values: [param(param_constant(ct_bool(true)))], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r5, value: %r1, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r2, fields: [%r5] }], terminator: break { label: present(loop4294967295), values: [%r2] } }]], else: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r6, value: %r3, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r4, fields: [%r6] }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }], terminator: unreachable {} }] }
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [], values: [bool(true)], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r5, value: %r1, target: kgen_simd { dtype: int, width: 1 } }, struct.create { dest: %r2, fields: [%r5] }], terminator: break { label: present(loop4294967295), values: [%r2] } }]], else: [bb0 { instructions: [], terminator: unreachable {} }] }], terminator: unreachable {} }] }
             ],
             terminator: return { value: present(%r0) }
           }
