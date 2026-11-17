@@ -1514,8 +1514,11 @@ impl Checker {
                     .lookup(name)
                     .map_or_else(|| "undefined".to_string(), ToString::to_string),
             })?;
-        if super::is_unbound_parametric_function(&actual) || !self.value_coerces(&actual, expected)
-        {
+        // A parametric function is a value of a generic function type only,
+        // its own binders left open.
+        let unbound = matches!(expected.kind(), TyKind::Func(_))
+            && super::is_unbound_parametric_function(&actual);
+        if unbound || !self.value_coerces(&actual, expected) {
             return Err(TypeError::TypeMismatch {
                 expected: expected.to_string(),
                 found: actual.to_string(),
@@ -1526,7 +1529,7 @@ impl Checker {
     }
 
     /// The type and symbol of the function `expression` names as a value at
-    /// the callable type `expected` — upstream's `#kgen.func.symbol` of a
+    /// the callable type `expected`, generic or not — upstream's `#kgen.func.symbol` of a
     /// callable parameter's argument or default: a function, an overload
     /// resolved against `expected`, or an explicit specialization (`f[Int]`,
     /// `twice[4]`) with the arguments its bracket bound. `None` when it

@@ -1103,7 +1103,7 @@ impl<'a> Specializer<'a> {
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
         self.enclosing.clone_from(bindings);
-        self.instantiate_nested_bodies(&key.template, &mut function.body)?;
+        self.instantiate_nested_bodies(&key.template, &function.reg_types, &mut function.body)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
@@ -2696,14 +2696,41 @@ impl<'a> Specializer<'a> {
     /// direct call, which names its reduced generator as any direct call
     /// does. A generic nested body's value names its generator under this
     /// instance, its enclosing binders bound and its own open, which a call
-    /// binding its own parameters extends.
+    /// binding its own parameters extends. A nested generator's symbol at
+    /// a generic function register (a `def[...] thin` value binder's
+    /// argument) names that generator under the instance its symbol
+    /// applies it to, its own binders left for each call through the
+    /// register to bind, as the pin's `#kgen.func.symbol` of a nested
+    /// `def` leaves them.
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
+        reg_types: &HashMap<u32, Ty>,
         block: &mut MirBlock,
     ) -> Result<(), MonoError> {
         for instruction in &mut block.instrs {
             match instruction {
+                MirInstr::Const {
+                    dest,
+                    k:
+                        Const::FunctionInstance {
+                            function: target,
+                            arguments,
+                            receiver: None,
+                        },
+                } if self.is_nested(target)
+                    && reg_types
+                        .get(&dest.0)
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::GenericFunc(_)))
+                    && self.nested_application_scope(target).len() == arguments.len() =>
+                {
+                    let mut generator = std::mem::take(target);
+                    self.apply_nested_generator(owner, &mut generator, arguments)?;
+                    *instruction = MirInstr::Const {
+                        dest: *dest,
+                        k: Const::Function(generator),
+                    };
+                }
                 MirInstr::MakeClosure {
                     function: target, ..
                 }
@@ -2759,7 +2786,7 @@ impl<'a> Specializer<'a> {
                 }
                 instruction => {
                     for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                        self.instantiate_nested_bodies(owner, region)?;
+                        self.instantiate_nested_bodies(owner, reg_types, region)?;
                     }
                 }
             }

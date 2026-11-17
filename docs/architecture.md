@@ -5232,8 +5232,13 @@ list binder and a callable binder included: both enclosing binding paths
 (`bound_enclosing_arguments` for a symbol, `enclosing_bindings` for a
 compile-time application) bind an enclosing type pack whole
 (`unify::bind_pack`), as a callee's own pack binds, so a pack read in the
-nested body folds. A generic function argument (R2088)
-keeps the slot `CtValue::Deferred`, bound from the argument's register. A
+nested body folds. At a `def[...] thin` value binder the argument is the
+same symbol with its own binders left open, a module or static generic
+function, a nested generic `def`, or a capture-free generic lambda, so no
+register carries it: the elaborator names a nested generator's symbol at a
+`GenericFunc` register as that generator under the instance its symbol
+applies it to (`Specializer::instantiate_nested_bodies`), and each call
+through the binder binds the rest. A
 function named where a compile-time
 value is read (`comptime h = sq`, `comptime f: OptionalReg[F] = sq`) is the
 same constant, typed by the function's signature

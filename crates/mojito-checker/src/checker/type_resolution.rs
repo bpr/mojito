@@ -716,6 +716,27 @@ impl Checker {
             return Ok(TyArg::Val(CtValue::Expr(binder)));
         }
         let actual = self.infer(expr)?;
+        // A capture-free generic lambda is its generator's symbol with its
+        // own binders open, a thin value as at the pin; the check types it
+        // `capturing[]` only because it gives a generic lambda no thin type.
+        if matches!(ty.kind(), TyKind::GenericFunc(_))
+            && matches!(expr.kind, ExprKind::Lambda { .. })
+            && !super::is_closure_storage(&actual)
+            && let Some(symbol) = self.nested_callable_symbol(expr)
+        {
+            let thin = super::with_callable_environment(
+                actual,
+                mojito_types::origin::CallableEnvironment::Thin,
+            );
+            if !self.value_coerces(&thin, ty) {
+                return Err(TypeError::TypeMismatch {
+                    expected: ty.to_string(),
+                    found: thin.to_string(),
+                    context: format!("callable-value parameter '{name}'"),
+                });
+            }
+            return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
+        }
         // A closure's storage is a run-time value, and so is a capturing
         // lambda's closure, as at the pin.
         let captures = super::is_closure_storage(&actual)
@@ -749,7 +770,7 @@ impl Checker {
                 context: format!("callable-value parameter '{name}'"),
             });
         }
-        let symbolic = matches!(ty.kind(), TyKind::Func(_));
+        let symbolic = matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_));
         if symbolic && let Some(symbol) = self.nested_callable_symbol(expr) {
             return Ok(TyArg::Val(CtValue::FuncSymbol(symbol)));
         }

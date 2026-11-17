@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic function at a `def[...] thin` value binder is now its
+  generator's symbol with its own binders left open, as at the pin, instead
+  of a register the elaborator erased: a module function, its callable
+  default, a static generic method, a nested generic `def`, and a
+  capture-free generic lambda, which used to be rejected as capturing
+  (`assets/ok/generic_function_value_binder.mojo`, R2088).
+
 - A capture-free generic lambda or nested generic `def` passed at a generic
   callable bound (`F: def[n: Int]() -> Int`, `SIMD.reduce_add`'s nested
   `add_fn[width]`) now binds as its generator's inflated symbol, as at the

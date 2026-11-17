@@ -4122,33 +4122,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2088 A generic function at a `def[...] thin` value binder has no
-  symbol in the checked instance key**
-
-  `callable_value_symbol` (`checker/declarations.rs`) is consulted only
-  at a `TyKind::Func` slot, so a generic function argument at a
-  `def[...] thin` (`TyKind::GenericFunc`) value binder stays
-  `CtValue::Deferred` and rides the register path, which the elaborator
-  erases to an `Int` placeholder
-  (`erase_specialized_generic_callable_storage`, `mono/symbolic.rs`); the
-  output already matches the pin.
-  - Resolving a `GenericFunc` slot through `callable_value_symbol`
-    specializes the function against the generic contract: twelve
-    fixtures broke, e.g. `callable_binder_parameter_inference.mojo` with
-    "cannot infer type parameter 'width' of 'add'".
-  - Mojo shape: the binder's argument is the generator's unspecialized
-    symbol as a compile-time constant, with its own binders left open, as
-    R2316 gives a generic callee at a bound.
-  - Probe: `assets/ok/callable_binder_parameter_inference.mojo`
-    (`apply_value[func]`).
-  - Probe: `writable_trait_library.mojo` and `index_list.mojo`, through
-    `f: def[FieldType: Writable](...) thin` in
-    `stdlib/std/format/__init__.mojo`.
-  - Done when no `GenericFunc`-typed register or slot is left in any
-    instance.
-  - Depends on R2316.
-  - Model: Fable, Planned.
-
 - [ ] **R2141 A static of a parametric struct has no symbol in a
   compile-time callable slot**
 
@@ -4167,6 +4140,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Int: return f()`; the pin prints `5`.
   - Probe: the same static as a callable default (`f: def() thin -> Int
     = P[4].st`) and as a struct's callable argument (`S[P[4].st]`).
+  - Probe: a generic static at a `def[...] thin` value binder,
+    `apply_value[Ops[5].mul](a)` over `struct Ops[k: Int]` with a static
+    `mul[w: SIMDLength]`, fails with "untyped variable slot ('Ops')" where
+    the pin prints `[6, 9, 14, 21]`; the non-parametric `Plain.sub`
+    already runs (`assets/ok/generic_function_value_binder.mojo`).
   - Found while landing R2110 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -9567,7 +9545,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`register_constant`, `native/mono/equiv.rs`).
   - Lever: carry the bracket arguments as the call's instantiated
     arguments, as a direct call's `InstantiatedArguments` does.
-  - The callee operand `F` itself is R2088's, not this entry's.
+  - The callee operand `F` itself is R2292's, not this entry's.
   - Probe: `def ap2[F: def[n: Int]() thin -> Int, k: Int]() -> Int:
     return F[3]() + F[k]()` with `ap2[twice, 4]()` prints `14` on both
     backends, with `value: absent` on both `call.indirect` operands.
@@ -9647,7 +9625,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `Int` placeholder.
   - Still load-bearing (2026-11-17): the `Bindings::callables` insert
     fires for `Optional`'s and `Tuple`'s `init_with`, and the shapes
-    R2088, R2313, R2314, and R2315 own.
+    R2313, R2314, and R2315 own.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
     seeding in `specializer.rs`), the `callable_arguments` instance-key
@@ -9669,8 +9647,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     takes the pin's conversion wording.
   - Probe: `assets/ok/nested_callable_parameter_symbol.mojo` and every
     callable-parameter fixture, unchanged on both backends.
-  - Depends on R2088, R2313, R2314, R2315, since each leaves a thin
-    function value at a bound.
+  - A call through a `def[...] thin` value binder already takes the
+    generator's symbol, yet `apply_value`'s callee is still a dead
+    `GenericFunc`-typed `const = param(func)` register the erase pass
+    rewrites to `Int` 0: lower such a call with the binder as its callee,
+    as upstream's `kgen.call` of a `#kgen.param.decl.ref`.
+  - Done when no `GenericFunc`-typed register or slot is left in any
+    instance (`assets/ok/callable_binder_parameter_inference.mojo`,
+    `generic_function_value_binder.mojo`).
+  - Depends on R2313, R2314, R2315, since each leaves a thin function
+    value at a bound.
   - Model: Fable, Planned.
 
 - [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a
