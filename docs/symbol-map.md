@@ -2216,7 +2216,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `folded_parameter_attributes` (`checker/call_inference.rs`, over
   `bracket_argument_slots`, over `call::match_parameter_slots`) makes each
   value-shaped argument solved to a `CtValue::is_parameter_attribute` value
-  (a string, or a closed scalar, vector, or aggregate) the call's bracket
+  (a string, a closed scalar, vector, or aggregate, or a
+  `CtValue::is_function_valued` parameter expression: a forwarded callable
+  binder `g[f]()` or a `#kgen.bind_params` over one) the call's bracket
   attribute, keyed by declaration (`DeclaredAttributes`), merged into the
   recorded ones by `Checker::record_folded_bracket_attributes` (a generic
   call's, a method's, a static's, a construction's through
@@ -2226,8 +2228,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
   such an attribute at a call carrying `InstantiatedArguments`, and an
   indirect call without an instantiated contract gives it a constant
-  register the elaborator reads (`register_constant`, `mono/equiv.rs`);
-  them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
+  register the elaborator reads (`register_constant`, `mono/equiv.rs`), a
+  forwarded callable binder's through
+  `Flatten::enclosing_value_binder_read` over
+  `EnclosingBinders::callable_binder`; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
   register against the call's `instantiated_args`, and checks a present one
   against its declared type closed under those arguments and the receiver
   struct's (`owner_arguments`, `verify/calls.rs`), bound by

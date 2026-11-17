@@ -1207,6 +1207,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A callable binder forwarded to another call (`g[f]()` inside
+  `fwd[f: def() thin -> Int]`, or a `#kgen.bind_params` over one) is now
+  the call's parameter attribute alone, as at the pin, instead of also a
+  register operand beside its compile-time reference
+  (`assets/ok/callable_binder_forwarded_attribute.mojo`, R2310).
 - Natively, an empty register-passable value (a field-less
   `TrivialRegisterPassable` struct, a function's inflated type) passed
   by value is no argument and a returned one is `void`, as at the pin:

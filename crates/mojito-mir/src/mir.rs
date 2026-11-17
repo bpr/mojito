@@ -4869,8 +4869,9 @@ impl<'a> Flatten<'a> {
         Some(dest)
     }
 
-    /// A read of the enclosing value binder `expr` names, when it is exactly
-    /// such a reference: upstream's `kgen.param.constant` of the binder.
+    /// A read of the enclosing value binder `expr` names, callable or not,
+    /// when it is exactly such a reference: upstream's `kgen.param.constant`
+    /// of the binder.
     fn enclosing_value_binder_read(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
         let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
             return None;
@@ -4880,7 +4881,8 @@ impl<'a> Flatten<'a> {
             .values
             .iter()
             .rfind(|(binder, _)| binder == reference)
-            .map(|(_, ty)| ty.clone())?;
+            .map(|(_, ty)| ty.clone())
+            .or_else(|| self.enclosing_binders.callable_binder(reference))?;
         Some(self.param_value_register_at(site.clone(), Some(ty), expr.clone()))
     }
 
@@ -6019,15 +6021,24 @@ impl EnclosingBinders {
             .any(|binder| names.contains(binder.name.as_ref()))
     }
 
-    /// `expr` when it is the reference to one of these value binders.
+    /// `expr` when it is the reference to one of these value binders,
+    /// callable or not.
     fn binder_value(&self, expr: &ParamExpr) -> Option<ParamExpr> {
         let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
             return None;
         };
-        self.values
-            .iter()
-            .any(|(binder, _)| binder == reference)
-            .then(|| expr.clone())
+        (self.values.iter().any(|(binder, _)| binder == reference)
+            || self.callable_binder(reference).is_some())
+        .then(|| expr.clone())
+    }
+
+    /// The declared type of the callable binder `reference` names, the
+    /// innermost in scope; `None` for a reference to no callable binder.
+    fn callable_binder(&self, reference: &mojito_types::param_expr::ParamRef) -> Option<Ty> {
+        self.callables.iter().rev().find_map(|decl| match decl {
+            ParamDecl::Value { ty, .. } if decl.binder() == *reference => Some(ty.clone()),
+            _ => None,
+        })
     }
 
     /// The expression the local `comptime` binding `owner` denotes.

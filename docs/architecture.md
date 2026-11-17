@@ -3390,7 +3390,8 @@ operand after the bracket ones (`Flatten::inferred_param_args`), as Mojo's
 call carries every parameter whether spelled or inferred; a closed value
 carries its constant as `expr`. A closed
 bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`,
-`f["x"]()`) or of a construction (`Counter[4](1)`) has no run-time form: as
+`f["x"]()`), a callable binder it forwards (`g[f]()`, `g[h[2]]()`), or a
+construction's (`Counter[4](1)`) has no run-time form: as
 Mojo's call carries a parameter attribute, the call carries the value in its
 instantiated arguments, the checked call carries the argument as that
 attribute (`CheckedParamArg::Attribute`, over

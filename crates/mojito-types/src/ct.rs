@@ -1190,11 +1190,13 @@ impl CtValue {
 
     /// Whether a bracket argument solved to this value has no run-time form
     /// at its call, which carries it as a parameter attribute alone, as
-    /// Mojo's call does: a string, a function symbol,
+    /// Mojo's call does: a string, a function symbol, a
+    /// [function-valued](Self::is_function_valued) parameter expression,
     /// [compile-time-only](Self::is_compile_time_only) data, or any value
     /// [`Self::is_folded_parameter_argument`] accepts.
     pub fn is_parameter_attribute(&self) -> bool {
         matches!(self, Self::Str(_) | Self::FuncSymbol(_))
+            || self.is_function_valued()
             || self.is_compile_time_only()
             || self.is_folded_parameter_argument()
     }
@@ -1210,6 +1212,17 @@ impl CtValue {
                 .is_some_and(|ty| matches!(ty.kind(), TyKind::AnyTrait(_))),
             _ => false,
         }
+    }
+
+    /// Whether this value is a parameter expression of a function type: a
+    /// callable binder's reference, or a `#kgen.bind_params` over a generic
+    /// one, which Mojo's call carries as an attribute. A `GenericFunc`-typed
+    /// expression is not one.
+    pub fn is_function_valued(&self) -> bool {
+        matches!(self, Self::Expr(expr) if expr
+            .meta()
+            .as_value()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_))))
     }
 
     /// Whether this value is compile-time data whose elements are types or

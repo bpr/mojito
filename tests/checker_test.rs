@@ -1264,6 +1264,29 @@ fn closed_bracket_arguments_are_the_calls_parameter_attributes() {
 }
 
 #[test]
+fn forwarded_callable_binder_is_the_calls_parameter_attribute() {
+    // `g[f]()` inside `fwd[f: def() thin -> Int]` forwards the enclosing
+    // binder as Mojo's call does, as the attribute `#kgen.param.decl.ref`
+    // alone: the checked call carries it as an attribute, not a value node.
+    let source = "def seven() -> Int:\n    return 7\n\ndef g[f: def() thin -> Int]() -> Int:\n    return f()\n\ndef fwd[f: def() thin -> Int]() -> Int:\n    return g[f]()\n\ndef main():\n    print(fwd[seven]())\n";
+    let checked = checked_with_std(source).expect("check");
+    let forwarded = bracket_arguments(&checked, "g");
+    assert!(
+        matches!(
+            forwarded.as_slice(),
+            [arguments] if matches!(
+                arguments.as_slice(),
+                [mojito::checked::CheckedParamArg::Attribute {
+                    value: Some(mojito::types::TyArg::Val(mojito::CtValue::Expr(_))),
+                    ..
+                }]
+            )
+        ),
+        "{forwarded:#?}"
+    );
+}
+
+#[test]
 fn abstract_element_copyability_derives_from_member_bounds() {
     // A `C.Element` copy is proven by the bound trait's member declaration,
     // never vacuously: a Movable-only element cannot be returned by copy from

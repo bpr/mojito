@@ -7092,6 +7092,59 @@ fn closed_aggregate_parameter_argument_has_no_runtime_form() {
 }
 
 #[test]
+fn forwarded_callable_binder_has_no_runtime_form() {
+    // `g[f]()` forwards the enclosing callable binder as the call's
+    // attribute alone, as Mojo's does. A call through a generic callable
+    // binder (`F[f]()`) carries no instantiated arguments, so it still
+    // reads the binder as a parameter constant register.
+    let source = "def seven() -> Int:\n    return 7\n\ndef g[f: def() thin -> Int]() -> Int:\n    return f()\n\ndef fwd[f: def() thin -> Int]() -> Int:\n    return g[f]()\n\ndef ap[F: def[f: def() thin -> Int]() thin -> Int, f: def() thin -> Int]() -> Int:\n    return F[f]()\n\ndef main():\n    print(fwd[seven]())\n    print(ap[g, seven]())\n";
+    let linked = mojito::link_source(source, Path::new("mir_test.mojo")).expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let body = |name: &str| {
+        &mir.functions
+            .iter()
+            .find(|(function, _)| function == name)
+            .expect("function lowered")
+            .1
+            .body
+            .instrs
+    };
+    let forwarded = body("fwd")
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                param_arg_regs,
+                ..
+            } if func.0 == "g" => Some(param_arg_regs),
+            _ => None,
+        })
+        .expect("g call");
+    assert!(
+        matches!(forwarded.as_slice(), [argument] if argument.value.is_none()),
+        "{forwarded:?}"
+    );
+    let indirect = body("ap")
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::CallIndirect { param_arg_regs, .. } => Some(param_arg_regs),
+            _ => None,
+        })
+        .expect("F call");
+    assert!(
+        matches!(indirect.as_slice(), [argument] if argument.value.is_some() && argument.expr.is_some()),
+        "{indirect:?}"
+    );
+}
+
+#[test]
 fn lone_struct_dunder_operator_names_its_method() {
     // A struct operator is its dunder call: the checker names the selected
     // dunder even when it is the struct's only declaration, and a scalar

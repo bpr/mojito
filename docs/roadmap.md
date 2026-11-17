@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2312**.
+Next free ID: **R2313**.
 
 ## Ordered Work
 
@@ -9545,25 +9545,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2310 A forwarded callable binder still passes a register
-  operand beside its compile-time reference**
+- [ ] **R2312 A call through a generic callable binder passes its
+  bracket arguments as registers**
 
-  `g[f]()` inside `def fwd[f: def() thin -> Int]()` carries
-  `ct_expr(param_decl_ref fwd.f)` and also
-  `param_arg { value: present(..) }`, where the pin forwards the
-  parameter as an attribute alone.
-  - Where: `CtValue::is_parameter_attribute` (`mojito-types/src/ct.rs`)
-    rejects a symbolic `Expr`, so `folded_parameter_attributes`
-    (`checker/call_inference.rs`) and `param_arg_has_no_runtime_form`
-    (`mojito-mir/src/mir.rs`) keep the operand.
-  - Accept an `Expr` whose meta type is a `TyKind::Func` value (a binder
-    reference or `#kgen.bind_params` over one), not a `GenericFunc`
-    (R2088); then confirm no register-dataflow reader
-    (`callable_targets`, `Bindings::callables`) still needs it.
-  - Probe: `fwd[T.seven]()` prints `7` on both backends, with
-    `param_arg { value: absent }` in `emit-mir`.
-  - Probe: `assets/ok/def_callable_parameter_symbol.mojo` and
-    `callable_param_binder_application.mojo`, unchanged on both backends.
+  `F[3]()`, `F[k]()`, and `F[f]()` inside `ap[F: def[n: Int]() thin ->
+  Int, ...]` each pass a register per bracket argument, even a closed
+  `3`, where the pin applies `#kgen.bind_params(F, ...)` and carries no
+  operand.
+  - Where: `Flatten::indirect_param_arg_regs` (`mojito-mir/src/mir.rs`)
+    has no instantiated arguments to fold into when the
+    `call.indirect` lacks an `InstantiatedCallableContract`, so every
+    argument gets a register.
+  - The elaborator reads those registers back as constants
+    (`register_constant`, `native/mono/equiv.rs`).
+  - Lever: carry the bracket arguments as the call's instantiated
+    arguments, as a direct call's `InstantiatedArguments` does.
+  - The callee operand `F` itself is R2088's, not this entry's.
+  - Probe: `def ap2[F: def[n: Int]() thin -> Int, k: Int]() -> Int:
+    return F[3]() + F[k]()` with `ap2[twice, 4]()` prints `14` on both
+    backends, with `value: absent` on both `call.indirect` operands.
+  - Probe: `F[f]()` in `assets/ok/callable_binder_forwarded_attribute.mojo`
+    passes `value: absent`, output unchanged.
+  - Found while landing R2310 (2026-11-17).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
