@@ -1297,6 +1297,7 @@ assets/ok/static_call_through_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_call_through_shadowed_type_name.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_method_explicit_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_method_pack_spread.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/static_method_pointer_result_keeps_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_method_reads_struct_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_method_unread_owner_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape

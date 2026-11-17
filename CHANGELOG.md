@@ -715,6 +715,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A static method's result whose type names an argument's origin now keeps
+  that argument's loans, as a free function's does: `var t =
+  S.same(Pointer(to=z))` over `-> Pointer[Noisy, o2]` no longer destroys
+  `z` before `t[].v` reads it, and prints `9` as at the pin
+  (`assets/ok/static_method_pointer_result_keeps_argument.mojo`, R2288).
 - The Pliron backend now lowers a pointer's backward offset, `p - n` and
   `p -= n` over a local, a struct field, or a `mut` parameter, as
   upstream's `UnsafePointer.__sub__`/`__isub__` do; it previously lowered

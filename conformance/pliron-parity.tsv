@@ -1298,6 +1298,7 @@ assets/ok/static_call_through_self.mojo	main	exe-differential	sanitized
 assets/ok/static_call_through_shadowed_type_name.mojo	main	exe-differential	sanitized
 assets/ok/static_method_explicit_application.mojo	main	exe-differential	sanitized
 assets/ok/static_method_pack_spread.mojo	main	exe-differential	sanitized
+assets/ok/static_method_pointer_result_keeps_argument.mojo	main	exe-differential	sanitized
 assets/ok/static_method_reads_struct_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/static_method_unread_owner_instances.mojo	main	exe-differential	sanitized
 assets/ok/static_method_unused_argument_instances.mojo	main	exe-differential	sanitized

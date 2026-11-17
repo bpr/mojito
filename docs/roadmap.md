@@ -2597,24 +2597,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2288 A static method's pointer result does not keep its argument's
-  pointee alive**
-
-  `var t = S.same(Pointer(to=z))`, over a static `same[m: Bool, //, o2:
-  Origin[mut=m]](p: Pointer[Noisy, o2]) -> Pointer[Noisy, o2]`, destroys `z`
-  right after the call, so `t[].v` fails on the VM ("field access on
-  non-struct None"), where the pin prints `9`.
-  - The same call through an instance method (`s.isame(Pointer(to=y))`) or
-    a module `def` keeps the pointee alive; the emitted `call` and its
-    register types are identical, so the static call loses the loan before
-    drop elaboration sees it.
-  - Probe: `conformance/probes/static_method_pointer_result_keeps_argument.mojo`.
-  - Probe: `View[origin_of(x)].same(Pointer(to=x))` over `-> Pointer[Noisy,
-    Self.o]` with no later use of `x` (now type-checked by R2276).
-  - Found while landing R2276 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2289 A struct's `ImmOrigin(...)` slot converts to and from the
   uncast origin**
 

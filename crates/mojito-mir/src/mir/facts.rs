@@ -1544,14 +1544,7 @@ impl<'a> Flatten<'a> {
                         return loans;
                     }
                 }
-                // A result whose type holds no reference, an `Int` from
-                // `len(xs[1:3])`, keeps none of its arguments' loans.
-                if !node.ty().is_none_or(|ty| carries_references(&ty)) {
-                    return Vec::new();
-                }
-                arguments()
-                    .flat_map(|argument| self.aggregate_borrows(argument))
-                    .collect()
+                self.result_argument_borrows(node)
             }
             CheckedOp::ListLit(_) | CheckedOp::TupleLit(_) => node
                 .operands()
@@ -1671,6 +1664,12 @@ impl<'a> Flatten<'a> {
                     }
                     return loans;
                 }
+                // A static method (`S.same(Pointer(to=z))`) is a call of a
+                // module-level function the type namespaces: its result
+                // keeps its arguments' loans as a free call's does.
+                if method_object.is_some_and(|object| self.type_receiver_name(object).is_some()) {
+                    return self.result_argument_borrows(node);
+                }
                 Vec::new()
             }
             // A field read whose type names an origin (`v.p` over a
@@ -1683,6 +1682,21 @@ impl<'a> Flatten<'a> {
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
+    }
+
+    /// The loans a call's arguments lend its result: every argument's, as
+    /// upstream keeps an origin's memory live while a value whose type
+    /// names it is, and none when the result's type holds no reference (an
+    /// `Int` from `len(xs[1:3])`).
+    fn result_argument_borrows(&mut self, node: Node<'a>) -> Vec<MirLoan> {
+        if !node.ty().is_none_or(|ty| carries_references(&ty)) {
+            return Vec::new();
+        }
+        node.args()
+            .into_iter()
+            .chain(node.kwargs().into_iter().map(|(_, value)| value))
+            .flat_map(|argument| self.aggregate_borrows(argument))
+            .collect()
     }
 
     /// `arguments` with each literal register at a closed value parameter

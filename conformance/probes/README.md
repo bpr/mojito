@@ -211,4 +211,3 @@ an upstream bug, not semantics to match.
 | `finally_copy_comptime_for.mojo` | Does a `comptime for` in a `finally` copied before two exits compile? | **differs**: the pin rejects ("use of uninitialized value '(expression temporary)'"), Mojito prints `k 0`, `k 1` twice and `end`. |
 | `finally_copy_nested_try.mojo` | Does a `try` nested in a `finally` copied before two exits compile? | **differs**: the pin rejects with the same error, Mojito runs it. |
 | `finally_copy_double_destroy.mojo` | Is a value a `finally` copied before a `break` out of an inner `while True` reads destroyed once? | **differs**: the pin destroys it twice per iteration, once before its first read; Mojito once, after its last read. |
-| `static_method_pointer_result_keeps_argument.mojo` | Does a static method's `Pointer` result keep its pointee argument alive? | **differs**: the pin prints `8 9`, Mojito destroys the pointee right after the static call — `docs/roadmap.md` R2288 |
