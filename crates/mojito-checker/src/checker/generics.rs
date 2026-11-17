@@ -1644,11 +1644,11 @@ impl Checker {
                 &signature.decls,
                 &explicit.subst,
             )?;
-            self.reject_run_time_function_value(
+            let actual = self.callable_bound_argument(
                 name,
                 &signature.names[index],
                 expression,
-                &actual,
+                actual,
                 &params[index],
             )?;
             actuals.push(actual);

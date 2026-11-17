@@ -186,6 +186,25 @@ impl<'a> Flatten<'a> {
     }
 
     pub(in crate::mir) fn expr_with_adjustments(&mut self, e: Node<'a>) -> Reg {
+        // A function inflated where it binds a `def(...)` bound is its
+        // inflated type's value, which has no field.
+        if let Some(ty) = e
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InflateFunction { ty, .. } => {
+                    Some(ty.clone())
+                }
+                _ => None,
+            })
+        {
+            let dest = self.fresh_typed(e.location(), None, ty);
+            self.emit(MirInstr::MakeStruct {
+                dest,
+                fields: Vec::new(),
+            });
+            return dest;
+        }
         if e.adjustments().iter().any(|adjustment| {
             matches!(
                 adjustment,

@@ -4478,6 +4478,55 @@ impl Checker {
         Some(TyKind::Struct(name, arguments).into())
     }
 
+    /// Register the type a function of type `signature` inflates to where
+    /// it binds a `def(...)` bound, and return its name: upstream's
+    /// `inflated$<signature>`, one declaration per signature whose one
+    /// value parameter, [`mojito_symbol::symbol::INFLATED_CALLEE`], names
+    /// the callee and is its `__call__` witness. It has no field, so it is
+    /// zero-sized, trivially register-passable, and copyable, and it
+    /// conforms to its signature as its `def(...)` conformance.
+    pub(super) fn register_inflated_function(&self, signature: &Ty) -> String {
+        let name = mojito_symbol::symbol::inflated_function_name(signature);
+        mojito_types::closure_trait::declare_closure_trait(&name, signature);
+        let callee = mojito_types::types::ParamDecl::Value {
+            id: mojito_types::param_expr::ParamId::new(&name, 0),
+            name: mojito_symbol::symbol::INFLATED_CALLEE.to_string(),
+            ty: signature.clone(),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        };
+        self.structs.synthesize(&name, || super::StructInfo {
+            params: vec![callee],
+            source_params: Vec::new(),
+            module: String::new(),
+            conforms: mojito_symbol::symbol::INFLATED_FUNCTION_CONFORMANCES
+                .iter()
+                .map(|conformance| (*conformance).to_string())
+                .collect(),
+            callable_target: super::callable_contract_target(signature),
+            callable_conformance: Some(signature.clone()),
+            witness_tables: Vec::new(),
+            conformance_conditions: HashMap::new(),
+            fields: Vec::new(),
+            declared_field_names: Vec::new(),
+            field_origin_arguments: HashMap::new(),
+            associated: HashMap::new(),
+            associated_value_types: HashMap::new(),
+            associated_spellings: HashMap::new(),
+            associated_constraints: HashMap::new(),
+            parameterized_associated: HashMap::new(),
+            methods: MethodTable::default(),
+            fieldwise_init: false,
+            explicit_destroy_message: None,
+            explicit_destructors: HashMap::new(),
+            materializes_to: None,
+        });
+        name
+    }
+
     /// The first runtime binding — an enclosing local or a parameter — a
     /// parameter default names, or the run-time
     /// `__is_run_in_comptime_interpreter` it reads, which current Mojo

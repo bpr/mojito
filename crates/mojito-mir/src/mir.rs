@@ -56,7 +56,10 @@ pub mod verify;
 pub mod visit;
 
 mod bound_calls;
-pub use bound_calls::{bound_call_contract, callable_bound_requirement, indirect_from_bound_call};
+pub use bound_calls::{
+    bound_call_contract, callable_bound_requirement, direct_from_inflated_bound_call,
+    indirect_from_bound_call,
+};
 mod call_addresses;
 pub use call_addresses::{
     by_address_parameter, by_address_receiver, call_operand_parameters,
@@ -1362,6 +1365,9 @@ fn lower_program(
             .structs
             .extend(struct_declaration(checked, *root, &mut invariant_errors));
     }
+    declarations
+        .structs
+        .extend(inflated_function_declarations(checked));
     declarations.decide_register_passability();
     let units = checked.lowering_units();
     let mut ranges = Vec::with_capacity(units.len());
@@ -2020,6 +2026,77 @@ fn struct_declaration(
             .cloned()
             .unwrap_or_default(),
     })
+}
+
+/// The MIR declaration of each type a function inflated to where the
+/// program binds a `def(...)` bound with it
+/// ([`mojito_checked::checked::SemanticAdjustment::InflateFunction`]), as
+/// upstream declares `inflated$<signature>`: one value parameter naming
+/// the callee, which is its `__call__` witness, no field, no member, and
+/// trivial lifecycles.
+fn inflated_function_declarations(checked: &CheckedProgram) -> Vec<MirStructDeclaration> {
+    let signatures: std::collections::BTreeMap<String, Ty> = checked
+        .expressions()
+        .iter()
+        .flat_map(|expression| &expression.adjustments)
+        .filter_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::InflateFunction { ty, signature } => {
+                let (name, _) = ty.kind().as_non_simd_struct()?;
+                Some((name.clone(), signature.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let holds = |trait_name: &str| mojito_checked::checked::StructConformance {
+        trait_name: trait_name.to_string(),
+        conditions: vec![GenericConstraint::Bool(true)],
+    };
+    signatures
+        .into_iter()
+        .map(|(name, signature)| MirStructDeclaration {
+            param_decls: vec![ParamDecl::Value {
+                id: mojito_types::param_expr::ParamId::new(&name, 0),
+                name: mojito_symbol::symbol::INFLATED_CALLEE.to_string(),
+                ty: signature,
+                default: None,
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            }],
+            name,
+            module: String::new(),
+            fields: Vec::new(),
+            fieldwise_init: false,
+            origin_params: Vec::new(),
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: [
+                "Copyable",
+                "ImplicitlyCopyable",
+                "Movable",
+                "Deinitable",
+                "IsTriviallyCopyable",
+                "IsTriviallyMovable",
+                "IsTriviallyDeinitable",
+            ]
+            .into_iter()
+            .map(holds)
+            .collect(),
+            declared: mojito_symbol::symbol::INFLATED_FUNCTION_CONFORMANCES
+                .into_iter()
+                .chain(["Deinitable"])
+                .map(holds)
+                .collect(),
+            register_passable: true,
+            associated_types: Vec::new(),
+            parameterized_associated_types: Vec::new(),
+            associated_values: Vec::new(),
+            parameterized_associated_values: Vec::new(),
+            members: Vec::new(),
+            witness_tables: Vec::new(),
+        })
+        .collect()
 }
 
 /// A parameter's default metadata: a folded literal, or a `Construct` when the

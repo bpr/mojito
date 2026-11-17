@@ -3099,18 +3099,25 @@ impl Checker {
                     && self.local_comptime_value(name).is_none()))
     }
 
+    /// The type `argument`, solved as `found`, binds the parameter
+    /// `expected` at.
+    ///
     /// A `def(...)` bound binds from a function's own compile-time
-    /// reference ([`Self::names_function_constant`]) or from a closure: a
-    /// run-time value of a thin function type (`var f = dbl`, a parameter)
-    /// does not conform to the bound, as at the pin.
-    pub(super) fn reject_run_time_function_value(
+    /// reference ([`Self::names_function_constant`]), a module function's
+    /// inflated to its type ([`Self::inflate_function_argument`]), or from
+    /// a closure: a run-time value of a thin function type (`var f = dbl`,
+    /// a parameter) does not conform to the bound, as at the pin.
+    pub(super) fn callable_bound_argument(
         &self,
         func: &str,
         parameter: &str,
         argument: &Expr,
-        found: &Ty,
+        found: Ty,
         expected: &Ty,
-    ) -> Result<(), TypeError> {
+    ) -> Result<Ty, TypeError> {
+        if let Some(inflated) = self.inflate_function_argument(argument, &found, expected) {
+            return Ok(inflated);
+        }
         if matches!(
             expected.kind(),
             TyKind::Param {
@@ -3128,7 +3135,44 @@ impl Checker {
                 ),
             });
         }
-        Ok(())
+        Ok(found)
+    }
+
+    /// The type a function `argument` names inflates to where it binds the
+    /// `def(...)` bound `expected`, as upstream binds `F` in `apply(dbl)`:
+    /// the struct its signature names
+    /// ([`Self::register_inflated_function`]) applied to the callee's
+    /// symbol, bare or bracket-specialized, an overload selected at the
+    /// bound's contract. `None` for any other argument, a nested `def` or
+    /// a lambda among them, which binds the bound as it did before.
+    fn inflate_function_argument(&self, argument: &Expr, found: &Ty, expected: &Ty) -> Option<Ty> {
+        let TyKind::Param {
+            callable_bound: Some(contract),
+            ..
+        } = expected.kind()
+        else {
+            return None;
+        };
+        if !matches!(
+            found.kind(),
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+        ) {
+            return None;
+        }
+        let (signature, callee) = self.callable_value_symbol(argument, contract).ok()??;
+        if !matches!(signature.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
+            return None;
+        }
+        let inflated: Ty = TyKind::Struct(
+            mojito_symbol::symbol::inflated_function_name(&signature),
+            vec![TyArg::Val(CtValue::FuncSymbol(callee))],
+        )
+        .into();
+        if mojito_types::types::is_symbolic(&inflated) {
+            return None;
+        }
+        self.register_inflated_function(&signature);
+        Some(inflated)
     }
 
     /// Whether `value` is a compile-time reference to a function: a module

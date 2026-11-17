@@ -4912,9 +4912,22 @@ under the bound's binders. Where the bound closes, the call folds as a witness
 lookup does, by one rule in `inline-parametric` and in the specializer: on a
 struct, closure storage included, to the member its `def(...)` conformance
 records (`MirDeclarations::callable_witness` when the bound spells its
-signature over the callee's binders), and on a function value, which has no
-witness table, to the value's own `CallIndirect`
-(`mir::indirect_from_bound_call`). The ownership analyses bind its arguments
+signature over the callee's binders), on a function's inflated type to its
+callee's direct call (`mir::direct_from_inflated_bound_call`, the bound's
+compile-time arguments renamed to the callee's by `mir::witness_arguments`),
+and on a function value, which has no witness table, to the value's own
+`CallIndirect` (`mir::indirect_from_bound_call`). A module function's
+compile-time reference at a `def(...)` bound binds it to that inflated type,
+as upstream binds `F` in `apply(dbl)` to `inflated$<signature>` with
+`#__CALL__#=dbl`: the checker inflates the argument where it solves the
+bound (`Checker::callable_bound_argument`), synthesizing one field-less
+struct per signature whose `__CALL__` value parameter names the callee
+(`Checker::register_inflated_function`, held in the declaration table's
+synthesized tier, `DeclarationTable::synthesize`), and records
+`SemanticAdjustment::InflateFunction`, which MIR lowers as an empty
+`MakeStruct` and declares the struct from (`inflated_function_declarations`,
+`mir.rs`). A nested `def` or capture-free lambda still binds its thin
+function type (R2087). The ownership analyses bind its arguments
 to the bound's signature (`register_ends::Callee::Contract`). A generic
 `def[...]` bound's call is the generic requirement call (R2005). Every call
 of a struct value is its `__call__` `MethodCall` from the check on, as

@@ -16,6 +16,11 @@ use std::collections::{HashMap, HashSet};
 /// `Owner.member`).
 pub struct DeclarationTable<V: 'static> {
     own: HashMap<String, V>,
+    /// Entries the check synthesizes while it infers an expression, where
+    /// it holds the table only shared: a function's inflated type
+    /// ([`Self::synthesize`]). Append-only, so a borrow of one outlives
+    /// later insertions.
+    synthesized: elsa::FrozenMap<String, Box<V>>,
     installed: Option<InstalledRows<V>>,
 }
 
@@ -38,11 +43,13 @@ impl<V: 'static> DeclarationTable<V> {
     pub fn get(&self, key: &str) -> Option<&V> {
         self.own
             .get(key)
+            .or_else(|| self.synthesized.get(key))
             .or_else(|| self.installed.as_ref()?.get(key).map(|(_, value)| value))
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
         self.own.contains_key(key)
+            || self.synthesized.get(key).is_some()
             || self
                 .installed
                 .as_ref()
@@ -61,6 +68,16 @@ impl<V: 'static> DeclarationTable<V> {
     /// Remove the own entry `key`.
     pub(super) fn remove(&mut self, key: &str) -> Option<V> {
         self.own.remove(key)
+    }
+
+    /// Register `value` under `key` through a shared borrow, unless an
+    /// entry already holds the key: a declaration the check synthesizes
+    /// mid-inference, which no statement declares, so the own entries and
+    /// an interface never carry it.
+    pub(super) fn synthesize(&self, key: &str, value: impl FnOnce() -> V) {
+        if !self.contains_key(key) {
+            self.synthesized.insert(key.to_string(), Box::new(value()));
+        }
     }
 
     /// The own entry `key`, for in-place registration.
@@ -121,6 +138,7 @@ impl<V: 'static> Default for DeclarationTable<V> {
     fn default() -> Self {
         Self {
             own: HashMap::new(),
+            synthesized: elsa::FrozenMap::new(),
             installed: None,
         }
     }

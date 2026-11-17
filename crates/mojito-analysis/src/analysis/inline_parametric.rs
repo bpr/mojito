@@ -4292,6 +4292,24 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
         for region in instruction_regions_mut(instruction) {
             fold_witnesses(region, function, declarations);
         }
+        // An inflated function type's witness is its callee.
+        if let Some(bound) = mojito_mir::mir::direct_from_inflated_bound_call(instruction, function)
+        {
+            if let MirInstr::Call {
+                func,
+                param_arg_regs,
+                ..
+            } = instruction
+                && let Some(declaration) = declarations.function(&func.0)
+            {
+                mojito_mir::mir::witness_arguments(
+                    &bound,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                );
+            }
+            continue;
+        }
         let Some(member) = witness_of(instruction, function, declarations) else {
             continue;
         };

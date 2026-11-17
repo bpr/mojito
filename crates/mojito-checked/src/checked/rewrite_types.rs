@@ -471,22 +471,18 @@ impl RewriteTypes for ReflectedFieldStep {
 impl RewriteTypes for SemanticAdjustment {
     fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
         match self {
-            Self::Rebind { operand, dest } => {
-                operand.rewrite_types(rewrite);
-                dest.rewrite_types(rewrite);
+            Self::Rebind {
+                operand: ty,
+                dest: signature,
             }
-            Self::ConstructType { ty } => {
+            | Self::InflateFunction { ty, signature } => {
                 ty.rewrite_types(rewrite);
+                signature.rewrite_types(rewrite);
             }
-            Self::SelectedCall(f0) => {
-                f0.rewrite_types(rewrite);
-            }
-            Self::AugmentedSubscript(f0) => {
-                f0.rewrite_types(rewrite);
-            }
-            Self::SubscriptWriteBack(f0) => {
-                f0.rewrite_types(rewrite);
-            }
+            Self::ConstructType { ty } => ty.rewrite_types(rewrite),
+            Self::SelectedCall(f0) => f0.rewrite_types(rewrite),
+            Self::AugmentedSubscript(f0) => f0.rewrite_types(rewrite),
+            Self::SubscriptWriteBack(f0) => f0.rewrite_types(rewrite),
             Self::AugmentedInPlace {
                 call,
                 place_reference,

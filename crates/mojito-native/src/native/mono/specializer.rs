@@ -3028,6 +3028,23 @@ impl<'a> Specializer<'a> {
             {
                 *in_place = false;
             }
+            // A `def(...)` bound's `__call__` requirement called on an
+            // inflated function type is its callee's direct call.
+            if let Some(bound) =
+                mojito_mir::mir::direct_from_inflated_bound_call(instruction, function)
+                && let MirInstr::Call {
+                    func,
+                    param_arg_regs,
+                    ..
+                } = instruction
+                && let Some(declaration) = self.declarations.get(func.0.as_str())
+            {
+                mojito_mir::mir::witness_arguments(
+                    &bound,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                );
+            }
             // A `def(...)` bound's `__call__` requirement called on a
             // function value is the value's own indirect call: a
             // function type has no witness table.

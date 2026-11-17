@@ -1114,6 +1114,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module function's compile-time reference at a `def(...)` bound now
+  binds the bound to the function's inflated type, as at the pin: an
+  empty, trivially register-passable struct per signature whose
+  `__CALL__` parameter names the callee and is its `__call__` witness.
+  `size_of[F]()` in `info(dbl)` now prints `0` as at the pin, and the
+  requirement call is the callee's direct call
+  (`assets/ok/callable_bound_inflated_function.mojo`, R2279). A nested
+  `def` or capture-free lambda still binds its thin function type
+  (R2087), the elaborator's dataflow fold retires after it (R2292), and a
+  zero-sized argument is still passed natively (R2293).
+
 - The SROA `borrowed_kept` and `borrowed_field` MIR pass cases now borrow
   their slot through a `mut self` receiver's `ref.make` operand, since a
   register-passable `read self` receiver passes by value and names no

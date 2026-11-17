@@ -1193,6 +1193,54 @@ pub fn is_closure_storage_name(name: &str) -> bool {
     name.ends_with("$__storage")
 }
 
+/// The struct a function of type `signature` inflates to at a `def(...)`
+/// bound.
+///
+/// As upstream's `inflated$<signature>|<hash>`, it is one declaration per
+/// signature, parameterized by the callee it calls ([`INFLATED_CALLEE`]).
+/// The name digests the signature's spelling.
+pub fn inflated_function_name(signature: &Ty) -> String {
+    let digest = Sha256::digest(signature.to_string().as_bytes());
+    format!("{INFLATED_PREFIX}{}", hex_digest(&digest[..8]))
+}
+
+/// Whether struct `name` is a function's inflated type
+/// ([`inflated_function_name`]).
+pub fn is_inflated_function_name(name: &str) -> bool {
+    name.starts_with(INFLATED_PREFIX)
+}
+
+/// The value parameter of an inflated function type that names its callee,
+/// upstream's `#__CALL__#`, which is also the type's `__call__` witness.
+pub const INFLATED_CALLEE: &str = "__CALL__";
+
+/// The traits an inflated function type conforms to, as at the pin: it
+/// has no field, so it is trivially register-passable and copyable.
+pub const INFLATED_FUNCTION_CONFORMANCES: [&str; 5] = [
+    "Movable",
+    "Copyable",
+    "ImplicitlyCopyable",
+    "RegisterPassable",
+    "TrivialRegisterPassable",
+];
+
+/// The callee an inflated function type `ty` (through any references)
+/// calls: its [`INFLATED_CALLEE`] argument, when that is closed.
+pub fn inflated_callee(ty: &Ty) -> Option<&mojito_types::ct::FuncSymbolRef> {
+    let mut ty = ty;
+    while let mojito_types::types::TyKind::Ref(reference) = ty.kind() {
+        ty = &reference.referent;
+    }
+    let (name, arguments) = ty.kind().as_non_simd_struct()?;
+    if !is_inflated_function_name(name) {
+        return None;
+    }
+    match arguments.first()? {
+        TyArg::Val(CtValue::FuncSymbol(callee)) => Some(callee),
+        _ => None,
+    }
+}
+
 /// Whose a lifted compile-time function is, as its name says
 /// ([`lifted_owner`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3429,6 +3477,10 @@ fn declared_struct_name(linked: &str) -> &str {
         .strip_prefix("__module$")
         .map_or(linked, |rest| rest.rsplit('$').next().unwrap_or(rest))
 }
+
+/// The prefix of an inflated function type's name
+/// ([`inflated_function_name`]).
+const INFLATED_PREFIX: &str = "$inflated$";
 
 #[cfg(test)]
 mod tests {

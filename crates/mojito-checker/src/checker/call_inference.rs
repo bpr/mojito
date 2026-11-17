@@ -2048,7 +2048,7 @@ impl Checker {
             };
             use_params.push(params[i].clone());
             let actual = self.solving_argument_ty(arg, &params[i], decls, &explicit.subst)?;
-            self.reject_run_time_function_value(name, &names[i], arg, &actual, &params[i])?;
+            let actual = self.callable_bound_argument(name, &names[i], arg, actual, &params[i])?;
             arg_tys.push(actual);
             arg_exprs.push(arg);
         }

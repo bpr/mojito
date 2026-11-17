@@ -1682,8 +1682,32 @@ impl Checker {
     /// callable type supplies all of its type information. Runtime execution is
     /// still type-erased; this produces the checked callable view used by the
     /// binding or argument site.
+    /// The signature of the function the type `to` inflates
+    /// ([`Self::register_inflated_function`]); `None` for any other type.
+    fn inflated_signature(&self, to: &Ty) -> Option<Ty> {
+        let (name, _) = to.kind().as_non_simd_struct()?;
+        if !mojito_symbol::symbol::is_inflated_function_name(name) {
+            return None;
+        }
+        self.structs.get(name)?.callable_conformance.clone()
+    }
+
+    /// Whether `from`, a function's type or an overload set holding one,
+    /// is the signature the type `to` inflates: the reference binds `to`
+    /// as its inflated value.
+    fn inflates_to(&self, from: &Ty, to: &Ty) -> bool {
+        self.inflated_signature(to)
+            .is_some_and(|signature| match from.kind() {
+                TyKind::Overload(candidates) => candidates
+                    .iter()
+                    .any(|candidate| coerces(candidate, &signature)),
+                TyKind::Func(_) | TyKind::GenericFunc(_) => coerces(from, &signature),
+                _ => false,
+            })
+    }
+
     fn value_coerces(&self, from: &Ty, to: &Ty) -> bool {
-        if coerces(from, to) {
+        if coerces(from, to) || self.inflates_to(from, to) {
             return true;
         }
         if let TyKind::Param { bounds, .. } = to.kind()
@@ -2297,6 +2321,19 @@ impl Checker {
         // naming it.
         if let Some(construction) = self.spelled_construction(expression) {
             return self.record_implicit_conversion(&construction, from, to);
+        }
+        // A function's reference at the type it inflated to where it bound
+        // a `def(...)` bound ([`Self::inflate_function_argument`]).
+        if self.inflates_to(from, to)
+            && let Some(signature) = self.inflated_signature(to)
+        {
+            self.record_at(expression.source_span()).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::InflateFunction {
+                    ty: to.clone(),
+                    signature,
+                },
+            ));
+            return Ok(true);
         }
         if let TyKind::Overload(candidates) = from.kind() {
             let matches: Vec<_> = candidates

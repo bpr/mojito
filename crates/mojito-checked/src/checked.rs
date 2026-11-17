@@ -734,6 +734,16 @@ pub enum SemanticAdjustment {
     ConstructType {
         ty: Ty,
     },
+    /// A function's compile-time reference (`dbl`, `twice[4]`) binding a
+    /// `def(...)` bound, inflated to `ty`: the struct its signature names,
+    /// applied to the callee, as upstream binds `F` in `apply(dbl)` to
+    /// `inflated$<signature>` with `#__CALL__#=dbl`. The value has no
+    /// field: MIR lowers the reference as an empty struct of `ty`, and
+    /// declares the struct from `signature`, the callee's function type.
+    InflateFunction {
+        ty: Ty,
+        signature: Ty,
+    },
     /// A built-in vector constructed by its one argument's own conversion,
     /// which the argument carries: `UInt(7)`, `Float64(2.5)` from a literal,
     /// upstream's builtin-inline `SIMD.__init__(IntLiteral)` (its

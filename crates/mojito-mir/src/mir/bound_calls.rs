@@ -5,9 +5,9 @@
 //! generic: the call carries the bound's compile-time parameter
 //! declarations and the arguments it applies, as a generic method's call
 //! does. Where the bound closes, the call folds as a witness lookup does: a
-//! struct's to the member its `def(...)` conformance records, and a
-//! function value, which has no witness table, to its own
-//! [`MirInstr::CallIndirect`].
+//! struct's to the member its `def(...)` conformance records, a function's
+//! inflated type to its callee's direct call, and a function value, which
+//! has no witness table, to its own [`MirInstr::CallIndirect`].
 
 use super::legacy_places::{LegacyCursor, LegacyOperandTables};
 use super::{MirFunction, MirInstr};
@@ -128,6 +128,66 @@ pub fn indirect_from_bound_call(
         spread: spread.take(),
     };
     loads
+}
+
+/// Rewrite a `__call__` requirement call on an inflated function type
+/// into the direct call of its callee.
+///
+/// Upstream's `#__CALL__#` is the inflated type's `__call__` witness: the
+/// receiver, which has no field, is dropped, and the callee's own
+/// compile-time arguments lead the call's.
+///
+/// Returns the bound's compile-time parameter declarations, which the
+/// rewritten call's `param_arg_regs` still name, for the caller to rename
+/// to the callee's ([`super::witness_arguments`]); `None`, leaving
+/// `instruction` as it was, for any other call.
+pub fn direct_from_inflated_bound_call(
+    instruction: &mut MirInstr,
+    function: &MirFunction,
+) -> Option<Vec<mojito_types::types::ParamDecl>> {
+    let MirInstr::MethodCall {
+        dest,
+        recv,
+        method,
+        resolved: Some(target),
+        raises,
+        args,
+        kwargs,
+        conventions,
+        capture_accesses,
+        param_arg_regs,
+        param_decls,
+        instantiated_args,
+        spread,
+        ..
+    } = instruction
+    else {
+        return None;
+    };
+    if method != "__call__" || !is_callable_contract_dispatch(target) {
+        return None;
+    }
+    let callee = mojito_symbol::symbol::inflated_callee(function.reg_types.get(&recv.0)?)?;
+    let bound = std::mem::take(param_decls);
+    *instruction = MirInstr::Call {
+        dest: *dest,
+        func: super::FuncRef(callee.symbol.clone()),
+        raises: raises.take(),
+        args: std::mem::take(args),
+        kwargs: std::mem::take(kwargs),
+        conventions: std::mem::take(conventions),
+        capture_accesses: std::mem::take(capture_accesses),
+        param_arg_regs: std::mem::take(param_arg_regs),
+        receiver: None,
+        instantiated_args: callee
+            .arguments
+            .iter()
+            .cloned()
+            .chain(std::mem::take(instantiated_args))
+            .collect(),
+        spread: spread.take(),
+    };
+    Some(bound)
 }
 
 /// Upgrade the `def(...)` bound calls of `functions`, read from an

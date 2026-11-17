@@ -1,8 +1,8 @@
-# A function value at a `def(...)`-bound `read` parameter is passed by the
+# A callable at a `def(...)`-bound `read` parameter is passed by the
 # address of its storage, as at Mojo, where the bound does not refine
-# `RegisterPassable`: a function name, a nested `def`, a forwarded bound
-# value, both kinds of lambda, and `Tuple()`'s `init_with` lambda each still
-# reach their callee.
+# `RegisterPassable`: a function name (its empty inflated type), a nested
+# `def`, a forwarded bound value, both kinds of lambda, and `Tuple()`'s
+# `init_with` lambda each still reach their callee.
 def dbl(x: Int) -> Int:
     return x * 2
 

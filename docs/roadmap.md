@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2291**.
+Next free ID: **R2294**.
 
 ## Ordered Work
 
@@ -1355,6 +1355,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R1641 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2293 A zero-sized argument is still passed natively**
+
+  Upstream drops every zero-sized argument from a compiled callee's
+  signature, `memoryOnly` or not, so `apply(dbl)`'s instance over an
+  inflated function type takes no parameter. Mojito passes a pointer to
+  the empty value.
+  - Probe: `take[T: G](e: T)` over a field-less `struct E(Copyable, G)`,
+    and the same `E` declared `TrivialRegisterPassable`: the pin defines
+    each instance with no parameter, where Mojito's `--emit ll` defines
+    `mj_take$mono$TE(ptr %0)`.
+  - Probe: `apply(dbl)` over `@no_inline def apply[F: def(Int) -> Int](f:
+    F) -> Int` defines `mj_apply$mono$T$inflated$...$Vdbl(ptr %0)`.
+  - Owner: the physical signature classification
+    (`mojito-native-core` rt_abi) and `mojito-pliron`'s signature and call
+    lowering, with the rule stated in `docs/native-abi.md` beside the
+    thunk's "zero-sized parameters skipped".
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### Catch Up To Current Mojo: Ownership, Origins, And Destruction
 
@@ -4142,6 +4161,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `CallableDefault::If` default stays `Deferred` at the check, and the
     elaborator's `apply_defaults` (`native/mono/unify.rs`) evaluates it
     per instance.
+  - The same gap keeps a nested `def` or capture-free lambda at a
+    `def(...)` bound from inflating, as a module function's reference
+    does (`inflate_function_argument`, `checker/constraints.rs`): upstream
+    binds `F` to `inflated$<signature>` with `#__CALL__#=b::g(...)`.
+  - Probe: `size_of[F]()` prints `16` for a nested `def h` and for
+    `lambda (x: Int) -> Int: x + 7` passed to
+    `def info[F: def(Int) -> Int](f: F)`, where the pin prints `0`.
+  - Probe: `Tuple[D, D]()` in
+    `assets/ok/callable_bound_function_value_address.mojo`, whose
+    `init_with` lambda sits in a generic method, must still print `7 7`
+    on both backends: the elaborator renames a nested body per enclosing
+    instance only at `closure.make` and `const function`
+    (`instantiate_nested_bodies`), not in a type argument.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9545,25 +9577,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2279 A function name at a `def(...)` bound is not inflated into
-  the bound's type**
+- [ ] **R2292 The elaborator still folds a `def(...)` bound's callee from
+  register dataflow**
 
-  Upstream binds `F` in `apply(dbl)` to an inflated closure type whose
-  `__call__` is `dbl` (`#__CALL__#=dbl` in its LLVM symbol). The value is
-  an empty struct, and the instance takes no argument. Mojito keeps the
-  thin function as a run-time argument passed by address.
-  - The elaborator folds the callee into the instance through
-    `bindings.callables` (`native/mono/infer.rs`), which reads
-    `callable_targets` dataflow rather than the type.
-  - A `GenericFunc` slot is erased to an `Int` placeholder
-    (`erase_specialized_generic_callable_storage`, `mono/symbolic.rs`).
-  - Probe: `apply(dbl)` and a nested `def g` in
-    `assets/ok/callable_bound_function_value_address.mojo`.
-  - Fix: inflate the function into the bound's type where the checker
-    binds a callable bound, so the elaborator's dataflow fold and the
-    placeholder erasure can retire.
-  - Depends on R2278, since inflation makes that rejection fall out.
-  - Model: Fable, Planned.
+  Once every function constant inflates, no thin function value reaches a
+  `def(...)` bound, yet the elaborator still keys an instance by a callee
+  it traces through registers, and erases a generic callable's slot to an
+  `Int` placeholder.
+  - Retire `Bindings::callables` and its readers
+    (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
+    seeding in `specializer.rs`), `callable_parameter_addresses`, and
+    `substitute_callable_parameter_reads`.
+  - Retire `erase_specialized_generic_callable_storage` and
+    `erase_generic_callable_parameters` (`mono/symbolic.rs`).
+  - Retire the `Func`/`GenericFunc` receiver arm of
+    `indirect_from_bound_call` once no caller reaches it.
+  - In the checker, drop the `Func`/`GenericFunc` arms of
+    `declared_callable_contract`, and fold the run-time function value
+    rejection in `callable_bound_argument` into plain non-conformance,
+    keeping the pin's wording
+    (`assets/type_error/callable_bound_run_time_function_value.mojo`).
+  - Probe: every fixture R2087 names, unchanged on both backends.
+  - Depends on R2087, since a nested callee still needs the fold.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2280 The verifier checks no by-address receiver**
 
