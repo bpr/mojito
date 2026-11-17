@@ -526,10 +526,11 @@ impl Checker {
     /// See [`Self::bind_ref_sig_pack_origin`]: bind the pack origin within
     /// one declared signature origin. Only the callee's declaration names
     /// its own pack origin; one reaching the call through an actual is the
-    /// caller's. A memory-only collected temporary the result borrows
-    /// (`first(String("q"), s)`) lives as long as the reference, as at a
-    /// `read` parameter: lowering stores it in a hidden slot the pack
-    /// element reads through.
+    /// caller's. A collected temporary the result borrows
+    /// (`first(String("q"), s)`, `first(n + 1, s)`) lives as long as the
+    /// reference, as at a `read` parameter: lowering stores it in a hidden
+    /// slot the pack element reads through, register-passable or not, as
+    /// upstream's pack refers to each element where it lies.
     pub(in crate::checker) fn bind_sig_pack_origin(
         &self,
         signature: &mojito_types::origin::SigOrigin,
@@ -547,16 +548,9 @@ impl Checker {
                 if !crate::checker::places::is_place_expr(expression)
                     && self.infer_reference_value(expression).is_none()
                 {
-                    // A register-passable temporary passes by value, so
-                    // the pack element's slot dies with the call (R2290).
-                    if !self.memory_only(&self.infer(expression)?) {
-                        return Err(TypeError::Unsupported(
-                            "a register-passable temporary collected by a pack whose origin \
-                             the call's result borrows"
-                                .to_string(),
-                        ));
-                    }
                     let root = self.materialize_borrow_owner(expression, false)?;
+                    self.record_at(expression.source_span())
+                        .pack_borrowed_temporary = true;
                     return Ok(Some(Origin::Place(OriginPlace {
                         root,
                         path: Vec::new(),

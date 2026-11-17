@@ -521,8 +521,11 @@ impl RewriteTypes for SemanticAdjustment {
             Self::ConversionMaterializesSource(f0) | Self::RaiseConversion(f0) => {
                 f0.rewrite_types(rewrite);
             }
-            Self::MaterializeLiteral(f0) => {
-                f0.rewrite_types(rewrite);
+            Self::MaterializeLiteral {
+                target,
+                materialized: _,
+            } => {
+                target.rewrite_types(rewrite);
             }
             Self::ReferenceResult { reference } => {
                 reference.rewrite_types(rewrite);
@@ -1470,7 +1473,10 @@ mod tests {
             binding: None,
             contextual_base: None,
             effects: EffectFacts::default(),
-            adjustments: vec![SemanticAdjustment::MaterializeLiteral(Ty::int())],
+            adjustments: vec![SemanticAdjustment::MaterializeLiteral {
+                target: Ty::int(),
+                materialized: None,
+            }],
             comprehension_bindings: Vec::new(),
             call_transfers: Vec::new(),
         };
@@ -1482,7 +1488,7 @@ mod tests {
         );
         assert!(matches!(
             node.adjustments.as_slice(),
-            [SemanticAdjustment::MaterializeLiteral(ty)] if *ty == Ty::bool()
+            [SemanticAdjustment::MaterializeLiteral { target, .. }] if *target == Ty::bool()
         ));
     }
 }

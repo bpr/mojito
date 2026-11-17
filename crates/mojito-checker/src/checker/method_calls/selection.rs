@@ -570,11 +570,11 @@ pub(in crate::checker) fn call_value_adjustments(
             .adjustment
             .as_deref()
             .and_then(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target) => {
-                    Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
-                        target: target.clone(),
-                    }])
-                }
+                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral {
+                    target, ..
+                } => Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
+                    target: target.clone(),
+                }]),
 
                 _ => None,
             })

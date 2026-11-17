@@ -640,6 +640,7 @@ assets/ok/literal_declared_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_dunder_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_operator_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_rule_value_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/literal_to_ref_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/literal_unary_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
@@ -1722,6 +1723,7 @@ assets/ok/variadic_overload_collector_position.mojo	-	ineligible	no-scalar-entry
 assets/ok/variadic_pack_element_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_forwarding_generic_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_origin_ref_return.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variadic_pack_origin_register_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_pointer_maps.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_read_collector_destroy_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_pack_upstream_spellings.mojo	-	ineligible	no-scalar-entry-shape

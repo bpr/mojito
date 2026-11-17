@@ -13,8 +13,10 @@ to evolve under the `0.x` compatibility rules.
   binds it to the places the collector gathers, so `first(x, s)` over
   `def first[*Ts: Writable](*args: *Ts) -> ref[args.origin] Ts[0]`
   prints `x` as at the pin (`assets/ok/variadic_pack_origin_ref_return.mojo`,
-  R2287). A register-passable temporary collected into such a call is
-  rejected for now (R2290).
+  R2287). A temporary collected into such a call, register-passable or
+  not, lives as long as the returned reference, so `first(n + 1, s)` and
+  `first(5, s)` print `4` and `5`
+  (`assets/ok/variadic_pack_origin_register_temporary.mojo`, R2290).
 
 - A conformance or refinement list entry may be a trait composition:
   `struct S(A & B)` conforms to each trait, `A & B where C` conditions
@@ -714,6 +716,12 @@ to evolve under the `0.x` compatibility rules.
   script helpers moved to `scripts/tierlib.py`.
 
 ### Fixed
+
+- A literal passed to a `ref` parameter (`look(3)` over `def look(ref
+  other: Int)`) is now materialized in a hidden slot the parameter binds,
+  as at the pin, instead of stopping at run time with "reference binding
+  to a non-place expression" (`assets/ok/literal_to_ref_parameter.mojo`,
+  part of R54).
 
 - A struct's `ImmOrigin(o)` origin slot no longer converts to or from
   the uncast `o` slot unless `o` is already immutable, as at the pin:

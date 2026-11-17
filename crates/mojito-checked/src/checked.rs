@@ -848,8 +848,15 @@ pub enum SemanticAdjustment {
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
     /// arithmetic is unbounded, while the resulting scalar has fixed-width
-    /// runtime semantics.
-    MaterializeLiteral(Ty),
+    /// runtime semantics. A borrow of the materialized value (a `ref`
+    /// parameter, a pack origin a call's result names) holds it in the
+    /// hidden slot of the `materialized` owner, as
+    /// [`Self::MaterializeBorrowSource`] does.
+    MaterializeLiteral {
+        target: Ty,
+        #[serde(default)]
+        materialized: Option<mojito_types::origin::OwnerId>,
+    },
     BorrowShared,
     BorrowMutable,
     /// Constructor arguments bound to origin-solving `ref` parameters: the
@@ -7503,6 +7510,10 @@ pub fn materialized_borrow_owner(
         | SemanticAdjustment::CallableCaptureAccesses {
             materialized: Some(owner),
             ..
+        }
+        | SemanticAdjustment::MaterializeLiteral {
+            materialized: Some(owner),
+            ..
         } => Some(*owner),
         _ => None,
     })
@@ -7677,6 +7688,12 @@ node_facts! {
         /// the caller destroys once the call returns: the check's own
         /// record, which decides [`SemanticAdjustment::RegisterPassableRead`].
         read_temporary_argument,
+        /// A temporary a read `*args` collector gathers whose pack origin
+        /// the call's result borrows: the pack refers to the temporary in
+        /// its owner's storage, as upstream's `!lit.ref.pack` does, so it
+        /// is never passed by value
+        /// ([`SemanticAdjustment::RegisterPassableRead`]).
+        pack_borrowed_temporary,
         /// A place receiver whose declared convention is a read, which a
         /// register-passable type passes by value
         /// ([`SemanticAdjustment::RegisterPassableRead`]).

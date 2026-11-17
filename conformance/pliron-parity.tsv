@@ -641,6 +641,7 @@ assets/ok/literal_declared_conformance.mojo	main	exe-differential	sanitized
 assets/ok/literal_dunder_instances.mojo	main	exe-differential	sanitized
 assets/ok/literal_operator_dunders.mojo	main	exe-differential	sanitized
 assets/ok/literal_rule_value_type.mojo	main	exe-differential	sanitized
+assets/ok/literal_to_ref_parameter.mojo	main	exe-differential	sanitized
 assets/ok/literal_unary_dunders.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/llvm_intrinsic.mojo	main	exe-differential	sanitized
@@ -1723,6 +1724,7 @@ assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	saniti
 assets/ok/variadic_pack_element_origin.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_origin_ref_return.mojo	main	exe-differential	sanitized
+assets/ok/variadic_pack_origin_register_temporary.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_pointer_maps.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_read_collector_destroy_order.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized

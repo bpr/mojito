@@ -961,9 +961,9 @@ impl<'a> Node<'a> {
         self.adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target) => {
-                    Some(target)
-                }
+                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral {
+                    target, ..
+                } => Some(target),
                 _ => None,
             })
             .cloned()

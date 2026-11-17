@@ -2126,20 +2126,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R54 A literal passed to a `ref` parameter stops at run time**
+- [ ] **R54 A list display passed to a `ref` parameter is not materialized**
 
-  Problem: `look(3)` against `def look(ref other: Int)` is accepted and then
-  fails with "reference binding to a non-place expression".
-  - The pin materializes the literal and binds the parameter to the temporary.
-  - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
-  - Probe: a list display converted at a `ref` parameter is not
-    materialized either. `h([1, 2, 3])` over `def h(ref a: List[Int])`,
+  Problem: a list display converted at a `ref` parameter fails where the
+  pin materializes it and binds the parameter to the temporary, as it
+  already does for a literal (`assets/ok/literal_to_ref_parameter.mojo`).
+  - Probe: `h([1, 2, 3])` over `def h(ref a: List[Int])`,
     and `Span([1, 2, 3]).__len__()` through `Span`'s `List` constructor
     (which the pin selects for a display), fail the verifier ("write-back
     parameter 0 of 'h' has no caller place"). `var s = Span([1, 2, 3])`
     reports "no field 'size'", and `len(Span([1, 2, 3]))` says `Span[Int]`
     is not `SizedRaising`. The pin prints `3` for each (found while
-    landing R1725, 2026-10-30).
+    landing R1725, 2026-10-30). On 2026-11-17 `h([1, 2, 3])` reported
+    "argument 0 of 'h' is received by address but passes a List[Int]
+    value" instead.
   - It materializes through the same fallback divergence R169
     (`ref-binding-register-value`) wants narrowed, so the two answers must
     agree.
@@ -7327,30 +7327,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `ctfe-body-print`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2290 A register-passable temporary a `read` pack collects is not
-  kept alive for a reference its call returns through the pack origin**
-
-  `first(n + 1, s)` and `first(5, s)` over `def first[*Ts: Writable](*args:
-  *Ts) -> ref[args.origin] Ts[0]` are rejected ("a register-passable
-  temporary collected by a pack whose origin the call's result borrows"),
-  where the pin prints `4` and `5`.
-  - The call lowering passes a register-passable `read` operand by value
-    (`register_passable_read_binding`, `mir/calls.rs`), so
-    `build_variadic_pack` (`mir/variadics.rs`) stores it in a fresh
-    `$pack_element` slot it keeps alive only through the call, not in the
-    checker's materialized borrow owner the result's origin names.
-  - A literal's span already carries another adjustment, so
-    `materialize_borrow_owner` cannot mint it an owner at all.
-  - Lever: let `Checker::bind_pack_origin` (`checker/origins/solve.rs`)
-    materialize these as it does a memory-only temporary, and have the pack
-    construction store a materialized element in its owner's slot.
-  - Probe: `print(first(n + 1, s))` prints `4` and `print(first(5, s))`
-    prints `5`, with `var n = 3; var s = String("a")`; before the
-    rejection, the first printed `0`.
-  - Found while landing R2287 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2230 `reflect[T].name()` spells a struct-valued parameter as its
   construction, where the pin prints the value**

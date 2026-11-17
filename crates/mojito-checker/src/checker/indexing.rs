@@ -889,7 +889,7 @@ impl Checker {
                 .borrow()
                 .get(&value_source)
                 .and_then(|facts| facts.adjustment.as_deref()),
-            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral { .. })
         ) {
             self.clear_fact(&value_source, |facts| facts.adjustment.take());
         }

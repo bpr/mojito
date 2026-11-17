@@ -2511,8 +2511,20 @@ impl Checker {
             {
                 return self.record_selected_conversion(expression, from, selected, to);
             }
-            self.record_at(expression.source_span()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
+            // Re-inference keeps the owner a borrow already minted.
+            let mut record = self.record_at(expression.source_span());
+            let materialized = match record.adjustment.as_deref() {
+                Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral {
+                    materialized,
+                    ..
+                }) => *materialized,
+                _ => None,
+            };
+            record.adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral {
+                    target: to.clone(),
+                    materialized,
+                },
             ));
             return Ok(());
         }
@@ -2621,6 +2633,7 @@ impl Checker {
                     let by_value = (facts.borrowed_read_call_place
                         || facts.read_temporary_argument
                         || facts.read_place_receiver)
+                        && !facts.pack_borrowed_temporary
                         && passed.is_some_and(|ty| !memory_only(ty));
                     let result = facts
                         .declared_result

@@ -726,7 +726,7 @@ impl Checker {
             facts.conversion_materialization = None;
         } else if matches!(
             facts.adjustment.as_deref(),
-            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral { .. })
         ) {
             facts.adjustment = None;
         }
