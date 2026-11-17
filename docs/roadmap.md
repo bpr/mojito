@@ -9667,24 +9667,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2274 The inliner does not inline a call whose `deinit` receiver
-  is passed by address**
-
-  Upstream's inliner substitutes a `DeinitMem` operand's address for the
-  callee's `deinit self`. `inline_parametric.rs`'s `argument_binding`
-  binds a `deinit` parameter only from a forwarded slot or a loaded place,
-  so a call whose receiver is a `ref.make` (R2267's form) stays a call.
-  - Probe: `tests/mir_passes/inline-parametric/field_destructor_place`,
-    whose `S.__deinit__` keeps `D.__deinit__` as a call where it used to
-    inline it.
-  - A first attempt bound the made place as a `Binding::Slot` or
-    `Binding::Part`; it broke the store drops through a `mut` parameter in
-    `assets/ok/mut_parameter_reassignment_drop_shapes.mojo` (`twice`
-    printed `del 0`), so the binding of a by-address part needs the
-    store-drop shape understood first.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2273 A dying memory-only slot is forwarded to its destructor
   rather than addressed**
 

@@ -1073,6 +1073,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` again inlines a `nodebug` destructor whose `deinit`
+  receiver is passed by address, as upstream's inliner maps `deinit self`
+  to the `DeinitMem` operand's address: a field's drop (`S.__deinit__`
+  over a `D` field) and a store's drop through a `mut` parameter
+  (`p = Pair(v)`) hold the destructor's body, its places on the field or
+  the parameter's referent, rather than a call. No program output
+  changes. (R2274)
+
 - `lower-arg-conventions` now takes a `deinit` receiver an elaborated
   instance makes register-passable out of its storage and passes the owned
   value, as upstream's `LowerArgConventions` passes a `DeinitMem` operand:

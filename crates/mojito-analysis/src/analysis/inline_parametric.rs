@@ -533,12 +533,17 @@ enum Binding {
     /// destructor's `deinit self` at a drop of the slot, which upstream
     /// passes by address. The body ends the slot as the forward did.
     Slot(VarId),
-    /// The place an explicit destroy, or a field's drop, loads into a
-    /// `deinit` receiver the call consumes in place, an owned part of a
-    /// caller's slot or the value a reference reaches, which upstream
-    /// passes by address: the body's places compose with it, and the
-    /// call's consumption of it is the body's end of the parameter.
-    Part { place: MirPlace, argument: Reg },
+    /// The storage a `deinit` receiver's call consumes in place, an owned
+    /// part of a caller's slot or the value a reference reaches, which
+    /// upstream passes by address (a `DeinitMem` operand): the body's
+    /// places compose with it, and the call's consumption of it is the
+    /// body's end of the parameter. `argument` is the value an explicit
+    /// destroy, or a field's drop, loads from the place, and `None` where
+    /// the call passes the place's address.
+    Part {
+        place: MirPlace,
+        argument: Option<Reg>,
+    },
     /// A `mut` or `ref` parameter whose caller's place is a `ref` field,
     /// or a `read` one read through a reference or pointer register: a
     /// fresh slot of the handle's type initialized with it, the address the
@@ -1153,13 +1158,12 @@ impl<'c> Inliner<'_, 'c> {
     /// the places the closure captures.
     fn inlinable(&self, block: &MirBlock, index: usize) -> Option<Inlinable<'c>> {
         let addressed = self.addresses.operands(&block.instrs[index]);
-        let reference_parameters = &self.function.ref_params;
-        let arg_places = bound_places(&addressed.positional, reference_parameters);
-        let kwarg_places = bound_places(&addressed.keyword, reference_parameters);
+        let arg_places = bound_places(&addressed.positional, self.function);
+        let kwarg_places = bound_places(&addressed.keyword, self.function);
         let receiver_place = addressed
             .receiver
-            .map(|address| bound_place(address, reference_parameters));
-        let subscript = subscript_operands(&block.instrs[index], &addressed, reference_parameters);
+            .map(|address| bound_place(address, self.function));
+        let subscript = subscript_operands(&block.instrs[index], &addressed, self.function);
         let (
             dest,
             target,
@@ -1574,6 +1578,7 @@ impl<'c> Inliner<'_, 'c> {
                 )
                 .or_else(|| {
                     (!is_reference_parameter(callee, param)
+                        && !callee.deinit_params.get(param).copied().unwrap_or(true)
                         && callee
                             .param_types
                             .get(param)
@@ -2442,7 +2447,11 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// explicit destroy's or a field drop's receiver, which the call consumes
 /// in place), and is otherwise a fresh slot the argument, an owned value
 /// the check proved whole (a copied receiver's move), initializes, for the
-/// body to consume;
+/// body to consume; a `deinit` receiver the call passes by address binds
+/// the owned slot it addresses whole, or else the part or referent it
+/// addresses as the place the call consumes in place, as upstream maps
+/// `deinit self` to the `DeinitMem` operand's address, and is `None`
+/// otherwise;
 /// an owned parameter, or a `read` one of a type no destructor tears down,
 /// is a fresh slot the argument initializes, and so is a `read` one passed
 /// a trivial copy of a slot; a `read` parameter passed a reference with
@@ -2470,7 +2479,22 @@ fn argument_binding(
     {
         return Some(place_binding(place));
     }
-    if deinit && place.is_none() {
+    if deinit && let Some(place) = place {
+        return if place.is_whole_root()
+            && place.through.is_none()
+            && !holds_handle(caller, place.root)
+        {
+            Some(Binding::Slot(place.root))
+        } else {
+            ((consumed_in_place(place) || holds_handle(caller, place.root))
+                && consumed.is_some_and(|consumed| same_part(consumed, place)))
+            .then(|| Binding::Part {
+                place: place.clone(),
+                argument: None,
+            })
+        };
+    }
+    if deinit {
         if let Some(slot) = forwarded_slot(block, index, argument) {
             return Some(Binding::Slot(slot));
         }
@@ -2484,7 +2508,10 @@ fn argument_binding(
                 if consumed_in_place(&place)
                     && consumed.is_some_and(|consumed| same_part(consumed, &place)) =>
             {
-                Binding::Part { place, argument }
+                Binding::Part {
+                    place,
+                    argument: Some(argument),
+                }
             }
             _ => Binding::Value(argument),
         });
@@ -2642,17 +2669,30 @@ fn default_binding(
 }
 
 /// Turn every part-bound parameter of `bindings` into a fresh slot its
-/// argument initializes, for a body that names the parameter other than as
-/// a place's root; returns whether one was.
+/// loaded argument initializes, for a body that names the parameter other
+/// than as a place's root; returns whether one was, and `false`, keeping
+/// the call, when a part the call passes by address has no value to
+/// demote to.
 fn demote_parts(bindings: &mut [Binding]) -> bool {
-    let mut demoted = false;
+    let parts = || {
+        bindings.iter().filter_map(|binding| match binding {
+            Binding::Part { argument, .. } => Some(*argument),
+            _ => None,
+        })
+    };
+    if parts().next().is_none() || parts().any(|argument| argument.is_none()) {
+        return false;
+    }
     for binding in bindings.iter_mut() {
-        if let Binding::Part { argument, .. } = *binding {
+        if let Binding::Part {
+            argument: Some(argument),
+            ..
+        } = *binding
+        {
             *binding = Binding::Value(argument);
-            demoted = true;
         }
     }
-    demoted
+    true
 }
 
 /// Whether the owned parts `left` and `right` are the same part of the
@@ -3331,13 +3371,10 @@ fn existential_arguments(
 
 /// The places a call's by-address operands bind their parameters to
 /// ([`bound_place`]).
-fn bound_places(
-    addresses: &[Option<&MirPlace>],
-    reference_parameters: &[bool],
-) -> Vec<Option<MirPlace>> {
+fn bound_places(addresses: &[Option<&MirPlace>], caller: &MirFunction) -> Vec<Option<MirPlace>> {
     addresses
         .iter()
-        .map(|address| address.map(|address| bound_place(address, reference_parameters)))
+        .map(|address| address.map(|address| bound_place(address, caller)))
         .collect()
 }
 
@@ -3346,19 +3383,29 @@ fn bound_places(
 /// operand reaches it through itself: a `ref` binding's slot for the
 /// handle it holds, forwarded (`stored_handle`), as a body's places through
 /// a `ref` binding are rebased on the slot, and the caller's `mut` or `ref`
-/// parameter (`reference_parameters`), whose slot is its handle.
-fn bound_place(address: &MirPlace, reference_parameters: &[bool]) -> MirPlace {
+/// parameter, whose slot is its handle.
+fn bound_place(address: &MirPlace, caller: &MirFunction) -> MirPlace {
     let mut place = address.clone();
     let stored_handle =
         place.is_whole_root() && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
-    let reference_parameter = reference_parameters
-        .get(place.root as usize)
-        .copied()
-        .unwrap_or(false);
-    if place.through == Some(place.root) && (stored_handle || reference_parameter) {
+    if place.through == Some(place.root)
+        && (stored_handle || is_reference_parameter(caller, place.root as usize))
+    {
         place.through = None;
     }
     place
+}
+
+/// Whether the caller's slot `root` holds a handle: the caller's `mut` or
+/// `ref` parameter, or a slot of a reference type. A place [`bound_place`]
+/// rebases on such a slot names the referent the handle reaches, not
+/// storage of the slot's own.
+fn holds_handle(caller: &MirFunction, root: VarId) -> bool {
+    is_reference_parameter(caller, root as usize)
+        || caller
+            .var_tys
+            .get(&root)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
 }
 
 /// The referent behind any number of reference layers.
@@ -4492,7 +4539,7 @@ impl SubscriptOperands {
 fn subscript_operands(
     instruction: &MirInstr,
     addressed: &AddressedOperands<'_>,
-    reference_parameters: &[bool],
+    caller: &MirFunction,
 ) -> Option<SubscriptOperands> {
     let (call, args, arg_places, kwargs, kwarg_places) = match instruction {
         MirInstr::Index {
@@ -4502,11 +4549,7 @@ fn subscript_operands(
         } => (
             call,
             vec![*index],
-            vec![
-                addressed
-                    .index
-                    .map(|address| bound_place(address, reference_parameters)),
-            ],
+            vec![addressed.index.map(|address| bound_place(address, caller))],
             Vec::new(),
             Vec::new(),
         ),
@@ -4520,12 +4563,12 @@ fn subscript_operands(
             args.iter()
                 .map(|MirSubscriptArg::Index(reg)| *reg)
                 .collect(),
-            bound_places(&addressed.positional, reference_parameters),
+            bound_places(&addressed.positional, caller),
             kwargs
                 .iter()
                 .map(|(name, MirSubscriptArg::Index(reg))| (name.clone(), *reg))
                 .collect(),
-            bound_places(&addressed.keyword, reference_parameters),
+            bound_places(&addressed.keyword, caller),
         ),
         _ => return None,
     };
