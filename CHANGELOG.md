@@ -715,6 +715,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An augmented pointer offset with a literal operand (`p += 1` over an
+  `UnsafePointer` local, field, or `mut` parameter) now converts the
+  literal at `Int`, as `p = p + 1` does, instead of failing MIR
+  verification (`assets/ok/pointer_augmented_literal_offset.mojo`).
+  Natively only `+=` lowers yet (R2301).
+
 - The verifier now rejects a value at every slot a `call.indirect` or a
   `def(...)` bound's `__call__` call takes by address under its function
   type, a memory-only `read` one and a keyword operand included, where it
@@ -1129,6 +1135,12 @@ to evolve under the `0.x` compatibility rules.
   (`assets/ok/literal_dunder_instances.mojo`).
 
 ### Changed
+
+- Assigning or augmented-assigning a `mut` pointer parameter now stores
+  through the parameter's reference (`ref.make` and `ref.write`), as any
+  `mut` parameter's assignment does and as upstream stores through the
+  `!lit.ref` it binds, instead of an untyped `var.store` to the
+  parameter's slot. Output is unchanged (R2283).
 
 - A copy of a value loaded from a place now passes `__copyinit__` a
   reference to the place, as upstream's `read copy: Self` takes the

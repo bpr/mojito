@@ -214,7 +214,6 @@ impl<'a> Flatten<'a> {
             let reference_slot = matches!(slot_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
             if ((var as usize) < self.f.n_params || reference_slot)
                 && self.runtime_aliases.contains(&var)
-                && !self.pointer_valued_slot(var)
             {
                 let ty = match slot_ty.as_ref().map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(reference.referent.clone()),

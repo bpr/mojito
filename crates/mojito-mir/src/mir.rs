@@ -3579,13 +3579,31 @@ fn reassigned_names(
 }
 
 impl<'a> Flatten<'a> {
-    /// Whether a variable's slot is typed as a pointer. An assignment to
-    /// one is an untyped `var.store` to the slot rather than a store
-    /// through a `ref.make` of it; for a `mut p: Pointer[...]` parameter,
-    /// whose slot holds the reference to the caller's pointer slot, both
-    /// backends write that untyped store through the reference.
+    /// Whether a variable's slot is typed as a pointer, so a projected
+    /// place rooted at it addresses the pointee.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
         self.var_types.get(&var).is_some_and(Ty::is_pointer)
+    }
+
+    /// Emit the `ref.make` of the referent a by-reference binding (a `mut`
+    /// parameter, a capture's reference slot) binds, as upstream's
+    /// assignment stores through the parameter's `!lit.ref`. The handle is
+    /// typed as a reference to the slot's storage: for a pointer parameter
+    /// that is the caller's pointer, never the pointee a pointer slot read
+    /// through itself designates.
+    fn binding_reference(&mut self, var: VarId, span: SourceSpan) -> Reg {
+        let storage = MirPlace::root(var, self.var_types.get(&var).cloned());
+        let handle_ty =
+            mir_place_handle_ty(&storage, Some(mojito_types::origin::Mutability::Mutable))
+                .unwrap_or_else(Ty::error);
+        let handle = self.fresh_typed(span, Some(var), handle_ty);
+        let mut place = storage;
+        place.through = Some(var);
+        self.emit(MirInstr::MakeRef {
+            dest: handle,
+            place,
+        });
+        handle
     }
 
     /// The statically known address behind a stably bound origin-bearing

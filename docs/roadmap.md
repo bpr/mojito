@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2301**.
+Next free ID: **R2302**.
 
 ## Ordered Work
 
@@ -955,6 +955,22 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R2301 Pliron lowers a pointer's offset arithmetic only for `+`**
+
+  Upstream's `UnsafePointer` declares `__sub__` and `__isub__` beside
+  `__add__` and `__iadd__`, each offsetting by `index(offset)`. Pliron's
+  `lower_binop` (`crates/mojito-pliron/src/lower/binops.rs`) lowers a
+  pointer operand's `BinOp` only for `Add`, through
+  `pointer_element_address`, and reports any other operator unsupported.
+  - Probe: `p = p - 1` over `var p = a + 2`, `a = unsafe_alloc[Int](3)`,
+    prints `a[1]` on the VM and stops natively with "unsupported operator
+    `Sub` on Pointer operands".
+  - Probe: `h.p -= 1` over a struct's `UnsafePointer` field, and `p -= 1`
+    over a local, fail natively the same way.
+  - Found while landing R2283 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
@@ -9758,31 +9774,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Stop when `scripts/smoke` runs clean with the rule on.
   - Depends on R2296, R2297, R2298, R2299, and R1506.
   - Model: Fable, Not Planned.
-
-- [ ] **R2283 MIR lowering assigns a `mut` pointer parameter by
-  replacing its slot, not through its reference**
-
-  Upstream's assignment to a `mut` parameter stores through the
-  `!lit.ref` the parameter binds, whatever the type. `Flatten`'s
-  `pointer_valued_slot` (`mir.rs`) exempts a pointer-typed slot, so the
-  lowering emits an untyped `var.store` to the parameter's slot, where any
-  other `mut` parameter gets a `ref.make` through the slot and a
-  `place.store`.
-  - Both backends happen to write the untyped `var.store` through the
-    slot's reference, so the program runs; the MIR still says the
-    opposite of what it does, and `pointer_valued_slot`'s doc claims the
-    slot holds the caller's pointer, which the VM no longer does.
-  - Sites: the assignment and augmented-assignment paths in
-    `lower_stmt.rs` (`writes_through_reference`, the `runtime_aliases`
-    test before `MakeRef`) and the transfer in `lower_expr/expr.rs`.
-    `retain_pointee_loans`' use is about the pointee and stays.
-  - Probe: `emit-mir` of `assets/ok/mut_pointer_parameter_reseat.mojo`
-    shows `reseat`'s `var.store { var: $v0, ... }`; it must print `2 1 2`
-    / `1 7` on both backends after the change, as must
-    `assets/ok/mut_pointer_parameter_reassign.mojo` (`5`) and
-    `assets/ok/pointer_slot_is_its_pointer.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2045 Nine MIR pass test inputs destroy a memory-only value
   through a `deinit` receiver register and fail at load**

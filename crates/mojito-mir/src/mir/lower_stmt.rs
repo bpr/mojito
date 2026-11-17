@@ -2841,30 +2841,10 @@ impl<'a> Flatten<'a> {
                     // write half just as `self.expr(place)` does for the read.
                     let var = self.expression_var(&name, place);
                     let cur = self.expr(place);
-                    let rhs = self.expr(value);
-                    let res = self.fresh(place.location(), None);
-                    self.emit(MirInstr::BinOp {
-                        op: *op,
-                        dest: res,
-                        a: cur,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                        refined_bound: None,
-                        fastmath: None,
-                    });
+                    let res = self.augmented_operation(*op, place, cur, value);
                     self.emit_interior_invalidations(place, None);
-                    if self.runtime_aliases.contains(&var) && !self.pointer_valued_slot(var) {
-                        let handle = self.fresh(place.location(), Some(var));
-                        self.emit(MirInstr::MakeRef {
-                            dest: handle,
-                            place: {
-                                let mut place =
-                                    MirPlace::root(var, self.var_types.get(&var).cloned());
-                                place.through = Some(var);
-                                place
-                            },
-                        });
+                    if self.runtime_aliases.contains(&var) {
+                        let handle = self.binding_reference(var, place.location());
                         self.emit(MirInstr::WriteRef {
                             reference: handle,
                             value: res,
@@ -2894,18 +2874,7 @@ impl<'a> Flatten<'a> {
                         dest: cur,
                         place: target.clone(),
                     });
-                    let rhs = self.expr(value);
-                    let res = self.fresh(place.location(), None);
-                    self.emit(MirInstr::BinOp {
-                        op: *op,
-                        dest: res,
-                        a: cur,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                        refined_bound: None,
-                        fastmath: None,
-                    });
+                    let res = self.augmented_operation(*op, place, cur, value);
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store {
                         place: target,
@@ -2922,18 +2891,7 @@ impl<'a> Flatten<'a> {
                         dest: cur,
                         reference,
                     });
-                    let rhs = self.expr(value);
-                    let res = self.fresh(place.location(), None);
-                    self.emit(MirInstr::BinOp {
-                        op: *op,
-                        dest: res,
-                        a: cur,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                        refined_bound: None,
-                        fastmath: None,
-                    });
+                    let res = self.augmented_operation(*op, place, cur, value);
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
                         reference,
@@ -2955,18 +2913,7 @@ impl<'a> Flatten<'a> {
                         dest: cur,
                         reference,
                     });
-                    let rhs = self.expr(value);
-                    let res = self.fresh(place.location(), None);
-                    self.emit(MirInstr::BinOp {
-                        op: *op,
-                        dest: res,
-                        a: cur,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                        refined_bound: None,
-                        fastmath: None,
-                    });
+                    let res = self.augmented_operation(*op, place, cur, value);
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
                         reference,
@@ -2981,18 +2928,7 @@ impl<'a> Flatten<'a> {
                         dest: cur,
                         place: p.clone(),
                     });
-                    let rhs = self.expr(value);
-                    let res = self.fresh(place.location(), None);
-                    self.emit(MirInstr::BinOp {
-                        op: *op,
-                        dest: res,
-                        a: cur,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                        refined_bound: None,
-                        fastmath: None,
-                    });
+                    let res = self.augmented_operation(*op, place, cur, value);
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store { place: p, src: res });
                 }
@@ -3755,6 +3691,36 @@ impl<'a> Flatten<'a> {
         self.with_statement_loans(|this| this.lower_stmt(node, statement));
     }
 
+    /// Apply a builtin augmented operator to `cur`, `place`'s current
+    /// value, and the lowered `value`. A pointer's offset converts at `Int`,
+    /// as upstream's `UnsafePointer.__iadd__` reads `index(offset)`.
+    fn augmented_operation(
+        &mut self,
+        op: InfixOp,
+        place: Node<'a>,
+        cur: Reg,
+        value: Node<'a>,
+    ) -> Reg {
+        let mut rhs = self.expr(value);
+        if self.f.reg_types.get(&cur.0).is_some_and(Ty::is_pointer)
+            || place.ty().is_some_and(|ty| ty.is_pointer())
+        {
+            rhs = self.materialize_register(rhs, &Ty::int(), value.location());
+        }
+        let res = self.fresh(place.location(), None);
+        self.emit(MirInstr::BinOp {
+            op,
+            dest: res,
+            a: cur,
+            b: rhs,
+            resolved: None,
+            raises: None,
+            refined_bound: None,
+            fastmath: None,
+        });
+        res
+    }
+
     /// Bind `value`, a HIR binding's value, to slot `dest`: a declaration of
     /// checked binding `binding` at `binding_ty`, or a write to the slot's
     /// existing binding.
@@ -3779,8 +3745,8 @@ impl<'a> Flatten<'a> {
         // The consuming call has returned: its temporary arguments'
         // loans end before the store replaces the destination.
         self.flush_argument_anchors();
-        let writes_through_reference = self.aliases.contains_key(&dest)
-            || (self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest));
+        let writes_through_reference =
+            self.aliases.contains_key(&dest) || self.runtime_aliases.contains(&dest);
         if !writes_through_reference
             && let Some(ty) = self
                 .f
@@ -3803,16 +3769,8 @@ impl<'a> Flatten<'a> {
             let mut place = loan.place;
             place.through = Some(dest);
             self.emit(MirInstr::Store { place, src });
-        } else if self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest) {
-            let handle = self.fresh(value.location(), Some(dest));
-            self.emit(MirInstr::MakeRef {
-                dest: handle,
-                place: {
-                    let mut place = MirPlace::root(dest, self.var_types.get(&dest).cloned());
-                    place.through = Some(dest);
-                    place
-                },
-            });
+        } else if self.runtime_aliases.contains(&dest) {
+            let handle = self.binding_reference(dest, value.location());
             if let Some(TyKind::Ref(reference)) = self.var_types.get(&dest).map(Ty::kind) {
                 let referent = reference.referent.clone();
                 self.destroy_pointee(value, handle, &referent);
