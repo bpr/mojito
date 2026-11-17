@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1208
+# swept-count	1209
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
@@ -738,6 +738,7 @@ assets/type_error/memory_bitcast_float16_to_i8x2.mojo	compile-reject	agree	error
 assets/type_error/memory_bitcast_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/memory_pack_bits_width.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/method_result_pointer_imm_origin_cast_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/method_signature_recursive_reference.mojo	compile-reject	agree	error: attempt to resolve a recursive reference to declaration 'W.a'
 assets/type_error/method_two_named_results.mojo	compile-reject	agree	error: function may not have multiple 'out' arguments
 assets/type_error/method_where_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead

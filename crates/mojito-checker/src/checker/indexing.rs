@@ -1992,7 +1992,7 @@ impl Checker {
             {
                 // The receiver's arguments — origin tail included — bind the
                 // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
-                let value = substitute_at(fty, info, targs);
+                let value = self.substitute_at_receiver(fty, info, targs, object);
                 return Ok(match value.kind() {
                     TyKind::Ref(reference) => reference.referent.clone(),
                     _ => value,

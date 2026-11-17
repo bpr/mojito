@@ -204,24 +204,7 @@ pub(super) fn unify(
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
 pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    let expanded = expand_bound_pack(ty, &info.decls(), targs);
-    // The receiver's origin tail binds the struct's own origin binders in
-    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
-    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
-    // origin where its declaration names `Self.o`. It binds the declaration
-    // before the type arguments go in: a caller's origin binder inside a type
-    // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
-    // own slots, and must not be captured by them.
-    let bound = substitute_struct_origin_tails(&expanded, &info.tail_origin_bindings(targs));
-    substitute_assoc(
-        &bound,
-        &AssocBindings {
-            types: struct_subst(&info.decls(), targs),
-            values: solved_value_bindings(&info.decls(), targs),
-            ids: forwarded_pack_lists(&info.decls(), targs),
-            origins: HashMap::new(),
-        },
-    )
+    substitute_at_with(ty, info, targs, None)
 }
 
 /// A member's `*args` collector element at a receiver's type arguments:
@@ -980,6 +963,59 @@ fn solve_simd_slot_values(
 
 /// Callable specialization and method-generic instantiation moved from `checker.rs`.
 impl Checker {
+    /// [`substitute_at`] for a member read through a receiver: the
+    /// receiver's origin tail binds the struct's origin binders in pointer
+    /// provenances too, so `get` declared `-> Pointer[T, Self.o]` on a
+    /// `View[origin_of(x)]` names `origin_of(x)`, as upstream substitutes
+    /// every parameter of the receiver's type into the member's signature.
+    /// A binder `receiver` bound through an `ImmOrigin(...)` cast binds
+    /// immutably, as the cast's `mut=False` does upstream.
+    pub(super) fn substitute_at_receiver(
+        &self,
+        ty: &Ty,
+        info: &StructInfo,
+        targs: &[TyArg],
+        receiver: &Expr,
+    ) -> Ty {
+        let immutable = self.immutable_origin_binders(receiver);
+        substitute_at_with(
+            ty,
+            info,
+            targs,
+            Some(&|id, origin| {
+                if immutable.contains(&id) {
+                    Some(mojito_types::origin::Mutability::Immutable)
+                } else {
+                    self.bound_origin_mutability(origin)
+                }
+            }),
+        )
+    }
+
+    /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes
+    /// when bound to `origin`: a place's owner's, or a caller's own binder's
+    /// declared one (itself, when that is parametric too).
+    pub(super) fn bound_origin_mutability(
+        &self,
+        origin: &mojito_types::origin::Origin,
+    ) -> Option<mojito_types::origin::Mutability> {
+        use mojito_types::origin::{Mutability, Origin};
+        match origin {
+            Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
+            Origin::Param(id) => {
+                let binder = self.enclosing_type_params.get(id.0 as usize)?;
+                (binder.bounds.as_slice() == ["Origin"]).then(|| {
+                    match binder.origin_mutability.as_ref().map(|e| &e.kind) {
+                        Some(ExprKind::Bool(true)) => Mutability::Mutable,
+                        Some(ExprKind::Bool(false)) => Mutability::Immutable,
+                        _ => Mutability::Param(*id),
+                    }
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Split the source parameter list at an explicit specialization site.
     /// Origin arguments are erased from the ordinary list handed to the
     /// generic binder, which binds the list as this split does
@@ -2225,6 +2261,39 @@ pub(super) fn method_instantiation_arguments(
         .then(|| arguments.to_vec())
 }
 
+/// [`substitute_at`], binding the receiver's origin tail into pointer
+/// provenances too when `binder_mutability` resolves a parametric binder's
+/// mutability (see [`Checker::substitute_at_receiver`]).
+fn substitute_at_with(
+    ty: &Ty,
+    info: &StructInfo,
+    targs: &[TyArg],
+    binder_mutability: Option<super::origins::BinderMutability<'_>>,
+) -> Ty {
+    let expanded = expand_bound_pack(ty, &info.decls(), targs);
+    // The receiver's origin tail binds the struct's own origin binders in
+    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
+    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
+    // origin where its declaration names `Self.o`. It binds the declaration
+    // before the type arguments go in: a caller's origin binder inside a type
+    // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
+    // own slots, and must not be captured by them.
+    let tails = info.tail_origin_bindings(targs);
+    let mut bound = substitute_struct_origin_tails(&expanded, &tails);
+    if binder_mutability.is_some() {
+        bound = super::origins::bind_pointer_origin_tails(&bound, &tails, binder_mutability);
+    }
+    substitute_assoc(
+        &bound,
+        &AssocBindings {
+            types: struct_subst(&info.decls(), targs),
+            values: solved_value_bindings(&info.decls(), targs),
+            ids: forwarded_pack_lists(&info.decls(), targs),
+            origins: HashMap::new(),
+        },
+    )
+}
+
 /// `callable` with every struct origin tail of its parameter, collector,
 /// and result types that names an explicitly bound origin binder rebound to
 /// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`), and
@@ -2251,9 +2320,10 @@ fn bind_callable_origin_tails(
             return;
         };
         let bind = |ty: &mut Ty| {
-            *ty = bind_pointer_origin_tails(
+            *ty = super::origins::bind_pointer_origin_tails(
                 &super::origins::substitute_struct_origin_tails(ty, tails),
                 tails,
+                None,
             );
         };
         params.iter_mut().for_each(bind);
@@ -2264,79 +2334,6 @@ fn bind_callable_origin_tails(
         bind(ret);
     });
     callable
-}
-
-/// `ty` with each pointer origin naming an explicitly bound binder of fixed
-/// mutability rebound to the place it binds, below which it re-applies its
-/// interior and subtree projection (see [`bind_callable_origin_tails`]).
-fn bind_pointer_origin_tails(
-    ty: &Ty,
-    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
-) -> Ty {
-    use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
-    let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
-    let bind = |origin: &PointerOrigin| {
-        let bound = match origin {
-            PointerOrigin::Param {
-                id,
-                mutability,
-                interior,
-                subtree,
-            } => match (tails.get(id), mutability) {
-                (Some(Origin::Place(place)), Mutability::Mutable | Mutability::Immutable) => {
-                    let mut place = place.clone();
-                    place.path.extend(
-                        interior
-                            .iter()
-                            .map(|tag| OriginSeg::Interior(tag.clone()))
-                            .chain(subtree.then_some(OriginSeg::Subtree)),
-                    );
-                    Some(PointerOrigin::Place {
-                        place,
-                        mutable: *mutability == Mutability::Mutable,
-                    })
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        bound.unwrap_or_else(|| origin.clone())
-    };
-    match ty.kind() {
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
-            element: recur(element),
-            origin: bind(origin),
-        }
-        .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(recur(&element), bind(&origin))
-        }
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
-            elements: elements.iter().map(recur).collect(),
-            origin: bind(origin),
-        }
-        .into(),
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
-            ty.reusing(TyKind::Struct(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ))
-        }
-        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
-            referent: recur(&reference.referent),
-            origin: reference.origin.clone(),
-            mutability: reference.mutability,
-        })
-        .into(),
-        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
-        _ => ty.clone(),
-    }
 }
 
 /// The struct value binders `decls` bound to the receiver's arguments

@@ -3885,9 +3885,10 @@ struct MethodInstantiation {
 impl MethodInstantiation {
     /// The declared result with the method's bound origin binders
     /// substituted.
-    fn bound_result(&self, ty: Ty) -> Ty {
+    fn bound_result(&self, checker: &Checker, ty: Ty) -> Ty {
         match &self.origin_bindings {
-            Some(bindings) => bindings.substitute(&ty),
+            Some(bindings) => bindings
+                .substitute_result(&ty, &|_, origin| checker.bound_origin_mutability(origin)),
             None => ty,
         }
     }

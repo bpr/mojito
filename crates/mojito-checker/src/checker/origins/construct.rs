@@ -22,6 +22,11 @@ pub(in crate::checker) struct ConstructorOriginBindings {
     /// The first binder this binding binds: a method's own binders follow
     /// its struct's, which its receiver or construction binds instead.
     own_from: u32,
+    /// Whether an argument binds through an `ImmOrigin(...)` cast, which a
+    /// struct's origin tail does not record: a parametric binder bound
+    /// through a tail then stays unbound in the result
+    /// ([`Self::substitute_result`]).
+    pub(in crate::checker) immutable_cast: bool,
 }
 
 impl ConstructorOriginBindings {
@@ -32,6 +37,31 @@ impl ConstructorOriginBindings {
             &substitute_pointer_origin_params(ty, &self.pointers),
             &self.origins,
         )
+    }
+
+    /// [`Self::substitute`] for a declared result: a binder this call bound
+    /// only through a struct argument's origin tail (`v: View[o]` over
+    /// `-> Pointer[T, o]`) rebinds the result's pointer provenances too,
+    /// taking a parametric binder's mutability from `binder_mutability`
+    /// unless an argument was cast immutably ([`bind_pointer_origin_tails`]).
+    /// The tail binding goes in first, so a caller binder the pointer
+    /// bindings substitute is never captured.
+    pub(in crate::checker) fn substitute_result(
+        &self,
+        ty: &Ty,
+        binder_mutability: &dyn Fn(OriginParamId, &Origin) -> Option<Mutability>,
+    ) -> Ty {
+        let tails: HashMap<OriginParamId, Origin> = self
+            .origins
+            .iter()
+            .filter(|(id, _)| !self.pointers.contains_key(id))
+            .map(|(id, origin)| (*id, origin.clone()))
+            .collect();
+        self.substitute(&bind_pointer_origin_tails(
+            ty,
+            &tails,
+            (!self.immutable_cast).then_some(binder_mutability),
+        ))
     }
 
     /// [`Self::substitute`] over a parameter list.
@@ -383,6 +413,7 @@ impl Checker {
             pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, own_from)?,
             origins: HashMap::new(),
             own_from,
+            immutable_cast: false,
         };
         for (id, provenance) in &bindings.pointers {
             if let Some(origin) = provenance

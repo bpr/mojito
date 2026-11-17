@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2276**.
+Next free ID: **R2277**.
 
 ## Ordered Work
 
@@ -2571,20 +2571,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2262 A method's result type keeps its struct's origin parameter
-  unsubstituted**
+- [ ] **R2276 A struct type's origin argument drops its binder's `mut`**
 
-  `var p: Pointer[Noisy, origin_of(x)] = v.get()`, over `struct View[mut:
-  Bool, //, o: Origin[mut=mut]]` with `def get(self) -> Pointer[Noisy,
-  Self.o]`, is rejected ("expected Pointer[Noisy, origin@…], found
-  Pointer[Noisy, origin#1]"), where the pin runs it.
-  - The call's result type names the struct's origin parameter, not the
-    receiver type's origin argument, as it does for a type parameter.
-  - The same happens with `ref self` and with a struct that is not
-    register-passable.
-  - Fix in the checker: substitute the receiver type's origin arguments
-    into a method's and a subscript's result type.
-  - Found while landing R2259 (2026-11-16).
+  `var p: Pointer[Noisy, ImmOrigin(origin_of(x))] = through(v)`, over `var
+  v = View[ImmOrigin(origin_of(x))](Pointer(to=x))` and `def through[mut:
+  Bool, //, o: Origin[mut=mut]](v: View[o]) -> Pointer[Noisy, o]`, is
+  rejected ("expected Pointer[Noisy, ImmOrigin(origin@…)], found
+  Pointer[Noisy, origin#1]"), where the pin prints `7`.
+  - Upstream's `View[ImmOrigin(origin_of(x))]` binds the infer-only `mut`
+    to `False`; Mojito's origin tail keeps only `Origin::Place`, and the
+    cast lives in a side table keyed by the holder expression
+    (`immutable_origin_binders`).
+  - A parametric (`Origin[mut=mut]`) binder bound through a struct tail
+    therefore cannot take its pointer mutability from the type:
+    `ConstructorOriginBindings::substitute_result` leaves it unbound when
+    any argument carries a recorded cast, and a receiver's member result
+    (`Checker::substitute_at_receiver`) reads the side table.
+  - Probe: `View[origin_of(x)].same(Pointer(to=x))`, a static method
+    taking and returning `Pointer[Noisy, Self.o]`, is rejected ("no
+    overload matches the supplied arguments"), where the pin prints `7`:
+    `statics.rs` binds the explicit type arguments through `substitute_at`,
+    which binds no pointer provenance without a receiver's cast table.
+  - R124's exclusivity check misreads the same cast.
+  - Fix: carry the binder's `mut` in the struct type (a tail origin with
+    its mutability, or the infer-only `mut` argument), and bind every
+    member result and free-call result from it.
+  - Found while landing R2262 (2026-11-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2603,6 +2615,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Fix: extend `origin_operands` from `Call` to `MethodCall`, `Index`, and
     `MultiIndex` with a tracked-pointer or `Ref` result, over
     `call_operands`; R2262 gives the result type the origin to match.
+  - Probe: a field read bound to a variable, `var p = v.p; print("v",
+    p[].v)` over the same `View`, prints `del 1` first and stops with
+    "field access on non-struct <moved>", where the pin prints `v 1`,
+    `del 1`; the field's load needs the same inheritance.
   - Found while landing R2259 (2026-11-16).
   - Depends on R2262.
   - Model: Opus, Not Planned.

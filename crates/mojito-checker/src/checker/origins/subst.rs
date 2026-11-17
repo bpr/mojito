@@ -5,6 +5,15 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// The mutability a parametric (`Origin[mut=mut]`) origin binder takes when
+/// bound to an origin ([`bind_pointer_origin_tails`]); `None` leaves the
+/// binder unbound.
+pub(in crate::checker) type BinderMutability<'a> =
+    &'a dyn Fn(
+        mojito_types::origin::OriginParamId,
+        &mojito_types::origin::Origin,
+    ) -> Option<mojito_types::origin::Mutability>;
+
 pub(in crate::checker) fn lower_sig_origin_expression(
     expression: &Expr,
     type_params: &[mojito_ast::ast::TypeParam],
@@ -443,6 +452,97 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
                 .collect(),
         )
         .into(),
+        _ => ty.clone(),
+    }
+}
+
+/// `ty` with each pointer origin naming a bound binder rebound to the origin
+/// it binds, below which it re-applies its interior and subtree projection
+/// (an explicitly bound callable's `g[origin_of(xs)]`, a receiver's
+/// origin tail, a binder solved from a struct argument's tail). A binder of fixed mutability keeps
+/// it. A parametric one (`Origin[mut=mut]`) takes the mutability
+/// `binder_mutability` gives the bound origin, as upstream infers the
+/// binder's `mut` with its origin; without a resolver it stays unbound, as
+/// does every binder bound to a caller's own binder.
+pub(in crate::checker) fn bind_pointer_origin_tails(
+    ty: &Ty,
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    binder_mutability: Option<BinderMutability<'_>>,
+) -> Ty {
+    use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
+    let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails, binder_mutability);
+    let bind = |origin: &PointerOrigin| -> Option<PointerOrigin> {
+        let PointerOrigin::Param {
+            id,
+            mutability,
+            interior,
+            subtree,
+        } = origin
+        else {
+            return None;
+        };
+        let tail = tails.get(id)?;
+        let mutability = match mutability {
+            Mutability::Param(_) => binder_mutability?(*id, tail)?,
+            fixed => *fixed,
+        };
+        match tail {
+            Origin::Place(place) => {
+                let mut place = place.clone();
+                place.path.extend(
+                    interior
+                        .iter()
+                        .map(|tag| OriginSeg::Interior(tag.clone()))
+                        .chain(subtree.then_some(OriginSeg::Subtree)),
+                );
+                Some(PointerOrigin::Place {
+                    place,
+                    mutable: mutability == Mutability::Mutable,
+                })
+            }
+            Origin::Param(caller) if binder_mutability.is_some() => Some(PointerOrigin::Param {
+                id: *caller,
+                mutability,
+                interior: interior.clone(),
+                subtree: *subtree,
+            }),
+            _ => None,
+        }
+    };
+    let bind = |origin: &PointerOrigin| bind(origin).unwrap_or_else(|| origin.clone());
+    match ty.kind() {
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: recur(element),
+            origin: bind(origin),
+        }
+        .into(),
+        pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            Ty::pointer(recur(&element), bind(&origin))
+        }
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements.iter().map(recur).collect(),
+            origin: bind(origin),
+        }
+        .into(),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            ty.reusing(TyKind::Struct(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ))
+        }
+        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
+            referent: recur(&reference.referent),
+            origin: reference.origin.clone(),
+            mutability: reference.mutability,
+        })
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         _ => ty.clone(),
     }
 }

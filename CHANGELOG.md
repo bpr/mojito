@@ -707,6 +707,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method's, subscript's, or field read's `Pointer[T, Self.o]` result now
+  names the receiver type's origin argument (`origin_of(x)` on a
+  `View[origin_of(x)]`, or a generic caller's own binder), and a free
+  function's `Pointer[T, o]` result names the origin a struct argument's
+  tail bound to `o`, with an `Origin[mut=mut]` binder taking its origin's
+  mutability, so each converts to the caller's `Pointer[T, origin_of(x)]`
+  as at the pin (R2262).
+
 - A compile-time value or other materialized temporary at a register-passable
   `read` parameter (`self == FastMathFlag.NONE`, a `StringLiteral` at
   `StringSpan.__init__`) is now passed by value with no `$mat_r` slot or
