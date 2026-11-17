@@ -4,9 +4,9 @@
 //! compile-time parameter read is a constant once the elaborator answers it.
 //!
 //! The body passes are the pre-elaboration pipeline's own, but
-//! `lower-arg-conventions`, which only this seam runs, and its call-graph
-//! pass is `automatic-inline`, which nests a function pipeline of its own.
-//! Unlike that seam, no body is verified after each pass: each pass reports
+//! `lower-arg-conventions`, which only the concrete program's pipelines run
+//! (this one and [`MANDATORY_PIPELINE`]), and its call-graph pass is
+//! `automatic-inline`, which nests a function pipeline of its own. Unlike that seam, no body is verified after each pass: each pass reports
 //! whether it changed a body, and the caller re-admits the program as
 //! concrete once, verifying only the changed bodies
 //! (`mojito_mir::mir::ConcreteMir::rewrite_bodies`).
@@ -49,9 +49,17 @@ pub const POST_ELABORATION_PIPELINE: &[Pass] = &[
 ];
 
 /// The pipeline the driver runs over the concrete program with the pre-
-/// and post-elaboration pipelines off: only `always-inline`, since
-/// upstream's `@always_inline` is mandatory, not an optimization.
-pub const MANDATORY_PIPELINE: &[Pass] = &[Pass::CallGraph(ALWAYS_INLINE)];
+/// and post-elaboration pipelines off.
+///
+/// It is upstream's lowering that holds at every optimization level:
+/// `lower-arg-conventions` loads each by-address `read` operand an instance
+/// proves register-passable (upstream's `imm_mem` lowered to `imm`), then
+/// `always-inline` inlines each `@always_inline` callee, in upstream's
+/// order.
+pub const MANDATORY_PIPELINE: &[Pass] = &[
+    Pass::Body(LOWER_ARG_CONVENTIONS),
+    Pass::CallGraph(ALWAYS_INLINE),
+];
 
 /// The symbol passes upstream runs over the elaborator's output before its
 /// function pipeline, in order: `EliminateDuplicateFunctions`, then
@@ -86,7 +94,7 @@ pub fn post_elaborate_program(
 
 /// Run [`MANDATORY_PIPELINE`] over every concrete function in `functions`
 /// but `__toplevel__`, as [`post_elaborate_program`] runs its own.
-pub fn inline_always_program(
+pub fn lower_mandatory_program(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
 ) -> Vec<usize> {

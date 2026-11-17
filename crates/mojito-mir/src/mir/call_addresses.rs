@@ -16,10 +16,12 @@
 //! callee's `!lit.fn` signature; and a type parameter's copy construction
 //! (`T(copy=x)`), its copy initializer's `read copy: Self`.
 //!
-//! A register-passable `read` argument is passed by value, as upstream's
-//! `LowerArgConventions` caller half passes it: one an instance's
-//! substitution makes register-passable (a `read x: T` at `T = Int`) is read
-//! through its reference once elaborated ([`load_register_passable_operands`]).
+//! A concrete register-passable `read` argument is passed by value, as
+//! upstream's IR generation passes it under its `imm` convention. One an
+//! instance's substitution makes register-passable (a `read x: T` at
+//! `T = Int`) is upstream's `imm_mem`: it stays an address until
+//! `LowerArgConventions`' caller half reads it through its reference once
+//! elaborated ([`load_register_passable_operands`]).
 //! An artifact written before lowering passed by-address operands as
 //! references has its calls addressed by that contract as it loads
 //! ([`upgrade_call_operands`]).

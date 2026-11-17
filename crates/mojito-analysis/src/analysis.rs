@@ -59,7 +59,7 @@ use moves::*;
 pub use opt::{OptError, opt};
 pub use post_elaboration::{
     ELABORATED_SYMBOL_PASSES, MANDATORY_PIPELINE, POST_ELABORATION_PIPELINE,
-    eliminate_elaborated_symbols, inline_always_program, post_elaborate_program,
+    eliminate_elaborated_symbols, lower_mandatory_program, post_elaborate_program,
 };
 pub use pre_elaboration::{
     BodyPass, CallGraphPass, Callees, Cycles, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,

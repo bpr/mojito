@@ -81,9 +81,9 @@ which names the upstream pass each one follows. Each is measured by the
   fails LLVM verification natively ("immarg operand has non-immediate
   parameter"), where the pin and the default pipeline run it.
   - `SIMD.insert` passes `Int64(offset)` to `llvm.vector.insert`; only
-    `MANDATORY_PIPELINE` (`always-inline`) runs after elaboration, so the
-    inlined constructor's result stays a stack slot and reaches the
-    intrinsic as a `load`.
+    `MANDATORY_PIPELINE` (`lower-arg-conventions`, `always-inline`) runs
+    after elaboration, so the inlined constructor's result stays a stack
+    slot and reaches the intrinsic as a `load`.
   - Upstream's LLVM lowering always sees the immediate: decide which
     promotion (`mem-2-reg`, `canonicalize`) the driver owes at every
     setting, as R2158 made `@always_inline` mandatory, and run it.
@@ -9356,21 +9356,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2252 A concrete register-passable `read` argument is lowered by
-  value, not as a `!lit.ref` that a later pass loads**
-
-  Upstream's IR generation passes every `read` argument as a `!lit.ref`,
-  and `LowerArgConventions` loads the ones the signature proves
-  register-passable. Mojito lowers a concrete callee's register-passable
-  `read` (`Int`, `Bool`) by value from the start (R677's arrangement);
-  only a template slot's operand is addressed and read back after
-  elaboration (`load_register_passable_operands`).
-  - Probe: `inc(n)` over `def inc(x: Int)` passes `%r = var.use n copy`.
-  - Fix: address every `read` operand in lowering and let
-    `lower-arg-conventions` load the register-passable ones.
-  - Depends on R2251.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2278 A run-time function value binds a `def(...)` bound**
 
   The pin binds a `def(...)` bound only from a function name or a
@@ -9693,6 +9678,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     resolving the self-referential handle when the VM binds the slot's
     reference as upstream does. A reseat the caller would observe has
     no Mojito-accepted probe yet (origin and aliasing check errors).
+  - Probe: `assets/ok/pointer_slot_is_its_pointer.mojo` with
+    `MOJITO_PRE_ELABORATION=0` fails "vm: Pointer has no method
+    '__iadd__'" (the default pipeline prints `11 2`). `bump(mut p:
+    UnsafePointer[Int, ...])`'s `p[] += 10` passes `ref.make $v0[0]` to an
+    un-inlined `SIMD.__iadd__`, and the VM resolves it to the pointer, not
+    the element; a `read` `p`, or `p[] = p[] + 10`, runs.
   - Fix: a distinct runtime value for a place pointer, so a reference to
     its slot extends to the slot and reading through it yields the
     pointer; then drop the `call_operand` special case.

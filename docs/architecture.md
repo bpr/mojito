@@ -2619,7 +2619,12 @@ a compiler-modelled type the elaborator answers itself, the elaborator
 reads each reference operand through ahead of the call
 (`mir::read_addressed_operands`), deciding on the operand's type alone, as
 upstream's `LowerArgConventions` loads a `!lit.ref` at a by-value slot,
-since the builtin takes values (R2177).
+since the builtin takes values (R2177). That split is upstream's own:
+its IR generation passes a concrete register-passable `read` argument by
+value (`imm`) and a template's `read x: T` by address (`imm_mem`), which
+`LowerArgConventions` loads once the instance is register-passable, so a
+compile-time run of the unlowered instance reads through the reference
+(`assets/ok/read_argument_convention_at_compile_time.mojo`).
 An operand over a type parameter a pointer may instantiate is addressed
 too: a `ref.make` of the whole of a slot holding a pointer designates the
 slot, the pointer, as upstream's `!lit.ref` of a pointer local does
@@ -8491,12 +8496,17 @@ concrete verifier rejects a reference slot read as its handle.
 - **The switch.** `MOJITO_PRE_ELABORATION=0` and
   `Compiler::with_pre_elaboration(false)` turn this pipeline off along with
   the pre-elaboration one, so the `pre_elaboration::*` differential covers
-  both. What the switch never turns off is `MANDATORY_PIPELINE`, the
+  both. What the switch never turns off is `MANDATORY_PIPELINE`, which the
+  driver runs over the concrete program in their place
+  (`lower_mandatory_program`), before it resolves `kgen.source_loc`:
+  `lower-arg-conventions` (`analysis::LOWER_ARG_CONVENTIONS`), then the
   `always-inline` pass (`analysis::ALWAYS_INLINE`,
-  `analysis/automatic_inline.rs`), which the driver runs over the concrete
-  program in their place (`inline_always_program`), before it resolves
-  `kgen.source_loc`: upstream's `@always_inline` holds at every
-  optimization level, so every always-inline callee, of any flavour or
+  `analysis/automatic_inline.rs`). Upstream's `LowerArgConventions` is
+  lowering, not an optimization: a template's by-address `read` operand an
+  instance proves register-passable is loaded at the call at every
+  optimization level (`assets/ok/read_argument_convention_at_compile_time.mojo`
+  prints the same with the switch off). And upstream's `@always_inline`
+  holds at every optimization level, so every always-inline callee, of any flavour or
   size, is inlined, callees first, with `automatic-inline`'s splice and
   cycle rule (`Admission::Mandatory`). An always-inline body's
   `call_location()` so reports its caller either way, and a builtin

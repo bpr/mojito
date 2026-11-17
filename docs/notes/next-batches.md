@@ -68,7 +68,7 @@ sessions filed these entries as they went. A batch's residue now runs at
 once, inside the batch (`scripts/run-batches` step 2). These were filed
 before that existed, so they run here, ahead of anything else.
 - By-address `read` arguments that still pass a value, and the verifier
-  rule that would catch them: R2244, R2248, R2249, R2250, R2251, R2252.
+  rule that would catch them: R2244, R2248, R2249, R2250, R2251.
 - `deinit` receivers: R2272, R2273, R2274.
 - Results that keep a struct's origin parameter or pass a pointer
   straight through: R2262, R2263.
@@ -78,7 +78,7 @@ before that existed, so they run here, ahead of anything else.
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
   --task R2244 --task R2248 --task R2249 --task R2250 --task R2251 \
-  --task R2252 --task R2253 --task R2262 --task R2263 --task R2264 \
+  --task R2253 --task R2262 --task R2263 --task R2264 \
   --task R2272 --task R2273 --task R2274 --task R2275
 ```
 

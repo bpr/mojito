@@ -70,8 +70,11 @@ pub const MEM_2_REG: BodyPass = BodyPass {
     run: mem_2_reg,
 };
 
-/// The callee half of upstream's `LowerArgConventions`, which the
-/// post-elaboration pipeline runs before [`MEM_2_REG`].
+/// Upstream's `LowerArgConventions`, under its flag spelling.
+///
+/// The post-elaboration pipeline runs it before [`MEM_2_REG`]. It is
+/// mandatory lowering, so the driver's pipeline with the pre- and
+/// post-elaboration pipelines off runs it too.
 pub const LOWER_ARG_CONVENTIONS: BodyPass = BodyPass {
     name: "lower-arg-conventions",
     run: lower_arg_conventions,

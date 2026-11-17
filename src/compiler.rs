@@ -203,7 +203,7 @@ impl CompiledProgram {
                     concrete.and_then(|concrete| {
                         concrete.rewritten(|functions, declarations| {
                             let mut changed =
-                                crate::analysis::inline_always_program(functions, declarations);
+                                crate::analysis::lower_mandatory_program(functions, declarations);
                             changed.extend(self.sources.resolve(functions));
                             changed
                         })

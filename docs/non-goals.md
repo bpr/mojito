@@ -238,6 +238,22 @@ from differential comparison.
 
 ## Not To Be Fixed
 
+### Addressing every `read` operand in lowering
+
+Upstream's IR generation passes a concrete register-passable `read`
+argument by value, under its `imm` convention; only a memory-only one, or
+one whose type is still a parameter, goes by address (`imm_mem`) until
+`LowerArgConventions` loads it. Mojito does the same (R677, plus
+`load_register_passable_operands`), so it does not address an `Int` or
+`Bool` `read` operand for a later pass to load (R2252).
+
+- The pin's compile-time interpreter runs the unlowered instance, and it
+  shows the split: `assets/ok/read_argument_convention_at_compile_time.mojo`
+  prints `3 5` at compile time, where addressing the concrete operand
+  would print `5 5`.
+- Reopen only if a pin dump shows its IR generation emitting `imm_mem` for
+  a concrete register-passable `read`.
+
 ### Native SIMD: signed-zero min/max is unspecified
 
 Float `reduce_min` / `reduce_max` fold through `llvm.minnum` / `llvm.maxnum`,

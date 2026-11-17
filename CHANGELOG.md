@@ -707,6 +707,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `lower-arg-conventions` now runs at every pipeline setting, before
+  `always-inline`, as upstream's `LowerArgConventions` is lowering rather
+  than an optimization: with `MOJITO_PRE_ELABORATION=0`, a template's
+  `read x: T` operand at `T = Int` is loaded at the call instead of read
+  through its reference after the callee writes it
+  (`assets/ok/read_argument_convention_at_compile_time.mojo`, R2252). A
+  concrete register-passable `read` argument stays by value, as the pin's
+  IR generation passes it (`imm`); addressing it is a non-goal.
+
 - A method's or subscript's pointer or reference result passed straight to a
   call (`read_ptr(v.get())` over a register-passable `View[origin_of(x)]`,
   `read_first(s.unsafe_ptr())` over a `Span`) now keeps the storage its
