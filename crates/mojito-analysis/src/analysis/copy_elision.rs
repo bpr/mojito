@@ -200,6 +200,9 @@ fn rewrite_blocks(block: &mut MirBlock, elision: &Elision, lent: &mut Vec<Loan>)
     let mut at = 1;
     while at < block.instrs.len() {
         let instrs = &mut block.instrs;
+        if load_through_fresh_ref(instrs, at, elision) {
+            at -= 1;
+        }
         let Some(source) = dying_copy(instrs, at, elision) else {
             at += 1;
             continue;
@@ -288,6 +291,45 @@ fn dying_copy(instrs: &[MirInstr], at: usize, elision: &Elision) -> Option<Dying
         binding_at,
         held_at,
     })
+}
+
+/// Fold a register-passable copy's source, a `ref.read` through a
+/// `ref.make` of a whole slot of the copied type that nothing else reads,
+/// into the slot's load, which [`dying_copy`] matches: the read sees what
+/// the load does. Returns whether it folded, removing the `ref.make` before
+/// `at`.
+fn load_through_fresh_ref(instrs: &mut Vec<MirInstr>, at: usize, elision: &Elision) -> bool {
+    let Some((_, operand)) = copy_construction(&instrs[at]) else {
+        return false;
+    };
+    let operand = *operand;
+    let (
+        Some(MirInstr::MakeRef {
+            dest: handle,
+            place: place @ MirPlace { through: None, .. },
+        }),
+        MirInstr::ReadRef { dest, reference },
+    ) = (at.checked_sub(2).map(|made| &instrs[made]), &instrs[at - 1])
+    else {
+        return false;
+    };
+    // A slot holding a reference is read through, not loaded: only a slot of
+    // the copied type holds the value the read sees.
+    if *dest != operand
+        || reference != handle
+        || !place.proj.is_empty()
+        || elision.uses.get(&handle.0) != Some(&1)
+        || elision.var_tys.get(&place.root).is_none()
+        || elision.var_tys.get(&place.root) != elision.reg_types.get(&operand.0)
+    {
+        return false;
+    }
+    instrs[at - 1] = MirInstr::LoadPlace {
+        dest: operand,
+        place: place.clone(),
+    };
+    instrs.remove(at - 2);
+    true
 }
 
 /// The result and the copied operand of `instruction` when it is a copy

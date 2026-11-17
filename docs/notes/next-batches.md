@@ -4,17 +4,18 @@ The batches to run after the Pliron gate repair, which has landed. Each
 batch is one `scripts/claude_loop.py` command. `--task` runs each named entry
 after its open prerequisites, so a batch may run a few entries it does not
 name. Preview one with `--list` or `--dry-run`. `scripts/run-batches` reads
-the commands below, one batch each, and runs focused and the instantiation
-ratchet after every batch. Delete a batch here once it has landed.
+the commands below, one batch each. After every batch it runs the entries
+the batch's sessions filed, then focused and the instantiation ratchet.
+Delete a batch here once it has landed.
 
 The goal is structure, not features. Each batch closes one place where
 Mojito's representation departs from Mojo's own and other code works around
 it. They are ordered so that each batch lands on the representation the
 earlier ones leave. Batch 1 finishes the MIR call op, which every phase
-below the check reads. Batches 2 to 4 make origins and `Pointer` the library
-declarations upstream has, which the memory model rests on. Batches 5 to 7
-move the trait, the parser, and the check's handoff closer to upstream's
-shapes.
+below the check reads, by running what its first pass left. Batches 2 to
+4 make origins and `Pointer` the library declarations upstream has, which
+the memory model rests on. Batches 5 to 7 move the trait, the parser, and
+the check's handoff closer to upstream's shapes.
 
 Four entries are planning entries. Their session writes a plan, files
 the plan's slices as chained entries, and deletes the planning entry
@@ -60,24 +61,25 @@ The overnight gate (`scripts/run-overnight-gates`) remains the full check.
 `scripts/focused --from-gate target/overnight-gates/<stamp>/check-default.log`
 prints the list lines a gate run's new failures add.
 
-## 1. Call operands are references, as in upstream's `lit.call` (8 entries)
+## 1. What the call-operand batch left (14 entries)
 
-This finishes the call-op batch. A by-address operand is the `ref.make` that
-lowering emits, and the VM, Pliron, the loan analysis, and the inliner bind
-that reference. No phase reads it back from a side table of places. Then
-`arg_places`, `recv_place`, and their seven siblings are deleted from every
-call-shaped instruction (R2191, a MIR text bump).
-- R2190 fixes a wrong-output bug on the way. A value whose `!lit.ref` is
-  passed in place is dropped before the read through the call's result.
-- R1931 classifies a loan by the convention recorded on the call, not by
-  a lookup in declaration tables.
-- R2191's `tests/mir_passes` re-bless is approved in advance, within
-  the limits its entry states. Its summary lists the changed cases.
+The call-operand batch (R2185–R2191, R1931) landed on 2026-11-16, and its
+sessions filed these entries as they went. A batch's residue now runs at
+once, inside the batch (`scripts/run-batches` step 2). These were filed
+before that existed, so they run here, ahead of anything else.
+- By-address `read` arguments that still pass a value, and the verifier
+  rule that would catch them: R2244, R2248, R2249, R2250, R2251, R2252.
+- `deinit` receivers: R2272, R2273, R2274.
+- Results that keep a struct's origin parameter or pass a pointer
+  straight through: R2262, R2263.
+- The VM's place pointers: R2253. `VariadicPack`'s mutability: R2264.
+- MIR pass cases that fail at HEAD: R2275.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R2185 --task R2187 --task R2186 --task R2188 --task R2189 \
-  --task R2190 --task R2191 --task R1931
+  --task R2244 --task R2248 --task R2249 --task R2250 --task R2251 \
+  --task R2252 --task R2253 --task R2262 --task R2263 --task R2264 \
+  --task R2272 --task R2273 --task R2274 --task R2275
 ```
 
 ## 2. Origin parameters are ordinary declared parameters (6 entries)

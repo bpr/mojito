@@ -3356,84 +3356,101 @@ impl Checker {
                     .iter()
                     .any(|function| function.symbol() == Some(target.as_str()))
             });
-        let mut selected = overloads
-            .iter()
-            .filter(|function| {
-                resolved
-                    .as_deref()
-                    .is_none_or(|target| function.symbol() == Some(target))
-            })
-            .filter(|function| function.takes_self() == receiver.is_some())
-            .filter(|function| explicit_initializer.is_none() || function.constructs())
-            .filter_map(|function| {
-                // A generic struct's construction is bracketed by the
-                // instance it constructs (`G[2](n)`), not by binders of its
-                // `__init__`; spelled without them (`G(n)`), it constructs
-                // the instance its run-time construction infers.
-                let (instance, param_args) = match (function.constructs(), function.on_instance) {
-                    (true, true) if let Some(struct_args) = &explicit_initializer => (
-                        if struct_args.is_empty() {
-                            run_time_type()
-                        } else {
-                            self.ty_from_anno(&SourceType::Named(name.clone(), struct_args.clone()))
+        let candidates = |only: Option<&str>| -> Vec<_> {
+            overloads
+                .iter()
+                .filter(|function| only.is_none_or(|target| function.symbol() == Some(target)))
+                .filter(|function| function.takes_self() == receiver.is_some())
+                .filter(|function| explicit_initializer.is_none() || function.constructs())
+                .filter_map(|function| {
+                    // A generic struct's construction is bracketed by the
+                    // instance it constructs (`G[2](n)`), not by binders of its
+                    // `__init__`; spelled without them (`G(n)`), it constructs
+                    // the instance its run-time construction infers.
+                    let (instance, param_args) = match (function.constructs(), function.on_instance)
+                    {
+                        (true, true) if let Some(struct_args) = &explicit_initializer => (
+                            if struct_args.is_empty() {
+                                run_time_type()
+                            } else {
+                                self.ty_from_anno(&SourceType::Named(
+                                    name.clone(),
+                                    struct_args.clone(),
+                                ))
                                 .ok()
-                        },
-                        param_args,
-                    ),
-                    (true, true) if !param_args.is_empty() => (
-                        self.ty_from_anno(&SourceType::Named(name.clone(), param_args.to_vec()))
+                            },
+                            param_args,
+                        ),
+                        (true, true) if !param_args.is_empty() => (
+                            self.ty_from_anno(&SourceType::Named(
+                                name.clone(),
+                                param_args.to_vec(),
+                            ))
                             .ok(),
-                        [].as_slice(),
-                    ),
-                    (true, true) => (
-                        spelled
-                            .or(instance.as_ref())
-                            .cloned()
-                            .or_else(run_time_type),
-                        param_args,
-                    ),
-                    _ => (instance.clone(), param_args),
-                };
-                if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
-                    return None;
-                }
-                // A `Self` slot takes the instance a call is made on, or the
-                // struct a non-generic one constructs.
-                let owner = instance.clone().or_else(|| {
-                    function
-                        .constructs()
-                        .then(|| {
-                            self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
-                                .ok()
-                        })
-                        .flatten()
-                });
-                let (mut arguments, result, conversions) = self.applied_arguments(
-                    &name,
-                    function,
-                    owner.as_ref(),
-                    param_args,
-                    args,
-                    kwargs,
-                )?;
-                if let Some(receiver) = &receiver {
-                    let receiver = match function.self_slot {
-                        SelfSlot::Receiver { by_reference: true } => {
-                            self.param_context.store_to_mem(receiver).ok()?
-                        }
-                        _ => receiver.clone(),
+                            [].as_slice(),
+                        ),
+                        (true, true) => (
+                            spelled
+                                .or(instance.as_ref())
+                                .cloned()
+                                .or_else(run_time_type),
+                            param_args,
+                        ),
+                        _ => (instance.clone(), param_args),
                     };
-                    arguments.insert(function.binders.len(), receiver);
-                }
-                Some(Selected {
-                    name: name.clone(),
-                    function,
-                    instance,
-                    arguments,
-                    result,
-                    conversions,
+                    if (function.on_instance && instance.is_none())
+                        || function.constraints.is_none()
+                    {
+                        return None;
+                    }
+                    // A `Self` slot takes the instance a call is made on, or the
+                    // struct a non-generic one constructs.
+                    let owner = instance.clone().or_else(|| {
+                        function
+                            .constructs()
+                            .then(|| {
+                                self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
+                                    .ok()
+                            })
+                            .flatten()
+                    });
+                    let (mut arguments, result, conversions) = self.applied_arguments(
+                        &name,
+                        function,
+                        owner.as_ref(),
+                        param_args,
+                        args,
+                        kwargs,
+                    )?;
+                    if let Some(receiver) = &receiver {
+                        let receiver = match function.self_slot {
+                            SelfSlot::Receiver { by_reference: true } => {
+                                self.param_context.store_to_mem(receiver).ok()?
+                            }
+                            _ => receiver.clone(),
+                        };
+                        arguments.insert(function.binders.len(), receiver);
+                    }
+                    Some(Selected {
+                        name: name.clone(),
+                        function,
+                        instance,
+                        arguments,
+                        result,
+                        conversions,
+                    })
                 })
-            });
+                .collect()
+        };
+        // The run-time call's overload need not apply in a compile-time
+        // position: `Span([4, 5, 6])` resolves to `Span`'s `List`
+        // initializer at run time, where a compile-time display is an
+        // `Array`. Then every overload is a candidate again.
+        let mut selected = match candidates(resolved.as_deref()) {
+            found if found.is_empty() && resolved.is_some() => candidates(None),
+            found => found,
+        }
+        .into_iter();
         let application = selected.next()?;
         let mut tied: Vec<_> = selected.collect();
         if tied.is_empty() {
