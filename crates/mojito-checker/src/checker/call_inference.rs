@@ -2047,7 +2047,9 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             use_params.push(params[i].clone());
-            arg_tys.push(self.solving_argument_ty(arg, &params[i], decls, &explicit.subst)?);
+            let actual = self.solving_argument_ty(arg, &params[i], decls, &explicit.subst)?;
+            self.reject_run_time_function_value(name, &names[i], arg, &actual, &params[i])?;
+            arg_tys.push(actual);
             arg_exprs.push(arg);
         }
         if let Some(elem) = variadic.as_ref() {

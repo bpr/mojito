@@ -1638,12 +1638,20 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             patterns.push(params[index].clone());
-            actuals.push(self.solving_argument_ty(
+            let actual = self.solving_argument_ty(
                 expression,
                 &params[index],
                 &signature.decls,
                 &explicit.subst,
-            )?);
+            )?;
+            self.reject_run_time_function_value(
+                name,
+                &signature.names[index],
+                expression,
+                &actual,
+                &params[index],
+            )?;
+            actuals.push(actual);
         }
         if let Some(element) = variadic {
             for position in matched.positional_overflow {

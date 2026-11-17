@@ -715,6 +715,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A run-time value of a thin function type no longer binds a
+  `def(...)` bound: `var f = dbl; apply(f)` over
+  `def apply[F: def(Int) -> Int](f: F)` is rejected as at the pin
+  ("value passed to 'f' cannot be converted from ... to 'F'") instead of
+  running, while a function name, nested `def`, `comptime` binding, or
+  closure still binds it
+  (`assets/type_error/callable_bound_run_time_function_value.mojo`, R2278).
+
 - An `ImmOrigin(...)` origin argument is now part of a struct's type, as
   the pin's `Origin[mut=False]` value is: `View[ImmOrigin(origin_of(x))]`
   binds the slot's `mut` to `False`, so a free function's `Pointer[T, o]`

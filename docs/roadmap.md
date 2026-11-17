@@ -3939,6 +3939,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - This also blocks reaching MIR lowering's field-invocation route of a
     bound call (`emit_indirect_invocation`) from source.
   - Probe: the shape above.
+  - Probe: `var f = twice; Holder(f)` must then be rejected, as the pin
+    does ("no matching function in initialization"): the constructor's
+    argument solve (`declarations.rs`) does not yet call
+    `reject_run_time_function_value`, which free and method calls do.
   - Found while landing R1933 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9365,23 +9369,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     variants.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R2278 A run-time function value binds a `def(...)` bound**
-
-  The pin binds a `def(...)` bound only from a function name or a
-  closure. A variable holding a function is rejected, but Mojito accepts
-  it and runs the call.
-  - Probe: `var f = dbl; print(apply(f))` over
-    `def apply[F: def(Int) -> Int](f: F)` prints `6`. The pin reports
-    "invalid call to 'apply': value passed to 'f' cannot be converted
-    from 'def(x: Int) thin -> Int' to 'F'".
-  - Fix: reject it in the checker's binding of a callable bound, with the
-    pin's wording.
-  - Add a negative fixture under `assets/type_error/` with its
-    `conformance/assets-mojo-errors.tsv` row.
-  - Check that no `assets/ok` fixture relies on the acceptance.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
