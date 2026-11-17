@@ -2620,10 +2620,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     a `read` owner's `ImmOrigin(origin_of(s))` equal to `origin_of(s)`.
     The bundled library still packages: `StringSpan.split_at_grapheme`
     now converts through `as_imm`, as upstream's does.
-  - It regresses one fixture,
-    `assets/ok/immutable_origin_struct_argument_exclusivity.mojo`, whose
-    `Span(xs)` converts into a cast slot through upstream's implicit
-    immutable `Span` constructor, which Mojito cannot select (R2307).
+  - `assets/ok/immutable_origin_struct_argument_exclusivity.mojo`'s
+    `Span(xs)` then converts into its cast slot through the bundled
+    `Span`'s implicit immutable constructor, which the strict comparison
+    was tried against and selects.
   - Probe: the program above (`View[mut: Bool, //, o: Origin[mut=mut]]`
     holding a `Pointer[Noisy, Self.o]`).
   - Found while landing R2276 (2026-11-17).
@@ -2665,6 +2665,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `ImmOrigin(other.origin)` reads an argument's origin parameter.
   - Probe: `def f[P: StaticString](): print(StaticString(P))`, and
     `comptime assert True, StaticString(P)`; both print or pass at the pin.
+  - Probe: upstream `Span`'s `@implicit __init__(other: Span, out self:
+    ImmSpan[other.T, other.origin])`, and any `out self: V[other.T,
+    ImmOrigin(other.o)]` over a bare `other: V` ("type 'V' expects 1 type
+    argument(s), got 2"); the bundled `Span` spells it over its own origin
+    binder (`other: Span[Self.T, o], out self: Span[Self.T,
+    ImmOrigin(o)]`) until this lands.
   - Found while landing R1881 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3116,37 +3122,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parameter 0 of 'bc' has no caller place"), where the pin rejects it
     the same way. No compile-time application takes a `mut` parameter.
   - Found while landing R1503 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2307 An `@implicit` constructor whose own origin binder is solved
-  from the source is never selected**
-
-  `def __init__[m: Bool, //, src: Origin[mut=m]](other: V[Self.T, src],
-  out self: V[Self.T, ImmOrigin(src)])`, marked `@implicit`, does not
-  convert a `V[Int, origin_of(x)]` into a `V[Int, ImmOrigin(origin_of(x))]`
-  slot, where the pin runs it.
-  - `refinement_admits` (`checker/declarations.rs`) admits a refined
-    `out self` argument naming one of the constructor's own type or value
-    binders, never its own origin binder, so the candidate is dropped.
-  - Admitting it is not enough: nothing solves the binder from the
-    source's origin tail and checks the refined origin against the
-    target's, so any origin would convert.
-  - Upstream's `Span` spells its mut-to-immutable cast this way
-    (`other: Span, out self: ImmSpan[other.T, other.origin]`); the bundled
-    `Span` (`stdlib/std/span.mojo`) lacks it; this entry's fix adds it.
-  - The argument-dependent spelling (`out self: V[other.T,
-    ImmOrigin(other.o)]`) fails earlier, at type resolution ("type 'V'
-    expects 1 type argument(s), got 2"); the binder spelling is the first
-    step.
-  - Probe: the constructor above on a `TrivialRegisterPassable` `V[mut:
-    Bool, //, T: AnyType, o: Origin[mut=mut]]` holding a `Pointer[Self.T,
-    Self.o]`, with `var v: V[Int, ImmOrigin(origin_of(x))] = V(x)` over a
-    `var x = 3` (the pin prints `3`).
-  - Probe: `assets/ok/immutable_origin_struct_argument_exclusivity.mojo`
-    once R2289 compares casts strictly; it passes today only because a
-    cast compares by its storage.
-  - Found while landing R2289 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

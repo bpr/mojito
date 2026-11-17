@@ -2903,7 +2903,7 @@ impl Checker {
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
-                            refinement_admits(refined, &instance, &sig.decls, target)
+                            refinement_admits(refined, &instance, &sig.decls, None, target)
                         })
                     })
             })
@@ -5599,11 +5599,14 @@ fn collector_takes_bound_pack(
 /// `instance`: every position the refinement defines is `target`'s, is an
 /// origin slot `target` leaves unbound (`write_string(string: StringSpan)`
 /// infers it from the refinement), or names one of the initializer's own
-/// parameters (`own`), which a call solves.
+/// parameters (`own`), or one of its own origin binders (those from
+/// `own_origins_from`, when its arguments can solve them), which a call
+/// solves and then checks.
 pub(super) fn refinement_admits(
     refined: &Ty,
     instance: &Ty,
     own: &[ParamDecl],
+    own_origins_from: Option<u32>,
     target: &Ty,
 ) -> bool {
     let arguments =
@@ -5625,7 +5628,25 @@ pub(super) fn refinement_admits(
                     TyArg::Origin(mojito_types::origin::Origin::Unbound)
                 )
                 || mentioned_binder(defined, own).is_some()
+                || matches!(
+                    (defined, own_origins_from),
+                    (TyArg::Origin(origin), Some(from)) if names_origin_binder_from(origin, from)
+                )
         })
+}
+
+/// Whether `origin` names an origin binder numbered `from` or above: a
+/// method's own binders follow its struct's.
+fn names_origin_binder_from(origin: &mojito_types::origin::Origin, from: u32) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Param(id) => id.0 >= from,
+        Origin::Immutable(inner) => names_origin_binder_from(inner, from),
+        Origin::Union(members) => members
+            .iter()
+            .any(|member| names_origin_binder_from(member, from)),
+        _ => false,
+    }
 }
 
 /// The name of the first of `decls`' binders `argument` mentions, a type

@@ -324,6 +324,11 @@ impl Checker {
             if let (TyArg::Origin(origin), TyArg::Origin(Origin::Param(id))) = (defined, binder)
                 && !matches!(origin, Origin::Param(_) | Origin::SelfParam)
             {
+                // The constructor's own binders the arguments solved
+                // (`out self: V[Self.T, ImmOrigin(src)]`) are the call's.
+                let origin = &super::substitute_origin_params(origin.clone(), &|own| {
+                    bindings.origins.get(&own).cloned()
+                });
                 let conflict = || {
                     let slot = self
                         .structs
@@ -642,7 +647,14 @@ impl Checker {
                             bindings,
                         )?,
                         (TyArg::Origin(Origin::Param(id)), TyArg::Origin(actual)) => {
+                            // A binder past the struct's is the
+                            // constructor's own (`other: V[Self.T, src]`),
+                            // which the source's tail solves.
                             let Some(slot) = slot_of(id) else {
+                                bindings.bind_origin(*id, actual, || TypeError::BadCall {
+                                    func: struct_name.to_string(),
+                                    reason: format!("{} binds conflicting origins", context()),
+                                })?;
                                 continue;
                             };
                             if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id)

@@ -2053,6 +2053,43 @@ impl Checker {
             .collect()
     }
 
+    /// Whether `sig`'s refined `out self`, with the own origin binders
+    /// `origins` solved, constructs `to`: each origin slot the refinement
+    /// spells over one of those binders must name `to`'s origin there.
+    fn solved_refinement_is(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        origins: &crate::checker::origins::ConstructorOriginBindings,
+        to: &Ty,
+    ) -> bool {
+        let (Some(refined), Some(instance)) = (&sig.refined_self, self.self_instance_ty(name))
+        else {
+            return true;
+        };
+        let arguments = |ty| {
+            mojito_types::types::nominal_parts(ty).map(|(_, arguments)| arguments.into_owned())
+        };
+        let (Some(refinement), Some(binders), Some(target)) =
+            (arguments(refined), arguments(&instance), arguments(to))
+        else {
+            return false;
+        };
+        refinement
+            .iter()
+            .zip(&binders)
+            .zip(&target)
+            .all(|((defined, binder), argument)| match (defined, argument) {
+                (TyArg::Origin(origin), TyArg::Origin(target)) if defined != binder => {
+                    origins::substitute_origin_params(origin.clone(), &|id| {
+                        origins.origins.get(&id).cloned()
+                    })
+                    .coerces_to(target)
+                }
+                _ => true,
+            })
+    }
+
     /// The `@implicit` constructor of `to` that takes a `from` value itself.
     fn direct_conversion_constructor(
         &self,
@@ -2092,6 +2129,7 @@ impl Checker {
         // function type: upstream selects the constructor and rejects the
         // argument as a runtime closure.
         let parametric_parameter = std::cell::Cell::new(false);
+        let own_origins_from = info.method_origin_binders();
         let matches = constructors
             .iter()
             .filter(|sig| {
@@ -2099,7 +2137,13 @@ impl Checker {
                     && converts_one_argument(sig)
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
-                            declarations::refinement_admits(refined, &instance, &sig.decls, to)
+                            declarations::refinement_admits(
+                                refined,
+                                &instance,
+                                &sig.decls,
+                                Some(own_origins_from),
+                                to,
+                            )
                         })
                     })
             })
@@ -2113,6 +2157,21 @@ impl Checker {
                     0,
                 )
                 .ok()?;
+                // The constructor's own origin binders are solved from the
+                // source (`other: V[T, src]`), and a refined `out self`
+                // naming them (`V[T, ImmOrigin(src)]`) must then be `to`.
+                let origins = Self::bind_callee_origins(
+                    name,
+                    &sig.names,
+                    std::slice::from_ref(&parameter),
+                    &[(0, from)],
+                    own_origins_from,
+                )
+                .ok()?;
+                let parameter = origins.substitute(&parameter);
+                if !self.solved_refinement_is(name, sig, &origins, to) {
+                    return None;
+                }
                 if matches!(from.kind(), TyKind::GenericFunc(_))
                     && matches!(parameter.kind(), TyKind::GenericFunc(_))
                 {

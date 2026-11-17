@@ -533,6 +533,7 @@ assets/ok/if_unread_elif_call_runs.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/immutable_origin_struct_argument_exclusivity.mojo	main	exe-differential	sanitized
+assets/ok/implicit_constructor_own_origin_binder.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized

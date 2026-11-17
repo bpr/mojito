@@ -715,6 +715,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An `@implicit` constructor generic over its own origin binder, whose
+  refined `out self` names it (`other: V[Self.T, src], out self:
+  V[Self.T, ImmOrigin(src)]`), is now selected: a conversion or an
+  explicit `V(v)` solves the binder from the source's origin tail and
+  converts only into the target the solved refinement names, as at the
+  pin. The bundled `Span` gains upstream's implicit immutable constructor
+  in this spelling (`assets/ok/implicit_constructor_own_origin_binder.mojo`,
+  R2307).
+
 - `rebind` between two instances that differ only in origin arguments
   is accepted, as at the pin, so upstream's `as_imm()` (`return
   rebind[Self.Immutable](self)`) checks; the bundled `StringSpan`

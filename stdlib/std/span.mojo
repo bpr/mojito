@@ -115,6 +115,19 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
         self._data = array.unsafe_ptr()
         self._size = array.length
 
+    # Upstream's implicit immutable view of any span, spelled over its own
+    # origin binder (upstream: `other: Span, out self: ImmSpan[other.T,
+    # other.origin]`).
+    @always_inline("builtin")
+    @implicit
+    def __init__[
+        other_mut: Bool, //, other_origin: Origin[mut=other_mut]
+    ](
+        other: Span[Self.T, other_origin],
+        out self: Span[Self.T, ImmOrigin(other_origin)],
+    ):
+        self = rebind[Span[Self.T, ImmOrigin(other_origin)]](other)
+
     @always_inline("builtin")
     def __len__(self) -> Int:
         return self._size
