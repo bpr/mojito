@@ -440,8 +440,8 @@ reaches, and no `def` is compile-time-keyed (R8, 2026-10-08).
 - **The erased oracle.** It agrees on every fixture but the
   `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`). An erased value carries
   no type arguments, so the oracle cannot spell a type name over a
-  parameter, and it cannot tell a place pointer bound to a parameter from a
-  reference.
+  parameter. (A place pointer bound to a parameter is now told from a
+  reference by its runtime tag, `Value::PlacePointer`.)
 - **Availability.** A member's `where` clause and each struct's conformance
   rows reach MIR, and the elaborator decides the clause. Its `speculative`
   set and the rollback are gone (text schema 1.9).

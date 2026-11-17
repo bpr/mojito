@@ -72,13 +72,13 @@ before that existed, so they run here, ahead of anything else.
 - `deinit` receivers: R2272, R2273, R2274.
 - Results that keep a struct's origin parameter or pass a pointer
   straight through: R2262, R2263.
-- The VM's place pointers: R2253. `VariadicPack`'s mutability: R2264.
+- `VariadicPack`'s mutability: R2264.
 - MIR pass cases that fail at HEAD: R2275.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
   --task R2244 --task R2248 --task R2249 --task R2250 --task R2251 \
-  --task R2253 --task R2262 --task R2263 --task R2264 \
+  --task R2262 --task R2263 --task R2264 \
   --task R2272 --task R2273 --task R2274 --task R2275
 ```
 

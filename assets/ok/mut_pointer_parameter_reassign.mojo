@@ -1,8 +1,6 @@
 # Assigning to a `mut` `Pointer` parameter (upstream accepts it and prints
-# `5`). The parameter's slot stores the caller's pointer as its own value —
-# both backends read a pointer-typed slot as the handle it holds — so the
-# assignment replaces the slot rather than writing through the pointer at its
-# pointee.
+# `5`). The parameter's slot holds a reference to the caller's pointer slot,
+# so the assignment stores through it into that slot, never at the pointee.
 def write_back[o: Origin](mut p: Pointer[Int, o]):
     p = p
 

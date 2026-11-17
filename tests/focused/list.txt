@@ -39,6 +39,7 @@ fixture assets/ok/for_destructuring_lifetimes.mojo
 fixture assets/ok/for_destructuring_targets.mojo
 fixture assets/extensions/ok/match_enum_cases_optional.mojo
 fixture assets/ok/mut_pointer_parameter_reassign.mojo
+fixture assets/ok/mut_pointer_parameter_reseat.mojo
 fixture assets/ok/parameter_default_application_removed_receiver.mojo
 fixture assets/type_error/struct_method_instance_clone_fails.mojo
 fixture assets/ok/tuple_reverse_concat.mojo

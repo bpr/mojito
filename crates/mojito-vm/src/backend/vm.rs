@@ -717,6 +717,10 @@ impl VmBackend {
             Value::Ref {
                 frame: frame @ (COMPTIME_MEMORY_FRAME | POINTER_ROOT_FRAME),
                 ..
+            }
+            | Value::PlacePointer {
+                frame: frame @ (COMPTIME_MEMORY_FRAME | POINTER_ROOT_FRAME),
+                ..
             } => {
                 let roots = if frame == COMPTIME_MEMORY_FRAME {
                     &self.comptime_memory
@@ -735,7 +739,7 @@ impl VmBackend {
                     active,
                 )?)))
             }
-            Value::Ref { .. } => Err(RuntimeError::Unsupported(
+            Value::Ref { .. } | Value::PlacePointer { .. } => Err(RuntimeError::Unsupported(
                 "cannot freeze a reference to run-time storage".to_string(),
             )),
             // The VM holds an `index` as an `Int`; its type says which it is.
@@ -830,10 +834,6 @@ struct Prog {
     /// ([`VmBackend::stage_error`]), and a raise edge writing one is the
     /// `try` catching the error.
     error_slots: Vec<HashSet<VarId>>,
-    /// Per function, the slots whose own type is a pointer value
-    /// ([`pointer_value_slots`]): their whole place is the pointer, never
-    /// its pointee ([`Prog::pointer_value_slot`]).
-    pointer_slots: Vec<HashSet<VarId>>,
 }
 
 /// What an initializer's `out self` receiver enters as ([`Prog::constructed`]).
@@ -884,32 +884,11 @@ fn simd_instance<'s>(
         .map(|(name, declaration)| (name.as_str(), declaration))
 }
 
-/// The slots of `function` whose own type is a pointer value
-/// ([`pointer_valued`]), but for a `mut`/`ref` parameter, whose slot holds
-/// the caller's handle to the pointer.
-fn pointer_value_slots(
-    structs: &HashMap<String, StructDef>,
-    function: &MirFunction,
-) -> HashSet<VarId> {
-    function
-        .var_tys
-        .iter()
-        .filter(|(slot, _)| {
-            !function
-                .ref_params
-                .get(**slot as usize)
-                .copied()
-                .unwrap_or(false)
-        })
-        .filter(|(_, ty)| pointer_valued(structs, ty))
-        .map(|(slot, _)| *slot)
-        .collect()
-}
-
 /// Whether a value of `ty` is a pointer value: a `Pointer`, its
 /// `!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field
-/// ([`StructDef::register_field`]). The VM holds a place pointer as the
-/// handle to its pointee, so such a value is no reference.
+/// ([`StructDef::register_field`]). A frame or compile-time address such a
+/// value holds is a [`Value::PlacePointer`], never a reference
+/// ([`address_as`]).
 fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
     use mojito_types::types::TyKind;
     let is_pointer = |ty: &Ty| {
@@ -922,6 +901,42 @@ fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
                 .iter()
                 .any(|(declared, ty)| declared == field && is_pointer(ty))
         })
+}
+
+/// `value` as the destination type `ty` holds it: a frame or compile-time
+/// handle in a pointer-valued destination ([`pointer_valued`]) is a place
+/// pointer, and one in a reference destination is a reference, as
+/// upstream's `lit.ref.to_pointer` and `lit.ref.from_pointer` retype one
+/// address between `!kgen.pointer` and `!lit.ref`.
+fn address_as(structs: &HashMap<String, StructDef>, value: Value, ty: Option<&Ty>) -> Value {
+    use mojito_types::types::TyKind;
+    match (value, ty) {
+        (
+            Value::Ref {
+                frame,
+                slot,
+                projection,
+            },
+            Some(ty),
+        ) if pointer_valued(structs, ty) => Value::PlacePointer {
+            frame,
+            slot,
+            projection,
+        },
+        (
+            Value::PlacePointer {
+                frame,
+                slot,
+                projection,
+            },
+            Some(ty),
+        ) if matches!(ty.kind(), TyKind::Ref(_)) => Value::Ref {
+            frame,
+            slot,
+            projection,
+        },
+        (value, _) => value,
+    }
 }
 
 /// Lower every field step whose base is a held struct to [`Proj::Rebind`]:
@@ -969,29 +984,34 @@ impl Prog {
         for (_, function) in &mut mir.functions {
             hold_register_fields(&structs, &mut function.body);
         }
-        let pointer_slots = mir
-            .functions
-            .iter()
-            .map(|(_, function)| pointer_value_slots(&structs, function))
-            .collect();
         Self {
             structs,
             sigs: build_sigs(&mir.declarations),
             mir,
             error_slots,
-            pointer_slots,
         }
     }
 
-    /// Whether `place` of `function` is the whole of a slot holding a
-    /// pointer value, which designates the slot itself: the pointer, as
-    /// upstream's pointer local is a value only a `!lit.ref` addresses, and
-    /// as `var.use` reads it. A place that reads through the slot
-    /// (`through` naming its root) designates the pointee instead.
-    fn pointer_value_slot(&self, function: usize, place: &MirPlace) -> bool {
+    /// Whether `place` of `function` is the whole of a slot whose own type
+    /// is a pointer value ([`pointer_valued`]), which designates the slot
+    /// itself, as upstream's pointer local is a value only a `!lit.ref`
+    /// addresses. A `mut`/`ref` parameter's slot holds a reference, and a
+    /// place that reads through its root designates the pointee. Only a
+    /// heap pointer needs asking: the VM also holds a reference to a heap
+    /// element as its `Value::Pointer` (`heap_reference_result`).
+    fn pointer_slot(&self, function: usize, place: &MirPlace) -> bool {
+        let function = &self.mir.functions[function].1;
         place.is_whole_root()
             && place.through != Some(place.root)
-            && self.pointer_slots[function].contains(&place.root)
+            && !function
+                .ref_params
+                .get(place.root as usize)
+                .copied()
+                .unwrap_or(false)
+            && function
+                .var_tys
+                .get(&place.root)
+                .is_some_and(|ty| pointer_valued(&self.structs, ty))
     }
 
     /// The struct a value of `ty` is and the field it is held as, when
@@ -1326,7 +1346,7 @@ struct StructDef {
     /// reference field: a reference is a [`Value::Ref`], which a frame slot
     /// holds only as a reference alias to the VM, so a struct holding one
     /// stays boxed. A struct held as its pointer field is a pointer value
-    /// ([`Prog::pointer_value_slot`]).
+    /// ([`pointer_valued`]).
     register_field: Option<String>,
 }
 
@@ -1655,11 +1675,6 @@ fn navigate_reference_mut<'a>(
                 Value::Tuple(items) => items.get_mut(*index).ok_or_else(|| {
                     RuntimeError::TypeError("reference index out of bounds".to_string())
                 })?,
-                // Offset-0 identity deref of an origin-erased single-pointee
-                // `to=place` pointer written through a mutable origin: the handle
-                // was re-rooted at the pointee itself, so `Index(0)` targets that
-                // value in place (see `read_reference_projection`).
-                _ if *index == 0 => value,
                 _ => {
                     return Err(RuntimeError::TypeError(
                         "mutable index reference did not cross a nominal collection's pointer \
@@ -1668,9 +1683,11 @@ fn navigate_reference_mut<'a>(
                     ));
                 }
             },
-            // The single-pointee dereference: the handle reached here already
-            // designates the pointee.
-            RefProjection::Deref => value,
+            RefProjection::Deref => {
+                return Err(RuntimeError::TypeError(
+                    "vm: a dereference reached no place pointer".to_string(),
+                ));
+            }
             RefProjection::Variant(expected) => match value {
                 Value::Variant {
                     index,
@@ -1959,7 +1976,6 @@ mod pointer_storage_tests {
             structs: HashMap::new(),
             sigs: HashMap::new(),
             error_slots: Vec::new(),
-            pointer_slots: Vec::new(),
         }
     }
 

@@ -814,11 +814,16 @@ fn pointer_handle(
 ) -> Result<Option<Value>, RuntimeError> {
     match value {
         Value::Pointer { allocation: 0, .. } => Ok(None),
-        Value::Pointer { .. } | Value::Ref { .. } => Ok(Some(value.clone())),
+        Value::Pointer { .. } | Value::PlacePointer { .. } | Value::Ref { .. } => {
+            Ok(Some(value.clone()))
+        }
         Value::Struct { fields, .. } => {
-            let mut pointers = fields
-                .iter()
-                .filter(|(_, field)| matches!(field, Value::Pointer { .. } | Value::Ref { .. }));
+            let mut pointers = fields.iter().filter(|(_, field)| {
+                matches!(
+                    field,
+                    Value::Pointer { .. } | Value::PlacePointer { .. } | Value::Ref { .. }
+                )
+            });
             match (pointers.next(), pointers.next()) {
                 (Some((_, field)), None) => pointer_handle(callee, index, field),
                 _ => Err(RuntimeError::TypeError(format!(

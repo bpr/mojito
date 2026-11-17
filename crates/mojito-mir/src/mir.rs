@@ -3467,12 +3467,11 @@ fn reassigned_names(
 }
 
 impl<'a> Flatten<'a> {
-    /// Whether a variable's slot stores a pointer *as* its value. Both
-    /// backends read such a slot as the pointer it holds (`UseVar` keys on the
-    /// declared type), so an assignment to the variable replaces the slot
-    /// rather than writing through the handle it stores — including for a
-    /// `mut p: Pointer[...]` parameter, whose slot is bound with the caller's
-    /// pointer rather than aliasing the caller's variable.
+    /// Whether a variable's slot is typed as a pointer. An assignment to
+    /// one is an untyped `var.store` to the slot rather than a store
+    /// through a `ref.make` of it; for a `mut p: Pointer[...]` parameter,
+    /// whose slot holds the reference to the caller's pointer slot, both
+    /// backends write that untyped store through the reference.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
         self.var_types.get(&var).is_some_and(Ty::is_pointer)
     }

@@ -744,6 +744,7 @@ assets/ok/mut_parameter_reassignment_drop.mojo	main	exe-differential	sanitized
 assets/ok/mut_parameter_reassignment_drop_shapes.mojo	main	exe-differential	sanitized
 assets/ok/mut_parameter_transfer_refilled.mojo	main	exe-differential	sanitized
 assets/ok/mut_pointer_parameter_reassign.mojo	main	exe-differential	sanitized
+assets/ok/mut_pointer_parameter_reseat.mojo	main	exe-differential	sanitized
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/named_result_transferred.mojo	main	exe-differential	sanitized
 assets/ok/named_shared_views.mojo	main	exe-differential	sanitized

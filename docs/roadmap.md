@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2283**.
+Next free ID: **R2285**.
 
 ## Ordered Work
 
@@ -2720,14 +2720,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
   `Int(Pointer(to=x)) != 0` prints `True` at the pin and natively; the VM
   fails with "vm: SIMD[DType.int, 1] has no method '__int__'".
-  - Cause: the VM holds a place-formed pointer as a `Value::Ref` (frame,
+  - Cause: the VM keeps two pointer kinds where upstream has one pointer
+    value. A place-formed pointer is a `Value::PlacePointer` (frame,
     slot, projection), which has no integer form beside
     `runtime::pointer_address`'s for an allocation's `Value::Pointer`.
-  - The method dispatch (`VmBackend::method_call`, `vm/invoke.rs`) also
-    chases a `Ref` receiver to its referent, so `Pointer.__int__` reaches
-    the pointee instead of the pointer.
-  - Fix: give a `Ref` a provenance-unique synthetic address, and dispatch
-    a `Pointer`-typed receiver's own methods before chasing it.
+  - Since the place-pointer split, `Int(p)` fails "vm backend does not
+    support methods on Pointer yet" (`VmBackend::method_call`,
+    `vm/invoke.rs`, has `__int__` only for a heap pointer).
+  - Fix: give a place pointer a provenance-unique synthetic address, or
+    fold the two kinds into one `Value::Pointer` over one address space,
+    as upstream's `!kgen.pointer` is one value.
   - Probe: `p.__int__()`, `Int(p)`, `UInt(p)`, and `def addr[T:
     Intable](v: T) -> Int: return Int(v)` over `var p = Pointer(to=x)`.
   - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
@@ -9427,8 +9429,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `splittable_type` refuses any struct with a `Pointer` field. A whole
   pointer slot now reads as the pointer in the VM and the verifier
-  (`Prog::pointer_value_slot`, `make_ref_target`), but places past a
-  split pointer slot still misbehave.
+  (`Value::PlacePointer`, `make_ref_target`), but places past a split
+  pointer slot still misbehave.
   - Probe: `assets/ok/condition_truthiness_reads_in_place.mojo` fails "vm:
     cannot project Field("v") through a heap pointer": the `MakeRef` heap
     path (`vm/exec.rs`) admits only `Deref`/`Index` steps past a
@@ -9640,33 +9642,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2253 The VM represents a place pointer by the same handle as a
-  reference to its slot**
+- [ ] **R2283 MIR lowering assigns a `mut` pointer parameter by
+  replacing its slot, not through its reference**
 
-  Upstream's `Pointer(to=x)` is a pointer value, and a `!lit.ref` of the
-  slot holding it is a distinct reference. The VM holds a place pointer as
-  a `Value::Ref` to its pointee, and `canonical_reference_parts` adopts a
-  root slot's stored handle, so a reference to the pointer's slot cannot be
-  told from the pointer it holds.
-  - So `VmBackend::call_operand` (`vm/exec.rs`) passes the pointer a
-    whole place-pointer slot holds where a call's operand references that
-    slot, rather than the reference the call formed.
-  - Probe: `assets/ok/mut_pointer_parameter_reassign.mojo` (`def
-    write_back[o](mut p: Pointer[Int, o]): p = p`) overflows the stack
-    resolving the self-referential handle when the VM binds the slot's
-    reference as upstream does. A reseat the caller would observe has
-    no Mojito-accepted probe yet (origin and aliasing check errors).
-  - Probe: `assets/ok/pointer_slot_is_its_pointer.mojo` with
-    `MOJITO_PRE_ELABORATION=0` fails "vm: Pointer has no method
-    '__iadd__'" (the default pipeline prints `11 2`). `bump(mut p:
-    UnsafePointer[Int, ...])`'s `p[] += 10` passes `ref.make $v0[0]` to an
-    un-inlined `SIMD.__iadd__`, and the VM resolves it to the pointer, not
-    the element; a `read` `p`, or `p[] = p[] + 10`, runs.
-  - Fix: a distinct runtime value for a place pointer, so a reference to
-    its slot extends to the slot and reading through it yields the
-    pointer; then drop the `call_operand` special case.
+  Upstream's assignment to a `mut` parameter stores through the
+  `!lit.ref` the parameter binds, whatever the type. `Flatten`'s
+  `pointer_valued_slot` (`mir.rs`) exempts a pointer-typed slot, so the
+  lowering emits an untyped `var.store` to the parameter's slot, where any
+  other `mut` parameter gets a `ref.make` through the slot and a
+  `place.store`.
+  - Both backends happen to write the untyped `var.store` through the
+    slot's reference, so the program runs; the MIR still says the
+    opposite of what it does, and `pointer_valued_slot`'s doc claims the
+    slot holds the caller's pointer, which the VM no longer does.
+  - Sites: the assignment and augmented-assignment paths in
+    `lower_stmt.rs` (`writes_through_reference`, the `runtime_aliases`
+    test before `MakeRef`) and the transfer in `lower_expr/expr.rs`.
+    `retain_pointee_loans`' use is about the pointee and stays.
+  - Probe: `emit-mir` of `assets/ok/mut_pointer_parameter_reseat.mojo`
+    shows `reseat`'s `var.store { var: $v0, ... }`; it must print `2 1 2`
+    / `1 7` on both backends after the change, as must
+    `assets/ok/mut_pointer_parameter_reassign.mojo` (`5`) and
+    `assets/ok/pointer_slot_is_its_pointer.mojo`.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2272 An instance's register-passable `deinit` receiver stays a
   reference**

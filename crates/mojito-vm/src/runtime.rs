@@ -83,6 +83,15 @@ pub enum Value {
         slot: usize,
         projection: Vec<RefProjection>,
     },
+    /// A pointer value addressing frame or compile-time storage
+    /// (`Pointer(to=x)`): upstream's `!kgen.pointer`, distinct from the
+    /// `!lit.ref` a [`Self::Ref`] is. Stored in a slot it is that slot's
+    /// value; only a dereferencing projection segment steps through it.
+    PlacePointer {
+        frame: u64,
+        slot: usize,
+        projection: Vec<RefProjection>,
+    },
     /// A **tombstone** left when a value is moved out of a variable slot (`b = a^`)
     /// in the VM backend: the source slot holds `Moved` afterward, so a
     /// use-after-move surfaces as a loud runtime error (a defensive check — the
@@ -209,6 +218,18 @@ impl PartialEq for Value {
                     projection: bp,
                 },
             ) => af == bf && as_ == bs && ap == bp,
+            (
+                Self::PlacePointer {
+                    frame: af,
+                    slot: as_,
+                    projection: ap,
+                },
+                Self::PlacePointer {
+                    frame: bf,
+                    slot: bs,
+                    projection: bp,
+                },
+            ) => af == bf && as_ == bs && ap == bp,
             (Self::UninitStorage(a), Self::UninitStorage(b)) => a == b,
             _ => false,
         }
@@ -276,6 +297,7 @@ impl fmt::Display for Value {
                 write!(f, "Pointer({allocation:#x}+{offset})")
             }
             Self::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
+            Self::PlacePointer { frame, slot, .. } => write!(f, "<pointer {frame}:{slot}>"),
             Self::Moved => write!(f, "<moved>"),
             Self::Undef => write!(f, "<undef>"),
             Self::UninitStorage(None) => write!(f, "<uninit>"),
@@ -387,7 +409,7 @@ pub fn type_name(value: &Value) -> String {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.width())
             }
         }
-        Value::Pointer { .. } => "Pointer".to_string(),
+        Value::Pointer { .. } | Value::PlacePointer { .. } => "Pointer".to_string(),
         Value::Ref { .. } => "ref".to_string(),
         Value::Moved => "<moved>".to_string(),
         Value::Undef => "<undef>".to_string(),

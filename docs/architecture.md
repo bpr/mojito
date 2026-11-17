@@ -2596,9 +2596,11 @@ receiver binding read a method call's and a subscript's operands as a
 call's, and the verifier compares a subscript's by-address operand by its
 referent. The VM binds each operand as the call passes it,
 a by-address one as its reference, as upstream's callee binds its
-`!lit.ref`, reads one through only for a builtin taking values, and
-passes the pointer a place-pointer slot holds for a reference to that
-slot (R2253). A memory-only `read` temporary (one
+`!lit.ref`, and reads one through only for a builtin taking values. A
+place pointer is a pointer value, distinct from a reference to the slot
+holding it, as `!kgen.pointer` is from `!lit.ref`: the VM tags a handle
+by its destination's type (`Value::PlacePointer` or `Value::Ref`), so a
+reference to a pointer slot designates the slot. A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
@@ -2628,7 +2630,8 @@ compile-time run of the unlowered instance reads through the reference
 An operand over a type parameter a pointer may instantiate is addressed
 too: a `ref.make` of the whole of a slot holding a pointer designates the
 slot, the pointer, as upstream's `!lit.ref` of a pointer local does
-(`make_ref_target`, `Prog::pointer_value_slot`). A compiler-known
+(`make_ref_target`; the VM's `Value::PlacePointer` the slot holds is no
+reference to adopt). A compiler-known
 lifecycle trait no declaration answers is read by its upstream declaration
 (`TraitDeclaration::lifecycle`), so `x.copy()` through `Copyable`, or a
 trait refining it, binds `Copyable`'s `copy(self) -> Self` and passes a
@@ -4640,8 +4643,9 @@ The whole of a slot whose type is a pointer value (a `Pointer`, its
 the pointer, not its pointee, unless the place reads through the slot
 (`through` naming its root, an inlined handle parameter) or the slot is a
 `mut`/`ref` parameter, whose handle addresses the caller's pointer: the
-verifier's `make_ref_target`, the VM's `Prog::pointer_value_slot`, and
-Pliron's `designated_ty` (`lower/places.rs`) share that rule, as upstream
+verifier's `make_ref_target` and Pliron's `designated_ty`
+(`lower/places.rs`) share that rule, which the VM's representation keeps
+(a place pointer is a `Value::PlacePointer`, never a `Value::Ref`), as upstream
 addresses a pointer local only through a `!lit.ref`.
 
 ### Important MIR Instructions
@@ -8564,8 +8568,8 @@ representation, each decided in `build_structs`, and are the VM's alone:
   slot that is not a pointer value reads as a reference alias to the VM,
   which cannot tell a by-address `read` parameter's handle from a held
   reference (R2184). A struct held as its pointer field is a pointer
-  value, as a `Pointer` slot is: its whole place is the pointer
-  (`Prog::pointer_value_slot`).
+  value, as a `Pointer` slot is: its whole place is the pointer, a
+  `Value::PlacePointer`.
 - Every instance of a template is held or none is: an erased instance
   lays out as every instance agreeing on its kept arguments, though a
   conditional `TrivialRegisterPassable` row it cannot decide drops from its

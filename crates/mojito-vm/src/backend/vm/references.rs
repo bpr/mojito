@@ -6,6 +6,10 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// The storage a handle designates: a frame (or compile-time memory, or
+/// the interned heap pointers), a slot of it, and a projection within.
+pub(super) type HandleParts = (u64, usize, Vec<RefProjection>);
+
 /// How many handle-to-handle hops a projection walk will chase before
 /// treating the chain as cyclic. Reborrows nest as deep as the source does,
 /// which is a handful of frames; this only has to be past that.
@@ -156,6 +160,11 @@ impl VmBackend {
                 frame,
                 slot,
                 projection,
+            }
+            | Value::PlacePointer {
+                frame,
+                slot,
+                projection,
             } => {
                 let (new_frame, new_slot, new_projection) = self.canonical_reference_parts(
                     current,
@@ -224,10 +233,28 @@ impl VmBackend {
             );
         }
         // Otherwise walk the projection and re-root at the first handle that
-        // segments still address through. A handle reached at the final
-        // segment is itself the designated value (a stored `Pointer` or `ref`
-        // element) and stays where it is.
+        // segments still address through: a reference reached before the
+        // final segment, or a place pointer a segment dereferences. A handle
+        // reached at the final segment is itself the designated value (a
+        // stored `Pointer` or `ref` element) and stays where it is.
         for (position, segment) in projection.iter().enumerate() {
+            if let Value::PlacePointer {
+                frame: pointer_frame,
+                slot: pointer_slot,
+                projection: pointer_projection,
+            } = value
+                && let Some(Ok((target_frame, target_slot, mut combined))) =
+                    place_pointer_target(*pointer_frame, *pointer_slot, pointer_projection, segment)
+            {
+                combined.extend_from_slice(&projection[position + 1..]);
+                return self.canonical_reference_parts(
+                    current,
+                    current_variables,
+                    target_frame,
+                    target_slot,
+                    combined,
+                );
+            }
             match navigate_reference_step(value, segment) {
                 Some(Value::Ref {
                     frame: handle_frame,
@@ -262,6 +289,7 @@ impl VmBackend {
         if let Value::Pointer { allocation, offset } = reference {
             return self.heap_read(*allocation, *offset, 0);
         }
+        let reference = &*address_reference(reference);
         if let Value::Ref {
             frame,
             slot,
@@ -308,6 +336,7 @@ impl VmBackend {
             let (region, slot) = self.heap_index(*allocation, *offset, 0)?;
             return self.write_heap_projection(region, slot, &[], value);
         }
+        let reference = &*address_reference(reference);
         let Value::Ref {
             frame,
             slot,
@@ -416,6 +445,32 @@ impl VmBackend {
                 (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {
                     self.heap_read(allocation, offset, *index as i64)?
                 }
+                (
+                    segment @ (RefProjection::Index(_) | RefProjection::Deref),
+                    Value::PlacePointer {
+                        frame,
+                        slot,
+                        projection,
+                    },
+                ) => {
+                    let (frame, slot, projection) =
+                        place_pointer_target(frame, slot, &projection, segment).ok_or_else(
+                            || {
+                                RuntimeError::TypeError(format!(
+                                    "vm: {segment:?} does not dereference a place pointer"
+                                ))
+                            },
+                        )??;
+                    self.read_reference(
+                        &Value::Ref {
+                            frame,
+                            slot,
+                            projection,
+                        },
+                        current,
+                        current_variables,
+                    )?
+                }
                 // A single-pointee `Pointer` whose value is a heap pointer
                 // (an `OwnedPointer`'s `unsafe_ptr()`) dereferences its one
                 // element.
@@ -455,16 +510,6 @@ impl VmBackend {
                             "vm: read of uninitialized MaybeUninit storage".to_string(),
                         )
                     })?,
-                // Offset-0 identity deref of an origin-erased single-pointee
-                // `to=place` pointer. `UnsafePointer(to=v)` lowers to a `Value::Ref`
-                // straight at `v`, so `self.p[0]` re-roots (across a return) at the
-                // pointee itself with a residual `Index(0)`. That pointer designates
-                // exactly one value — the checker rejects any other offset — so
-                // index 0 is the value. A non-collection pointee (a scalar, or a
-                // non-List struct falling through the guarded List arm) resolves here.
-                (RefProjection::Index(0), value) => value,
-                // The handle chased above already designates the pointee.
-                (RefProjection::Deref, value) => value,
                 (segment, value) => {
                     return Err(RuntimeError::TypeError(format!(
                         "invalid reference projection {segment:?} on {}",
@@ -562,11 +607,6 @@ impl VmBackend {
                     value = *payload;
                 }
                 (RefProjection::UninitPayload, Value::UninitStorage(None)) => return Ok(None),
-                // A `to=place` pointer's handle already designates the
-                // pointee (`navigate_reference_mut` treats the dereference as
-                // the identity), so a boundary further along — `p[][i] = v`
-                // into a List's heap storage — is still reachable.
-                (RefProjection::Deref, current) => value = current,
                 _ => return Ok(None),
             }
         }
@@ -655,21 +695,44 @@ impl VmBackend {
         place: &MirPlace,
         registers: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
-        let Value::Ref {
-            frame,
-            slot,
-            projection,
-        } = root
-        else {
-            return Ok(None);
-        };
-        let mut projection = projection.clone();
-        projection.extend(place_projection_segments(place, registers)?);
-        Ok(Some(Value::Ref {
-            frame: *frame,
-            slot: *slot,
-            projection,
-        }))
+        match root {
+            Value::Ref {
+                frame,
+                slot,
+                projection,
+            } => {
+                let mut projection = projection.clone();
+                projection.extend(place_projection_segments(place, registers)?);
+                Ok(Some(Value::Ref {
+                    frame: *frame,
+                    slot: *slot,
+                    projection,
+                }))
+            }
+            // A place dereferencing the pointer its root holds designates
+            // the pointee's storage; any other place is the slot's own.
+            Value::PlacePointer {
+                frame,
+                slot,
+                projection,
+            } => {
+                let segments = place_projection_segments(place, registers)?;
+                let Some((first, suffix)) = segments.split_first() else {
+                    return Ok(None);
+                };
+                let Some(target) = place_pointer_target(*frame, *slot, projection, first) else {
+                    return Ok(None);
+                };
+                let (frame, slot, mut projection) = target?;
+                projection.extend_from_slice(suffix);
+                Ok(Some(Value::Ref {
+                    frame,
+                    slot,
+                    projection,
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The reference handle a place designates, if any: the root slot's own
@@ -677,20 +740,14 @@ impl VmBackend {
     /// only reaches a handle below its root ([`place_crosses_reference`]) — a
     /// handle composed at the root slot. `None` leaves the place to ordinary
     /// frame-storage navigation, which cannot interpret a [`Value::Ref`],
-    /// as it does for the whole of a slot holding a pointer value
-    /// ([`Prog::pointer_value_slot`]).
+    /// as it does for the whole of a slot holding a pointer value.
     pub(super) fn place_handle(
         &self,
-        prog: &Prog,
-        function: usize,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
-        if prog.pointer_value_slot(function, place) {
-            return Ok(None);
-        }
         if let Some(reference) =
             self.extend_reference(&variables[place.root as usize], place, registers)?
         {
@@ -707,14 +764,12 @@ impl VmBackend {
     /// or parameter's field included, or in frame storage.
     pub(super) fn take_place(
         &mut self,
-        prog: &Prog,
-        function: usize,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &mut [Value],
     ) -> Result<Value, RuntimeError> {
-        match self.place_handle(prog, function, frame_id, place, registers, variables)? {
+        match self.place_handle(frame_id, place, registers, variables)? {
             Some(reference) => {
                 let old = self.read_reference(&reference, frame_id, variables)?;
                 self.write_reference(&reference, frame_id, variables, Value::Moved)?;
@@ -734,34 +789,42 @@ impl VmBackend {
 /// array moves a native address. A handle selecting no element designates
 /// one value, which only offset 0 reaches.
 pub(super) fn offset_place_handle(handle: Value, delta: i64) -> Result<Value, RuntimeError> {
-    if delta == 0 {
-        return Ok(handle);
-    }
-    let Value::Ref {
+    let Value::PlacePointer {
         frame,
         slot,
         mut projection,
     } = handle
     else {
         return Err(RuntimeError::TypeError(
-            "vm: pointer arithmetic expects a place handle".to_string(),
+            "vm: pointer arithmetic expects a place pointer".to_string(),
         ));
     };
-    let Some(RefProjection::Index(index)) = projection.last_mut() else {
-        return Err(RuntimeError::TypeError(
-            "vm: a place pointer designates a single value; only offset 0 can be \
-             dereferenced"
-                .to_string(),
-        ));
-    };
-    *index = usize::try_from(*index as i64 + delta).map_err(|_| {
-        RuntimeError::TypeError("vm: place pointer offset before its array".to_string())
-    })?;
-    Ok(Value::Ref {
+    offset_place_projection(&mut projection, delta)?;
+    Ok(Value::PlacePointer {
         frame,
         slot,
         projection,
     })
+}
+
+/// The storage the place pointer `(frame, slot, projection)` designates
+/// after the dereferencing `segment`: its pointee for a `Deref`, and the
+/// element `i` past it for an `Index(i)`, as `lit.ref.from_pointer` of the
+/// offset pointer addresses it. `None` for a segment that does not
+/// dereference a pointer.
+pub(super) fn place_pointer_target(
+    frame: u64,
+    slot: usize,
+    projection: &[RefProjection],
+    segment: &RefProjection,
+) -> Option<Result<HandleParts, RuntimeError>> {
+    let delta = match segment {
+        RefProjection::Deref => 0,
+        RefProjection::Index(index) => *index as i64,
+        _ => return None,
+    };
+    let mut projection = projection.to_vec();
+    Some(offset_place_projection(&mut projection, delta).map(|()| (frame, slot, projection)))
 }
 
 /// The element a place rooted at a slot holding the heap pointer `pointer`
@@ -894,8 +957,6 @@ pub(super) fn navigate_reference_step<'a>(
             .find(|(field, _)| field == name)
             .map(|(_, value)| value),
         (RefProjection::Index(index), Value::Tuple(items)) => items.get(*index),
-        (RefProjection::Deref, Value::Pointer { .. }) => None,
-        (RefProjection::Deref, value) => Some(value),
         (
             RefProjection::Variant(expected),
             Value::Variant {
@@ -927,6 +988,45 @@ fn list_storage_pointer(fields: &[(String, Value)]) -> Result<(u64, i64), Runtim
         _ => Err(RuntimeError::TypeError(
             "self-hosted List has no pointer storage".into(),
         )),
+    }
+}
+
+/// Move a place pointer's projection `delta` elements along the aggregate
+/// its last index selects within ([`offset_place_handle`]).
+fn offset_place_projection(
+    projection: &mut [RefProjection],
+    delta: i64,
+) -> Result<(), RuntimeError> {
+    if delta == 0 {
+        return Ok(());
+    }
+    let Some(RefProjection::Index(index)) = projection.last_mut() else {
+        return Err(RuntimeError::TypeError(
+            "vm: a place pointer designates a single value; only offset 0 can be \
+             dereferenced"
+                .to_string(),
+        ));
+    };
+    *index = usize::try_from(*index as i64 + delta).map_err(|_| {
+        RuntimeError::TypeError("vm: place pointer offset before its array".to_string())
+    })?;
+    Ok(())
+}
+
+/// The reference to the storage `address` designates: a place pointer's
+/// pointee, as `lit.ref.from_pointer` addresses it, and a reference itself.
+fn address_reference(address: &Value) -> std::borrow::Cow<'_, Value> {
+    match address {
+        Value::PlacePointer {
+            frame,
+            slot,
+            projection,
+        } => std::borrow::Cow::Owned(Value::Ref {
+            frame: *frame,
+            slot: *slot,
+            projection: projection.clone(),
+        }),
+        reference => std::borrow::Cow::Borrowed(reference),
     }
 }
 

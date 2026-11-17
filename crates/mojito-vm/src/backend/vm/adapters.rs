@@ -189,7 +189,8 @@ impl VmBackend {
                     _ => target.and_then(Ty::pointer_element).or(target),
                 };
                 let referent = self.thaw(prog, referent, referent_ty)?;
-                return Ok(self.store_to_comptime_memory(referent));
+                let reference = self.store_to_comptime_memory(referent);
+                return Ok(address_as(&prog.structs, reference, target));
             }
             CtValue::Pointer { memory, offset } => {
                 let Some(element) = target.and_then(Ty::pointer_element) else {
@@ -360,17 +361,16 @@ impl VmBackend {
         let mut pointers = Vec::with_capacity(items.len());
         for item in items {
             let value = self.thaw(prog, item, Some(element))?;
-            pointers.push(self.store_to_comptime_memory(value));
+            pointers.push(comptime_pointer(self.store_to_comptime_memory(value)));
         }
         let length = pointers.len();
-        let Value::Ref { frame, slot, .. } = self.store_to_comptime_memory(Value::Tuple(pointers))
-        else {
-            unreachable!("compile-time memory is addressed by reference");
-        };
-        let first = Value::Ref {
-            frame,
-            slot,
-            projection: vec![RefProjection::Index(0)],
+        let first = match self.store_to_comptime_memory(Value::Tuple(pointers)) {
+            Value::Ref { frame, slot, .. } => Value::PlacePointer {
+                frame,
+                slot,
+                projection: vec![RefProjection::Index(0)],
+            },
+            other => other,
         };
         let missing = || {
             RuntimeError::Unsupported(format!(
@@ -406,7 +406,7 @@ impl VmBackend {
         let mut references = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             let value = self.thaw(prog, item, elements.get(index))?;
-            references.push(self.store_to_comptime_memory(value));
+            references.push(comptime_pointer(self.store_to_comptime_memory(value)));
         }
         let name = prog.declared_struct(Some(target)).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
@@ -504,5 +504,22 @@ impl VmBackend {
             }
             _ => Ok(None),
         }
+    }
+}
+
+/// The pointer to the compile-time memory `reference` designates, as a
+/// call's element pointers address its variadic arguments.
+fn comptime_pointer(reference: Value) -> Value {
+    match reference {
+        Value::Ref {
+            frame,
+            slot,
+            projection,
+        } => Value::PlacePointer {
+            frame,
+            slot,
+            projection,
+        },
+        other => other,
     }
 }

@@ -423,7 +423,9 @@ impl VmBackend {
         };
         let owner = match &receiver {
             Value::Struct { name, .. } => name.clone(),
-            Value::Tuple(_) | Value::Pointer { .. } => return Ok(None),
+            Value::Tuple(_) | Value::Pointer { .. } | Value::PlacePointer { .. } => {
+                return Ok(None);
+            }
             _ => match resolved
                 .as_deref()
                 .filter(|selected| prog.index_of(selected).is_some())

@@ -707,6 +707,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The VM holds a place pointer (`Pointer(to=x)`) as its own value,
+  distinct from a reference to the slot holding it, as upstream's
+  `!kgen.pointer` is from `!lit.ref`. Assigning a `mut` pointer parameter
+  now reseats the caller's pointer instead of overwriting the old pointee
+  with an alias of the new one, and `p[] += 10` on a `mut` pointer
+  parameter, like `assets/ok/struct_origin_pointer_result.mojo`, runs
+  without pre-elaboration
+  (`assets/ok/mut_pointer_parameter_reseat.mojo`). (R2253)
+
 - A trait-dispatched call binding a mutable place to a `ref x: T` slot
   whose mutability the requirement infers (`t.size(a)` over `def
   size(self, ref x: List[Int]) -> Int`) is no longer rejected as a loan
