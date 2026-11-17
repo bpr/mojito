@@ -219,6 +219,9 @@ struct Omitted {
     /// temporary the default is bound to.
     by_address: bool,
     convention: Option<ArgConvention>,
+    /// The callee's declared parameter writes through the argument's place
+    /// ([`MirFunctionDeclaration::param_writes`]).
+    writes: bool,
     default: OmittedDefault,
 }
 
@@ -384,6 +387,7 @@ fn fill_call(
             source,
             convention: default.convention,
             by_address: default.by_address,
+            writes: default.writes,
         });
         if positional {
             site.args.push(argument);
@@ -523,6 +527,10 @@ fn collect_contract_arguments(
             requires_place: false,
             convention: callee.variadic_convention,
             by_address: false,
+            writes: matches!(
+                callee.variadic_convention,
+                Some(ArgConvention::Var | ArgConvention::Deinit)
+            ),
         },
     );
 }
@@ -2053,6 +2061,7 @@ fn omitted_argument(
         owned: matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit)),
         by_address: by_address_parameter(callee, declarations, slot).is_some(),
         convention,
+        writes: callee.param_writes.get(slot).copied().unwrap_or(false),
         default,
     })
 }

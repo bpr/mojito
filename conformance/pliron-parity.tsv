@@ -1553,6 +1553,7 @@ assets/ok/trait_default_parameter_defaults.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_refinement.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_some_parameter.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_wrapper_conventions.mojo	main	exe-differential	sanitized
+assets/ok/trait_dispatch_inferred_ref_beside_view.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_parameter_markers.mojo	main	exe-differential	sanitized

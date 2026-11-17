@@ -415,6 +415,7 @@ impl Decoder {
             Some(d.option_value(Some(v)).and_then(|v| d.convention(v)))
         })?;
         let by_address = self.by_address(fields);
+        let writes = self.writes(fields, convention);
         self.unknown(
             fields,
             &[
@@ -423,6 +424,7 @@ impl Decoder {
                 "requires_place",
                 "convention",
                 "by_address",
+                "writes",
             ],
         );
         Some(CheckedCallArgument {
@@ -431,6 +433,7 @@ impl Decoder {
             requires_place,
             convention,
             by_address,
+            writes,
         })
     }
 
@@ -444,11 +447,13 @@ impl Decoder {
             Some(d.option_value(Some(v)).and_then(|v| d.convention(v)))
         })?;
         let by_address = self.by_address(fields);
-        self.unknown(fields, &["source", "convention", "by_address"]);
+        let writes = self.writes(fields, convention);
+        self.unknown(fields, &["source", "convention", "by_address", "writes"]);
         Some(mojito_checked::checked::CheckedArgumentConvention {
             source,
             convention,
             by_address,
+            writes,
         })
     }
 
@@ -633,6 +638,28 @@ impl Decoder {
             .ok()
             .and_then(|value| self.boolean(value))
             .unwrap_or(false)
+    }
+
+    /// A bound argument's `writes` (schema 1.203), absent for `false`. An
+    /// older artifact recorded none, and its loan check read every `ref`
+    /// slot it could not resolve to a declaration as writing, so it reads
+    /// as the convention's exclusive access: a `mut`, `ref`, `var`, or
+    /// `deinit` slot writes.
+    fn writes(&mut self, fields: &[Field], convention: Option<ArgConvention>) -> bool {
+        let unrecorded = self.minor < 203
+            && matches!(
+                convention,
+                Some(
+                    ArgConvention::Mut
+                        | ArgConvention::Ref
+                        | ArgConvention::Var
+                        | ArgConvention::Deinit
+                )
+            );
+        self.field(fields, "writes")
+            .ok()
+            .and_then(|value| self.boolean(value))
+            .unwrap_or(unrecorded)
     }
 
     /// A schema 1.156 capture's mode, of which only `reference` remains.

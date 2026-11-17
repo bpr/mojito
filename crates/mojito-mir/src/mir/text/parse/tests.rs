@@ -936,6 +936,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
                 requires_place: false,
                 convention: None,
                 by_address: false,
+                writes: false,
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Keyword(1),
@@ -943,6 +944,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
                 requires_place: true,
                 convention: Some(ArgConvention::Ref),
                 by_address: true,
+                writes: true,
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Default,
@@ -950,6 +952,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
                 requires_place: false,
                 convention: Some(ArgConvention::Imm),
                 by_address: false,
+                writes: false,
             },
         ],
         capture_accesses: vec![MirCaptureAccess {
@@ -4957,6 +4960,66 @@ fn a_current_artifact_naming_an_operand_place_is_rejected() {
             .any(|diagnostic| diagnostic.message == "unknown field `arg_places`"),
         "{error:?}"
     );
+}
+
+/// MIR 1.203 records whether a bound argument's declared contract writes
+/// (`writes`), written only when set: a `ref` slot whose mutability the
+/// callee infers reads back as not writing, and in an older artifact, which
+/// recorded none, as the convention's exclusive access.
+#[test]
+fn an_argument_convention_reads_its_declared_writes() {
+    use mojito_checked::checked::CheckedArgumentConvention;
+    let bound = |convention, writes| CheckedArgumentConvention {
+        source: CheckedCallArgumentSource::Positional(0),
+        convention,
+        by_address: true,
+        writes,
+    };
+    let program = |argument| {
+        program_with(vec![(
+            "f".into(),
+            function_with(
+                vec![Ty::int(), Ty::none()],
+                vec![MirInstr::Call {
+                    conventions: crate::mir::MirArgConventions::new([argument]),
+                    dest: Reg(1),
+                    func: FuncRef("g".into()),
+                    raises: None,
+                    args: vec![Reg(0)],
+                    kwargs: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    receiver: None,
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                }],
+            ),
+        )])
+    };
+    let read = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("artifact reads");
+        let [MirInstr::Call { conventions, .. }] = &parsed.program.functions[0].1.body.instrs[..]
+        else {
+            panic!("one call");
+        };
+        conventions
+            .argument(CheckedCallArgumentSource::Positional(0))
+            .map(|argument| argument.writes)
+    };
+    let inferred = write::program(&program(bound(Some(ArgConvention::Ref), false)));
+    assert!(!inferred.contains("writes"));
+    assert_eq!(read(&inferred), Some(false));
+    let declared = write::program(&program(bound(Some(ArgConvention::Ref), true)));
+    assert!(declared.contains("writes: true"));
+    assert_eq!(read(&declared), Some(true));
+    let older = legacy_text(
+        &program(bound(Some(ArgConvention::Ref), false)),
+        202,
+        &[String::new()],
+    );
+    assert_eq!(read(&older), Some(true));
+    let older_read = legacy_text(&program(bound(None, false)), 202, &[String::new()]);
+    assert_eq!(read(&older_read), Some(false));
 }
 
 /// `inc(mut x: Int)`, the callee of the legacy by-address operand tests.

@@ -1382,7 +1382,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConstructorBinding::of_signature`; a call that records no contract
   records the conventions it binds its arguments by,
   `SemanticAdjustment::CallConventions`, through `record_call_conventions`
-  (`argument_conventions`), as
+  (`argument_conventions`), each bound slot's `by_address` verdict and
+  declared `writes` (`DeclarationEffect::param_writes`'s rule, which the
+  loan check's `recorded_access` reads for a `ref` slot) spelled
+  `DeclaredSlots` by `Checker::declared_slots`, as
   `record_operand_convention` records a `not`'s operand, a copy
   construction's `copy` source, and a read builtin's argument; a construction binds through it from
   `Checker::record_constructor_call` in `checker/declarations.rs`, which

@@ -4609,7 +4609,11 @@ it is checked (upstream has no persistent-loan check, so the exemption
 stays on the pin's side). The
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
 the drop-elaborated program it actually executes. The loan analysis reads
-each call's retained argument places against the callee's declaration
+each call's retained argument places by the convention the call records
+for them (`MirArgConventions`), a `ref` slot by the record's `writes` bit,
+which the checker sets by the rule below, so a trait-dispatched call's
+inferred-mutability `ref` slot lends a shared read; a slot the call records
+nothing for is read against the callee's declaration
 (a program-wide `CalleeRefParams` table): a place retained at a slot whose
 `param_writes` mask is set — a `mut` parameter, or a `ref` whose declared
 origin is statically mutable — is an exclusive write, while a place lent to

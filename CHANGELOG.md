@@ -707,6 +707,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait-dispatched call binding a mutable place to a `ref x: T` slot
+  whose mutability the requirement infers (`t.size(a)` over `def
+  size(self, ref x: List[Int]) -> Int`) is no longer rejected as a loan
+  conflict beside a live view of that place: each recorded argument
+  convention now says whether its slot's declared contract writes, which
+  the loan check reads instead of asking the callee's declaration. MIR
+  text moves to 1.203 (an optional `writes: true`) and the package format
+  to `mojito-package 228`
+  (`assets/ok/trait_dispatch_inferred_ref_beside_view.mojo`). (R2244)
+
 - `lower-arg-conventions` now runs at every pipeline setting, before
   `always-inline`, as upstream's `LowerArgConventions` is lowering rather
   than an optimization: with `MOJITO_PRE_ELABORATION=0`, a template's

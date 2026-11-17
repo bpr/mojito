@@ -128,22 +128,37 @@ impl Checker {
     /// Record the conventions `site`, a call that records no contract,
     /// binds its arguments by: each bound slot's effective convention, and
     /// a gathering collector's for each element it gathers
-    /// ([`SemanticAdjustment::CallConventions`]), with whether each bound
-    /// slot is `by_address`.
+    /// ([`SemanticAdjustment::CallConventions`]), with what each bound
+    /// slot's declaration says of it (`declared`).
     pub(super) fn record_call_conventions(
         &self,
         site: &SourceSpan,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
-        by_address: &[bool],
+        declared: &DeclaredSlots,
         gathered: Gathered<'_>,
     ) {
-        self.record_at(site.clone()).call_conventions = Some(argument_conventions(
-            slots,
-            conventions,
-            by_address,
-            gathered,
-        ));
+        self.record_at(site.clone()).call_conventions =
+            Some(argument_conventions(slots, conventions, declared, gathered));
+    }
+
+    /// What a signature's declaration says of each of its parameters, by
+    /// its declared `conventions`, `ref` contracts (`ref_params`), and
+    /// parameter types (`declared`, else `bound`).
+    pub(super) fn declared_slots(
+        &self,
+        conventions: &[Option<ArgConvention>],
+        ref_params: &[Option<mojito_types::origin::RefSig>],
+        declared: &[Ty],
+        bound: &[Ty],
+    ) -> DeclaredSlots {
+        DeclaredSlots {
+            by_address: self.declared_by_address_slots(conventions, declared, bound),
+            writes: mojito_checked::checked::DeclarationEffect::param_writes(
+                conventions,
+                ref_params,
+            ),
+        }
     }
 
     /// Bind each nominal subscript passed to a `mut` parameter of `func` as
@@ -245,7 +260,9 @@ impl Checker {
     /// source as the copy initializer's `read` parameter, and a builtin
     /// standing for a library function (`input`, `abort`) its argument as
     /// that function's `read` parameter
-    /// ([`SemanticAdjustment::CallConventions`]).
+    /// ([`SemanticAdjustment::CallConventions`]). The operand's slot writes
+    /// only under a `mut`, `var`, or `deinit` receiver: a `ref self` names
+    /// no declared origin here.
     pub(super) fn record_operand_convention(
         &self,
         site: &SourceSpan,
@@ -258,6 +275,10 @@ impl Checker {
                 source,
                 convention,
                 by_address,
+                writes: matches!(
+                    convention,
+                    Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Deinit)
+                ),
             }]);
     }
 
@@ -536,6 +557,15 @@ impl<'a> Gathered<'a> {
     }
 }
 
+/// What each parameter's declaration says of the argument bound to it
+/// ([`Checker::declared_slots`]).
+pub(super) struct DeclaredSlots {
+    /// See [`mojito_checked::checked::CheckedArgumentConvention::by_address`].
+    pub(super) by_address: Vec<bool>,
+    /// See [`mojito_checked::checked::CheckedArgumentConvention::writes`].
+    pub(super) writes: Vec<bool>,
+}
+
 pub(super) fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
@@ -714,7 +744,7 @@ pub(super) fn read_temporary_arguments(
 pub(super) fn argument_conventions(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
-    by_address: &[bool],
+    declared: &DeclaredSlots,
     gathered: Gathered<'_>,
 ) -> Vec<mojito_checked::checked::CheckedArgumentConvention> {
     use mojito_checked::checked::{CheckedArgumentConvention, CheckedCallArgumentSource};
@@ -731,7 +761,8 @@ pub(super) fn argument_conventions(
             Some(CheckedArgumentConvention {
                 source,
                 convention: conventions.get(index).copied().flatten(),
-                by_address: by_address.get(index).copied().unwrap_or(false),
+                by_address: declared.by_address.get(index).copied().unwrap_or(false),
+                writes: declared.writes.get(index).copied().unwrap_or(false),
             })
         })
         .chain(
@@ -742,6 +773,7 @@ pub(super) fn argument_conventions(
                     source: CheckedCallArgumentSource::Positional(*position),
                     convention: collector,
                     by_address: false,
+                    writes: gathered.owning,
                 }),
         )
         .collect()

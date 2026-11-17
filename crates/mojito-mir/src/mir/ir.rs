@@ -1874,6 +1874,7 @@ impl MirArgConventions {
                 source: argument.source,
                 convention: argument.convention,
                 by_address: argument.by_address,
+                writes: argument.writes,
             }
         }))
     }
@@ -1890,9 +1891,16 @@ impl MirArgConventions {
         &self,
         source: mojito_checked::checked::CheckedCallArgumentSource,
     ) -> Option<Option<mojito_ast::ast::ArgConvention>> {
-        self.iter()
-            .find(|argument| argument.source == source)
-            .map(|argument| argument.convention)
+        self.argument(source).map(|argument| argument.convention)
+    }
+
+    /// The record of source argument `source`, `None` when the record does
+    /// not name it.
+    pub fn argument(
+        &self,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+    ) -> Option<&mojito_checked::checked::CheckedArgumentConvention> {
+        self.iter().find(|argument| argument.source == source)
     }
 
     /// The record with each source moved to the position `position`

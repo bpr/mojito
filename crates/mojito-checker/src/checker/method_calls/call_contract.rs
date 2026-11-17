@@ -239,6 +239,10 @@ fn checked_call_arguments(
     by_address: &[bool],
 ) -> Vec<mojito_checked::checked::CheckedCallArgument> {
     use mojito_checked::checked::{CheckedCallArgument, CheckedCallArgumentSource};
+    let writes = mojito_checked::checked::DeclarationEffect::param_writes(
+        &resolved.conventions,
+        &resolved.ref_params,
+    );
     let mut arguments = resolved
         .slots
         .iter()
@@ -260,6 +264,7 @@ fn checked_call_arguments(
             ),
             convention: effective_conventions.get(index).copied().flatten(),
             by_address: by_address.get(index).copied().unwrap_or(false),
+            writes: writes.get(index).copied().unwrap_or(false),
         })
         .collect::<Vec<_>>();
     // An owning (`var`/`deinit`) collector takes each element it gathers.
@@ -279,6 +284,7 @@ fn checked_call_arguments(
                 requires_place: false,
                 convention: collector,
                 by_address: false,
+                writes: collector.is_some(),
             },
         ));
     }
@@ -295,6 +301,7 @@ fn checked_call_arguments(
                     requires_place: false,
                     convention: Some(ArgConvention::Var),
                     by_address: false,
+                    writes: true,
                 }),
         );
     }

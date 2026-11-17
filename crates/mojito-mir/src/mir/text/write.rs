@@ -2166,6 +2166,9 @@ fn call_argument(value: &CheckedCallArgument) -> String {
     if value.by_address {
         fields.push(("by_address", "true".into()));
     }
+    if value.writes {
+        fields.push(("writes", "true".into()));
+    }
     record("call_argument", &fields)
 }
 fn argument_convention(value: &mojito_checked::checked::CheckedArgumentConvention) -> String {
@@ -2175,6 +2178,9 @@ fn argument_convention(value: &mojito_checked::checked::CheckedArgumentConventio
     ];
     if value.by_address {
         fields.push(("by_address", "true".into()));
+    }
+    if value.writes {
+        fields.push(("writes", "true".into()));
     }
     record("argument_convention", &fields)
 }

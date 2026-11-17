@@ -9548,28 +9548,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2244 A call's recorded `ref` convention does not say whether
-  the callee declares or infers the slot's mutability**
-
-  A trait-dispatched call binding a mutable place to a bare `ref x: T`
-  slot is rejected as a loan conflict beside a live view of that place,
-  where the pin runs it.
-  - The checker's effective convention keeps `ref` for an inferred
-    mutability over a mutable actual (`solve_call_origins`), which the
-    argument-exclusivity check needs.
-  - `recorded_access` (`analysis/loans.rs`) therefore reads a recorded
-    `ref` as a write unless the callee's `param_writes` says otherwise,
-    and a `__trait_dispatch` symbol has no declaration to ask.
-  - Fix: record beside each argument's convention whether its slot's
-    declared contract writes (`DeclarationEffect::param_writes`'s rule),
-    so the loan check reads the call alone.
-  - Probe: `t.size(a)` over a trait requirement `def size(self, ref x:
-    List[Int]) -> Int`, in a generic body holding `var s = Span(a)` used
-    after the call; the pin prints its result.
-  - Found while landing R1931 (2026-11-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2277 A copy of a slot passes the slot's loaded value to
   `__copyinit__`**
 

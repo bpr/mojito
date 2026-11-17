@@ -1517,6 +1517,7 @@ pub(super) mod tests {
                     requires_place: false,
                     convention: None,
                     by_address: false,
+                    writes: false,
                 }],
                 capture_accesses: Vec::new(),
                 reference_result: Some(reference_to(referent)),

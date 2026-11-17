@@ -260,7 +260,10 @@ impl Checker {
                         span,
                         &[slot],
                         &[convention],
-                        &[true],
+                        &crate::checker::places::DeclaredSlots {
+                            by_address: vec![true],
+                            writes: vec![false],
+                        },
                         Gathered::NONE,
                     );
                     self.record_argument_borrows(

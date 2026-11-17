@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.202
+mojito-mir 1.203
 ```
 
-The writer emits 1.202. The reader accepts 1.0 through 1.202; *Schema 1.0*
+The writer emits 1.203. The reader accepts 1.0 through 1.203; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1222,6 +1222,19 @@ from follows its defining load (`mir::callee_slots`). The syntax is
 unchanged. The reader reads and drops an older artifact's
 `callee_place`, so its `call.indirect` loads with the field cleared. The package format moves to
 `mojito-package 226` with it (R2269).
+
+Schema 1.203 adds an optional `writes: true` to the
+`argument_convention` and `call_argument` records: the slot's declared
+contract writes through the caller's place — a `mut`, `var`, or `deinit`
+parameter, or a `ref` whose declared origin is statically mutable
+(`DeclarationEffect::param_writes`'s rule). The loan check reads a recorded
+`ref` as a write only where it is set, so a `ref` whose mutability the
+callee infers (`ref x: T`) lends a mutable actual as a shared read, a trait
+requirement's slot included, with no declaration to consult. The writer
+emits the field only when it is set; an absent field reads as `false`, and
+in an artifact before 1.203 as the convention's exclusive access (a `mut`,
+`ref`, `var`, or `deinit` slot writes). The package format moves to
+`mojito-package 228` with it (R2244).
 
 Schema 1.202 drops the operand place fields of every call-shaped
 instruction, as upstream's `lit.call` names no storage beside its

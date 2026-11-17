@@ -2525,8 +2525,9 @@ impl Checker {
             span,
             binding.slots,
             &effective,
-            &self.declared_by_address_slots(
+            &self.declared_slots(
                 binding.conventions,
+                binding.ref_params,
                 &exclusivity.declared,
                 &exclusivity.bound,
             ),

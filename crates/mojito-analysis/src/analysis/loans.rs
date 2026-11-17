@@ -783,11 +783,12 @@ const fn convention_access(convention: Option<mojito_ast::ast::ArgConvention>) -
 /// the callee's declaration where the call records none, or for an
 /// operand past the collector the call builds (`spread`).
 ///
-/// A `ref` slot the record binds mutably writes only where the declaration
-/// writes through it: a `ref` whose mutability the callee infers
-/// (`ref x: T`) cannot write through a mutable actual, so the place stays
-/// a shared read, as the pin accepts; where the declaration does not
-/// answer (a trait requirement, a keyword slot), it is a write.
+/// A `ref` slot the record binds mutably writes only where the record says
+/// its declared contract writes
+/// ([`mojito_checked::checked::CheckedArgumentConvention::writes`]): a
+/// `ref` whose mutability the callee infers (`ref x: T`) cannot write
+/// through a mutable actual, so the place stays a shared read, as the pin
+/// accepts, a trait requirement's slot included.
 fn recorded_access(
     conventions: &mojito_mir::mir::MirArgConventions,
     source: CheckedCallArgumentSource,
@@ -798,13 +799,16 @@ fn recorded_access(
         (source, spread),
         (CheckedCallArgumentSource::Positional(position), Some(collector)) if position >= collector
     );
-    match conventions.of(source).filter(|_| !past_collector) {
+    match conventions.argument(source).filter(|_| !past_collector) {
         None => declared(),
-        Some(Some(mojito_ast::ast::ArgConvention::Ref)) => match declared() {
-            LoanAccess::Unclassified => LoanAccess::Write,
-            access => access,
-        },
-        Some(convention) => convention_access(convention),
+        Some(argument) if argument.convention == Some(mojito_ast::ast::ArgConvention::Ref) => {
+            if argument.writes {
+                LoanAccess::Write
+            } else {
+                LoanAccess::Read
+            }
+        }
+        Some(argument) => convention_access(argument.convention),
     }
 }
 

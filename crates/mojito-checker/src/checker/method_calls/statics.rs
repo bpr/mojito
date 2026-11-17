@@ -736,8 +736,9 @@ impl Checker {
             &span,
             &selected.slots,
             &effective_conventions,
-            &self.declared_by_address_slots(
+            &self.declared_slots(
                 &selected.conventions,
+                &selected.ref_params,
                 &selected.declared_params,
                 &selected.param_types,
             ),

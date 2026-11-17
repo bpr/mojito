@@ -76,6 +76,9 @@ pub struct CheckedCallArgument {
     /// See [`CheckedArgumentConvention::by_address`].
     #[serde(default)]
     pub by_address: bool,
+    /// See [`CheckedArgumentConvention::writes`].
+    #[serde(default)]
+    pub writes: bool,
 }
 
 /// One run-time argument of a call and the effective convention of the
@@ -94,6 +97,15 @@ pub struct CheckedArgumentConvention {
     /// type register-passable. A collector's element is never by address.
     #[serde(default)]
     pub by_address: bool,
+    /// The slot's declared contract writes through the caller's place
+    /// ([`DeclarationEffect::param_writes`]'s rule): a `mut`, `var`, or
+    /// `deinit` parameter, or a `ref` whose declared origin is statically
+    /// mutable. A `ref` whose mutability the callee infers (`ref x: T`)
+    /// keeps the effective convention `ref` over a mutable actual, for the
+    /// argument-exclusivity check, but does not write, so a place lent to
+    /// it stays a shared access for loan checking.
+    #[serde(default)]
+    pub writes: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

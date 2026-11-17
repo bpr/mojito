@@ -1552,6 +1552,7 @@ assets/ok/trait_default_parameter_defaults.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/trait_default_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_some_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_wrapper_conventions.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_dispatch_inferred_ref_beside_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_inheritance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_method_parameter_markers.mojo	-	ineligible	no-scalar-entry-shape
