@@ -1141,6 +1141,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A homogeneous collector's `VariadicList` now names the callable's
+  implicit pack origin in its `origin` parameter, as the pin's `*xs: T` is
+  `VariadicList[origin=xs, T, is_owned]`; a caller-built list leaves it
+  unbound. Output is unchanged (R2286).
+
 - Assigning or augmented-assigning a `mut` pointer parameter now stores
   through the parameter's reference (`ref.make` and `ref.write`), as any
   `mut` parameter's assignment does and as upstream stores through the

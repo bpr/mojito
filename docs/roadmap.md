@@ -8311,6 +8311,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `mojito_types::origin::Origin`, which MIR text, verification, and
     substitution all read.
   - Ledger name: `pointee-element-reference-return`.
+  - Probe: `def bump(*xs: String): for ref x in xs: x += "!"` is
+    accepted, where the pin rejects it ("expression must be mutable").
+    `_VariadicListIter.__next__`'s `ref[self.src[][0]]` resolves to a
+    mutable place under `mut self` (`[Field("src"), AnyIndex, AnyIndex]`)
+    rather than through `src`'s immutable `list_origin`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -10162,25 +10167,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     nothing.
   - Depends on R2197.
   - Model: Fable, Not Planned.
-
-- [ ] **R2286 A homogeneous collector's `VariadicList` names no origin,
-  where upstream's names the function's implicit pack origin**
-
-  `types::variadic_list_type` builds `VariadicList[element, is_owned]`
-  with no origin tail, where the pin's `*xs: T` is `VariadicList[origin=xs,
-  T, is_owned]`, so the list's `origin` parameter stays unbound in the body.
-  - Lever: give `variadic_list_type` the
-    `OriginParamId::pack_binder()` origin a heterogeneous collector's
-    `VariadicPack` already carries, and bind a caller-built list's
-    (`build_variadic_list`, `mir/call_defaults.rs`) as `Unbound`.
-  - `__getitem__` returns `ref[origin_of(self)]` here and at the pin, so
-    the visible effect is the iterator's `elt_origin`: `for ref x in xs`
-    names the pack origin rather than nothing.
-  - Probe: `def total(*xs: Int) -> Int: var t = 0; for x in xs: t += x;
-    return t` keeps printing `6` over `total(1, 2, 3)` on both backends.
-  - Found while landing R2264 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1929 A read collector cannot keep alive the owner of an element
   read through a call's reference result**

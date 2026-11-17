@@ -164,7 +164,11 @@ pub fn build_variadic_list(
         dest: array_reference,
         place: MirPlace::root(array_slot, Some(array_ty)),
     });
-    let list = tables.fresh_register(variadic_list_type(element.clone(), owned));
+    let list = tables.fresh_register(variadic_list_type(
+        element.clone(),
+        owned,
+        mojito_types::origin::Origin::Unbound,
+    ));
     before.push(MirInstr::Call {
         conventions: crate::mir::MirArgConventions::default(),
         dest: list,

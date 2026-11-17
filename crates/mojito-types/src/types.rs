@@ -2190,12 +2190,20 @@ pub const VARIADIC_LIST_TYPE_NAME: &str = "VariadicList";
 /// pointers in, as upstream's.
 pub const SPAN_TYPE_NAME: &str = "Span";
 
-/// `VariadicList[element, is_owned]`, the type a `*xs: element` collector
-/// has in its callee's body: owned for a `var` collector.
-pub fn variadic_list_type(element: Ty, is_owned: bool) -> Ty {
+/// `VariadicList[origin=origin, element, is_owned]`, a `*xs: element`
+/// collector's type in its callee's body.
+///
+/// It is owned for a `var` collector, and its origin tail holds `origin`,
+/// the struct's infer-only `origin` parameter: the callable's implicit
+/// pack origin in the body.
+pub fn variadic_list_type(element: Ty, is_owned: bool, origin: crate::origin::Origin) -> Ty {
     TyKind::Struct(
         VARIADIC_LIST_TYPE_NAME.to_string(),
-        vec![TyArg::Ty(element), TyArg::Val(CtValue::Bool(is_owned))],
+        vec![
+            TyArg::Ty(element),
+            TyArg::Val(CtValue::Bool(is_owned)),
+            TyArg::Origin(origin),
+        ],
     )
     .into()
 }
@@ -2295,8 +2303,9 @@ pub fn collector_pack_spread(ty: &Ty) -> Option<&Ty> {
 /// `VariadicPack` over the pack, whose origin is the callable's implicit
 /// pack origin ([`crate::origin::OriginParamId::pack_binder`]); an owned one (`var *args: *Ts`) the
 /// compiler's pack storage, the tuple of its elements once specialized
-/// (`$pack`); and a homogeneous one upstream's `VariadicList[element,
-/// is_owned]`, owned for a `var` collector.
+/// (`$pack`); and a homogeneous one upstream's `VariadicList[origin,
+/// element, is_owned]` over the same pack origin, owned for a `var`
+/// collector.
 pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -> Ty {
     let owned = matches!(convention, Some(ArgConvention::Var));
     let heterogeneous = matches!(element.kind(), TyKind::RuntimePack(_))
@@ -2309,7 +2318,7 @@ pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -
         _ if heterogeneous && !owned => variadic_pack_type(element, false, origin),
         TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
         _ if heterogeneous => TyKind::VariadicPack(element).into(),
-        _ => variadic_list_type(element, owned),
+        _ => variadic_list_type(element, owned, origin),
     }
 }
 
