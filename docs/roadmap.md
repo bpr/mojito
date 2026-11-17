@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2313**.
+Next free ID: **R2317**.
 
 ## Ordered Work
 
@@ -4122,25 +4122,66 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2088 A generic function passed to a callable parameter has no
+- [ ] **R2316 A generic callee at a `def[...]` callable bound has no
+  symbol in the checked instance key**
+
+  A nested generic `def` or a generic lambda passed at a generic callable
+  bound (`F: def[width: SIMDLength](...)`) stays a thin function value, so
+  the elaborator traces its callee through registers
+  (`Bindings::callables`, `native/mono/infer.rs`), where the pin binds the
+  generator's symbol as the argument's type.
+  - `Checker::nested_callable_symbol` (`checker/comptime_validation.rs`)
+    admits only `TyKind::Func` identifiers and lambdas without
+    `type_params`.
+  - Mojo shape: the generator's symbol, applied to its enclosing binders
+    with its own binders left open, is the inflated struct's `FuncSymbol`
+    argument (`inflate_function_argument`, `checker/constraints.rs`), as
+    R2087 and R2309 did for non-generic bodies.
+    `direct_from_inflated_bound_call` already chains the callee's
+    arguments ahead of the call's own.
+  - Probe: `assets/ok/simd_reductions_int.mojo` and
+    `simd_reduce_tree.mojo` (`SIMD.reduce_add` passes the nested
+    `add_fn[width]`).
+  - Probe: `assets/ok/nested_generic_def_callable_binder_argument.mojo`.
+  - Probe: `Tuple`'s `init_with` lambda (`lambda [i: Int]() ->
+    Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`), through
+    `initializer_list_contextual.mojo` and
+    `string_default_construction.mojo`.
+  - Probe: `tuple_consume_elements_{print,len,discard}.mojo`, whose
+    `show[index]` names a local's type; if that is a capture, file it
+    apart.
+  - Done when the probes print unchanged on both backends and none
+    reaches the `Bindings::callables` insert.
+  - Found while planning R2292 (2026-11-17).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2088 A generic function at a `def[...] thin` value binder has no
   symbol in the checked instance key**
 
   `callable_value_symbol` (`checker/declarations.rs`) is consulted only
   at a `TyKind::Func` slot, so a generic function argument at a
-  `def[...] thin` (`TyKind::GenericFunc`) slot stays `CtValue::Deferred`
-  and rides the register path; the output already matches the pin.
+  `def[...] thin` (`TyKind::GenericFunc`) value binder stays
+  `CtValue::Deferred` and rides the register path, which the elaborator
+  erases to an `Int` placeholder
+  (`erase_specialized_generic_callable_storage`, `mono/symbolic.rs`); the
+  output already matches the pin.
   - Resolving a `GenericFunc` slot through `callable_value_symbol`
     specializes the function against the generic contract: twelve
     fixtures broke, e.g. `callable_binder_parameter_inference.mojo` with
     "cannot infer type parameter 'width' of 'add'".
-  - Lever: the generator's unspecialized symbol, which the elaborator's
-    `bindings.callables` already keys (`native/mono/infer.rs`).
-  - Probe: a generic lambda at a generic callable slot stays deferred
-    too, since `Checker::nested_callable_symbol` names no body with type
-    parameters: `Tuple`'s `init_with` lambdas
-    (`lambda [i: Int]() -> Self.Ts[i]`, `stdlib/std/builtin/tuple.mojo`).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Mojo shape: the binder's argument is the generator's unspecialized
+    symbol as a compile-time constant, with its own binders left open, as
+    R2316 gives a generic callee at a bound.
+  - Probe: `assets/ok/callable_binder_parameter_inference.mojo`
+    (`apply_value[func]`).
+  - Probe: `writable_trait_library.mojo` and `index_list.mojo`, through
+    `f: def[FieldType: Writable](...) thin` in
+    `stdlib/std/format/__init__.mojo`.
+  - Done when no `GenericFunc`-typed register or slot is left in any
+    instance.
+  - Depends on R2316.
+  - Model: Fable, Planned.
 
 - [ ] **R2141 A static of a parametric struct has no symbol in a
   compile-time callable slot**
@@ -9570,6 +9611,62 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2313 A bracket over a nested generic `def` at a `def(...)`
+  bound stays a thin function value**
+
+  `apply(inner[5], x)`, with `inner[m: Int]` nested in the caller, binds
+  `F` as `def(Int) thin -> Int` and rides a register, where the pin binds
+  the generator's symbol applied to the enclosing binders and then the
+  bracket's arguments.
+  - `callable_value_symbol` answers `None` for a local binding, and
+    `Checker::nested_callable_symbol` matches only a bare identifier.
+  - Probe: `assets/ok/generic_def_bracket_function_value.mojo` prints
+    unchanged on both backends and no longer reaches the
+    `Bindings::callables` insert (`native/mono/infer.rs`).
+  - Found while planning R2292 (2026-11-17).
+  - Depends on R2316.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2314 A lambda with an empty capture list is a thin function
+  value, where the pin types it as capture-free**
+
+  `transform(lambda (x: Int) {} -> Int: x * 3, 5)` over `F: def(x: Int)
+  -> Int` prints `size_of[F]()` as `16`, where the pin prints `0`: the pin
+  types a `{}` lambda as a capture-free function.
+  - `Checker::nested_callable_symbol` requires `captures: None`, so a
+    `{}` lambda never inflates.
+  - Fix: treat an empty capture list as no capture list when naming the
+    lambda's symbol.
+  - Probe: `conformance/probes/empty_capture_list_lambda_at_callable_bound.mojo`
+    prints `0 15 0 15`.
+  - Probe: `assets/ok/lambda_generic_comptime.mojo` unchanged on both
+    backends, no longer reaching the `Bindings::callables` insert.
+  - Found while planning R2292 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2315 A function at an applied generic struct's initializer bound
+  stays a thin function value**
+
+  `S[Int](init_with=make)` over `__init__[F: def() -> Self.T]` binds `F`
+  to a thin function type and rides a register, where a non-generic
+  struct's `S(init_with=make)` already inflates as at the pin.
+  - The generic-struct construction paths in `checker/declarations.rs`
+    (the single-signature fast path and the matched-slot path) build the
+    argument types with `solving_argument_ty` alone, never
+    `callable_bound_argument`, as `generics.rs` and `call_inference.rs`
+    do.
+  - Probe: `Optional[Int](init_with=make)`, `Variant[Pinned,
+    Int](init_with=make)`, `Cell[Int, String](init_with=...)`, through
+    `assets/ok/optional_owning_api.mojo`,
+    `collection_handler_closure_traits.mojo`,
+    `variant_init_with_constructor.mojo`, and
+    `variadic_method_type_params.mojo`, unchanged on both backends and no
+    longer reaching the `Bindings::callables` insert.
+  - Found while planning R2292 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2292 The elaborator still folds a `def(...)` bound's callee from
   register dataflow**
 
@@ -9577,24 +9674,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `def(...)` bound, yet the elaborator still keys an instance by a callee
   it traces through registers, and erases a generic callable's slot to an
   `Int` placeholder.
+  - Still load-bearing (2026-11-17): the `Bindings::callables` insert
+    fires for `SIMD.reduce_add`, `Optional`'s `init_with`, and the shapes
+    R2088, R2313, R2314, R2315, and R2316 own.
   - Retire `Bindings::callables` and its readers
     (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
-    seeding in `specializer.rs`), `callable_parameter_addresses`, and
+    seeding in `specializer.rs`), the `callable_arguments` instance-key
+    push beside it, `callable_parameter_addresses`, and
     `substitute_callable_parameter_reads`.
   - Retire `erase_specialized_generic_callable_storage` and
     `erase_generic_callable_parameters` (`mono/symbolic.rs`).
-  - Retire the `Func`/`GenericFunc` receiver arm of
-    `indirect_from_bound_call` once no caller reaches it.
-  - In the checker, drop the `Func`/`GenericFunc` arms of
-    `declared_callable_contract`, and fold the run-time function value
-    rejection in `callable_bound_argument` into plain non-conformance,
-    keeping the pin's wording
-    (`assets/type_error/callable_bound_run_time_function_value.mojo`).
+  - Retire `indirect_from_bound_call` and both callers: the specializer's
+    bound-call fold and `fold_bound_calls`
+    (`analysis/inline_parametric.rs`).
+  - In the checker, split `declared_callable_contract`: bound
+    conformance keeps only the callable-bound `Param` and nominal-struct
+    arms, while calling a value (`fns[0](5)` in
+    `function_value_array_display.mojo`) keeps `Func`/`GenericFunc`.
+  - Fold the run-time function value rejection in
+    `callable_bound_argument` into plain non-conformance, with the pin's
+    wording (`assets/type_error/callable_bound_run_time_function_value.mojo`).
+  - Probe: `conformance/probes/callable_bound_nonconforming_struct.mojo`
+    takes the pin's conversion wording.
   - Probe: `assets/ok/nested_callable_parameter_symbol.mojo` and every
     callable-parameter fixture, unchanged on both backends.
-  - Depends on R2308, R2309, R2310, since a deferred nested callee and a
-    forwarded binder's register still need the fold.
-  - Model: Fable, Not Planned.
+  - Depends on R2088, R2313, R2314, R2315, since each leaves a thin
+    function value at a bound.
+  - Model: Fable, Planned.
 
 - [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a
   memory-only receiver by value**

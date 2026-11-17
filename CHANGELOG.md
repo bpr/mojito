@@ -1207,6 +1207,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Retiring the elaborator's register fold of a `def(...)` bound's callee
+  (R2292) is deferred: the pin settles that an empty-capture-list lambda is
+  capture-free and that a non-conforming struct takes the conversion
+  wording (`conformance/probes/`), and the shapes still reaching the fold
+  are filed as R2088, R2313, R2314, R2315, and R2316.
+
 - A callable binder forwarded to another call (`g[f]()` inside
   `fwd[f: def() thin -> Int]`, or a `#kgen.bind_params` over one) is now
   the call's parameter attribute alone, as at the pin, instead of also a
